@@ -3,7 +3,7 @@ Owners
 Purpose:
 - Current ownership, review, authority, and escalation memory for MemoryEndpoints.com.
 
-Verification status: current-state memory; verify with repository owner, human instructions, and public repository metadata before relying on it.
+Verification status: active operational memory; verify with repository owner, human instructions, and public repository metadata before relying on it.
 Memory scope: owner roles, review authority, deployment authority, and escalation boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when ownership, reviewer roles, approval authority, or escalation rules change.

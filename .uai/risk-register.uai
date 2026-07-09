@@ -3,7 +3,7 @@ Risk register
 Purpose:
 - Current public-safe risk memory for deployment, security, privacy, reliability, claims, and memory governance.
 
-Verification status: current-state memory; verify with readiness reports, secret scan, tests, and deployment evidence before relying on it.
+Verification status: active operational memory; verify with readiness reports, secret scan, tests, and deployment evidence before relying on it.
 Memory scope: active risks, mitigations, blockers, and claim boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when risk posture, mitigation, owner, or evidence changes.

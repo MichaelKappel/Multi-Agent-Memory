@@ -3,7 +3,7 @@ Taboo
 Purpose:
 - Hard negative boundaries for agents working in MemoryEndpoints.com.
 
-Verification status: current-state memory; verify against human instructions and repository policy before relying on it.
+Verification status: active operational memory; verify against human instructions and repository policy before relying on it.
 Memory scope: forbidden actions, forbidden claims, and hard safety boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: change this file only when a human names this exact artifact and exact operation.

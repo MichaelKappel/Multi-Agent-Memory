@@ -3,7 +3,7 @@ Open questions
 Purpose:
 - Current unresolved questions, blockers, and safe assumptions for MemoryEndpoints.com.
 
-Verification status: current-state memory; verify with current human instructions, reports, and external system state before relying on it.
+Verification status: active operational memory; verify with current human instructions, reports, and external system state before relying on it.
 Memory scope: unresolved questions, current assumptions, escalation routes, and blocker impact.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when questions are answered, deferred, converted into decisions, or replaced by evidence.

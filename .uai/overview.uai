@@ -3,7 +3,7 @@ Overview
 Purpose:
 - Compact project overview for the MemoryEndpoints.com product, companion site, modules, and public surfaces.
 
-Verification status: current-state memory; verify with source, route inventory, and site verification before relying on it.
+Verification status: active operational memory; verify with source, route inventory, and site verification before relying on it.
 Memory scope: project purpose, module map, public surfaces, and documentation boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when product scope, modules, public surfaces, or documentation boundaries change.

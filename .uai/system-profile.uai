@@ -3,7 +3,7 @@ System profile
 Purpose:
 - Operating profile for MemoryEndpoints.com as a code-bearing MATM project with local active memory and durable memory pointers.
 
-Verification status: current-state memory; verify against source, tests, reports, and deployment evidence before relying on it.
+Verification status: active operational memory; verify against source, tests, reports, and deployment evidence before relying on it.
 Memory scope: collaboration model, source authority, quality gates, release gates, and memory architecture.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when operating model, authority, quality gates, or memory architecture changes.

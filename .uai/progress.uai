@@ -1,9 +1,9 @@
 Progress
 
 Purpose:
-- Public-safe current-state progress memory for MemoryEndpoints.com implementation, verification, deployment, and dogfooding work.
+- Public-safe active operational progress memory for MemoryEndpoints.com implementation, verification, deployment, and dogfooding work.
 
-Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: current progress, verification evidence pointers, and completion boundary.
 Public-safe status: safe for source control; contains no credential values.
 Update route: replace stale facts with public-safe current state here; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -23,6 +23,6 @@ Current progress state:
 - Raw strategy reports and prompt drafts remain local-only and must not be committed.
 - Live MemoryEndpoints.com public routes and live MATM dogfood are verified for the currently deployed surface, but latest-code deployment remains blocked by FTPS login failure before upload.
 - Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
-- GitHub Actions CI for the pushed commit failed before any job steps executed; current evidence points to an external GitHub account or billing lock.
-- Local dogfood status: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; audit-log readback verified: false; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
+- GitHub Actions CI for the pushed commit failed before any job steps executed; `scripts/check_github_actions.py` refreshes this public-safe evidence without requiring `gh`.
+- Local dogfood status: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; audit-log readback verified: true; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
 - Completion must not be claimed until latest-code live deployment, MultiAgentMemory.com live static publish, live companion route verification, CI, and gated capabilities are resolved or explicitly waived.

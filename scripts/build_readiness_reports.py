@@ -155,7 +155,7 @@ def build_final_markdown(local_report):
         lines.append("- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.")
     lines.extend(
         [
-            "- GitHub Actions CI: blocked by repository/account billing state before job execution, so the latest run is not a passing CI signal.",
+            "- GitHub Actions CI: blocked. %s" % (github_ci.get("blocker") or "The latest run is not a passing CI signal."),
             "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.",
             "",
             "## Claim Boundary",

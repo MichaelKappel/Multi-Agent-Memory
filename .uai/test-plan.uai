@@ -3,7 +3,7 @@ Test Plan
 Purpose:
 - Public-safe current test and verification memory for the MemoryEndpoints.com enterprise MATM gate.
 
-Verification status: current-state memory; verify by running the commands named here before relying on it.
+Verification status: active operational memory; verify by running the commands named here before relying on it.
 Memory scope: local test gates, integration proof, report refresh order, and completion-blocking verification.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when required verification changes; submit durable public-safe test summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -21,6 +21,9 @@ Current local gate:
 - `python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json`
 - `python scripts\build_readiness_reports.py --write`
 - `git diff --check`
+
+External evidence refresh:
+- `python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json` updates GitHub Actions evidence. It exits nonzero while CI is not successful, so use its report as a gate signal rather than as a local code-test failure.
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.

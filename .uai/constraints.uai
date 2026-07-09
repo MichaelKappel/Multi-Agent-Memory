@@ -3,7 +3,7 @@ MemoryEndpoints.com constraints
 Purpose:
 - Runtime, repository, safety, licensing, and claim-boundary constraints for MemoryEndpoints.com agents.
 
-Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: active guardrails and policy constraints.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file for constraint changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.

@@ -3,7 +3,7 @@ Agent instructions
 Purpose:
 - Current agent operating instructions for MemoryEndpoints.com work.
 
-Verification status: current-state memory; verify with `AGENTS.md`, `.uai/startup-packet.uai`, and current human instructions before relying on it.
+Verification status: active operational memory; verify with `AGENTS.md`, `.uai/startup-packet.uai`, and current human instructions before relying on it.
 Memory scope: agent startup, source-control hygiene, verification behavior, and handoff conduct.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when agent operating rules change; keep detailed workflow evidence in durable reports.

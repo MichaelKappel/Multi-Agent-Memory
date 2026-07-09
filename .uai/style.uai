@@ -3,7 +3,7 @@ Style
 Purpose:
 - Current editorial and interface style memory for MemoryEndpoints.com and MultiAgentMemory.com public surfaces.
 
-Verification status: current-state memory; verify with current site source and public-route screenshots or route checks before relying on it.
+Verification status: active operational memory; verify with current site source and public-route screenshots or route checks before relying on it.
 Memory scope: public copy tone, documentation density, companion-site style, and claim wording.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when product positioning, UI style, documentation tone, or public claim rules change.

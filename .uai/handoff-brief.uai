@@ -3,7 +3,7 @@ Handoff brief
 Purpose:
 - Project Handoff receiver brief for the current MemoryEndpoints.com code-bearing work package.
 
-Verification status: current-state memory; verify with `AGENTS.md`, `.uai/receiver-brief.uai`, and current reports before relying on it.
+Verification status: active operational memory; verify with `AGENTS.md`, `.uai/receiver-brief.uai`, and current reports before relying on it.
 Memory scope: package pickup, expected first response, active intake, checks, and blocked live gates.
 Public-safe status: safe for source control; contains no credential values.
 Update route: refresh this brief after accepted work, verification, or blocker changes.

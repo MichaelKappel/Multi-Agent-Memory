@@ -308,7 +308,15 @@ def combine_reports(runs):
         "valuesRedacted": True,
     }
     primary = next((item for item in runs if item.get("liveDogfoodVerified")), runs[-1])
-    for key in ("steps", "searchReadbackCount", "currentMessageUnreadCount", "postAckUnreadCount", "receiptCount"):
+    for key in (
+        "steps",
+        "searchReadbackCount",
+        "currentMessageUnreadCount",
+        "postAckUnreadCount",
+        "receiptCount",
+        "auditLogCount",
+        "auditTrailReadbackVerified",
+    ):
         if key in primary:
             report[key] = primary[key]
     if "workspaceIdHash" in primary:

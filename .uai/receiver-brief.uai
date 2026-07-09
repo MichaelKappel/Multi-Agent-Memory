@@ -3,7 +3,7 @@ Receiver brief
 Purpose:
 - Startup brief for the next human, Codex session, or AI agent entering this repository.
 
-Verification status: current-state memory; verify with `workspace.uai`, `AGENTS.md`, and `.uai/startup-packet.uai` before relying on it.
+Verification status: active operational memory; verify with `workspace.uai`, `AGENTS.md`, and `.uai/startup-packet.uai` before relying on it.
 Memory scope: first-load behavior, target resolution, active memory rules, and immediate caution points.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this brief when startup behavior, setup mode, or receiver expectations change.

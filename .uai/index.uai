@@ -3,7 +3,7 @@ Active memory index
 Purpose:
 - Index of the active `.uai` suite and the responsibility of each typed file.
 
-Verification status: current-state memory; verify with `.uai/startup-packet.uai` and the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with `.uai/startup-packet.uai` and the `.uai` audit before relying on it.
 Memory scope: active file map and typed responsibility routing.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this index whenever active `.uai` files are added, removed, or reclassified.

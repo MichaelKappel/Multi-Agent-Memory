@@ -3,7 +3,7 @@ Operations
 Purpose:
 - Public-safe current operations memory for verification, deployment, packaging, live-site gates, and blocked external dependencies.
 
-Verification status: current-state memory; verify with deployment and readiness reports before relying on it.
+Verification status: active operational memory; verify with deployment and readiness reports before relying on it.
 Memory scope: current operational gates, deploy boundaries, and safe runbook pointers.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when operational gates change; submit durable public-safe operations summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.

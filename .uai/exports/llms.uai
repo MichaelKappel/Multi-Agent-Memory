@@ -3,7 +3,7 @@ LLMS export
 Purpose:
 - Compact AI-readable export pointer for the MemoryEndpoints.com UAIX memory package.
 
-Verification status: current-state export; verify with `.uai/exports/manifest.json` before relying on it.
+Verification status: active operational export; verify with `.uai/exports/manifest.json` before relying on it.
 Memory scope: package summary, read order pointer, memory routing, and truth boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: refresh this export after active read-order, memory route, or package-profile changes.

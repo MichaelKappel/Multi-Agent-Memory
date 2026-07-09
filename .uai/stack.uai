@@ -3,7 +3,7 @@ Stack
 Purpose:
 - Current stack memory for runtime, storage, tests, deployment, and static companion assets.
 
-Verification status: current-state memory; verify against source manifests, imports, scripts, and tests before relying on it.
+Verification status: active operational memory; verify against source manifests, imports, scripts, and tests before relying on it.
 Memory scope: language/runtime stack, dependency policy, storage backend status, and deploy packaging.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when runtime, storage, dependency, test, or deployment stack changes.

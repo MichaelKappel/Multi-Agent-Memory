@@ -3,7 +3,7 @@ Human briefing
 Purpose:
 - Human-facing clarification brief for the MemoryEndpoints.com UAIX handoff package.
 
-Verification status: current-state briefing; verify with `AGENTS.md`, `workspace.uai`, and `.uai/startup-packet.uai` before relying on it.
+Verification status: active operational briefing; verify with `AGENTS.md`, `workspace.uai`, and `.uai/startup-packet.uai` before relying on it.
 Memory scope: human clarification needs, approval boundaries, and what agents will defend.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this briefing when human-facing assumptions, approvals, or escalation boundaries change.

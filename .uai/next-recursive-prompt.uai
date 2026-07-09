@@ -3,7 +3,7 @@ Next recursive prompt
 Purpose:
 - Derived continuation prompt for directly related code, memory, deployment, and verification work.
 
-Verification status: current-state memory; verify against authoritative typed `.uai` files and current user instructions before relying on it.
+Verification status: active operational memory; verify against authoritative typed `.uai` files and current user instructions before relying on it.
 Memory scope: continuation prompt, acceptance checks, and direct next-loop guidance.
 Public-safe status: safe for source control; contains no credential values.
 Update route: regenerate this file after meaningful source, memory, deployment, or readiness changes.

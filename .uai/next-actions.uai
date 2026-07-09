@@ -3,7 +3,7 @@ Next actions
 Purpose:
 - Ordered current next actions for MemoryEndpoints.com without becoming a dated task log.
 
-Verification status: current-state memory; verify with `.uai/progress.uai`, readiness reports, and current human instructions before relying on it.
+Verification status: active operational memory; verify with `.uai/progress.uai`, readiness reports, and current human instructions before relying on it.
 Memory scope: next work, acceptance conditions, blockers, and verification targets.
 Public-safe status: safe for source control; contains no credential values.
 Update route: replace this file's current list when priority or blocker state changes; keep detailed history in durable reports.
@@ -14,7 +14,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Current ordered actions:
 - Finish the `.uai` setup correction: full typed suite, no README memory substitutes, clear active handoff buckets, refreshed audit, and tests.
 - Keep relational SQLite storage covered by integration and migration tests.
-- Refresh local verification reports after memory and storage changes.
+- Refresh local verification reports after memory and storage changes, including public-safe CI evidence through `scripts/check_github_actions.py`.
 - Commit and push source-controlled improvements once checks pass and prompt drafts remain untracked.
 - Resolve FTPS access outside the repo before attempting live deployment or live companion-site publish.
 - Rerun live route verification and authenticated live dogfood only after latest code is deployed.

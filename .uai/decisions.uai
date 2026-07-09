@@ -3,7 +3,7 @@ Decisions
 Purpose:
 - Public-safe current decision memory for active product, architecture, documentation, and claim-boundary choices.
 
-Verification status: current-state memory; verify against code, docs, and reports before relying on it.
+Verification status: active operational memory; verify against code, docs, and reports before relying on it.
 Memory scope: governing decisions that should steer future agents until explicitly changed.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when governing decisions change; submit durable public-safe decision summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -14,7 +14,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Current governing decisions:
 - Keep `E:\MemoryEndpoints.com` as the single source of truth for MemoryEndpoints.com and MultiAgentMemory.com content.
 - Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
-- Keep active `.uai` date-free and current-state only.
+- Keep active `.uai` date-free active operational memory only.
 - Do not add generic catch-all `.uai` files such as `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, or `project-state.uai`.
 - Store deep detail in docs, reports, MATM records, or other durable targets, then point to those from typed `.uai` files.
 - Do not copy public NeuralWikis wiki content, branding, or generated public site material.

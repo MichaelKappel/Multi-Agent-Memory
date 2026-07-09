@@ -3,7 +3,7 @@ Talisman
 Purpose:
 - Conflict handling, no-op behavior, and protected-anchor change-control guidance for the MemoryEndpoints.com active memory suite.
 
-Verification status: current-state memory; verify with `.uai/memory-maintenance.uai` and current human instructions before relying on it.
+Verification status: active operational memory; verify with `.uai/memory-maintenance.uai` and current human instructions before relying on it.
 Memory scope: anchor governance, contradiction handling, review routing, and no-op behavior.
 Public-safe status: safe for source control; contains no credential values.
 Update route: change this file only when a human names this exact artifact and exact operation; record the reason in `.uai/decisions.uai`.

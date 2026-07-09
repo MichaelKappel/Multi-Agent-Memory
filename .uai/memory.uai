@@ -3,7 +3,7 @@ Memory map
 Purpose:
 - Configuration-specific memory map for active `.uai`, local durable docs, MATM routes, and companion documentation.
 
-Verification status: current-state memory; verify with `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and route evidence before relying on it.
+Verification status: active operational memory; verify with `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and route evidence before relying on it.
 Memory scope: memory layers, routing, durable targets, and truth boundaries.
 Public-safe status: safe for source control; contains route names and paths only, no credentials.
 Update route: update this map when memory layers, durable targets, setup modes, or route boundaries change.

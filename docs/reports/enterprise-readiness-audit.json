@@ -33,7 +33,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
+      "blocker": "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -204,7 +204,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
+      "blocker": "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],

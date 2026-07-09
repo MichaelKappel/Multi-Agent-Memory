@@ -3,7 +3,7 @@ Memory maintenance
 Purpose:
 - Lifecycle, validation, and write-safety policy for the active MemoryEndpoints.com `.uai` suite.
 
-Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: memory lifecycle, active read order, protected anchors, date-free rule, and write-back safety.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file only when memory lifecycle policy changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -14,7 +14,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Maintenance rules:
 - The `.uai/` folder is the active startup memory suite.
 - Every `.uai/*.uai` file listed in `.uai/startup-packet.uai` is active memory.
-- Active `.uai` files are date-free current-state records; chronology belongs in durable reports, archives, CI logs, deployment logs, or MATM records.
+- Active `.uai` files are date-free active operational records; chronology belongs in durable reports, archives, CI logs, deployment logs, or MATM records.
 - Do not create catch-all files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, or equivalent.
 - Keep facts distributed by responsibility: constraints, identity, context, progress, operations, testing, decisions, owners, risks, handoff state, and durable pointers each have their own typed files.
 - Keep README files out of the memory package and active intake buckets. README files may document the repository for humans but must not be the `.uai` setup.

@@ -3,7 +3,7 @@ World context
 Purpose:
 - Public-safe ecosystem context for MemoryEndpoints.com, MultiAgentMemory.com, UAIX guidance, and durable memory systems.
 
-Verification status: current-state memory; verify against live public pages and local repository evidence before relying on it.
+Verification status: active operational memory; verify against live public pages and local repository evidence before relying on it.
 Memory scope: external context, interoperability boundaries, inbound link policy, and durable-memory landscape.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when external setup guidance, public site roles, or durable-memory positioning changes.

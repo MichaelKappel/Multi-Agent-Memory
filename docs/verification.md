@@ -74,4 +74,10 @@ Reports must remain public-safe and evidence-bound. If a report is stale or over
 
 ## GitHub CI Signal
 
-The repository has a CI workflow under `.github/workflows/ci.yml`. Recent public runs did not start because GitHub reported an account billing lock. Treat that as an external GitHub-state blocker, not as a passing CI signal and not as a local test failure. The current public-safe status is recorded in `docs/reports/github-ci-status-report.json`.
+The repository has a CI workflow under `.github/workflows/ci.yml`. Refresh the public-safe CI evidence with the stdlib-only public API checker:
+
+```powershell
+python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json
+```
+
+The checker exits nonzero when the latest matching run is not successful. A failed run with zero recorded job steps means GitHub did not execute the workflow commands, so treat it as an external GitHub runner/account gate, not as a passing CI signal and not as a local test failure. The current public-safe status is recorded in `docs/reports/github-ci-status-report.json`.

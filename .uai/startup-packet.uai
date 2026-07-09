@@ -3,7 +3,7 @@ MemoryEndpoints.com startup packet
 Purpose:
 - Cold-start packet for agents entering the MemoryEndpoints.com repository.
 
-Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: startup order, product target, and active memory boundary.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file for startup-order changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.

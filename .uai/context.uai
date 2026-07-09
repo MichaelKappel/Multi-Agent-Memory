@@ -3,7 +3,7 @@ Context
 Purpose:
 - Compact current context for MemoryEndpoints.com work without becoming a changelog or durable memory body.
 
-Verification status: current-state memory; verify with source, reports, and the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with source, reports, and the `.uai` audit before relying on it.
 Memory scope: compact project context, current objective shape, and active constraints.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when the compact current context changes; preserve detail in durable docs, reports, or MATM.

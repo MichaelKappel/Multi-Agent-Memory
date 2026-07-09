@@ -3,7 +3,7 @@ Identity
 Purpose:
 - Public-safe identity memory for the product, companion site, repository, and trust boundary.
 
-Verification status: current-state memory; verify against repository routes and public documentation before relying on it.
+Verification status: active operational memory; verify against repository routes and public documentation before relying on it.
 Memory scope: project identity, site roles, public claims, and product separation.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this file when product names, site roles, repository identity, or public trust boundaries change.

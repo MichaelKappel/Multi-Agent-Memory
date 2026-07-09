@@ -1,24 +1,14 @@
 {
-  "discovery": {
-    "attempted": true,
-    "candidateCount": 6,
-    "errorType": "error_perm",
-    "failedPhase": "login",
-    "found": false,
-    "foundFingerprint": null,
-    "foundSource": null,
-    "status": "connection_or_login_failed",
-    "valuesRedacted": true
-  },
   "dryRun": true,
   "hasResolvedHost": true,
   "hasResolvedPassword": true,
   "hasResolvedPort": true,
   "hasResolvedUser": true,
   "plannedUploadCount": 12,
-  "remoteDirResolved": false,
-  "remoteDirSource": null,
-  "safeNoOp": true,
+  "remoteDirFingerprint": "cdb4ee2aea69cc6a",
+  "remoteDirResolved": true,
+  "remoteDirSource": "argument_or_handoff",
+  "safeNoOp": false,
   "schemaVersion": "static_site.ftp_deploy.v1",
   "signals": {
     "hasFtp": true,
@@ -32,7 +22,7 @@
   },
   "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
   "siteRootExists": true,
-  "status": "missing_prerequisite",
+  "status": "ready",
   "targetDomain": "multiagentmemory.com",
   "valuesRedacted": true
 }

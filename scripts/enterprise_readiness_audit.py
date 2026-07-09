@@ -78,6 +78,12 @@ def main(argv=None):
     multiagentmemory_static = load_json(Path("docs") / "reports" / "multiagentmemory-static-site-verification.json")
     multiagentmemory_live_site = load_json(Path("docs") / "reports" / "multiagentmemory-live-site-verification.json")
     github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
+    github_ci_ok = bool(github_ci and github_ci.get("conclusion") == "success")
+    github_ci_blocker = (
+        github_ci.get("blocker")
+        if github_ci and github_ci.get("blocker")
+        else "Latest GitHub Actions run did not pass."
+    )
     multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
         item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
     )
@@ -153,9 +159,9 @@ def main(argv=None):
         ),
         evidence_item(
             "github_actions_ci",
-            "blocked" if github_ci and github_ci.get("conclusion") != "success" else "pass_github",
+            "pass_github" if github_ci_ok else "blocked",
             ["docs/reports/github-ci-status-report.json"],
-            None if github_ci and github_ci.get("conclusion") == "success" else "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
+            None if github_ci_ok else github_ci_blocker,
         ),
         evidence_item(
             "mysql_runtime_adapter",

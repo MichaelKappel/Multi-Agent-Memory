@@ -63,7 +63,7 @@
   "ok": true,
   "schemaVersion": "static_site.verifier.v1",
   "site": "MultiAgentMemory.com",
-  "siteRoot": "sites\\multiagentmemory.com",
+  "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
   "staticHtmlCompanion": true,
   "valuesRedacted": true
 }

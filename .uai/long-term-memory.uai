@@ -3,7 +3,7 @@ Long-term memory pointer ledger
 Purpose:
 - Pointer ledger for durable memory locations and external setup references.
 
-Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: mid-to-long-term memory routing, documentation pointers, and UAIX MATM setup anchors.
 Public-safe status: safe for source control; contains route URLs only, no credentials.
 Update route: use https://memoryendpoints.com/api/matm/memory-events/submit for authenticated MATM memory updates; update this local pointer ledger when durable routes change.
