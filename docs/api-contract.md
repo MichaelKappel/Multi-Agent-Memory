@@ -103,7 +103,7 @@ Firewall behavior:
 
 ### GET `/api/matm/search`
 
-Searches workspace memory and docs-backed durable memory.
+Searches hosted workspace memory. Files under `docs/long-term-memory` are source-controlled artifacts and migration seeds, not the protected workspace search source.
 
 Query:
 
@@ -113,7 +113,8 @@ Query:
 Response includes:
 
 - `items`: API-submitted memory events
-- `docsMemory`: matching records from `docs/long-term-memory`
+- `memorySource`: `hosted_workspace_store`
+- `filesystemDocsIncluded`: `false`
 
 Quarantined or rejected memory records are excluded from normal search results.
 

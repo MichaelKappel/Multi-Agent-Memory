@@ -21,7 +21,7 @@ The transactive-memory dimensions to preserve are specialization, credibility, a
 
 - Use the typed `.uai` suite for compact operational memory and startup continuity.
 - Do not create `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation; every startup-loaded typed `.uai` file is active memory.
-- Use `docs/long-term-memory` for reviewed durable strategy and release memory.
+- Use hosted MemoryEndpoints workspace memory for reviewed durable strategy and release memory; keep `docs/long-term-memory` as migration seed/evidence files.
 - Use MemoryEndpoints.com protected MATM routes for authenticated workspace memory and current-message coordination.
 - Keep pointer ledgers link-rich and context-rich: stable id, path, routing summary, authority/source, review status, evidence, and truth boundary.
 - Avoid monolithic memory dumps. Store summaries, pointers, and reviewed targets that can be loaded by need.
@@ -52,7 +52,7 @@ Treat memory writes as a pipeline:
 4. Deduplicate against existing active memory and durable docs.
 5. Attach provenance, authority, confidence, and review status.
 6. Promote public-safe current facts into `.uai`.
-7. Promote durable strategy into `docs/long-term-memory`.
+7. Promote durable strategy into hosted MemoryEndpoints workspace memory.
 8. Submit authenticated MATM updates to `https://memoryendpoints.com/api/matm/memory-events/submit` when credentials and connectivity exist.
 9. Record proof of use in `.uai/intake-outcome-ledger.uai` or progress reports.
 

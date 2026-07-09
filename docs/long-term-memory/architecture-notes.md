@@ -8,6 +8,6 @@ The MySQL/MariaDB production adapter exists through `memoryendpoints.storage.MyS
 
 The canonical database structure is `docs/database-schema-canonical.sql`. It separates account hierarchy, durable memory, crawl/search records, current-message delivery, receipts, review promotion, idempotency, outbox events, quota ledger, and audit log.
 
-Long-term memory starts in `docs/long-term-memory` and can later be promoted into hosted MemoryEndpoints MATM storage once deployment and authority gates are proven.
+Long-term memory is promoted into hosted MemoryEndpoints MATM storage once deployment and authority gates are proven. Files under `docs/long-term-memory` are migration seeds and source-controlled evidence, not the protected workspace search source.
 
 The local `.uai` folder remains active even after hosted MATM is verified. `.uai/totem.uai` is the invariant record: hosted MATM augments durable memory, but it does not retire local startup continuity or offline recovery memory.

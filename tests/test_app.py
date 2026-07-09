@@ -100,6 +100,18 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(status.startswith("200"), route)
             self.assertIn("MemoryEndpoints", text)
 
+    def test_console_exposes_operator_views_and_debug_json(self):
+        status, _headers, text = call_app("/console")
+
+        self.assertEqual("200 OK", status)
+        self.assertIn("Workspace Overview", text)
+        self.assertIn("data-console-workspace-summary", text)
+        self.assertIn("data-console-memory-list", text)
+        self.assertIn("data-console-inbox-list", text)
+        self.assertIn("data-console-receipts-list", text)
+        self.assertIn("data-console-audit-list", text)
+        self.assertIn("Debug JSON", text)
+
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
         self.assertEqual("200 OK", status)
@@ -228,7 +240,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "scope": "project",
                 "scopeId": project_id,
                 "title": "Decision",
-                "summary": "Use docs as long-term memory until hosted storage is live.",
+                "summary": "Use hosted MemoryEndpoints memory as the dogfood long-term memory lane.",
                 "tags": ["bootstrap"],
             },
         )
@@ -243,11 +255,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/search",
             headers=auth,
-            query="workspace_id=%s&q=docs" % workspace_id,
+            query="workspace_id=%s&q=hosted" % workspace_id,
         )
         self.assertEqual("200 OK", status)
-        self.assertEqual(1, json.loads(text)["count"])
-        self.assertGreaterEqual(json.loads(text)["docsMemoryCount"], 1)
+        search_payload = json.loads(text)
+        self.assertEqual(1, search_payload["count"])
+        self.assertEqual("hosted_workspace_store", search_payload["memorySource"])
+        self.assertFalse(search_payload["filesystemDocsIncluded"])
+        self.assertNotIn("docsMemory", search_payload)
 
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
@@ -295,6 +310,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         self.assertFalse(json.loads(text)["receipt"]["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=agent-b" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual(0, json.loads(text)["unreadCount"])
 
         status, _headers, text = call_app(
             "/api/matm/receipts",

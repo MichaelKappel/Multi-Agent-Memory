@@ -13,6 +13,8 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Current progress state:
 - MemoryEndpoints.com has a pure stdlib WSGI MATM app with public discovery routes, protected workspace memory, current-message coordination, notification acknowledgement, redacted receipts, memory firewall, review queue, idempotency, file storage, and optional stdlib SQLite relational storage.
+- Operator Console v1 local work converts the human console from always-visible raw JSON panes into workspace summary cards, memory rows, inbox rows, receipt rows, audit rows, and collapsible debug JSON. Browser verification covers desktop, mobile-width overflow, memory save/search, broadcast row rendering, acknowledgement, and receipt display.
+- Protected search is now aligned with dogfooding hosted MemoryEndpoints workspace memory. Source-controlled `docs/long-term-memory` files remain migration seeds and evidence artifacts rather than the protected workspace search source.
 - MultiAgentMemory.com is plain static HTML/CSS companion documentation under `sites/multiagentmemory.com/`; it links to MemoryEndpoints.com and the GitHub repository and explains how the system works.
 - Local verification passes through unit and integration tests, WSGI public-route verification, static companion-site verification, `.uai` audit, package verification, secret scan, enterprise readiness audit checks, and whitespace diff check.
 - Repository boundary audit is rerunnable and passes with `E:\MemoryEndpoints.com` as the only active MemoryEndpoints/MultiAgentMemory source tree, `sites/multiagentmemory.com/` as the companion docs source, no duplicate product folders at the drive root, and no root-level runtime artifacts.

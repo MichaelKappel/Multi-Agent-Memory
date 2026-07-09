@@ -7,7 +7,7 @@ from urllib.parse import parse_qs
 
 from . import __version__
 from .build import build_provenance
-from .config import COMPANION_DOCS_URL, DOCS_DIR, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
+from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
@@ -226,8 +226,14 @@ def route_console(start_response):
   </form>
   <div class="console-status" data-console-status>Waiting for a key.</div>
   <section class="console-panel">
-    <h2>Account Boundary</h2>
-    <pre data-console-workspace>{}</pre>
+    <h2>Workspace Overview</h2>
+    <div class="operator-summary" data-console-workspace-summary>
+      <p class="empty-state">Load a workspace to see account, company, workspace, project, storage, and redaction status.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Debug JSON</summary>
+      <pre data-console-workspace>{}</pre>
+    </details>
   </section>
   <section class="console-panel">
     <h2>Memory</h2>
@@ -259,7 +265,13 @@ def route_console(start_response):
       </label>
       <button class="button" type="submit">Search</button>
     </form>
-    <pre data-console-memory-output>[]</pre>
+    <div class="console-results" data-console-memory-list>
+      <p class="empty-state">Search results will appear as scoped memory rows.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Debug JSON</summary>
+      <pre data-console-memory-output>{}</pre>
+    </details>
   </section>
   <section class="console-panel">
     <h2>Messages</h2>
@@ -286,7 +298,13 @@ def route_console(start_response):
       <button class="button" type="submit">Refresh inbox</button>
       <button class="button" type="button" data-console-ack>Mark first unread read</button>
     </form>
-    <pre data-console-inbox-output>[]</pre>
+    <div class="console-results" data-console-inbox-list>
+      <p class="empty-state">Inbox messages will appear as broadcast or targeted rows.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Debug JSON</summary>
+      <pre data-console-inbox-output>{}</pre>
+    </details>
   </section>
   <section class="console-panel">
     <h2>Receipts And Audit</h2>
@@ -294,8 +312,20 @@ def route_console(start_response):
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
       <button class="button" type="button" data-console-audit>Refresh audit</button>
     </div>
-    <pre data-console-receipts-output>[]</pre>
-    <pre data-console-audit-output>[]</pre>
+    <div class="console-results" data-console-receipts-list>
+      <p class="empty-state">Read receipts will appear after acknowledgements.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Receipts JSON</summary>
+      <pre data-console-receipts-output>{}</pre>
+    </details>
+    <div class="console-results" data-console-audit-list>
+      <p class="empty-state">Audit events will appear after refresh.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Audit JSON</summary>
+      <pre data-console-audit-output>{}</pre>
+    </details>
   </section>
 </section>
 """
@@ -309,7 +339,7 @@ def route_memory_lifecycle(start_response):
   <ol>
     <li>The full <code>.uai/</code> suite is active startup memory; <code>.uai/startup-packet.uai</code> defines the read order.</li>
     <li>File handoff enters <code>agent-file-handoff/Content</code> or <code>agent-file-handoff/Improvement</code>.</li>
-    <li>Reviewed durable notes live under <code>docs/long-term-memory</code> until hosted memory promotion is proven.</li>
+    <li>Reviewed durable strategy is dogfooded into hosted MemoryEndpoints workspace memory once MySQL is verified.</li>
     <li>Current messages are read through <code>/api/matm/current-message</code> and acknowledged through <code>/api/matm/notifications/ack</code>.</li>
     <li>Production database persistence requires the live MySQL/MariaDB backend to connect and pass protected workflow verification.</li>
   </ol>
@@ -352,7 +382,7 @@ def text_discovery(name):
         "Protected MATM routes: " + ", ".join(matrix["protectedRoutes"]),
         "Companion documentation: %s." % COMPANION_DOCS_URL,
         "Source repository: %s." % GITHUB_REPO_URL,
-        "Memory boundary: docs-backed long-term memory until hosted persistence is proven.",
+        "Memory boundary: hosted workspace memory for protected search; local files remain startup and migration evidence.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "Readiness evidence: /api/matm/readiness-result.",
         "Authority boundary: no certification, endorsement, hidden credential validation, or automatic memory promotion.",
@@ -572,35 +602,6 @@ def route_setup(environ, start_response):
     )
 
 
-def _docs_memory(query):
-    root = DOCS_DIR / "long-term-memory"
-    q = (query or "").lower().strip()
-    items = []
-    if not root.exists():
-        return items
-    for path in sorted(root.rglob("*.md")):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        haystack = text.lower()
-        if q and q not in haystack and q not in path.name.lower():
-            continue
-        rel = path.relative_to(DOCS_DIR).as_posix()
-        first_heading = path.stem.replace("-", " ").title()
-        for line in text.splitlines():
-            if line.startswith("#"):
-                first_heading = line.lstrip("#").strip()
-                break
-        items.append(
-            {
-                "source": "docs",
-                "path": "docs/" + rel,
-                "title": first_heading,
-                "summary": text.strip().split("\n\n", 1)[0][:500],
-                "valuesRedacted": True,
-            }
-        )
-    return items
-
-
 def _idempotency_replay_or_conflict(store, start_response, workspace_id, key, operation, body):
     replay = store.check_idempotency(workspace_id, key, operation, body)
     if not replay:
@@ -725,16 +726,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload)
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
         items = store.search_memory(workspace_id, query.get("q") or query.get("query"))
-        docs_items = _docs_memory(query.get("q") or query.get("query"))
-        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "docsMemoryCount": len(docs_items)})
+        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "memorySource": "hosted_workspace_store"})
         return json_response(
             start_response,
             {
                 "ok": True,
                 "items": items,
-                "docsMemory": docs_items,
                 "count": len(items),
-                "docsMemoryCount": len(docs_items),
+                "memorySource": "hosted_workspace_store",
+                "filesystemDocsIncluded": False,
             },
         )
     if path == "/api/matm/agent-messages" and method == "POST":

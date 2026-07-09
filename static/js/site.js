@@ -44,6 +44,270 @@
     }
   }
 
+  function clear(node) {
+    while (node && node.firstChild) {
+      node.removeChild(node.firstChild);
+    }
+  }
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) {
+      node.className = className;
+    }
+    if (text !== undefined && text !== null) {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function shortId(value) {
+    var text = String(value || "");
+    if (!text) {
+      return "not set";
+    }
+    var parts = text.split("-");
+    if (parts.length > 1) {
+      return parts[0] + "-" + parts.slice(1).join("").slice(0, 8);
+    }
+    return text.length > 12 ? text.slice(0, 12) : text;
+  }
+
+  function formatBytes(value) {
+    var number = Number(value || 0);
+    if (number >= 1024 * 1024) {
+      return (number / (1024 * 1024)).toFixed(1) + " MB";
+    }
+    if (number >= 1024) {
+      return (number / 1024).toFixed(1) + " KB";
+    }
+    return number + " B";
+  }
+
+  function appendBadge(parent, text, kind) {
+    if (!text) {
+      return;
+    }
+    parent.appendChild(el("span", "status-badge " + (kind || ""), text));
+  }
+
+  function appendMeta(parent, items) {
+    var meta = el("div", "row-meta");
+    (items || []).filter(Boolean).forEach(function (item) {
+      meta.appendChild(el("span", "", item));
+    });
+    parent.appendChild(meta);
+  }
+
+  function renderEmpty(selector, text) {
+    var node = pick(selector);
+    if (!node) {
+      return;
+    }
+    clear(node);
+    node.appendChild(el("p", "empty-state", text));
+  }
+
+  function summaryCard(title, value, meta, badges) {
+    var card = el("article", "summary-card");
+    card.appendChild(el("div", "summary-label", title));
+    card.appendChild(el("strong", "", value || "Not available"));
+    if (meta) {
+      card.appendChild(el("span", "summary-meta", meta));
+    }
+    var badgeLine = el("div", "badge-line");
+    (badges || []).forEach(function (badge) {
+      appendBadge(badgeLine, badge.text, badge.kind);
+    });
+    if (badgeLine.childNodes.length) {
+      card.appendChild(badgeLine);
+    }
+    return card;
+  }
+
+  function renderWorkspaceSummary(workspace) {
+    var node = pick("[data-console-workspace-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    if (!workspace || !workspace.workspaceId) {
+      node.appendChild(el("p", "empty-state", "Workspace details will appear after the key is accepted."));
+      return;
+    }
+    var account = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
+    var company = workspace.company || {};
+    var project = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
+    node.appendChild(summaryCard("Account", account.label || workspace.accountId, shortId(account.accountId || workspace.accountId), [
+      { text: account.role || "owner", kind: "neutral" },
+      { text: account.status || "active", kind: "good" },
+    ]));
+    node.appendChild(summaryCard("Company", company.label || workspace.companyId, shortId(company.companyId || workspace.companyId), [
+      { text: company.status || "active", kind: "good" },
+    ]));
+    node.appendChild(summaryCard("Workspace", workspace.label || workspace.workspaceId, shortId(workspace.workspaceId), [
+      { text: workspace.plan || "plan unknown", kind: "neutral" },
+      { text: workspace.status || "active", kind: "good" },
+    ]));
+    node.appendChild(summaryCard("Project", project.label || workspace.primaryProjectId, shortId(project.projectId || workspace.primaryProjectId), [
+      { text: project.status || "active", kind: "good" },
+    ]));
+    node.appendChild(summaryCard(
+      "Storage",
+      formatBytes(workspace.storageUsedBytes) + " used",
+      formatBytes(workspace.storageRemainingBytes) + " remaining",
+      [{ text: workspace.quotaExceeded ? "quota exceeded" : "within quota", kind: workspace.quotaExceeded ? "warn" : "good" }]
+    ));
+    node.appendChild(summaryCard("Redaction", workspace.rawKeyStoredByServer ? "Check key handling" : "Key not stored raw", "Values are public-safe", [
+      { text: workspace.rawKeyStoredByServer ? "review" : "pass", kind: workspace.rawKeyStoredByServer ? "warn" : "good" },
+    ]));
+  }
+
+  function resultRow(title, summary, badges, metaItems) {
+    var row = el("article", "result-row");
+    var top = el("div", "result-row-top");
+    top.appendChild(el("h3", "", title || "Untitled"));
+    var badgeLine = el("div", "badge-line");
+    (badges || []).forEach(function (badge) {
+      appendBadge(badgeLine, badge.text, badge.kind);
+    });
+    top.appendChild(badgeLine);
+    row.appendChild(top);
+    if (summary) {
+      row.appendChild(el("p", "result-summary", summary));
+    }
+    appendMeta(row, metaItems);
+    return row;
+  }
+
+  function renderMemorySummary(payload) {
+    var node = pick("[data-console-memory-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", items.length + " hosted memory item(s). Filesystem docs are excluded from protected search."));
+    items.forEach(function (item) {
+      node.appendChild(resultRow(
+        item.title || item.subject,
+        item.summary,
+        [
+          { text: item.scope, kind: "neutral" },
+          { text: item.memoryType, kind: "neutral" },
+          { text: item.reviewStatus || item.promotionState, kind: item.reviewStatus === "quarantined" ? "warn" : "good" },
+          { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+        ],
+        [
+          "actor " + (item.actorAgentId || "unknown"),
+          "id " + shortId(item.eventId),
+          item.createdAt || "",
+          "source " + (item.source || "api"),
+        ]
+      ));
+    });
+  }
+
+  function renderInboxSummary(payload) {
+    var node = pick("[data-console-inbox-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No unread messages for this agent."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", (payload.unreadCount || items.length) + " unread message(s)."));
+    items.forEach(function (item) {
+      var message = item.message || {};
+      var notification = item.notification || {};
+      var target = message.targetAgentId || notification.targetAgentId;
+      node.appendChild(resultRow(
+        target ? "Targeted message" : "Broadcast message",
+        message.safeSummary,
+        [
+          { text: target ? "targeted" : "broadcast", kind: target ? "neutral" : "good" },
+          { text: notification.status || "unread", kind: notification.status === "read" ? "good" : "warn" },
+          { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
+          { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
+        ],
+        [
+          "from " + (message.senderAgentId || "unknown"),
+          "to " + (target || "all agents"),
+          "message " + shortId(message.messageId),
+          "notification " + shortId(notification.notificationId),
+          message.createdAt || "",
+        ]
+      ));
+    });
+  }
+
+  function renderReceiptSummary(payload) {
+    var node = pick("[data-console-receipts-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No receipts for the current agent yet."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", items.length + " receipt(s)."));
+    items.forEach(function (item) {
+      node.appendChild(resultRow(
+        "Notification " + (item.status || "read"),
+        "Receipt confirms an acknowledgement without exposing raw private payloads.",
+        [
+          { text: item.status || "read", kind: "good" },
+          { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+          { text: item.rawPayloadExposed ? "raw payload exposed" : "raw payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+        ],
+        [
+          "consumer " + (item.consumerAgentId || "unknown"),
+          "receipt " + shortId(item.receiptId),
+          "notification " + shortId(item.notificationId),
+          item.createdAt || "",
+        ]
+      ));
+    });
+  }
+
+  function renderAuditSummary(payload) {
+    var node = pick("[data-console-audit-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No audit events returned."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", items.length + " audit event(s), newest first."));
+    items.slice().reverse().slice(0, 24).forEach(function (item) {
+      node.appendChild(resultRow(
+        item.action,
+        "Actor " + (item.actor || "unknown") + " touched " + (item.target || "unknown target") + ".",
+        [
+          { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+          { text: item.rawCredentialExposed ? "credential exposed" : "credentials hidden", kind: item.rawCredentialExposed ? "warn" : "good" },
+          { text: item.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+        ],
+        [
+          "audit " + shortId(item.auditId),
+          item.createdAt || "",
+        ]
+      ));
+    });
+  }
+
   function authHeaders(extra) {
     var headers = {
       "Accept": "application/json",
@@ -62,6 +326,7 @@
     var fetchOptions = {
       method: options.method || "GET",
       headers: authHeaders(options.headers),
+      cache: "no-store",
     };
     if (options.body) {
       fetchOptions.headers["Content-Type"] = "application/json";
@@ -96,6 +361,7 @@
       state.companyId = workspace.companyId || state.companyId;
       state.projectId = workspace.primaryProjectId || state.projectId;
       render("[data-console-workspace]", workspace);
+      renderWorkspaceSummary(workspace);
       setStatus("Workspace loaded. Key remains session-local.", false);
       return workspace;
     });
@@ -120,6 +386,7 @@
     var qs = query({workspace_id: state.workspaceId, q: searchTerm || ""});
     return api("/api/matm/search?" + qs).then(function (payload) {
       render("[data-console-memory-output]", payload);
+      renderMemorySummary(payload);
       return payload;
     });
   }
@@ -130,6 +397,7 @@
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
       render("[data-console-inbox-output]", payload);
+      renderInboxSummary(payload);
       return payload;
     });
   }
@@ -138,6 +406,7 @@
     var qs = query({workspace_id: state.workspaceId, consumer_agent_id: state.agentId});
     return api("/api/matm/receipts?" + qs).then(function (payload) {
       render("[data-console-receipts-output]", payload);
+      renderReceiptSummary(payload);
       return payload;
     });
   }
@@ -146,6 +415,7 @@
     var qs = query({workspace_id: state.workspaceId, limit: "50"});
     return api("/api/matm/audit-log?" + qs).then(function (payload) {
       render("[data-console-audit-output]", payload);
+      renderAuditSummary(payload);
       return payload;
     });
   }
