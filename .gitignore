@@ -10,6 +10,7 @@ Thumbs.db
 var/
 dist/
 reports/private/
+docs/prompts/*.md
 ftp_Deploy.txt
 agent-file-handoff/Content/*
 !agent-file-handoff/Content/.gitkeep

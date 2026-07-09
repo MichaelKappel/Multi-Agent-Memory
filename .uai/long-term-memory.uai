@@ -30,15 +30,5 @@ Label: Proposed UAIX AI Memory Package Wizard MATM setup
 Routing summary: Requested UAIX wizard/spec mode for .uai startup memory plus a hosted MATM durable-memory endpoint. MemoryEndpoints.com is the suggested example endpoint, not a UAIX endorsement.
 Authority/source: UAIX public standards page
 Review status: requested
-Review evidence: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
+Review evidence: owner request recorded in .uai progress; local prompt drafts are intentionally excluded from source control.
 Truth boundary: requested UAIX guidance only; the MATM fragments are target anchors to add, and agents must not claim UAIX has published or endorsed them until UAIX does.
-
-Stable id: uaix-agent-spec-wizard-update-prompt
-Path: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
-Requested setup URLs: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM and https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
-Label: Prompt for UAIX.org agent to add MATM setup guidance
-Routing summary: Use this prompt to ask a UAIX.org agent to add MATM as a wizard/spec/guidance option, including .uai update_url fields that point to the configured MATM memory update route.
-Authority/source: MemoryEndpoints.com and MultiAgentMemory.com implementation evidence
-Review status: current
-Review evidence: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
-Truth boundary: prompt request only; UAIX.org must review, adapt, and publish any standards or wizard changes through its own process.

@@ -21,7 +21,3 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 - [Release verification summary](long-term-memory/release-verification-summary.md)
 - [Architecture notes](long-term-memory/architecture-notes.md)
 - [Project charter](long-term-memory/project-charter.md)
-
-## Prompts
-
-- [UAIX MATM wizard guidance prompt](prompts/uaix-agent-add-matm-wizard-guidance.md)

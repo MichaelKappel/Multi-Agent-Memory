@@ -9,4 +9,4 @@ Short-term memory
 - Use `.uai/` files for short-term/startup memory; use MemoryEndpoints.com MATM routes for mid-to-long-term memory.
 - MATM memory update URL for this repo: https://memoryendpoints.com/api/matm/memory-events/submit
 - Requested UAIX wizard/spec anchors to add: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM and https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
-- UAIX.org agent update prompt: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
+- Prompt drafts are local-only artifacts and must not be included in source control.

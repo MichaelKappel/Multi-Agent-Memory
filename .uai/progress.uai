@@ -19,5 +19,6 @@ Progress
 - Final live route verification passed: 21 public routes checked, 0 failures, 0 public-route secret hits.
 - Readiness result now reports `overallStatus: live_verified`, empty blockers, and MySQL/MariaDB as a gated capability.
 - Corrected `.uai` memory routing: MemoryEndpoints.com owns the MATM memory update URL at `https://memoryendpoints.com/api/matm/memory-events/submit`; the UAIX wizard URLs are requested setup/spec anchors, not this repo's memory update destination.
-- Added `docs/prompts/uaix-agent-add-matm-wizard-guidance.md` as a prompt for a UAIX.org agent to add `#setup-MATM` and `#setup-file-handoff-MATM` wizard/spec guidance, including MATM update URL fields and MemoryEndpoints.com as a suggested example endpoint.
+- Recorded the UAIX.org request to add `#setup-MATM` and `#setup-file-handoff-MATM` wizard/spec guidance, including MATM update URL fields and MemoryEndpoints.com as a suggested example endpoint.
+- Prompt drafts are now local-only artifacts excluded from source control.
 - Reorganized public repository presentation: moved MultiAgentMemory.com under `sites/multiagentmemory.com/`, added CI and repository structure docs, removed raw handoff reports from the public front door, and added handoff ignore rules.
