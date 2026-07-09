@@ -42,4 +42,18 @@ $env:MEMORYENDPOINTS_MYSQL_PASSWORD='<password>'
 
 `MEMORYENDPOINTS_MYSQL_URL` or `DATABASE_URL` may also be used with a `mysql://` or `mariadb://` URL. Secrets must stay outside Git.
 
+If Passenger/cPanel cannot expose environment variables reliably, the runtime can read a JSON secret file from the path in `MEMORYENDPOINTS_MYSQL_CONFIG_PATH`, or from `.local-secrets/mysql.json` by default:
+
+```json
+{
+  "host": "<host>",
+  "port": 3306,
+  "database": "<database>",
+  "user": "<user>",
+  "password": "<password>"
+}
+```
+
+The `.local-secrets/` directory is ignored by Git and excluded from the deployment package. Create or upload that file directly on the host outside source control.
+
 The canonical MySQL/MariaDB relational schema is in `docs/database-schema-canonical.sql`. The app initializes missing tables on connection. `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before the site can be claimed to be using real MySQL.

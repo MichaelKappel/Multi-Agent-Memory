@@ -71,6 +71,14 @@ python scripts\build_readiness_reports.py --write
 
 Do not claim the newest code is live until the live upload succeeds, Passenger restart is requested, live route verification passes for the required public routes, and `/api/version` reports the expected source SHA.
 
+Production database verification is a separate hard gate. Configure `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus `MEMORYENDPOINTS_MYSQL_*`, `MEMORYENDPOINTS_MYSQL_URL`, or an ignored `.local-secrets/mysql.json` file on the host, then run:
+
+```powershell
+python scripts\verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out docs\reports\live-mysql-backend-verification.json
+```
+
+The verifier must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before live dogfood or the human-verifier account should be created.
+
 Do not claim live dogfooding until the live authenticated MATM workflow is verified and a redacted report proves it.
 
 ## MultiAgentMemory.com Companion Site

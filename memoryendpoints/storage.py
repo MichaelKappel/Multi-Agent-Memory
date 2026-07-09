@@ -6,9 +6,9 @@ import secrets
 import sqlite3
 import threading
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
-from .config import PUBLIC_STORAGE_BYTES, utc_now
+from .config import PUBLIC_STORAGE_BYTES, ROOT, utc_now
 from .security import evaluate_memory_firewall, redact_text
 
 
@@ -1718,6 +1718,26 @@ class _DbConnection(object):
         return False
 
 
+def _mysql_config_from_secret_file():
+    configured = os.environ.get("MEMORYENDPOINTS_MYSQL_CONFIG_PATH")
+    path = Path(configured) if configured else ROOT / ".local-secrets" / "mysql.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise RuntimeError("MySQL secret config file is not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("MySQL secret config file must contain a JSON object.")
+    return {
+        "host": payload.get("host") or "localhost",
+        "port": int(payload.get("port") or 3306),
+        "user": payload.get("user") or payload.get("username") or "",
+        "password": payload.get("password") or "",
+        "database": payload.get("database") or payload.get("db") or "",
+    }
+
+
 def _mysql_config_from_env():
     url = os.environ.get("MEMORYENDPOINTS_MYSQL_URL") or os.environ.get("DATABASE_URL")
     if url:
@@ -1727,17 +1747,25 @@ def _mysql_config_from_env():
         return {
             "host": parsed.hostname or "localhost",
             "port": parsed.port or 3306,
-            "user": parsed.username or "",
-            "password": parsed.password or "",
-            "database": parsed.path.lstrip("/"),
+            "user": unquote(parsed.username or ""),
+            "password": unquote(parsed.password or ""),
+            "database": unquote(parsed.path.lstrip("/")),
         }
-    return {
+    config = {
         "host": os.environ.get("MEMORYENDPOINTS_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "localhost",
         "port": int(os.environ.get("MEMORYENDPOINTS_MYSQL_PORT") or os.environ.get("MYSQL_PORT") or "3306"),
         "user": os.environ.get("MEMORYENDPOINTS_MYSQL_USER") or os.environ.get("MYSQL_USER") or "",
         "password": os.environ.get("MEMORYENDPOINTS_MYSQL_PASSWORD") or os.environ.get("MYSQL_PASSWORD") or "",
         "database": os.environ.get("MEMORYENDPOINTS_MYSQL_DATABASE") or os.environ.get("MYSQL_DATABASE") or "",
     }
+    if config["user"] or config["password"] or config["database"]:
+        return config
+    file_config = _mysql_config_from_secret_file()
+    if file_config:
+        file_config.setdefault("host", config["host"])
+        file_config.setdefault("port", config["port"])
+        return file_config
+    return config
 
 
 class MySQLStore(SQLiteStore):

@@ -62,6 +62,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "MYSQL_PASSWORD",
             "MEMORYENDPOINTS_MYSQL_DATABASE",
             "MYSQL_DATABASE",
+            "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
         ):
             os.environ.pop(key, None)
 
@@ -750,6 +751,31 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 method="POST",
                 body={"label": "MySQL must not fall back"},
             )
+
+    def test_mysql_config_can_load_from_ignored_secret_file(self):
+        from memoryendpoints.storage import _mysql_config_from_env
+
+        secret_path = Path(self.tempdir) / "mysql.json"
+        secret_path.write_text(
+            json.dumps(
+                {
+                    "host": "db.internal.example",
+                    "port": 3307,
+                    "database": "memoryendpoints_test",
+                    "user": "memory_user",
+                    "password": "pw",
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = str(secret_path)
+
+        config = _mysql_config_from_env()
+        self.assertEqual("db.internal.example", config["host"])
+        self.assertEqual(3307, config["port"])
+        self.assertEqual("memoryendpoints_test", config["database"])
+        self.assertEqual("memory_user", config["user"])
+        self.assertEqual("pw", config["password"])
 
 if __name__ == "__main__":
     unittest.main()

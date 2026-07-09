@@ -89,7 +89,7 @@ $env:MEMORYENDPOINTS_SQLITE_PATH='E:\MemoryEndpoints.com\var\matm_store.sqlite3'
 python run_dev.py
 ```
 
-Production MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus `MEMORYENDPOINTS_MYSQL_*` credentials outside Git. `/api/version` must report `storeBackend: mysql` or `mariadb` before the live site is considered to be using real MySQL.
+Production MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus `MEMORYENDPOINTS_MYSQL_*` credentials, `MEMORYENDPOINTS_MYSQL_URL`, or an ignored `.local-secrets/mysql.json` file outside Git. `/api/version` must report `storeBackend: mysql` or `mariadb` and `storeBackendVerified: true` before the live site is considered to be using real MySQL.
 
 ## Verification
 
