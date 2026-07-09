@@ -71,7 +71,7 @@ python scripts\build_readiness_reports.py --write
 
 Do not claim the newest code is live until the live upload succeeds, Passenger restart is requested, live route verification passes for the required public routes, and `/api/version` reports the expected source SHA.
 
-Production database verification is a separate hard gate. Configure `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus `MEMORYENDPOINTS_MYSQL_*`, `MEMORYENDPOINTS_MYSQL_URL`, or an ignored `.local-secrets/mysql.json` file on the host, then run:
+Production database verification is a separate hard gate. Configure `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus an ignored `.local-secrets/mysql.json` file on the host, `MEMORYENDPOINTS_MYSQL_*`, or `MEMORYENDPOINTS_MYSQL_URL`, then run:
 
 ```powershell
 python scripts\verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out docs\reports\live-mysql-backend-verification.json
@@ -86,6 +86,8 @@ python scripts\upload_mysql_secret_config.py --dry-run --filezilla-site-match me
 python scripts\upload_mysql_secret_config.py --connection-check --filezilla-site-match memoryendpoints --protocol ftps
 python scripts\upload_mysql_secret_config.py --filezilla-site-match memoryendpoints --protocol ftps
 ```
+
+When `.local-secrets/mysql.json` exists, the runtime treats it as the authoritative MySQL credential source over URL and individual environment variables.
 
 The upload report is redacted and must not print the host, user, password, database name, or raw remote path.
 

@@ -1739,6 +1739,9 @@ def _mysql_config_from_secret_file():
 
 
 def _mysql_config_from_env():
+    file_config = _mysql_config_from_secret_file()
+    if file_config:
+        return file_config
     url = os.environ.get("MEMORYENDPOINTS_MYSQL_URL") or os.environ.get("DATABASE_URL")
     if url:
         parsed = urlparse(url)
@@ -1751,9 +1754,6 @@ def _mysql_config_from_env():
             "password": unquote(parsed.password or ""),
             "database": unquote(parsed.path.lstrip("/")),
         }
-    file_config = _mysql_config_from_secret_file()
-    if file_config:
-        return file_config
     config = {
         "host": os.environ.get("MEMORYENDPOINTS_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "localhost",
         "port": int(os.environ.get("MEMORYENDPOINTS_MYSQL_PORT") or os.environ.get("MYSQL_PORT") or "3306"),

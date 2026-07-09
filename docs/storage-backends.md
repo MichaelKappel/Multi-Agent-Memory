@@ -42,7 +42,7 @@ $env:MEMORYENDPOINTS_MYSQL_PASSWORD='<password>'
 
 `MEMORYENDPOINTS_MYSQL_URL` or `DATABASE_URL` may also be used with a `mysql://` or `mariadb://` URL. Secrets must stay outside Git.
 
-If Passenger/cPanel cannot expose environment variables reliably, the runtime can read a JSON secret file from the path in `MEMORYENDPOINTS_MYSQL_CONFIG_PATH`, or from `.local-secrets/mysql.json` by default:
+If Passenger/cPanel cannot expose environment variables reliably, the runtime can read a JSON secret file from the path in `MEMORYENDPOINTS_MYSQL_CONFIG_PATH`, or from `.local-secrets/mysql.json` by default. When that file exists, it is the authoritative MySQL credential source over URL and individual environment variables:
 
 ```json
 {
