@@ -212,6 +212,7 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
+    "dateFreeHotMemory": true,
     "latestCodeLiveDeployed": false,
     "liveDogfoodVerified": true,
     "livePublicRoutesVerified": true,
@@ -219,6 +220,7 @@
     "multiAgentMemoryLiveDeployed": false,
     "multiAgentMemoryLiveSiteVerified": false,
     "multiAgentMemoryStaticSiteVerified": true,
+    "noCatchAllActiveMemoryFile": true,
     "promptDraftsTracked": false,
     "valuesRedacted": true
   },

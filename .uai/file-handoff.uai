@@ -3,7 +3,7 @@ Agent File Handoff
 Purpose:
 - Startup memory for local dropped-file intake and proof-of-use handling.
 
-Last verified: 2026-07-09
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
 Memory scope: active file-handoff buckets and intake processing rules.
 Public-safe status: safe for source control; tracked buckets contain only `.gitkeep` placeholders unless the human adds files.
 Update route: update `.uai/intake-outcome-ledger.uai` after each scan; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.

@@ -30,6 +30,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 - Keep MemoryEndpoints.com as the mid-to-long-term MATM endpoint and MultiAgentMemory.com as companion documentation with direct links to the GitHub repository and detailed architecture guidance.
 - Keep `.uai/totem.uai` as a non-retirement invariant: local `.uai` stays active always.
+- Keep `.uai` as a typed active suite. Do not add a catch-all `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, or equivalent file.
 - Make every protected mutation idempotent where retries are realistic.
 - Keep public evidence routes current and bounded: readiness, capability matrix, route inventory, redacted receipts, AI manifest, and discovery files.
 - Improve hosted MATM toward richer review decisions, pointer-ledger export, memory graph traversal, and authenticated durable-memory search without exposing secrets.

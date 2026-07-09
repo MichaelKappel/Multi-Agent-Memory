@@ -6,7 +6,7 @@ Purpose: durable strategy memory for MemoryEndpoints.com as a Multi-Agent Transa
 
 MemoryEndpoints.com should model MATM as a split-memory system:
 
-- Hot startup memory: local `.uai` stays active always.
+- Hot startup memory: the full typed local `.uai` suite stays active always.
 - Durable hosted memory: authenticated MemoryEndpoints.com MATM routes store mid-to-long-term workspace memory.
 - Companion public docs: MultiAgentMemory.com explains the model and discovery boundary.
 - Evidence layer: route verification, dogfood reports, redacted receipts, readiness reports, and deployment reports prove claims.
@@ -19,7 +19,8 @@ The transactive-memory dimensions to preserve are specialization, credibility, a
 
 ## Hierarchical And Crawlable Memory
 
-- Use `.uai` for compact current-state memory and startup continuity.
+- Use the typed `.uai` suite for compact current-state memory and startup continuity.
+- Do not create a catch-all `.uai` file such as `short-term-memory.uai`, `active-memory.uai`, or `current-state.uai`; every startup-loaded typed `.uai` file is active memory.
 - Use `docs/long-term-memory` for reviewed durable strategy and release memory.
 - Use MemoryEndpoints.com protected MATM routes for authenticated workspace memory and current-message coordination.
 - Keep pointer ledgers link-rich and context-rich: stable id, path, routing summary, authority/source, review status, evidence, and truth boundary.

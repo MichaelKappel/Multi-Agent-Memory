@@ -3,41 +3,21 @@ Intake outcome ledger
 Purpose:
 - Public-safe record of local file-handoff scans and how intake affected repository work.
 
-Last verified: 2026-07-09
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
 Memory scope: disposition ledger for agent-file-handoff intake.
 Public-safe status: safe for source control; raw source bodies and private payloads are not included.
-Update route: append a public-safe scan outcome here after every active intake check; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Update route: replace stale intake state with the current public-safe scan outcome after active intake checks; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
 Source of truth: active bucket scans plus implemented code, docs, tests, and reports.
 Next action for agents: verify current bucket state before claiming intake is complete.
 Must not expose: raw private files, credential values, deployment handoff values, API keys, bearer tokens, database passwords, or raw private report bodies.
 
-2026-07-09
-- Content bucket scanned: agent-file-handoff/Content
-- Improvement bucket scanned: agent-file-handoff/Improvement
-- Active dropped files found: none, excluding .gitkeep placeholders
-- Disposition: accepted_empty_scan
-- Processed outcome: no source files required incorporation
-- Proof of use: repo implementation continued after live bucket scan evidence was recorded
-
-2026-07-09
-- Content bucket scanned: agent-file-handoff/Content
-- Improvement bucket scanned: agent-file-handoff/Improvement
-- Active dropped files found: six improvement reports
-- Disposition: partially_accepted
-- Processed outcome: incorporated matching requirements for AI-ready discovery, `.uai` handoff, docs-backed long-term memory, safe no-op behavior, idempotency, package exclusions, deployment root handling, and live route verification
-- Deferred outcome: stale file-tree proposals, incompatible route names, unsupported runtime claims, third-party dependency suggestions, and any NeuralWikis branding/content copy were not incorporated
-- Durable memory impact: added docs/long-term-memory/release-verification-summary.md and docs/reports/final-verification-report.md
-- Proof of use: local tests, WSGI route verifier, package build, dry-run deploy, live deploy, live route verifier, secret scan, and package exclusion checks all passed after intake processing
-- Archive/source-site action: raw improvement reports were removed from the public repository front door during enterprise reorganization; curated evidence remains in docs/reports and docs/long-term-memory
-
-2026-07-09
-- Content bucket scanned: agent-file-handoff/Content
-- Improvement bucket scanned: agent-file-handoff/Improvement
-- Active dropped files found: 14 strategy reports, excluding .gitkeep placeholders
-- Disposition: partially_accepted
-- Processed outcome: distilled enterprise Python, testing, MySQL/database, MATM, hierarchical memory, timestamp-free retrieval, and system-target guidance into active `.uai` memory and reviewed long-term memory docs
-- Durable memory impact: added docs/long-term-memory/strategy-index.md, docs/long-term-memory/enterprise-engineering-best-practices.md, docs/long-term-memory/matm-architecture-strategy.md, and docs/long-term-memory/system-targets.md
-- Active memory impact: updated `.uai/short-term-memory.uai` and `.uai/long-term-pointer-ledger.uai` with strategy summaries and deep links
-- Deferred outcome: raw report bodies, citation blocks, generated examples not specific to MemoryEndpoints.com, and dependency/tooling recommendations that conflict with the pure stdlib runtime remain local-only source material rather than committed policy
-- Proof of use: `.uai` audit, unit tests, WSGI route verification, package verification, secret scan, enterprise readiness audit, and readiness report refresh were run after distribution
-- Archive/source-site action: raw strategy reports remain ignored local intake files pending human archive or removal; they were not added to source control
+Current intake state:
+- Active buckets: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
+- Content bucket currently has no committed source payloads beyond placeholders.
+- Improvement intake was partially accepted where it matched MemoryEndpoints.com goals.
+- Accepted outcomes: AI-ready discovery, `.uai` startup handoff, docs-backed durable memory, safe no-op behavior, idempotency, package exclusions, deployment-root handling, live route verification, enterprise Python/testing strategy, MySQL/database planning, MATM strategy, hierarchical memory, timestamp-free retrieval, and system-target guidance.
+- Durable memory impact: reviewed docs under `docs/long-term-memory/` and verification reports under `docs/reports/`.
+- Active memory impact: typed `.uai` records carry current routing facts, intake outcomes, constraints, progress state, and deep links without calendar dates.
+- Deferred outcomes: raw report bodies, citation blocks, generated examples not specific to MemoryEndpoints.com, stale file-tree proposals, incompatible routes, unsupported runtime claims, third-party dependency suggestions, and NeuralWikis branding or public content copy.
+- Raw strategy reports remain ignored local intake material unless a human explicitly archives or removes them.
+- Completion gate: agents must rescan active buckets and record current public-safe disposition before claiming intake complete.

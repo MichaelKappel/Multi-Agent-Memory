@@ -10,7 +10,7 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 4. Inspect active file handoff buckets:
    - `agent-file-handoff/Content`
    - `agent-file-handoff/Improvement`
-5. Use `.uai/` as short-term/startup memory.
+5. Use the full `.uai/` suite as active startup memory.
 6. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory boundary when reachable and authenticated.
 7. Use MultiAgentMemory.com as the GitHub companion documentation site.
 8. Record progress in `.uai/progress.uai` and reports under `docs/reports/`.

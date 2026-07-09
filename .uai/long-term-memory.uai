@@ -3,7 +3,7 @@ Long-term memory pointer ledger
 Purpose:
 - Pointer ledger for durable memory locations and external setup references.
 
-Last verified: 2026-07-09
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
 Memory scope: mid-to-long-term memory routing, documentation pointers, and UAIX MATM setup anchors.
 Public-safe status: safe for source control; contains route URLs only, no credentials.
 Update route: use https://memoryendpoints.com/api/matm/memory-events/submit for authenticated MATM memory updates; update this local pointer ledger when durable routes change.
@@ -44,5 +44,5 @@ Inbound link policy: UAIX may use setup-option fragment URLs because the wizard 
 Routing summary: Use the UAIX MemoryEndpoints.com MATM setup option to configure hot .uai startup memory and MemoryEndpoints.com example MATM endpoint routes.
 Authority/source: UAIX public standards page
 Review status: published_reference_verified
-Review evidence: UAIX AI Memory Package Wizard public page verified 2026-07-09.
+Review evidence: UAIX AI Memory Package Wizard public page and repository setup reports.
 Truth boundary: UAIX publishes setup guidance and MemoryEndpoints.com example route prefill only. This is not certification, endorsement, automatic sync, repository write authority, hidden credential validation, or the MATM memory update destination.

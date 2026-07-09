@@ -66,7 +66,7 @@ def capability_matrix():
             "sourceRepository": GITHUB_REPO_URL,
         },
         "memoryLevels": [
-            {"level": "session", "status": "live", "storage": ".uai/short-term-memory.uai"},
+            {"level": "active_startup_suite", "status": "live", "storage": ".uai/*.uai listed by .uai/startup-packet.uai"},
             {"level": "project", "status": "live", "storage": "docs/long-term-memory"},
             {"level": "workspace", "status": "live", "storage": "file store with memory firewall and review queue"},
             {"level": "workspace_database", "status": "live_optional", "storage": "stdlib sqlite"},

@@ -71,6 +71,7 @@ def main(argv=None):
 
     live_routes = load_json(Path("docs") / "reports" / "live-route-verification.json")
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
+    uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
     multiagentmemory_live = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-live-attempt-latest.json")
@@ -174,6 +175,8 @@ def main(argv=None):
         "blockers": blockers,
         "summary": {
             "localHardeningVerified": all_checks_ok is True or all_checks_ok is None,
+            "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
+            "noCatchAllActiveMemoryFile": bool(uai_audit and uai_audit.get("noCatchAllActiveMemoryFile")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
             "latestCodeLiveDeployed": False,
             "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,

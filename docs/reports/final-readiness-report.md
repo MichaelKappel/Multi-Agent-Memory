@@ -10,9 +10,9 @@ Status: not complete. `completionClaimAllowed` is `false`.
 - Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.
 - Local WSGI route verification: 21 routes, 0 failures.
 - Live public route verification: 21 routes, 0 failures for the currently deployed public surface.
-- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, and `.uai/totem.uai` is first in the required memory order.
+- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, `.uai/totem.uai` is first, active `.uai` is date-free, and no catch-all active-memory file exists.
 - Local dogfooding: true through WSGI; live dogfooding: true.
-- Package verification: status `ready`, 94 planned files, excludes local runtime state and secrets.
+- Package verification: status `ready`, 95 planned files, excludes local runtime state and secrets.
 - Secret scan: 103 scanned files, 0 hits.
 - MultiAgentMemory.com static source: pass; live publish status `connection_or_upload_failed`, uploaded count `0`.
 - MultiAgentMemory.com live site verification: 9 failures; home page is not serving expected companion links yet.

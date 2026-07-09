@@ -1,52 +1,27 @@
 Progress
 
 Purpose:
-- Public-safe progress ledger for MemoryEndpoints.com implementation, verification, deployment, and dogfooding work.
+- Public-safe current-state progress memory for MemoryEndpoints.com implementation, verification, deployment, and dogfooding work.
 
-Last verified: 2026-07-09
-Memory scope: chronological progress, verification evidence, and current completion boundary.
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
+Memory scope: current progress, verification evidence pointers, and completion boundary.
 Public-safe status: safe for source control; contains no credential values.
-Update route: append public-safe verified progress here; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Update route: replace stale facts with public-safe current state here; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
 Source of truth: current repository state, command output, verification reports, Git commits, and `.uai/totem.uai`.
-Next action for agents: add concise evidence-backed entries after real verification; do not claim full goal completion without a requirement-by-requirement audit.
+Next action for agents: keep this file date-free, concise, and current; do not use it as a dated changelog.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or unredacted deployment handoff values.
 
-2026-07-09:
-- Created initial pure stdlib WSGI MATM scaffold.
-- Added file-backed storage, public discovery routes, protected memory/message APIs, and UAIX-style file handoff files.
-- Verification passed locally: Python compile, unittest, local route verifier, package build, and whitespace check.
-- FTP deploy dry-run is gated because no explicit remote application directory is present in the secret handoff.
-- Added protected mutation idempotency, route inventory, docs-backed search readback, API contract docs, SQL schema proposal, AGENTS.md, and curl examples.
-- Added readiness result, workspace quota readback, current-message lane readback, and redacted receipt readback.
-- Current local verification: 4 unit tests passed; public verifier checked 20 routes with 0 failures and 0 secret hits; package contains 53 files; route inventory reports 30 routes.
-- Added stdlib SQLite backend, file-to-SQLite migration dry-run helper, and canonical MATM database schema covering hierarchy memory, crawl/search metadata, current messages, receipts, review queue, idempotency, outbox, quota ledger, and audit.
-- User clarified that the FTP login directory is the remote app root; live deploy should use `--remote-dir .` after current verification passes.
-- Added `/docs/` as a valid docs alias and verified both `/docs` and `/docs/` locally and live.
-- Hardened idempotency replay to return the original response status and body for exact retries.
-- Hardened package exclusions for SQLite, journal, database, log, cache, `dist`, and credential handoff files.
-- Added `scripts/secret_scan.py`; package-eligible secret scan passed with 0 hits.
-- Added Passenger restart marker upload via `tmp/restart.txt` so deployed Python changes reload.
-- Live deploy to the FTP login root completed with `--remote-dir .`; credential values remained redacted.
-- Final live route verification passed: 21 public routes checked, 0 failures, 0 public-route secret hits.
-- Readiness result now reports `overallStatus: live_verified`, empty blockers, and MySQL/MariaDB as a gated capability.
-- Corrected `.uai` memory routing: MemoryEndpoints.com owns the MATM memory update URL at `https://memoryendpoints.com/api/matm/memory-events/submit`; the UAIX wizard URLs are requested setup/spec anchors, not this repo's memory update destination.
-- Recorded the UAIX.org request to add MATM wizard/spec guidance, including MATM update URL fields and MemoryEndpoints.com as a suggested example endpoint.
-- Prompt drafts are now local-only artifacts excluded from source control.
-- Reorganized public repository presentation: moved MultiAgentMemory.com under `sites/multiagentmemory.com/`, added CI and repository structure docs, removed raw handoff reports from the public front door, and added handoff ignore rules.
-- Added `.uai/totem.uai` to record the invariant that local `.uai` stays active always; hosted MATM augments durable memory but never replaces local startup continuity.
-- 2026-07-09T14:58:38Z: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
-- 2026-07-09: Normalized all active `.uai/*.uai` files with purpose, last verified date, memory scope, public-safe status, update route, source of truth, next actions, and must-not-expose boundaries. Required-field audit passed for 9 files.
-- 2026-07-09: Added local memory firewall, typed memory event fields, review queue readback/decision routes, redacted dogfood runner, NeuralWikis concept intake report, current implementation audit, and enterprise gap matrix. Local verification passed: 7 tests, 21 WSGI public routes with 0 failures, package check, secret scan with 0 hits, and `git diff --check`.
-- 2026-07-09: Production package rebuilt with deploy-safe exclusions for `.git*`, `.github`, `.uai`, `.gitkeep`, local prompt drafts, `var`, `dist`, logs, databases, and local secrets. Dry-run deploy to `--remote-dir .` resolved, but live FTPS upload failed at login with `error_perm` before any upload; live deployment of this tranche remains gated.
-- 2026-07-09: Added reusable `.uai` memory audit and enterprise readiness audit automation. Current live public route verifier passed 21 routes with 0 failures, but the enterprise audit still blocks full completion because the newest code is not live-deployed and live dogfooding is not verified.
-- 2026-07-09: Tightened `.uai` startup memory verification so `.uai/totem.uai` is first, every required local memory file is in the startup order, the intake outcome ledger is loaded, and the audit fails if `local .uai stays active always` is not true.
-- 2026-07-09: Replaced stale final verification overclaims with bounded readiness reports. Local verification, package build, `.uai` audit, secret scan, and live public routes pass; latest-code live deploy remains blocked by FTPS login failure before upload, and live dogfooding remains unverified.
-- 2026-07-09: Added first-class verification and deployment docs, expanded CI and PR checks with `.uai` and enterprise readiness audits, and recorded a public-safe repository boundary audit showing MemoryEndpoints.com as the only active product root with MultiAgentMemory.com under `sites/`.
-- 2026-07-09: Checked GitHub Actions for the pushed SHA. The latest CI run failed before job execution because GitHub reported an account billing lock; record this as an external GitHub-state blocker, not a local verification failure.
-- 2026-07-09T15:42:38Z: Live MATM dogfood run verified against `https://memoryendpoints.com`; report `docs/reports/dogfood-memory-run.json`; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
-- 2026-07-09: Fully verified local `.uai` memory setup with `.uai/startup-packet.uai` as bootstrap index, `.uai/totem.uai` first in required memory order, all 9 active `.uai` files accounted for, no unexpected `.uai` files, no missing required fields, no secret hits, and `localUaiStaysActiveAlways=true`.
-- 2026-07-09: Updated UAIX setup pointer to `https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints`; MemoryEndpoints.com remains the MATM update destination, while UAIX remains setup guidance only.
-- 2026-07-09: Corrected inbound-link policy: UAIX may use setup-option fragments because it has multiple wizard modes. MemoryEndpoints.com currently has one setup surface, so inbound links should use `https://memoryendpoints.com`; future MemoryEndpoints setup URLs should be clean readable routes.
-- 2026-07-09: Processed 14 new strategy reports from Agent File Handoff Improvement intake into active `.uai` memory and deep-linked long-term memory docs for enterprise best practices, MATM architecture strategy, timestamp-free memory, and system targets; raw reports remain ignored local intake files.
-- 2026-07-09: Expanded MemoryEndpoints.com links and metadata to point to MultiAgentMemory.com, expanded MultiAgentMemory.com with a detailed GitHub companion guide and repository links, and added target-aware static-site deploy tooling. Live MultiAgentMemory.com publish remains blocked because FTPS login was rejected before upload; uploaded file count was 0.
-- 2026-07-09: Verified live MultiAgentMemory.com separately. The live home page returns 200 but does not contain the expected companion links, and the companion documentation/discovery routes return 404; report `docs/reports/multiagentmemory-live-site-verification.json`.
+Current progress state:
+- MemoryEndpoints.com has a pure stdlib WSGI MATM app with public discovery routes, protected workspace memory, current-message coordination, notification acknowledgement, redacted receipts, memory firewall, review queue, idempotency, file storage, and optional stdlib SQLite storage.
+- MultiAgentMemory.com is plain static HTML/CSS companion documentation under `sites/multiagentmemory.com/`; it links to MemoryEndpoints.com and the GitHub repository and explains how the system works.
+- Local verification passes through unit and integration tests, WSGI public-route verification, static companion-site verification, `.uai` audit, package verification, secret scan, enterprise readiness audit checks, and whitespace diff check.
+- Local `.uai` memory is required to remain active always. It is hot startup memory, not a dated changelog, and this file must stay date-free.
+- MemoryEndpoints.com is the MATM update destination at `https://memoryendpoints.com/api/matm/memory-events/submit`; UAIX wizard URLs are setup guidance only.
+- The UAIX setup option is `https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints`.
+- MemoryEndpoints.com inbound links should use `https://memoryendpoints.com`; it currently has one setup surface.
+- Strategy intake has been distilled into reviewed long-term docs for enterprise engineering, MATM architecture, timestamp-free memory, and system targets.
+- Raw strategy reports and prompt drafts remain local-only and must not be committed.
+- Live MemoryEndpoints.com public routes and live MATM dogfood are verified for the currently deployed surface, but latest-code deployment remains blocked by FTPS login failure before upload.
+- Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
+- GitHub Actions CI for the pushed commit failed before any job steps executed; current evidence points to an external GitHub account or billing lock.
+- Completion must not be claimed until latest-code live deployment, MultiAgentMemory.com live static publish, live companion route verification, CI, and gated capabilities are resolved or explicitly waived.

@@ -12,7 +12,7 @@ Primary links:
 
 Memory boundary:
 
-- Short-term/startup memory: repository `.uai/` files.
+- Active startup memory: the full repository `.uai/` suite.
 - Mid-to-long-term memory: MemoryEndpoints.com protected MATM endpoint routes.
 - Public documentation: MultiAgentMemory.com pages and discovery files.
 

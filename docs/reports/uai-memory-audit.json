@@ -2,19 +2,23 @@
   "bootstrapFile": ".uai/startup-packet.uai",
   "bootstrapFilePresent": true,
   "bootstrapPointsToTotem": true,
+  "dateFreeHotMemory": true,
   "expectedStartupReadOrder": [
     ".uai/totem.uai",
     ".uai/constraints.uai",
     ".uai/file-handoff.uai",
     ".uai/intake-outcome-ledger.uai",
-    ".uai/short-term-memory.uai",
     ".uai/long-term-memory.uai",
     ".uai/long-term-pointer-ledger.uai",
     ".uai/progress.uai"
   ],
-  "fileCount": 9,
+  "fileCount": 8,
+  "forbiddenActiveMemoryFiles": [],
   "items": [
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -24,6 +28,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -33,6 +40,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -42,6 +52,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -51,6 +64,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -60,6 +76,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -69,15 +88,9 @@
       "valuesRedacted": true
     },
     {
-      "forbiddenReferences": [],
-      "missingRequiredFields": [],
-      "ok": true,
-      "path": ".uai/short-term-memory.uai",
-      "secretHitCount": 0,
-      "secretRules": [],
-      "valuesRedacted": true
-    },
-    {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -87,6 +100,9 @@
       "valuesRedacted": true
     },
     {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
       "forbiddenReferences": [],
       "missingRequiredFields": [],
       "ok": true,
@@ -98,6 +114,7 @@
   ],
   "localUaiStaysActiveAlways": true,
   "missingFiles": [],
+  "noCatchAllActiveMemoryFile": true,
   "ok": true,
   "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
   "startupReadOrder": [
@@ -105,7 +122,6 @@
     ".uai/constraints.uai",
     ".uai/file-handoff.uai",
     ".uai/intake-outcome-ledger.uai",
-    ".uai/short-term-memory.uai",
     ".uai/long-term-memory.uai",
     ".uai/long-term-pointer-ledger.uai",
     ".uai/progress.uai"

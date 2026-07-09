@@ -52,7 +52,7 @@
           <tr>
             <td>Local active memory</td>
             <td><code>.uai/</code></td>
-            <td>Short-term startup continuity, totem invariants, progress ledger, pointer ledger, intake outcomes, and offline fallback when hosted MATM is unreachable.</td>
+            <td>Active startup continuity, totem invariants, progress state, pointer ledgers, intake outcomes, and offline fallback when hosted MATM is unreachable.</td>
           </tr>
         </tbody>
       </table>
@@ -61,7 +61,7 @@
     <h2>Memory layers</h2>
     <p>The system treats memory as layered rather than monolithic. Local `.uai` files stay active always. Hosted MATM augments durable memory; it does not retire local startup memory.</p>
     <ul>
-      <li><strong>Short-term startup memory:</strong> `.uai/totem.uai`, `.uai/startup-packet.uai`, `.uai/short-term-memory.uai`, and related ledgers tell an agent what must be loaded before work begins.</li>
+      <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
       <li><strong>Reviewed local long-term memory:</strong> `docs/long-term-memory/` stores public-safe strategy, architecture, system targets, and release evidence that survived review.</li>
       <li><strong>Hosted workspace memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, and redacted receipts for authenticated workspaces.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>

@@ -3,7 +3,7 @@ MemoryEndpoints.com startup packet
 Purpose:
 - Cold-start packet for agents entering the MemoryEndpoints.com repository.
 
-Last verified: 2026-07-09
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
 Memory scope: startup order, product target, and active memory boundary.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file for startup-order changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -21,13 +21,12 @@ Read order:
 2. .uai/constraints.uai
 3. .uai/file-handoff.uai
 4. .uai/intake-outcome-ledger.uai
-5. .uai/short-term-memory.uai
-6. .uai/long-term-memory.uai
-7. .uai/long-term-pointer-ledger.uai
-8. .uai/progress.uai
+5. .uai/long-term-memory.uai
+6. .uai/long-term-pointer-ledger.uai
+7. .uai/progress.uai
 
 Target:
 Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.
 
 Current boundary:
-Use .uai as short-term/startup memory. Read `.uai/totem.uai` as the invariant: local .uai stays active always, even when MemoryEndpoints.com is live. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint when reachable and authenticated. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.
+Use the full `.uai` suite as active startup memory. Every `.uai/*.uai` file in the read order is active memory. Read `.uai/totem.uai` as the invariant: local `.uai` stays active always, even when MemoryEndpoints.com is live. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint when reachable and authenticated. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.

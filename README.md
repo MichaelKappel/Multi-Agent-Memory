@@ -30,11 +30,13 @@ MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the archi
 
 | Layer | Location | Purpose |
 | --- | --- | --- |
-| Short-term/startup memory | `.uai/` | Current instructions, constraints, progress, and pointer ledgers |
+| Active startup memory | `.uai/` | Current instructions, constraints, progress state, pointer ledgers, and all files in the startup read order |
 | Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory, current messages, notifications, and receipts |
 | Public documentation | [MultiAgentMemory.com](https://multiagentmemory.com) and `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
+
+No single catch-all `.uai` file is "the" active memory. Every `.uai/*.uai` file in `.uai/startup-packet.uai` read order is active memory, and active `.uai` stays date-free current-state memory.
 
 UAIX setup reference: use the [MemoryEndpoints.com MATM setup option](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints) for this repository's `.uai` package pattern. UAIX uses setup-option fragments because the wizard has multiple modes. MemoryEndpoints.com inbound links should use the [home page](https://memoryendpoints.com); it currently has one setup surface, and any future setup-specific MemoryEndpoints URLs should be clean readable routes.
 

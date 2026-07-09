@@ -8,9 +8,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 UAI_DIR = ROOT / ".uai"
 BOOTSTRAP_FILE = ".uai/startup-packet.uai"
+FORBIDDEN_ACTIVE_MEMORY_FILENAMES = {
+    "active-memory.uai",
+    "current-state.uai",
+    "project-state.uai",
+    "short-term-memory.uai",
+    "working-state.uai",
+}
 REQUIRED_FIELDS = [
     "Purpose:",
-    "Last verified:",
+    "Verification status:",
     "Memory scope:",
     "Public-safe status:",
     "Update route:",
@@ -23,7 +30,6 @@ STARTUP_READ_ORDER = [
     ".uai/constraints.uai",
     ".uai/file-handoff.uai",
     ".uai/intake-outcome-ledger.uai",
-    ".uai/short-term-memory.uai",
     ".uai/long-term-memory.uai",
     ".uai/long-term-pointer-ledger.uai",
     ".uai/progress.uai",
@@ -41,6 +47,11 @@ SECRET_PATTERNS = [
     ("raw_memoryendpoints_key", re.compile(r"\bme_live_[A-Za-z0-9_-]{20,}\b")),
     ("credential_assignment", re.compile(r"\b(password|passwd|pwd|secret|api[_ -]?key|token)\b\s*[:=]\s*([^\s,;\"']{8,})", re.I)),
 ]
+DATE_PATTERNS = [
+    ("iso_date", re.compile(r"\b\d{4}-\d{2}-\d{2}\b")),
+    ("iso_timestamp", re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", re.I)),
+    ("compact_calendar_date", re.compile(r"\b20\d{6}\b")),
+]
 
 
 def read(path):
@@ -55,11 +66,18 @@ def audit_file(path):
     for name, pattern in SECRET_PATTERNS:
         if pattern.search(text):
             secret_hits.append(name)
+    date_hits = []
+    for name, pattern in DATE_PATTERNS:
+        if pattern.search(text):
+            date_hits.append(name)
     return {
         "path": str(path.relative_to(ROOT)).replace("\\", "/"),
-        "ok": not missing and not forbidden and not secret_hits,
+        "ok": not missing and not forbidden and not secret_hits and not date_hits,
         "missingRequiredFields": missing,
         "forbiddenReferences": forbidden,
+        "dateFree": not date_hits,
+        "dateHitCount": len(date_hits),
+        "dateRules": date_hits,
         "secretHitCount": len(secret_hits),
         "secretRules": secret_hits,
         "valuesRedacted": True,
@@ -88,13 +106,13 @@ def main(argv=None):
         "long-term-memory.uai",
         "long-term-pointer-ledger.uai",
         "progress.uai",
-        "short-term-memory.uai",
         "startup-packet.uai",
         "totem.uai",
     }
     present_names = {Path(item["path"]).name for item in items}
     missing_files = sorted(required_names - present_names)
     unexpected_files = sorted(present_names - required_names)
+    forbidden_active_memory_files = sorted(present_names & FORBIDDEN_ACTIVE_MEMORY_FILENAMES)
     read_order = startup_read_order()
     read_order_matches = read_order == STARTUP_READ_ORDER
     bootstrap_path = UAI_DIR / "startup-packet.uai"
@@ -108,6 +126,7 @@ def main(argv=None):
         "ok": all(item["ok"] for item in items)
         and not missing_files
         and not unexpected_files
+        and not forbidden_active_memory_files
         and read_order_matches
         and bootstrap_points_to_totem
         and local_uai_stays_active,
@@ -117,11 +136,14 @@ def main(argv=None):
         "fileCount": len(items),
         "missingFiles": missing_files,
         "unexpectedFiles": unexpected_files,
+        "forbiddenActiveMemoryFiles": forbidden_active_memory_files,
         "startupReadOrder": read_order,
         "expectedStartupReadOrder": STARTUP_READ_ORDER,
         "startupReadOrderMatchesExpected": read_order_matches,
         "startupReadOrderTotemFirst": bool(read_order and read_order[0] == ".uai/totem.uai"),
         "localUaiStaysActiveAlways": local_uai_stays_active,
+        "dateFreeHotMemory": all(item["dateFree"] for item in items),
+        "noCatchAllActiveMemoryFile": not forbidden_active_memory_files,
         "items": items,
         "valuesRedacted": True,
     }

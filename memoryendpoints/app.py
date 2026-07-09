@@ -176,7 +176,7 @@ def route_memory_lifecycle(start_response):
 <section class="page">
   <h1>Memory Lifecycle</h1>
   <ol>
-    <li>Session memory starts in <code>.uai/short-term-memory.uai</code>.</li>
+    <li>The full <code>.uai/</code> suite is active startup memory; <code>.uai/startup-packet.uai</code> defines the read order.</li>
     <li>File handoff enters <code>agent-file-handoff/Content</code> or <code>agent-file-handoff/Improvement</code>.</li>
     <li>Reviewed durable notes live under <code>docs/long-term-memory</code> until hosted memory promotion is proven.</li>
     <li>Current messages are read through <code>/api/matm/current-message</code> and acknowledged through <code>/api/matm/notifications/ack</code>.</li>

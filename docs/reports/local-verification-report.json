@@ -68,21 +68,23 @@
       "status": "pass"
     }
   ],
+  "dateFreeHotMemory": true,
   "externalSignals": {
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T17:38:25Z",
+  "generatedAt": "2026-07-09T17:51:32Z",
   "liveDogfoodVerified": true,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,
   "multiAgentMemoryStaticSiteVerified": true,
+  "noCatchAllActiveMemoryFile": true,
   "ok": true,
   "repositoryBoundaryOk": true,
   "routeCount": 21,
   "routeFailureCount": 0,
   "schemaVersion": "memoryendpoints.local_verification_report.v1",
   "scope": "local worktree, WSGI route handlers, package plan, .uai startup memory, and local dogfood runner",
-  "uaiFileCount": 9,
+  "uaiFileCount": 8,
   "valuesRedacted": true
 }

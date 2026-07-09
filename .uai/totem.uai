@@ -4,7 +4,7 @@ Purpose:
 - This file records the non-negotiable memory invariant for MemoryEndpoints.com.
 - It is loaded as startup continuity memory before relying on hosted MATM routes.
 
-Last verified: 2026-07-09
+Verification status: current-state memory; verify with the `.uai` audit before relying on it.
 Memory scope: startup continuity, offline continuity, and non-retirement invariant.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file for invariant changes; submit only public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
@@ -21,12 +21,12 @@ Totem rule:
 
 Required agent behavior:
 - Load `.uai/startup-packet.uai` as the bootstrap index when entering cold.
-- Read `.uai/totem.uai`, `.uai/constraints.uai`, `.uai/file-handoff.uai`, `.uai/intake-outcome-ledger.uai`, `.uai/short-term-memory.uai`, `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and `.uai/progress.uai` at startup when local filesystem access is available.
+- Read `.uai/totem.uai`, `.uai/constraints.uai`, `.uai/file-handoff.uai`, `.uai/intake-outcome-ledger.uai`, `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and `.uai/progress.uai` at startup when local filesystem access is available.
 - Use `https://memoryendpoints.com/api/matm/memory-events/submit` for safe authenticated MATM memory updates when configured credentials and connectivity exist.
 - If hosted MATM is unavailable, record public-safe progress in `.uai/progress.uai` and continue from local memory.
 - Do not place raw API keys, bearer tokens, FTP credentials, database passwords, private keys, or private handoff payloads in `.uai`.
 
 Truth boundary:
-- `.uai` is short-term/startup continuity memory and break-glass local memory.
+- The full `.uai` suite is active startup continuity memory and break-glass local memory.
 - MemoryEndpoints.com is the durable MATM system of record when reachable and authenticated.
 - The two layers are additive. Neither layer silently deletes, retires, or invalidates the other.

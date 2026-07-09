@@ -12,7 +12,7 @@
     "githubRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory"
   },
   "memoryBoundary": {
-    "shortTermStartup": "repository .uai files",
+    "activeStartup": "full repository .uai suite listed by startup-packet.uai",
     "midToLongTerm": "MemoryEndpoints.com protected MATM routes",
     "publicDocumentation": "MultiAgentMemory.com"
   },
