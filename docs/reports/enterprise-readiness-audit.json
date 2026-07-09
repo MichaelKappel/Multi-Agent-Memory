@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 3cef96968624, current HEAD 9659b296ab10.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -241,7 +241,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 3cef96968624, current HEAD 9659b296ab10.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -260,15 +260,15 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "3cef969686243464e7a533331044d73aada5f7d8",
+    "currentGitHead": "9659b296ab10585b428c6c7f42ea124e5131cd24",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
-    "githubCiReportCurrent": true,
+    "githubCiReportCurrent": false,
     "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": true,
+    "liveLatestCodeReportCurrent": false,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,

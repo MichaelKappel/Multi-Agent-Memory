@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -111,6 +112,22 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         workspace = json.loads(text)["workspace"]
         self.assertEqual(200 * 1024 * 1024, workspace["storageLimitBytes"])
         self.assertFalse(workspace["rawKeyStoredByServer"])
+
+        self.assertTrue(token.startswith("me_live_"))
+        store_path = Path(os.environ["MEMORYENDPOINTS_STORE_PATH"])
+        store_text = store_path.read_text(encoding="utf-8")
+        self.assertNotIn(token, store_text)
+        self.assertNotIn("apiKeySecret", store_text)
+        store = json.loads(store_text)
+        keys = [
+            api_key
+            for api_key in store["apiKeys"].values()
+            if api_key["workspaceId"] == workspace_id
+        ]
+        self.assertEqual(1, len(keys))
+        self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), keys[0]["tokenHash"])
+        self.assertNotIn("token", keys[0])
+        self.assertNotIn("apiKeySecret", keys[0])
 
         status, _headers, text = call_app(
             "/api/matm/agents/register",
@@ -554,6 +571,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_workspaces").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_records").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_revisions").fetchone()[0])
+            key_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(matm_api_keys)").fetchall()
+            }
+            self.assertEqual(
+                {"key_id", "workspace_id", "token_hash", "created_at", "last_used_at", "revoked_at"},
+                key_columns,
+            )
+            row = connection.execute(
+                "SELECT key_id, workspace_id, token_hash FROM matm_api_keys"
+            ).fetchone()
+            self.assertEqual(workspace_id, row[1])
+            self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), row[2])
+
+        sqlite_bytes = Path(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]).read_bytes()
+        self.assertNotIn(token.encode("utf-8"), sqlite_bytes)
+        self.assertNotIn(b"apiKeySecret", sqlite_bytes)
 
     def test_sqlite_backend_migrates_legacy_json_blob_on_write(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"

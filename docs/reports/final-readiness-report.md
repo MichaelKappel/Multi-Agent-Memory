@@ -4,12 +4,12 @@ Date: 2026-07-09
 
 Status: not complete. `completionClaimAllowed` is `false`.
 
-Report source snapshot: `3cef969686243464e7a533331044d73aada5f7d8`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
+Report source snapshot: `9659b296ab10585b428c6c7f42ea124e5131cd24`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
 
 ## Verified
 
 - Local verification report: `pass`, see `docs/reports/local-verification-report.json`.
-- Report freshness: local route report `true`, local route evidence `true`, package report `true`, package evidence `true`, GitHub CI report `true` for current HEAD `3cef96968624`.
+- Report freshness: local route report `true`, local route evidence `true`, package report `true`, package evidence `true`, GitHub CI report `false` for current HEAD `9659b296ab10`.
 - Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.
 - Local WSGI route verification: 21 routes, 0 failures.
 - Live public route verification: 21 routes, 0 failures for the currently deployed public surface.
@@ -46,7 +46,7 @@ The repository has strong local MATM evidence, current live core dogfood evidenc
   "liveDogfoodVerified": false,
   "multiAgentMemoryLiveDeployed": false,
   "multiAgentMemoryLiveSiteVerified": false,
-  "reportSourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
+  "reportSourceSha": "9659b296ab10585b428c6c7f42ea124e5131cd24",
   "valuesRedacted": true
 }
 ```

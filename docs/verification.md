@@ -22,6 +22,7 @@ git diff --check
 Expected current local state:
 
 - Unit/integration tests pass.
+- Protected workflow tests prove one-time workspace keys are revealed once, then persisted only as hashes in both the file store and SQLite relational backend; raw keys and `apiKeySecret` are not stored.
 - WSGI route verifier checks 21 required public routes with 0 failures.
 - Local route and package reports must record the current Git HEAD; stale reports from an older commit are treated as missing evidence even when their own `ok` field is true.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
