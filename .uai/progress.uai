@@ -20,3 +20,4 @@ Progress
 - Readiness result now reports `overallStatus: live_verified`, empty blockers, and MySQL/MariaDB as a gated capability.
 - Added explicit UAIX update URL to `.uai/long-term-memory.uai` and `.uai/short-term-memory.uai`.
 - Added `docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md` as a prompt for a UAIX.org agent to add the documentation-site plus hosted-memory-endpoint boundary to the setup-llm-wiki spec and wizard.
+- Reorganized public repository presentation: moved MultiAgentMemory.com under `sites/multiagentmemory.com/`, added CI and repository structure docs, removed raw handoff reports from the public front door, and added handoff ignore rules.

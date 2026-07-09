@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Verify stdlib MATM app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Verify WSGI routes
+        run: python scripts/verify_memoryendpoints.py --wsgi
+
+      - name: Run secret scan
+        run: python scripts/secret_scan.py
+
+      - name: Check package plan
+        run: python scripts/package_memoryendpoints.py --check-only

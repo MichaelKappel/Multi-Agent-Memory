@@ -17,4 +17,4 @@ Intake outcome ledger
 - Deferred outcome: stale file-tree proposals, incompatible route names, unsupported runtime claims, third-party dependency suggestions, and any NeuralWikis branding/content copy were not incorporated
 - Durable memory impact: added docs/long-term-memory/release-verification-summary.md and docs/reports/final-verification-report.md
 - Proof of use: local tests, WSGI route verifier, package build, dry-run deploy, live deploy, live route verifier, secret scan, and package exclusion checks all passed after intake processing
-- Archive/source-site action: retained active improvement reports as public-safe source evidence for this release cycle
+- Archive/source-site action: raw improvement reports were removed from the public repository front door during enterprise reorganization; curated evidence remains in docs/reports and docs/long-term-memory

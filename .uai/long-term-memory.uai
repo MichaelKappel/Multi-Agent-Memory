@@ -10,12 +10,12 @@ Review evidence: docs/reports/final-verification-report.md and https://memoryend
 Truth boundary: workspace memory requires authentication; public docs and public evidence routes do not grant hidden authority.
 
 Stable id: multiagentmemory-docs
-Path: MultiAgentMemory.com/
+Path: sites/multiagentmemory.com/
 Label: MultiAgentMemory.com documentation companion
 Routing summary: Use this folder for public GitHub-facing MATM documentation, memory boundary explanation, and AI-readable discovery files.
 Authority/source: repository documentation site
 Review status: current
-Review evidence: MultiAgentMemory.com/README.md and MultiAgentMemory.com/ai-manifest.json
+Review evidence: sites/multiagentmemory.com/README.md and sites/multiagentmemory.com/ai-manifest.json
 Truth boundary: documentation only; not the hosted memory endpoint.
 
 Stable id: uaix-llm-wiki-setup

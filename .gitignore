@@ -11,6 +11,12 @@ var/
 dist/
 reports/private/
 ftp_Deploy.txt
+agent-file-handoff/Content/*
+!agent-file-handoff/Content/.gitkeep
+!agent-file-handoff/Content/README.md
+agent-file-handoff/Improvement/*
+!agent-file-handoff/Improvement/.gitkeep
+!agent-file-handoff/Improvement/README.md
 *.zip
 *.db
 *.sqlite
