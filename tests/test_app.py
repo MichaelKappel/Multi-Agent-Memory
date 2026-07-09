@@ -137,6 +137,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertTrue(payload["valuesRedacted"])
         self.assertEqual("mysql_missing_settings", payload["connectAttempt"]["errorCode"])
+        self.assertEqual("mysql_missing_settings", payload["stageDiagnostics"]["credentialConnect"]["errorCode"])
+        self.assertFalse(payload["stageDiagnostics"]["databaseSelect"]["ok"])
         self.assertFalse(payload["configDiagnostics"]["secretConfigPathExists"])
         self.assertNotIn(sample_bearer, text)
         self.assertNotIn(str(token_path), text)

@@ -1729,6 +1729,32 @@ def _diagnostic_fingerprint(value):
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
 
 
+def _mysql_diagnostic_error(exc):
+    args = getattr(exc, "args", ()) or ()
+    mysql_error_number = args[0] if args and isinstance(args[0], int) else None
+    message = str(exc).lower()
+    if "required database settings are missing" in message:
+        error_code = "mysql_missing_settings"
+    elif mysql_error_number == 1045 or "access denied" in message or "authentication" in message:
+        error_code = "mysql_auth_failed"
+    elif mysql_error_number == 1044:
+        error_code = "mysql_database_access_denied"
+    elif mysql_error_number == 1049 or "unknown database" in message:
+        error_code = "mysql_database_missing"
+    elif "connect" in message:
+        error_code = "mysql_connection_failed"
+    else:
+        error_code = "mysql_unavailable"
+    return {
+        "errorCode": error_code,
+        "errorType": exc.__class__.__name__,
+        "mysqlErrorNumber": mysql_error_number,
+        "sqlState": getattr(exc, "sqlstate", None),
+        "messageFingerprint": _diagnostic_fingerprint(str(exc)),
+        "valuesRedacted": True,
+    }
+
+
 def _mysql_config_from_secret_file():
     path = _mysql_secret_config_path()
     if not path.exists():
@@ -1803,6 +1829,62 @@ def mysql_config_diagnostics():
             "errorFingerprint": _diagnostic_fingerprint(str(exc)),
             "valuesRedacted": True,
         }
+    return report
+
+
+def mysql_connection_stage_diagnostics():
+    report = {
+        "schemaVersion": "memoryendpoints.mysql_connection_stage_diagnostics.v1",
+        "credentialConnect": {"ok": False, "valuesRedacted": True},
+        "databaseSelect": {"ok": False, "valuesRedacted": True},
+        "valuesRedacted": True,
+    }
+    try:
+        config = _mysql_config_from_env()
+        missing = [key for key in ("user", "password", "database") if not config.get(key)]
+        if missing:
+            raise RuntimeError("MySQL backend is selected but required database settings are missing.")
+        try:
+            import pymysql
+
+            report["driver"] = "pymysql"
+            connection = pymysql.connect(
+                host=config["host"],
+                port=int(config["port"]),
+                user=config["user"],
+                password=config["password"],
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+                autocommit=True,
+            )
+            cursor_factory = lambda conn: conn.cursor()
+        except ImportError:
+            import mysql.connector
+
+            report["driver"] = "mysql.connector"
+            connection = mysql.connector.connect(
+                host=config["host"],
+                port=int(config["port"]),
+                user=config["user"],
+                password=config["password"],
+            )
+            cursor_factory = lambda conn: conn.cursor()
+        try:
+            report["credentialConnect"]["ok"] = True
+            database = "`%s`" % str(config["database"]).replace("`", "``")
+            try:
+                cursor = cursor_factory(connection)
+                try:
+                    cursor.execute("USE " + database)
+                finally:
+                    cursor.close()
+                report["databaseSelect"]["ok"] = True
+            except Exception as exc:
+                report["databaseSelect"].update(_mysql_diagnostic_error(exc))
+        finally:
+            connection.close()
+    except Exception as exc:
+        report["credentialConnect"].update(_mysql_diagnostic_error(exc))
     return report
 
 

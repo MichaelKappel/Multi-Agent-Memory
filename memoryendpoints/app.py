@@ -12,7 +12,7 @@ from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
-from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics
+from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 
 
 STATIC_ROOT = ROOT / "static"
@@ -506,6 +506,7 @@ def route_admin_mysql_diagnostics(environ, start_response):
         "authStatus": auth_status,
         "configuredStoreBackend": os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file",
         "configDiagnostics": diagnostics,
+        "stageDiagnostics": mysql_connection_stage_diagnostics(),
         "connectAttempt": connect_attempt,
         "valuesRedacted": True,
     }
