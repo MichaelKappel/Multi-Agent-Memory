@@ -1,14 +1,18 @@
 import argparse
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 PACKAGE = DIST / "MemoryEndpoints.com-Production.zip"
+BUILD_INFO = ROOT / "memoryendpoints" / "build_info.generated.json"
 EXCLUDE_DIRS = {
     ".git",
     ".github",
@@ -47,6 +51,40 @@ EXCLUDE_NAME_SUFFIXES = (
 )
 
 
+def utc_now():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def git_head_sha():
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+    )
+    if completed.returncode == 0:
+        return completed.stdout.strip()
+    return "unknown"
+
+
+def write_build_info():
+    source_sha = git_head_sha()
+    payload = {
+        "schemaVersion": "memoryendpoints.build_info.v1",
+        "sourceSha": source_sha,
+        "sourceShaShort": source_sha[:12],
+        "sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory",
+        "generatedAt": utc_now(),
+        "generatedBy": "scripts/package_memoryendpoints.py",
+        "contentHash": hashlib.sha256(source_sha.encode("utf-8")).hexdigest(),
+        "valuesRedacted": True,
+    }
+    BUILD_INFO.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
+
+
 def iter_files():
     for path in ROOT.rglob("*"):
         if path.is_dir():
@@ -73,6 +111,7 @@ def main(argv=None):
     parser.add_argument("--json-out")
     args = parser.parse_args(argv)
 
+    build_info = write_build_info()
     files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.package_plan.v1",
@@ -87,6 +126,12 @@ def main(argv=None):
         "excludedPathPrefixes": sorted(EXCLUDE_PATH_PREFIXES),
         "excludedSuffixes": sorted(EXCLUDE_SUFFIXES),
         "thirdPartyRuntimeDependencies": False,
+        "build": {
+            "sourceSha": build_info["sourceSha"],
+            "sourceShaShort": build_info["sourceShaShort"],
+            "buildInfoFile": "memoryendpoints/build_info.generated.json",
+            "valuesRedacted": True,
+        },
     }
     if not args.check_only:
         DIST.mkdir(exist_ok=True)

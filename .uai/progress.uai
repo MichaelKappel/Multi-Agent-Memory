@@ -21,6 +21,7 @@ Current progress state:
 - MemoryEndpoints.com inbound links should use `https://memoryendpoints.com`; it currently has one setup surface.
 - Strategy intake has been distilled into reviewed long-term docs for enterprise engineering, MATM architecture, timestamp-free memory, and system targets.
 - Raw strategy reports and prompt drafts remain local-only and must not be committed.
+- `/api/version` exposes public-safe build provenance and the verifier can require the live `build.sourceSha` to match the current Git head before claiming latest-code deployment.
 - Live MemoryEndpoints.com public routes and live core MATM dogfood are verified for the currently deployed surface, but latest-code deployment and latest audit-log dogfood contract remain blocked by FTPS login failure before upload.
 - Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
 - GitHub Actions CI for the pushed commit failed before any job steps executed; `scripts/check_github_actions.py` refreshes this public-safe evidence without requiring `gh`.

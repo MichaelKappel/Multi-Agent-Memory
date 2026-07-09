@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from . import __version__
+from .build import build_provenance
 from .config import COMPANION_DOCS_URL, DOCS_DIR, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
 from .security import redact_text
@@ -240,6 +241,7 @@ def route_public_json(path, start_response):
                 "site": SITE_NAME,
                 "version": __version__,
                 "generatedAt": utc_now(),
+                "build": build_provenance(),
                 "runtime": "python-stdlib-wsgi",
                 "storeBackend": os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file",
                 "thirdPartyRuntimeDependencies": False,

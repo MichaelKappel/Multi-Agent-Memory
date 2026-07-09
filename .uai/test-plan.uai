@@ -13,7 +13,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Current local gate:
 - `python -m unittest discover -s tests`
-- `python scripts\verify_memoryendpoints.py --wsgi --json-out docs\reports\local-route-verification.json`
+- `python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out docs\reports\local-route-verification.json`
 - `python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json`
 - `python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json`
 - `python scripts\package_memoryendpoints.py --json-out docs\reports\package-verification-report.json`

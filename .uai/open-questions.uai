@@ -16,9 +16,9 @@ Current open questions:
 - When GitHub account or billing state is repaired, will Actions pass on the latest pushed commit?
 - What approved runtime adapter path should be used before claiming live MySQL/MariaDB support?
 - When live deployment succeeds, which authenticated workspace and credential inventory should be used for live dogfood without exposing secrets?
-- Which published UAIX pages still need deployment so future agents stop treating `short-term-memory.uai` or `current-state.uai` as required files?
 
 Safe assumptions:
 - Keep local `.uai` active always.
 - Keep MySQL runtime support gated.
 - Treat live deployment and CI as blocked until fresh evidence says otherwise.
+- Treat deployed UAIX wizard guidance as possibly behind the human-approved rule: `.uai/short-term-memory.uai` and `.uai/current-state.uai` are forbidden catch-all active-memory files.

@@ -19,7 +19,8 @@
     {
       "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
       "evidence": [
-        "docs/reports/deploy-attempt-20260709.json"
+        "docs/reports/deploy-attempt-20260709.json",
+        "docs/reports/live-latest-code-verification.json"
       ],
       "requirement": "latest_code_live_deployed",
       "status": "blocked"
@@ -51,7 +52,7 @@
       "valuesRedacted": true
     },
     {
-      "command": "python scripts/verify_memoryendpoints.py --wsgi",
+      "command": "python scripts/verify_memoryendpoints.py --wsgi --expect-git-head",
       "exitCode": 0,
       "name": "wsgi_route_verifier",
       "ok": true,
@@ -198,7 +199,8 @@
     {
       "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
       "evidence": [
-        "docs/reports/deploy-attempt-20260709.json"
+        "docs/reports/deploy-attempt-20260709.json",
+        "docs/reports/live-latest-code-verification.json"
       ],
       "requirement": "latest_code_live_deployed",
       "status": "blocked"
@@ -233,6 +235,7 @@
   "summary": {
     "dateFreeHotMemory": true,
     "latestCodeLiveDeployed": false,
+    "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
     "livePublicRoutesVerified": true,

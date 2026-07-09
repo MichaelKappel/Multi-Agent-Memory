@@ -26,6 +26,8 @@ The package builder excludes local runtime state and credential surfaces, includ
 - `docs/prompts`
 - logs, caches, local databases, SQLite journals, temporary files, and `ftp_Deploy.txt`
 
+The package builder writes ignored public-safe build provenance to `memoryendpoints/build_info.generated.json` and includes it in the deploy package. `/api/version` exposes the deployed source SHA so latest-code deployment can be proven after upload.
+
 ## Dry Run
 
 The FTP login directory is the MemoryEndpoints.com deployment root, so use `--remote-dir .`:
@@ -52,11 +54,12 @@ After a successful upload:
 
 ```powershell
 python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --json-out docs\reports\live-route-verification.json
+python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head --json-out docs\reports\live-latest-code-verification.json
 python scripts\build_deploy_attempt_report.py
 python scripts\build_readiness_reports.py --write
 ```
 
-Do not claim the newest code is live until the live upload succeeds, Passenger restart is requested, and live route verification passes for the required public routes.
+Do not claim the newest code is live until the live upload succeeds, Passenger restart is requested, live route verification passes for the required public routes, and `/api/version` reports the expected source SHA.
 
 Do not claim live dogfooding until the live authenticated MATM workflow is verified and a redacted report proves it.
 

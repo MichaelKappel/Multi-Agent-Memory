@@ -110,6 +110,7 @@ def build_final_markdown(local_report):
     enterprise = load_json("enterprise-readiness-audit.json") or {}
     local_routes = load_json("local-route-verification.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
+    live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
     multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
@@ -118,7 +119,10 @@ def build_final_markdown(local_report):
     dogfood = load_json("dogfood-memory-run.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
 
-    latest_deployed = bool((deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed"))
+    latest_deployed = bool(
+        (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
+        and live_latest_code.get("sourceShaMatchesExpected")
+    )
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
     completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and live_dogfood and not enterprise.get("blockers"))
@@ -135,6 +139,11 @@ def build_final_markdown(local_report):
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
+        "- Live latest-code SHA verification: expected `%s`, observed `%s`, match `%s`." % (
+            live_latest_code.get("expectedSourceSha"),
+            live_latest_code.get("observedSourceSha"),
+            str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
+        ),
         "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and no catch-all active-memory file exists.",
         "- Local dogfooding: %s through WSGI; live core dogfooding on current deployed API: %s; latest live dogfood contract: %s." % (
             str(bool(dogfood.get("localDogfoodVerified"))).lower(),
@@ -153,7 +162,12 @@ def build_final_markdown(local_report):
         "",
         "## Blocked Or Gated",
         "",
-        "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % ((deploy.get("liveAttempt") or {}).get("failedPhase"), (deploy.get("liveAttempt") or {}).get("errorType"), (deploy.get("liveAttempt") or {}).get("uploadedCount")),
+        "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; live source SHA match is `%s`." % (
+            (deploy.get("liveAttempt") or {}).get("failedPhase"),
+            (deploy.get("liveAttempt") or {}).get("errorType"),
+            (deploy.get("liveAttempt") or {}).get("uploadedCount"),
+            str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
+        ),
         "- MultiAgentMemory.com live publish: blocked. The recorded static-site FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % (multiagentmemory_live.get("failedPhase"), multiagentmemory_live.get("errorType"), multiagentmemory_live.get("uploadedCount")),
         "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
     ]

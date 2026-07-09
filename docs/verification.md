@@ -10,7 +10,7 @@ Run from `E:\MemoryEndpoints.com`:
 
 ```powershell
 python -m unittest discover -s tests
-python scripts\verify_memoryendpoints.py --wsgi --json-out docs\reports\local-route-verification.json
+python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out docs\reports\local-route-verification.json
 python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json
 python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json
 python scripts\package_memoryendpoints.py --check-only
@@ -24,7 +24,7 @@ Expected current local state:
 - Unit/integration tests pass.
 - WSGI route verifier checks 21 required public routes with 0 failures.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
-- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/totem.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and no catch-all active-memory file.
+- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and no catch-all active-memory file.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Secret scan reports 0 hits.
 - Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy, live dogfooding, and external CI are proven.
@@ -33,9 +33,10 @@ Expected current local state:
 
 ```powershell
 python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --json-out docs\reports\live-route-verification.json
+python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head --json-out docs\reports\live-latest-code-verification.json
 ```
 
-This proves the currently deployed public surface responds correctly. It does not prove the newest local commit was deployed.
+The first command proves the currently deployed public surface responds correctly. The second command proves whether `/api/version` reports the expected source SHA. Do not treat public-route success alone as proof that the newest local commit was deployed.
 
 ## Live Companion Site Gate
 

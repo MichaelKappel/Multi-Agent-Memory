@@ -6,7 +6,7 @@ All responses are JSON unless the route is explicitly a human HTML or text disco
 
 | Route | Purpose |
 | --- | --- |
-| `/api/version` | Runtime version, dependency, and generated-at facts. |
+| `/api/version` | Runtime version, dependency, generated-at, and build provenance facts. |
 | `/api/matm/live-capability-matrix` | Current live/planned/gated capability state. |
 | `/api/matm/route-inventory` | Public and protected route inventory. |
 | `/api/matm/readiness-result` | Local readiness checks, evidence, and deployment status. |

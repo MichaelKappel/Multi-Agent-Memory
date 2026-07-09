@@ -78,6 +78,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(status.startswith("200"), route)
             self.assertIn("MemoryEndpoints", text)
 
+    def test_version_route_exposes_build_provenance(self):
+        status, _headers, text = call_app("/api/version")
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("memoryendpoints.build_info.v1", payload["build"]["schemaVersion"])
+        self.assertIn("sourceSha", payload["build"])
+        self.assertTrue(payload["build"]["valuesRedacted"])
+        self.assertNotIn("E:\\", json.dumps(payload))
+
     def test_free_account_memory_message_ack_flow(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",

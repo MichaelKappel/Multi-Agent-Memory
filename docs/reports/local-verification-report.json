@@ -74,7 +74,7 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T19:01:01Z",
+  "generatedAt": "2026-07-09T19:10:39Z",
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,

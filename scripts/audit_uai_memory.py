@@ -201,7 +201,7 @@ def main(argv=None):
     missing_files = sorted(required_paths - present_paths)
     unexpected_files = sorted(present_paths - required_paths)
     forbidden_active_memory_files = sorted(
-        path for path in present_paths if Path(path).name in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+        path for path in present_paths if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
     )
     missing_support_files = sorted(
         path for path in required_support_paths if not (ROOT / path).exists()
@@ -211,7 +211,7 @@ def main(argv=None):
     read_order_matches = read_order == STARTUP_READ_ORDER
     manifest_read_order_matches = manifest_order == STARTUP_READ_ORDER
     manifest_forbidden_active_memory_files = sorted(
-        path for path in manifest_order if Path(path).name in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+        path for path in manifest_order if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
     )
     bootstrap_path = UAI_DIR / "startup-packet.uai"
     bootstrap_text = read(bootstrap_path) if bootstrap_path.exists() else ""

@@ -61,7 +61,7 @@ def main(argv=None):
     if args.run_checks:
         checks = [
             run_check("unit_and_integration_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
-            run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi"]),
+            run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi", "--expect-git-head"]),
             run_check("multiagentmemory_static_site", [sys.executable, "scripts/verify_static_site.py"]),
             run_check("uai_memory_audit", [sys.executable, "scripts/audit_uai_memory.py"]),
             run_check("package_check", [sys.executable, "scripts/package_memoryendpoints.py", "--check-only"]),
@@ -70,6 +70,7 @@ def main(argv=None):
         ]
 
     live_routes = load_json(Path("docs") / "reports" / "live-route-verification.json")
+    live_latest_code = load_json(Path("docs") / "reports" / "live-latest-code-verification.json")
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
     uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
@@ -84,6 +85,21 @@ def main(argv=None):
         if github_ci and github_ci.get("blocker")
         else "Latest GitHub Actions run did not pass."
     )
+    latest_code_live_verified = bool(
+        deploy_attempt
+        and (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed")
+        and live_latest_code
+        and live_latest_code.get("ok")
+        and live_latest_code.get("sourceShaMatchesExpected")
+    )
+    latest_code_blocker = None
+    if not latest_code_live_verified:
+        if deploy_attempt and not (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed"):
+            latest_code_blocker = "FTPS login rejected before upload; uploadedCount was 0."
+        elif live_latest_code and not live_latest_code.get("sourceShaMatchesExpected"):
+            latest_code_blocker = "Live /api/version did not report the expected source SHA for the latest deploy package."
+        else:
+            latest_code_blocker = "Run live latest-code SHA verification after deployment."
     multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
         item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
     )
@@ -153,9 +169,9 @@ def main(argv=None):
         ),
         evidence_item(
             "latest_code_live_deployed",
-            "blocked",
-            ["docs/reports/deploy-attempt-20260709.json"],
-            "FTPS login rejected before upload; uploadedCount was 0.",
+            "pass_live" if latest_code_live_verified else "blocked",
+            ["docs/reports/deploy-attempt-20260709.json", "docs/reports/live-latest-code-verification.json"],
+            latest_code_blocker,
         ),
         evidence_item(
             "live_dogfooding",
@@ -198,7 +214,8 @@ def main(argv=None):
             "noCatchAllActiveMemoryFile": bool(uai_audit and uai_audit.get("noCatchAllActiveMemoryFile")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
             "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
-            "latestCodeLiveDeployed": False,
+            "latestCodeLiveDeployed": latest_code_live_verified,
+            "latestCodeSourceShaMatchesExpected": bool(live_latest_code and live_latest_code.get("sourceShaMatchesExpected")),
             "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,
             "multiAgentMemoryLiveDeployed": bool(multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded"),
             "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site and multiagentmemory_live_site.get("ok")),

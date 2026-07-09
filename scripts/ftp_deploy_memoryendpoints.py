@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dist" / "MemoryEndpoints.com-Production.zip"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
-from package_memoryendpoints import iter_files
+from package_memoryendpoints import iter_files, write_build_info
 
 
 def emit_report(report, args):
@@ -189,6 +189,7 @@ def main(argv=None):
         if args.dry_run or args.allow_discovered_live_upload:
             remote_dir = discovered_dir
 
+    build_info = write_build_info()
     planned_files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.ftp_deploy.v1",
@@ -204,6 +205,12 @@ def main(argv=None):
         "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])) else ("discovery" if remote_dir else None),
         "passengerRestartPlanned": bool(remote_dir),
         "valuesRedacted": True,
+        "build": {
+            "sourceSha": build_info["sourceSha"],
+            "sourceShaShort": build_info["sourceShaShort"],
+            "buildInfoFile": "memoryendpoints/build_info.generated.json",
+            "valuesRedacted": True,
+        },
     }
     if remote_dir:
         report["remoteDirFingerprint"] = fingerprint(remote_dir)

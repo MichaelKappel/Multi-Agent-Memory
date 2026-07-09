@@ -26,3 +26,4 @@ agent-file-handoff/Archive/*
 *.log
 devserver-*.out.log
 devserver-*.err.log
+memoryendpoints/build_info.generated.json
