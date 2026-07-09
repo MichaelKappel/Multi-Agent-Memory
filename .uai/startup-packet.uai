@@ -1,0 +1,15 @@
+MemoryEndpoints.com startup packet
+
+Read order:
+1. .uai/constraints.uai
+2. .uai/file-handoff.uai
+3. .uai/short-term-memory.uai
+4. .uai/long-term-memory.uai
+5. .uai/long-term-pointer-ledger.uai
+6. .uai/progress.uai
+
+Target:
+Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.
+
+Current boundary:
+Use .uai as short-term/startup memory. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.

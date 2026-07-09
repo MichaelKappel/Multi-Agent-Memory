@@ -1,0 +1,5 @@
+MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.com.
+
+Agents should use repository `.uai/` files for short-term/startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication.
+
+Unsupported actions should no-op safely and route back to human review.

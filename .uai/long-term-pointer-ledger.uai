@@ -1,0 +1,23 @@
+Long-term pointer ledger
+
+Durable docs memory root:
+- docs/long-term-memory/
+
+Initial records:
+- docs/long-term-memory/project-charter.md
+- docs/long-term-memory/architecture-notes.md
+- docs/long-term-memory/release-verification-summary.md
+- .uai/long-term-memory.uai
+- MultiAgentMemory.com/README.md
+
+Release evidence:
+- docs/reports/final-verification-report.md
+- docs/reports/local-route-verification.json
+- docs/reports/live-route-verification.json
+
+Hosted memory:
+- MemoryEndpoints.com is the mid-to-long-term MATM memory endpoint for this project.
+- MultiAgentMemory.com is documentation only and should point agents back to MemoryEndpoints.com for hosted memory operations.
+
+Promotion rule:
+Facts in session memory become durable only after they are written to docs, code, tests, release notes, or reviewed reports.

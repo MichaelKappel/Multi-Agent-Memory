@@ -1,0 +1,23 @@
+MemoryEndpoints.com Notice
+
+Project: MemoryEndpoints.com / Multi-Agent Memory
+Primary author: Michael Joseph Kappel
+Purpose: Public, source-available reference implementation for Multi-Agent
+Transactive Memory (MATM) endpoints.
+
+Attribution requirement:
+
+If you publish screenshots, demos, forks, excerpts, articles, integrations, or
+derived examples based on this repository, identify MemoryEndpoints.com and the
+Multi-Agent Memory project as the source.
+
+No deceptive rebranding:
+
+Do not copy the repository, change the name, remove provenance, and present the
+result as independent original work.
+
+Standards references:
+
+This project is informed by UAIX AI-ready web and UAI-style memory handoff
+guidance. The repository does not claim UAIX certification, endorsement,
+official adapter status, hosted importer status, or standards authority.

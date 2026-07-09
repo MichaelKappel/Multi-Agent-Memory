@@ -1,0 +1,135 @@
+{
+  "failureCount": 0,
+  "failures": [],
+  "items": [
+    {
+      "missing": [],
+      "route": "/",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/docs",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/docs/",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/agent-setup",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/memory-lifecycle",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/transparency",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/version",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/matm/live-capability-matrix",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/matm/route-inventory",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/matm/readiness-result",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/matm/redacted-example-receipts",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/api/matm/agent-setup/free-account",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/mcp/resources",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/robots.txt",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/sitemap.xml",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/llms.txt",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/llms-full.txt",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/ai.txt",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/ai-manifest.json",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/.well-known/mcp.json",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "missing": [],
+      "route": "/.well-known/ai-agent.json",
+      "secretHitCount": 0,
+      "status": 200
+    }
+  ],
+  "ok": true,
+  "routeCount": 21,
+  "schemaVersion": "memoryendpoints.verifier.v1"
+}

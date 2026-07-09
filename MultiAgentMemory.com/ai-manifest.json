@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "multiagentmemory.ai_manifest.v1",
+  "name": "MultiAgentMemory.com",
+  "url": "https://multiagentmemory.com",
+  "role": "github_companion_documentation_site",
+  "primaryEndpointSite": "https://memoryendpoints.com",
+  "memoryBoundary": {
+    "shortTermStartup": "repository .uai files",
+    "midToLongTerm": "MemoryEndpoints.com protected MATM routes",
+    "publicDocumentation": "MultiAgentMemory.com"
+  },
+  "setupReferences": [
+    "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki"
+  ],
+  "evidence": {
+    "liveCapabilityMatrix": "https://memoryendpoints.com/api/matm/live-capability-matrix",
+    "routeInventory": "https://memoryendpoints.com/api/matm/route-inventory",
+    "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result"
+  },
+  "supportBoundary": {
+    "noCertificationClaimed": true,
+    "noHiddenCredentialValidation": true,
+    "noAutomaticRepositoryWrites": true,
+    "secretsAcceptedInPublicDocs": false
+  }
+}

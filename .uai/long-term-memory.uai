@@ -1,0 +1,28 @@
+Long-term memory pointer ledger
+
+Stable id: memoryendpoints-live-matm
+Path: https://memoryendpoints.com
+Label: MemoryEndpoints.com live MATM memory endpoint
+Routing summary: Use MemoryEndpoints.com protected MATM routes for mid-to-long-term workspace memory, current messages, notifications, and redacted receipts.
+Authority/source: live MemoryEndpoints.com deployment evidence
+Review status: live_verified
+Review evidence: docs/reports/final-verification-report.md and https://memoryendpoints.com/api/matm/readiness-result
+Truth boundary: workspace memory requires authentication; public docs and public evidence routes do not grant hidden authority.
+
+Stable id: multiagentmemory-docs
+Path: MultiAgentMemory.com/
+Label: MultiAgentMemory.com documentation companion
+Routing summary: Use this folder for public GitHub-facing MATM documentation, memory boundary explanation, and AI-readable discovery files.
+Authority/source: repository documentation site
+Review status: current
+Review evidence: MultiAgentMemory.com/README.md and MultiAgentMemory.com/ai-manifest.json
+Truth boundary: documentation only; not the hosted memory endpoint.
+
+Stable id: uaix-llm-wiki-setup
+Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
+Label: UAIX AI Memory Package Wizard LLM Wiki setup
+Routing summary: Use the setup-llm-wiki guidance to keep .uai active as startup continuity memory while preserving a long-term pointer ledger.
+Authority/source: UAIX public standards page
+Review status: referenced
+Review evidence: user-requested source URL
+Truth boundary: reference model only; do not copy UAIX page content into the target site.

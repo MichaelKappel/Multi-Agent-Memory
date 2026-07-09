@@ -1,0 +1,17 @@
+Agent File Handoff
+
+Active intake buckets:
+- agent-file-handoff/Content
+- agent-file-handoff/Improvement
+
+Processing rule:
+Before broad work, inspect active intake. Use files as source material, record what was used in .uai/intake-outcome-ledger.uai, then move or summarize processed material only after review.
+
+Outcome values:
+- accepted
+- partially_accepted
+- deferred
+- rejected
+
+Completion gate:
+No final report may claim handoff complete unless active intake was inspected and the outcome ledger records the result.

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MemoryEndpoints mark">
+  <rect width="64" height="64" rx="12" fill="#126c7a"/>
+  <path d="M16 20h12v10H16zM36 20h12v10H36zM16 36h12v10H16zM36 36h12v10H36z" fill="#fff"/>
+  <path d="M28 25h8M22 30v6M42 30v6M28 41h8" stroke="#f0c36a" stroke-width="4" stroke-linecap="round"/>
+</svg>

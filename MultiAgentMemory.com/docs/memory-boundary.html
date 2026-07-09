@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Boundary | MultiAgentMemory.com</title>
+  <meta name="description" content="Short-term, documentation, and mid-to-long-term MATM memory boundary for MultiAgentMemory.com and MemoryEndpoints.com.">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">MultiAgentMemory.com</a>
+    <nav aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/ai-manifest.json">AI Manifest</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>Memory Boundary</h1>
+    <p>MultiAgentMemory.com is the public documentation companion for the MemoryEndpoints.com MATM endpoint system.</p>
+    <h2>Short-term and startup memory</h2>
+    <p>Repository `.uai/` files are the active short-term memory layer. They carry current constraints, startup order, progress, and pointer-ledger records. The LLM Wiki setup path keeps `.uai` active rather than retiring it.</p>
+    <h2>Mid-to-long-term memory</h2>
+    <p>MemoryEndpoints.com is the live endpoint surface for durable workspace memory, current messages, notifications, and redacted receipts. It is the intended mid-to-long-term memory service boundary for this project.</p>
+    <h2>Public documentation</h2>
+    <p>MultiAgentMemory.com documents the public architecture and repository handoff rules. It does not store private workspace secrets, deployment credentials, raw API keys, or hidden authority claims.</p>
+    <h2>UAIX setup reference</h2>
+    <p>The memory layout is aligned with the UAIX AI Memory Package Wizard LLM Wiki setup URL: <a href="https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki">setup LLM Wiki</a>.</p>
+  </main>
+  <footer>
+    <p>Use public-safe summaries only. Store secrets outside repository and public documentation.</p>
+  </footer>
+</body>
+</html>

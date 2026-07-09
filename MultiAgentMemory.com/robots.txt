@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Sitemap: https://multiagentmemory.com/sitemap.xml
+
+# MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.com.

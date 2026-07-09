@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "multiagentmemory.ai_agent.v1",
+  "name": "MultiAgentMemory.com",
+  "description": "Public documentation companion for the MemoryEndpoints.com MATM endpoint reference.",
+  "manifest": "https://multiagentmemory.com/ai-manifest.json",
+  "primaryEndpointSite": "https://memoryendpoints.com",
+  "capabilities": [
+    "public_documentation",
+    "memory_boundary_explanation",
+    "ai_ready_discovery"
+  ],
+  "protectedActions": "Use MemoryEndpoints.com protected MATM routes with a workspace key.",
+  "valuesRedacted": true
+}

@@ -1,0 +1,20 @@
+Intake outcome ledger
+
+2026-07-09
+- Content bucket scanned: agent-file-handoff/Content
+- Improvement bucket scanned: agent-file-handoff/Improvement
+- Active dropped files found: none, excluding .gitkeep placeholders
+- Disposition: accepted_empty_scan
+- Processed outcome: no source files required incorporation
+- Proof of use: repo implementation continued after live bucket scan evidence was recorded
+
+2026-07-09
+- Content bucket scanned: agent-file-handoff/Content
+- Improvement bucket scanned: agent-file-handoff/Improvement
+- Active dropped files found: six improvement reports
+- Disposition: partially_accepted
+- Processed outcome: incorporated matching requirements for AI-ready discovery, `.uai` handoff, docs-backed long-term memory, safe no-op behavior, idempotency, package exclusions, deployment root handling, and live route verification
+- Deferred outcome: stale file-tree proposals, incompatible route names, unsupported runtime claims, third-party dependency suggestions, and any NeuralWikis branding/content copy were not incorporated
+- Durable memory impact: added docs/long-term-memory/release-verification-summary.md and docs/reports/final-verification-report.md
+- Proof of use: local tests, WSGI route verifier, package build, dry-run deploy, live deploy, live route verifier, secret scan, and package exclusion checks all passed after intake processing
+- Archive/source-site action: retained active improvement reports as public-safe source evidence for this release cycle

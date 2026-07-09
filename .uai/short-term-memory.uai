@@ -1,0 +1,9 @@
+Short-term memory
+
+2026-07-09:
+- Workspace cloned from MichaelKappel/Multi-Agent-Memory.
+- Initial implementation target is file-backed MATM with docs-backed durable memory.
+- Database credentials exist outside repo in E:\ftp_Deploy.txt; values must remain redacted.
+- MultiAgentMemory.com is the GitHub companion documentation site.
+- MemoryEndpoints.com is the real endpoint site and live mid-to-long-term MATM memory boundary.
+- Use `.uai/` files for short-term/startup memory following the UAIX setup-llm-wiki split-memory model.

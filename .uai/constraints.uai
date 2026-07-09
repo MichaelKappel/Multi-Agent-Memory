@@ -1,0 +1,9 @@
+MemoryEndpoints.com constraints
+
+- Do not print or commit raw credentials.
+- Do not commit E:\ftp_Deploy.txt or derived secret values.
+- Runtime must remain pure Python stdlib, TypeScript, and HTML5 unless the human explicitly approves a dependency.
+- Do not copy NeuralWikis public wiki surfaces or branding.
+- Reuse MATM concepts and test patterns selectively; write MemoryEndpoints-specific code.
+- Public claims must distinguish live, planned, gated, unsupported, and external-authority-waiting behavior.
+- The license and NOTICE must preserve attribution and prohibit deceptive wholesale rebranding.

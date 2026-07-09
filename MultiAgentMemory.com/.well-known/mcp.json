@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "mcp.well_known.v1",
+  "name": "MultiAgentMemory.com",
+  "description": "Documentation resources for the MemoryEndpoints.com MATM endpoint project.",
+  "resources": [
+    {
+      "uri": "multiagentmemory://docs/memory-boundary",
+      "name": "Memory Boundary",
+      "mimeType": "text/html",
+      "route": "/docs/memory-boundary.html"
+    },
+    {
+      "uri": "multiagentmemory://docs/llms",
+      "name": "LLM-readable Documentation Summary",
+      "mimeType": "text/plain",
+      "route": "/llms.txt"
+    }
+  ],
+  "boundary": "Documentation metadata only; protected MATM APIs live at MemoryEndpoints.com."
+}

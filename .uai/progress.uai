@@ -1,0 +1,20 @@
+Progress
+
+2026-07-09:
+- Created initial pure stdlib WSGI MATM scaffold.
+- Added file-backed storage, public discovery routes, protected memory/message APIs, and UAIX-style file handoff files.
+- Verification passed locally: Python compile, unittest, local route verifier, package build, and whitespace check.
+- FTP deploy dry-run is gated because no explicit remote application directory is present in the secret handoff.
+- Added protected mutation idempotency, route inventory, docs-backed search readback, API contract docs, SQL schema proposal, AGENTS.md, and curl examples.
+- Added readiness result, workspace quota readback, current-message lane readback, and redacted receipt readback.
+- Current local verification: 4 unit tests passed; public verifier checked 20 routes with 0 failures and 0 secret hits; package contains 53 files; route inventory reports 30 routes.
+- Added stdlib SQLite backend, file-to-SQLite migration dry-run helper, and canonical MATM database schema covering hierarchy memory, crawl/search metadata, current messages, receipts, review queue, idempotency, outbox, quota ledger, and audit.
+- User clarified that the FTP login directory is the remote app root; live deploy should use `--remote-dir .` after current verification passes.
+- Added `/docs/` as a valid docs alias and verified both `/docs` and `/docs/` locally and live.
+- Hardened idempotency replay to return the original response status and body for exact retries.
+- Hardened package exclusions for SQLite, journal, database, log, cache, `dist`, and credential handoff files.
+- Added `scripts/secret_scan.py`; package-eligible secret scan passed with 0 hits.
+- Added Passenger restart marker upload via `tmp/restart.txt` so deployed Python changes reload.
+- Live deploy to the FTP login root completed with `--remote-dir .`; credential values remained redacted.
+- Final live route verification passed: 21 public routes checked, 0 failures, 0 public-route secret hits.
+- Readiness result now reports `overallStatus: live_verified`, empty blockers, and MySQL/MariaDB as a gated capability.
