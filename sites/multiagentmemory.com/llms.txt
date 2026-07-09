@@ -42,6 +42,7 @@ Protected MATM workflow:
 - Current message read: GET /api/matm/current-message
 - Notification acknowledgement: POST /api/matm/notifications/ack
 - Redacted receipts: GET /api/matm/receipts
+- Redacted audit log: GET /api/matm/audit-log
 
 Setup references:
 

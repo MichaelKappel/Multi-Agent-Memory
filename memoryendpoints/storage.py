@@ -30,6 +30,16 @@ def _json_size(value):
     return len(json.dumps(value or {}, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
+def _public_value(value):
+    if isinstance(value, dict):
+        return {str(key): _public_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_public_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
+    return value
+
+
 def _blank_store():
     return {
         "schemaVersion": "memoryendpoints.file_store.v1",
@@ -100,14 +110,52 @@ class FileStore(object):
             {
                 "auditId": _id("audit"),
                 "workspaceId": workspace_id,
-                "action": action,
-                "actor": actor,
-                "target": target,
-                "details": details or {},
+                "action": redact_text(action),
+                "actor": redact_text(actor),
+                "target": redact_text(target),
+                "details": _public_value(details or {}),
                 "createdAt": utc_now(),
                 "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
             }
         )
+
+    def record_audit(self, workspace_id, action, actor, target, details=None):
+        data = self._load()
+        self.audit(data, action, actor, target, workspace_id, details)
+        self._save(data)
+
+    def audit_log(self, workspace_id, limit=50, action=None):
+        data = self._load()
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        action_filter = (action or "").strip()
+        items = []
+        for item in data.get("auditLog", []):
+            if item.get("workspaceId") != workspace_id:
+                continue
+            if action_filter and item.get("action") != action_filter:
+                continue
+            items.append(
+                {
+                    "auditId": item.get("auditId"),
+                    "workspaceId": item.get("workspaceId"),
+                    "action": item.get("action"),
+                    "actor": redact_text(item.get("actor") or ""),
+                    "target": redact_text(item.get("target") or ""),
+                    "details": _public_value(item.get("details") or {}),
+                    "createdAt": item.get("createdAt"),
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                    "rawPayloadExposed": False,
+                }
+            )
+        items.sort(key=lambda item: item.get("createdAt") or "")
+        return items[-limit_value:]
 
     def workspace_usage_bytes(self, data, workspace_id):
         usage = _json_size(data.get("workspaces", {}).get(workspace_id))

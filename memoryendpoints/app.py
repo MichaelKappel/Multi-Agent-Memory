@@ -407,6 +407,12 @@ def _idempotency_replay_or_conflict(store, start_response, workspace_id, key, op
     return json_response(start_response, replay, replay_status)
 
 
+def _audit_read(store, workspace_id, auth, action, route, details=None):
+    audit_details = {"route": route, "method": "GET"}
+    audit_details.update(details or {})
+    store.record_audit(workspace_id, action, auth.get("keyId") or "workspace-key", route, audit_details)
+
+
 def route_protected(environ, start_response, path):
     method = environ["REQUEST_METHOD"]
     query = _query(environ)
@@ -422,7 +428,23 @@ def route_protected(environ, start_response, path):
     idem = _idempotency_key(environ)
     if path == "/api/matm/workspace" and method == "GET":
         status = store.workspace_status(workspace_id)
+        _audit_read(store, workspace_id, auth, "workspace.read", path, {"found": bool(status)})
         return json_response(start_response, {"ok": True, "workspace": status})
+    if path == "/api/matm/audit-log" and method == "GET":
+        _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": query.get("action") or "", "limit": query.get("limit") or ""})
+        items = store.audit_log(workspace_id, query.get("limit") or 50, query.get("action"))
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.audit_log.v1",
+                "items": items,
+                "count": len(items),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
     if path == "/api/matm/agents/register" and method == "POST":
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "agent-register", body)
         if replay:
@@ -466,6 +488,7 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":
         items = store.review_queue(workspace_id, query.get("status"))
+        _audit_read(store, workspace_id, auth, "review_queue.read", path, {"statusFilter": query.get("status") or "", "count": len(items)})
         return json_response(
             start_response,
             {
@@ -498,6 +521,7 @@ def route_protected(environ, start_response, path):
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
         items = store.search_memory(workspace_id, query.get("q") or query.get("query"))
         docs_items = _docs_memory(query.get("q") or query.get("query"))
+        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "docsMemoryCount": len(docs_items)})
         return json_response(
             start_response,
             {
@@ -533,6 +557,7 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "202 Accepted")
     if path in ("/api/matm/agent-inbox", "/api/matm/current-message") and method == "GET":
         items = store.inbox(workspace_id, query.get("agent_id") or query.get("agentId"))
+        _audit_read(store, workspace_id, auth, "current_message.read" if path == "/api/matm/current-message" else "agent_inbox.read", path, {"unreadCount": len(items)})
         return json_response(
             start_response,
             {
@@ -555,6 +580,7 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload)
     if path == "/api/matm/receipts" and method == "GET":
         items = store.receipts(workspace_id, query.get("consumer_agent_id") or query.get("consumerAgentId"))
+        _audit_read(store, workspace_id, auth, "receipts.read", path, {"count": len(items)})
         return json_response(start_response, {"ok": True, "items": items, "count": len(items), "valuesRedacted": True})
     return problem(start_response, "404 Not Found", "Route not found", "No protected route matched this request.", "not_found")
 

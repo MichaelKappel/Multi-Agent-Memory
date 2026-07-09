@@ -24,4 +24,5 @@ Current progress state:
 - Live MemoryEndpoints.com public routes and live MATM dogfood are verified for the currently deployed surface, but latest-code deployment remains blocked by FTPS login failure before upload.
 - Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
 - GitHub Actions CI for the pushed commit failed before any job steps executed; current evidence points to an external GitHub account or billing lock.
+- Local dogfood status: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; audit-log readback verified: false; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
 - Completion must not be claimed until latest-code live deployment, MultiAgentMemory.com live static publish, live companion route verification, CI, and gated capabilities are resolved or explicitly waived.

@@ -1,12 +1,12 @@
 {
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-09T15:50:01Z",
-  "liveDogfoodVerified": true,
+  "generatedAt": "2026-07-09T18:00:52Z",
+  "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
-  "mode": "combined",
+  "mode": "local_wsgi",
   "ok": true,
   "oneTimeKeyReturned": true,
-  "optionalStepFailureCount": 1,
+  "optionalStepFailureCount": 0,
   "postAckUnreadCount": 0,
   "rawCredentialValuesStored": false,
   "rawPrivatePayloadsStored": false,
@@ -15,8 +15,10 @@
   "requiredStepFailureCount": 0,
   "runs": [
     {
+      "auditLogCount": 10,
+      "auditTrailReadbackVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T15:49:58Z",
+      "generatedAt": "2026-07-09T18:00:51Z",
       "liveDogfoodVerified": false,
       "localDogfoodVerified": true,
       "mode": "local_wsgi",
@@ -143,142 +145,15 @@
         },
         {
           "httpStatus": "200 OK",
-          "name": "read_current_message_after_ack",
-          "ok": true,
-          "payloadShape": [
-            "currentMessageLane",
-            "items",
-            "ok",
-            "responseStates",
-            "unreadCount"
-          ],
-          "required": true
-        }
-      ],
-      "target": "local_wsgi_application",
-      "valuesRedacted": true,
-      "workspaceIdHash": "sha256:302f4027b3942e71d3aa6b29dac8876b9f0ed3bbd7d56e413f26eeeea65bb209"
-    },
-    {
-      "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T15:49:59Z",
-      "liveDogfoodVerified": true,
-      "localDogfoodVerified": false,
-      "mode": "live_http",
-      "ok": true,
-      "oneTimeKeyReturned": true,
-      "optionalStepFailureCount": 1,
-      "postAckUnreadCount": 0,
-      "rawCredentialValuesStored": false,
-      "rawPrivatePayloadsStored": false,
-      "rawWorkspaceIdStoredInReport": false,
-      "receiptCount": 1,
-      "requiredStepFailureCount": 0,
-      "searchReadbackCount": 1,
-      "steps": [
-        {
-          "httpStatus": "201 Created",
-          "name": "create_free_workspace",
-          "ok": true,
-          "payloadShape": [
-            "apiKeySecret",
-            "checkoutRequired",
-            "idempotencySupported",
-            "keyId",
-            "ok",
-            "rawKeyStoredByServer",
-            "showKeyOnce",
-            "storageLimitBytes",
-            "storeKeySafely",
-            "workspaceId"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "201 Created",
-          "name": "register_agent",
-          "ok": true,
-          "payloadShape": [
-            "agent",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "201 Created",
-          "name": "submit_memory",
-          "ok": true,
-          "payloadShape": [
-            "event",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "search_memory",
-          "ok": true,
-          "payloadShape": [
-            "count",
-            "docsMemory",
-            "docsMemoryCount",
-            "items",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "404 Not Found",
-          "name": "read_review_queue",
-          "ok": false,
-          "payloadShape": [
-            "error",
-            "ok"
-          ],
-          "required": false
-        },
-        {
-          "httpStatus": "202 Accepted",
-          "name": "create_current_message",
-          "ok": true,
-          "payloadShape": [
-            "message",
-            "notification",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_current_message",
-          "ok": true,
-          "payloadShape": [
-            "currentMessageLane",
-            "items",
-            "ok",
-            "responseStates",
-            "unreadCount"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "acknowledge_notification",
-          "ok": true,
-          "payloadShape": [
-            "ok",
-            "receipt"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_redacted_receipts",
+          "name": "read_audit_log",
           "ok": true,
           "payloadShape": [
             "count",
             "items",
             "ok",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "schemaVersion",
             "valuesRedacted"
           ],
           "required": true
@@ -297,12 +172,12 @@
           "required": true
         }
       ],
-      "target": "https://memoryendpoints.com",
+      "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:e1b4747b914d33a95163c1b430b92a33efac682087e8bd795319f3ee639fcc6b"
+      "workspaceIdHash": "sha256:2dda108b32055cbcd090df38c115441c25e78c5fce52c87396971d157b899224"
     }
   ],
-  "schemaVersion": "memoryendpoints.dogfood_run.v2",
+  "schemaVersion": "memoryendpoints.dogfood_run.v3",
   "searchReadbackCount": 1,
   "steps": [
     {
@@ -357,12 +232,15 @@
       "required": true
     },
     {
-      "httpStatus": "404 Not Found",
+      "httpStatus": "200 OK",
       "name": "read_review_queue",
-      "ok": false,
+      "ok": true,
       "payloadShape": [
-        "error",
-        "ok"
+        "count",
+        "items",
+        "ok",
+        "promotionRoute",
+        "valuesRedacted"
       ],
       "required": false
     },
@@ -414,6 +292,21 @@
     },
     {
       "httpStatus": "200 OK",
+      "name": "read_audit_log",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "items",
+        "ok",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
       "name": "read_current_message_after_ack",
       "ok": true,
       "payloadShape": [
@@ -426,6 +319,7 @@
       "required": true
     }
   ],
+  "uaiProgressUpdated": true,
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:e1b4747b914d33a95163c1b430b92a33efac682087e8bd795319f3ee639fcc6b"
+  "workspaceIdHash": "sha256:2dda108b32055cbcd090df38c115441c25e78c5fce52c87396971d157b899224"
 }

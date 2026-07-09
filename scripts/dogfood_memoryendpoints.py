@@ -116,12 +116,31 @@ def append_progress(report):
     else:
         detail = "MATM dogfood run attempted but not fully verified"
     line = (
-        "- %s: %s; report `docs/reports/dogfood-memory-run.json`; "
-        "MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.\n"
-        % (utc_now(), detail)
+        "- Local dogfood status: %s; report `docs/reports/dogfood-memory-run.json`; "
+        "audit-log readback verified: %s; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; "
+        "raw credential values stored in report: false."
+        % (detail, str(bool(report.get("auditTrailReadbackVerified"))).lower())
     )
-    with PROGRESS_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(line)
+    existing = PROGRESS_PATH.read_text(encoding="utf-8").splitlines()
+    cleaned = [
+        item
+        for item in existing
+        if not (item.startswith("- 20") and "dogfood" in item.lower() and "docs/reports/dogfood-memory-run.json" in item)
+    ]
+    replaced = False
+    for index, item in enumerate(cleaned):
+        if item.startswith("- Local dogfood status:"):
+            cleaned[index] = line
+            replaced = True
+            break
+    if not replaced:
+        insert_at = len(cleaned)
+        for index, item in enumerate(cleaned):
+            if item.startswith("- Completion must not be claimed"):
+                insert_at = index
+                break
+        cleaned.insert(insert_at, line)
+    PROGRESS_PATH.write_text("\n".join(cleaned).rstrip() + "\n", encoding="utf-8")
     report["uaiProgressUpdated"] = True
 
 
@@ -171,7 +190,7 @@ def run_sequence(transport, label, base_url=None):
                 "memoryType": "status",
                 "subject": "MemoryEndpoints enterprise MATM hardening",
                 "title": "%s dogfood status" % label.title(),
-                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, current-message readback, acknowledgement, and receipt readback." % label.title(),
+                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, current-message readback, acknowledgement, receipt readback, and audit-log readback." % label.title(),
                 "tags": ["dogfood", label, "matm"],
                 "confidence": 0.86,
                 "source": "scripts/dogfood_memoryendpoints.py",
@@ -235,6 +254,13 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "read_redacted_receipts", status, receipts)
 
+        status, audit_log = transport.call(
+            "/api/matm/audit-log",
+            headers=auth,
+            query=urlencode({"workspace_id": workspace_id, "limit": "50"}),
+        )
+        step(report, "read_audit_log", status, audit_log)
+
         status, post_ack_current = transport.call(
             "/api/matm/current-message",
             headers=auth,
@@ -252,6 +278,8 @@ def run_sequence(transport, label, base_url=None):
         report["currentMessageUnreadCount"] = current.get("unreadCount", 0)
         report["postAckUnreadCount"] = post_ack_current.get("unreadCount", 0)
         report["receiptCount"] = receipts.get("count", 0)
+        report["auditLogCount"] = audit_log.get("count", 0)
+        report["auditTrailReadbackVerified"] = bool(audit_log.get("ok") and audit_log.get("valuesRedacted") and audit_log.get("count", 0))
         report["requiredStepFailureCount"] = len([item for item in report["steps"] if item["required"] and not item["ok"]])
         report["optionalStepFailureCount"] = len([item for item in report["steps"] if not item["required"] and not item["ok"]])
     except Exception as exc:
@@ -265,7 +293,7 @@ def combine_reports(runs):
     local_verified = any(item.get("localDogfoodVerified") for item in runs)
     live_verified = any(item.get("liveDogfoodVerified") for item in runs)
     report = {
-        "schemaVersion": "memoryendpoints.dogfood_run.v2",
+        "schemaVersion": "memoryendpoints.dogfood_run.v3",
         "generatedAt": utc_now(),
         "mode": "combined" if len(runs) > 1 else runs[0]["mode"],
         "runs": runs,

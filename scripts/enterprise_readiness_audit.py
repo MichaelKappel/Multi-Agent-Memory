@@ -101,7 +101,7 @@ def main(argv=None):
         evidence_item(
             "critical_protected_workflows_integration_tested",
             "pass_local",
-            ["tests/test_app.py covers free account, hash boundary, registration, memory submit/search, firewall redaction, review queue, current-message, ack, receipts, idempotency, and safe no-op errors"],
+            ["tests/test_app.py covers free account, hash boundary, registration, memory submit/search, firewall redaction, review queue, current-message, ack, receipts, protected audit-log readback, idempotency, and safe no-op errors"],
         ),
         evidence_item(
             "local_dogfooding",

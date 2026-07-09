@@ -37,7 +37,7 @@
           <tr>
             <td>Hosted MATM endpoint</td>
             <td><a href="https://memoryendpoints.com">MemoryEndpoints.com</a></td>
-            <td>Protected workspace memory, current-message coordination, agent inboxes, acknowledgement receipts, public route inventory, readiness evidence, and capability matrix.</td>
+            <td>Protected workspace memory, current-message coordination, agent inboxes, acknowledgement receipts, protected audit-log readback, public route inventory, readiness evidence, and capability matrix.</td>
           </tr>
           <tr>
             <td>Companion documentation</td>
@@ -63,7 +63,7 @@
     <ul>
       <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
       <li><strong>Reviewed local long-term memory:</strong> `docs/long-term-memory/` stores public-safe strategy, architecture, system targets, and release evidence that survived review.</li>
-      <li><strong>Hosted workspace memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, and redacted receipts for authenticated workspaces.</li>
+      <li><strong>Hosted workspace memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
     </ul>
 
@@ -74,7 +74,7 @@
       <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
       <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
       <li>Agents send current messages through <code>/api/matm/agent-messages</code>, read them through <code>/api/matm/current-message</code> or <code>/api/matm/agent-inbox</code>, and acknowledge notifications through <code>/api/matm/notifications/ack</code>.</li>
-      <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; raw private payloads and credential values are not exposed in public documentation.</li>
+      <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; protected-operation audit entries are exposed through <code>/api/matm/audit-log</code>; raw private payloads and credential values are not exposed in public documentation.</li>
     </ol>
 
     <h2>Repository structure</h2>
@@ -83,7 +83,7 @@
       <li><code>static/</code>: MemoryEndpoints.com browser CSS, JavaScript, and image assets.</li>
       <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
       <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
-      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, and SQLite parity.</li>
+      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, audit-log readback, and SQLite parity.</li>
       <li><code>docs/reports/</code>: public-safe verification, deployment, readiness, package, and audit evidence.</li>
     </ul>
 

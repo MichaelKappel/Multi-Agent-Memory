@@ -160,7 +160,7 @@ def build_final_markdown(local_report):
             "",
             "## Claim Boundary",
             "",
-            "The repository has strong local MATM evidence, live dogfood evidence, public route evidence, package evidence, and secret-safety evidence. It must not be described as fully done until latest-code live deployment, GitHub Actions CI, and remaining gated items are verified.",
+            "The repository has strong local MATM evidence, public route evidence, package evidence, and secret-safety evidence. Live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code live deployment, live dogfood, GitHub Actions CI, and remaining gated items are verified.",
             "",
             "```json",
             json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "valuesRedacted": True}, indent=2, sort_keys=True),

@@ -32,6 +32,17 @@
     "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result",
     "redactedExampleReceipts": "https://memoryendpoints.com/api/matm/redacted-example-receipts"
   },
+  "protectedRoutePurposes": {
+    "agentSetup": "POST /api/matm/agent-setup/free-account",
+    "memorySubmit": "POST /api/matm/memory-events/submit",
+    "memorySearch": "GET /api/matm/search",
+    "reviewQueue": "GET /api/matm/review-queue",
+    "reviewDecision": "POST /api/matm/review-queue/decide",
+    "currentMessage": "GET /api/matm/current-message",
+    "notificationAck": "POST /api/matm/notifications/ack",
+    "redactedReceipts": "GET /api/matm/receipts",
+    "redactedAuditLog": "GET /api/matm/audit-log"
+  },
   "repositoryMap": {
     "runtime": "memoryendpoints/",
     "companionSite": "sites/multiagentmemory.com/",

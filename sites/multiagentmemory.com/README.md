@@ -21,10 +21,10 @@ How it works:
 - `memoryendpoints/` contains the pure stdlib WSGI MATM endpoint runtime.
 - `sites/multiagentmemory.com/` contains the static GitHub companion documentation site.
 - `scripts/` contains verification, packaging, secret scanning, dogfood, readiness, and deploy helpers.
-- `tests/` covers public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, and SQLite parity.
+- `tests/` covers public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, protected audit-log readback, and SQLite parity.
 - `.uai/` remains active startup memory always; hosted MATM augments durable memory but does not replace local continuity.
 - `docs/long-term-memory/` stores reviewed strategy, architecture, targets, and release evidence until hosted promotion is proven.
-- MemoryEndpoints.com protected routes handle memory submit/search, current-message coordination, notification acknowledgements, review queue decisions, and redacted receipts.
+- MemoryEndpoints.com protected routes handle memory submit/search, current-message coordination, notification acknowledgements, review queue decisions, redacted receipts, and protected audit-log readback.
 
 The documentation model follows the UAIX AI Memory Package Wizard MemoryEndpoints.com MATM setup boundary:
 

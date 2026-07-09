@@ -37,7 +37,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         temp_root = Path(__file__).resolve().parents[1] / "var" / "test-store"
         temp_root.mkdir(parents=True, exist_ok=True)
         safe_name = "".join(ch if ch.isalnum() else "-" for ch in self._testMethodName)
-        self.tempdir = str(temp_root / safe_name)
+        self.tempdir = str(temp_root / ("%s-%s" % (os.getpid(), safe_name)))
         shutil.rmtree(self.tempdir, ignore_errors=True)
         Path(self.tempdir).mkdir(parents=True, exist_ok=True)
         os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "store.json")
@@ -179,6 +179,38 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         receipts = json.loads(text)
         self.assertEqual(1, receipts["count"])
         self.assertTrue(receipts["valuesRedacted"])
+
+        status, _headers, text = call_app(
+            "/api/matm/audit-log",
+            headers=auth,
+            query="workspace_id=%s&limit=50" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        audit = json.loads(text)
+        self.assertEqual("memoryendpoints.audit_log.v1", audit["schemaVersion"])
+        self.assertTrue(audit["valuesRedacted"])
+        audit_text = json.dumps(audit)
+        self.assertNotIn(token, audit_text)
+        self.assertNotIn("apiKeySecret", audit_text)
+        actions = {item["action"] for item in audit["items"]}
+        self.assertTrue(
+            {
+                "workspace.create_free_account",
+                "workspace.read",
+                "agent.register",
+                "memory.submit",
+                "memory.search",
+                "message.submit",
+                "current_message.read",
+                "notification.ack",
+                "receipts.read",
+                "audit_log.read",
+            }.issubset(actions)
+        )
+        for item in audit["items"]:
+            self.assertTrue(item["valuesRedacted"])
+            self.assertFalse(item["rawCredentialExposed"])
+            self.assertFalse(item["rawPayloadExposed"])
 
     def test_memory_firewall_review_queue_and_promotion(self):
         status, _headers, text = call_app(
@@ -409,8 +441,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/docs/", routes)
         self.assertIn("/api/matm/readiness-result", routes)
         self.assertIn("/api/matm/review-queue/decide", routes)
+        self.assertIn("/api/matm/audit-log", routes)
         self.assertEqual(["POST"], routes["/api/matm/notifications/ack"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/review-queue/decide"]["methods"])
+        self.assertEqual(["GET"], routes["/api/matm/audit-log"]["methods"])
 
     def test_readiness_result_does_not_overclaim_completion(self):
         status, _headers, text = call_app("/api/matm/readiness-result")
@@ -421,7 +455,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         blockers = {item["id"] for item in data["blockers"]}
         self.assertIn("latest_code_live_deployed", blockers)
         checks = {item["id"]: item for item in data["checks"]}
-        self.assertEqual("pass_live_current_public_surface", checks["live_dogfood"]["status"])
+        self.assertEqual("blocked_latest_tranche", checks["live_dogfood"]["status"])
+        self.assertEqual("pass_local", checks["protected_operation_audit_trail"]["status"])
 
     def test_sqlite_backend_supports_core_memory_flow(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"

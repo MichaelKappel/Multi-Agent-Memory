@@ -32,3 +32,4 @@ Current protected MATM routes:
 - `/api/matm/agent-inbox`
 - `/api/matm/notifications/ack`
 - `/api/matm/receipts`
+- `/api/matm/audit-log`

@@ -189,6 +189,18 @@ Query:
 - `workspace_id`
 - `consumer_agent_id`
 
+### GET `/api/matm/audit-log`
+
+Reads a redacted protected-operation audit trail for the authenticated workspace.
+
+Query:
+
+- `workspace_id`
+- `limit` optional, capped at 200 records
+- `action` optional exact action filter such as `memory.submit`, `review.decide`, or `current_message.read`
+
+The route returns action names, actors, targets, counts, route metadata, timestamps, and redaction flags. It does not return raw credentials, raw request bodies, raw private payloads, idempotency keys, or reviewer note text.
+
 ## No-Op Boundary
 
 Unsupported, unauthenticated, malformed, or authority-gated actions return an error object with `safeNoOp=true`.

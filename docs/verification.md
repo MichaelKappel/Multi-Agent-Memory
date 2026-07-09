@@ -27,7 +27,7 @@ Expected current local state:
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/totem.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and no catch-all active-memory file.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Secret scan reports 0 hits.
-- Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy and live dogfooding are proven.
+- Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy, live dogfooding, and external CI are proven.
 
 ## Live Public Route Gate
 
@@ -59,7 +59,7 @@ To exercise the current live HTTP API as well:
 python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com
 ```
 
-Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. Optional newer routes can still be absent from the live site until deployment succeeds; required dogfood steps are recorded separately from optional step failures.
+Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. The current dogfood contract includes protected audit-log readback, so live dogfood must be rerun after the latest route tranche is deployed.
 
 ## Report Refresh
 

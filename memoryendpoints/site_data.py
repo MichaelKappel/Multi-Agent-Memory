@@ -36,6 +36,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/agent-inbox", "access": "protected", "methods": ["GET"], "purpose": "Unread inbox readback."},
     {"route": "/api/matm/notifications/ack", "access": "protected", "methods": ["POST"], "purpose": "Notification acknowledgement and receipt creation."},
     {"route": "/api/matm/receipts", "access": "protected", "methods": ["GET"], "purpose": "Redacted receipt readback."},
+    {"route": "/api/matm/audit-log", "access": "protected", "methods": ["GET"], "purpose": "Redacted protected-operation audit log readback."},
 ]
 
 
@@ -94,6 +95,14 @@ def capability_matrix():
             "readRoute": "/api/matm/current-message",
             "ackRoute": "/api/matm/notifications/ack",
             "responseStates": ["required_response", "viewed_acknowledgement"],
+        },
+        "auditTrail": {
+            "status": "live",
+            "readRoute": "/api/matm/audit-log",
+            "protectedOperationsLogged": True,
+            "valuesRedacted": True,
+            "rawCredentialsExposed": False,
+            "rawPayloadsExposed": False,
         },
         "freeAccount": {
             "status": "live",
@@ -201,6 +210,11 @@ def readiness_result():
                 "evidence": ["/api/matm/review-queue", "/api/matm/review-queue/decide", "idempotent promotion decisions"],
             },
             {
+                "id": "protected_operation_audit_trail",
+                "status": "pass_local",
+                "evidence": ["/api/matm/audit-log", "redacted protected-operation readback", "tests/test_app.py"],
+            },
+            {
                 "id": "agent_file_handoff",
                 "status": "pass_local",
                 "evidence": ["agent-file-handoff/Content", "agent-file-handoff/Improvement", ".uai/intake-outcome-ledger.uai"],
@@ -223,10 +237,10 @@ def readiness_result():
             },
             {
                 "id": "live_dogfood",
-                "status": "pass_live_current_public_surface",
+                "status": "blocked_latest_tranche",
                 "evidence": [
                     "docs/reports/dogfood-memory-run.json",
-                    "Live MATM dogfood is verified for the currently deployed API; latest-code deployment remains a separate gate.",
+                    "Local MATM dogfood verifies the latest audit-log readback contract. Live authenticated dogfood must be rerun after latest-code deployment succeeds.",
                 ],
             },
             {

@@ -25,6 +25,14 @@
       "status": "blocked"
     },
     {
+      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "requirement": "live_dogfooding",
+      "status": "blocked"
+    },
+    {
       "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
@@ -122,7 +130,7 @@
     {
       "blocker": null,
       "evidence": [
-        "tests/test_app.py covers free account, hash boundary, registration, memory submit/search, firewall redaction, review queue, current-message, ack, receipts, idempotency, and safe no-op errors"
+        "tests/test_app.py covers free account, hash boundary, registration, memory submit/search, firewall redaction, review queue, current-message, ack, receipts, protected audit-log readback, idempotency, and safe no-op errors"
       ],
       "requirement": "critical_protected_workflows_integration_tested",
       "status": "pass_local"
@@ -185,12 +193,12 @@
       "status": "blocked"
     },
     {
-      "blocker": null,
+      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
       "evidence": [
         "docs/reports/dogfood-memory-run.json"
       ],
       "requirement": "live_dogfooding",
-      "status": "pass_live"
+      "status": "blocked"
     },
     {
       "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
@@ -214,7 +222,7 @@
   "summary": {
     "dateFreeHotMemory": true,
     "latestCodeLiveDeployed": false,
-    "liveDogfoodVerified": true,
+    "liveDogfoodVerified": false,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "multiAgentMemoryLiveDeployed": false,

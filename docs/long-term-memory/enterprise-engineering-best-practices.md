@@ -15,7 +15,7 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 - Keep the local test suite fast, hermetic, and runnable with `python -m unittest discover -s tests`.
 - Preserve layered verification: unit/integration tests, WSGI route verification, live public-route verification, package verification, `.uai` audit, secret scan, enterprise readiness audit, and deployment reports.
 - Separate local proof from live proof. Local WSGI checks prove current code behavior; live public-route and live dogfood checks prove the currently deployed surface; latest-code deployment remains a separate gate.
-- Treat dogfooding as an integration test, not as marketing evidence. It must exercise workspace creation, agent registration, memory submit/search, current message, acknowledgement, receipt readback, redaction, and `.uai` progress behavior.
+- Treat dogfooding as an integration test, not as marketing evidence. It must exercise workspace creation, agent registration, memory submit/search, current message, acknowledgement, receipt readback, protected audit-log readback, redaction, and `.uai` progress behavior.
 - Track optional route gaps separately from required workflow failures. An optional live route missing from the deployed site should not erase a verified required workflow, but it should remain visible as deploy drift.
 
 ## MySQL And Database Operations
