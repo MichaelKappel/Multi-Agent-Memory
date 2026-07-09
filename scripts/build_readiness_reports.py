@@ -60,6 +60,7 @@ def build_local_report():
     dogfood = load_json("dogfood-memory-run.json")
     package = load_json("package-verification-report.json")
     secret = load_json("secret-scan-report.json")
+    boundary = load_json("repository-boundary-audit.json")
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
@@ -68,6 +69,7 @@ def build_local_report():
         {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
         {"id": "package_check", "status": status(bool(package and package.get("status") == "ready")), "evidence": ["docs/reports/package-verification-report.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
+        {"id": "repository_boundary", "status": status(bool(boundary and boundary.get("ok"))), "evidence": ["docs/reports/repository-boundary-audit.json", "sites/multiagentmemory.com/"]},
         {"id": "diff_check", "status": status((check_result(enterprise, "diff_check") or {}).get("ok")), "evidence": ["git diff --check"]},
     ]
     report = {
@@ -82,6 +84,7 @@ def build_local_report():
         "localUaiStaysActiveAlways": bool(uai and uai.get("localUaiStaysActiveAlways")),
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
+        "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
         "valuesRedacted": True,
     }
     write_json("local-verification-report.json", report)

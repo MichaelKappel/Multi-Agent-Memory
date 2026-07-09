@@ -45,17 +45,26 @@
     },
     {
       "evidence": [
+        "docs/reports/repository-boundary-audit.json",
+        "sites/multiagentmemory.com/"
+      ],
+      "id": "repository_boundary",
+      "status": "pass"
+    },
+    {
+      "evidence": [
         "git diff --check"
       ],
       "id": "diff_check",
       "status": "pass"
     }
   ],
-  "generatedAt": "2026-07-09T15:27:52Z",
+  "generatedAt": "2026-07-09T15:32:27Z",
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,
   "ok": true,
+  "repositoryBoundaryOk": true,
   "routeCount": 21,
   "routeFailureCount": 0,
   "schemaVersion": "memoryendpoints.local_verification_report.v1",

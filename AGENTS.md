@@ -36,6 +36,8 @@ python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi
 python scripts\package_memoryendpoints.py --check-only
 python scripts\secret_scan.py
+python scripts\audit_uai_memory.py
+python scripts\enterprise_readiness_audit.py --run-checks
 ```
 
 ## Deployment

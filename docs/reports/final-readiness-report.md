@@ -12,8 +12,8 @@ Status: not complete. `completionClaimAllowed` is `false`.
 - Live public route verification: 21 routes, 0 failures for the currently deployed public surface.
 - `.uai` memory audit: pass; local `.uai` stays active always and `.uai/totem.uai` is first in startup order.
 - Local dogfooding: true through WSGI; live dogfooding: false.
-- Package verification: status `ready`, 78 planned files, excludes local runtime state and secrets.
-- Secret scan: 87 scanned files, 0 hits.
+- Package verification: status `ready`, 81 planned files, excludes local runtime state and secrets.
+- Secret scan: 90 scanned files, 0 hits.
 
 ## Blocked Or Gated
 

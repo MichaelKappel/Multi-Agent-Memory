@@ -1,0 +1,16 @@
+{
+  "activeProductRoot": "E:/MemoryEndpoints.com",
+  "companionDocumentationRoot": "E:/MemoryEndpoints.com/sites/multiagentmemory.com",
+  "duplicateProductSiteFoldersFound": [],
+  "generatedAt": "2026-07-09",
+  "ok": true,
+  "schemaVersion": "memoryendpoints.repository_boundary_audit.v1",
+  "scannedImmediateDriveRoot": "E:/",
+  "truthBoundary": {
+    "memoryEndpointsSourceOfTruth": "E:/MemoryEndpoints.com",
+    "multiAgentMemoryIsCompanionDocsInsideRepo": true,
+    "neuralWikisIsConceptSourceOnly": true,
+    "rawPrivateFolderNamesOrSecretsIncluded": false
+  },
+  "valuesRedacted": true
+}

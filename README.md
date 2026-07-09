@@ -57,6 +57,7 @@ UAIX wizard/spec update request: add [MATM setup](https://uaix.org/en-us/tools/a
 ```
 
 See [docs/repository-structure.md](docs/repository-structure.md) for ownership and publishing boundaries.
+See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/deployment.md) for rerunnable operating checks.
 
 ## Public Evidence
 
@@ -92,6 +93,8 @@ python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi
 python scripts\secret_scan.py
 python scripts\package_memoryendpoints.py --check-only
+python scripts\audit_uai_memory.py
+python scripts\enterprise_readiness_audit.py --run-checks
 python scripts\build_readiness_reports.py --write
 ```
 

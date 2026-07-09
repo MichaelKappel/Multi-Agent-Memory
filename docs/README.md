@@ -9,6 +9,8 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 - [Storage backends](storage-backends.md)
 - [Database structure](database-structure.md)
 - [Repository structure](repository-structure.md)
+- [Verification](verification.md)
+- [Deployment](deployment.md)
 
 ## Evidence
 
@@ -22,6 +24,7 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 - [Enterprise MATM gap matrix](reports/enterprise-gap-matrix.md)
 - [Local dogfood memory run](reports/dogfood-memory-run.json)
 - [Deploy attempt report](reports/deploy-attempt-20260709.json)
+- [Repository boundary audit](reports/repository-boundary-audit.json)
 - [Final readiness report](reports/final-readiness-report.md)
 - [Final verification report](reports/final-verification-report.md)
 - [Local route verification](reports/local-route-verification.json)

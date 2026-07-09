@@ -30,3 +30,9 @@ jobs:
 
       - name: Check package plan
         run: python scripts/package_memoryendpoints.py --check-only
+
+      - name: Audit UAI startup memory
+        run: python scripts/audit_uai_memory.py
+
+      - name: Run enterprise readiness audit checks
+        run: python scripts/enterprise_readiness_audit.py --run-checks
