@@ -59,6 +59,23 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("no-write checks", build_readiness_reports.REPORT_FRESHNESS_MODEL)
         self.assertIn("current-worktree", enterprise_readiness_audit.REPORT_FRESHNESS_MODEL)
 
+    def test_dogfood_gap_state_distinguishes_live_core_from_full_contract(self):
+        current, needed = build_readiness_reports.dogfood_gap_state(
+            {"liveCoreDogfoodVerified": True, "liveDogfoodVerified": False}
+        )
+
+        self.assertIn("Live core MATM dogfood is verified", current)
+        self.assertIn("latest protected audit-log", current)
+        self.assertIn("protected audit-log readback", needed)
+
+    def test_dogfood_gap_state_reports_full_live_contract(self):
+        current, needed = build_readiness_reports.dogfood_gap_state(
+            {"liveCoreDogfoodVerified": True, "liveDogfoodVerified": True}
+        )
+
+        self.assertIn("Full live dogfood contract verified", current)
+        self.assertIn("After each latest-code deploy", needed)
+
 
 if __name__ == "__main__":
     unittest.main()

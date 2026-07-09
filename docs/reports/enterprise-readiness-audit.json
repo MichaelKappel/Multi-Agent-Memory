@@ -260,7 +260,7 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
+    "currentGitHead": "7234135b80753ae29e1042727ac9955aa92b0b44",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
     "githubCiReportCurrent": true,

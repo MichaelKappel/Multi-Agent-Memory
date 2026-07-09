@@ -4,33 +4,37 @@ Generated: 2026-07-09
 
 ## Scope
 
-Audit against the active MemoryEndpoints.com enterprise MATM objective after adding local `.uai` totem memory, memory firewall, review queue, and dogfood runner.
+Audit against the active MemoryEndpoints.com enterprise MATM objective after local MATM workflow hardening, `.uai` normalization, dogfood runner implementation, deployment diagnostics, and readiness evidence hardening.
 
 ## Evidence Gathered
 
-- Repository status inspected before changes.
-- Current WSGI app, storage, route inventory, API contract, tests, and `.uai` files inspected.
-- NeuralWikis code and selected reports inspected as concept evidence only.
-- Unit/integration suite passed after firewall/review changes: `python -m unittest discover -s tests`.
-- Local dogfood runner passed: `python scripts\dogfood_memoryendpoints.py`.
-- `.uai` required-field audit passed for all active `.uai/*.uai` files.
-- Secret scan passed with zero hits after `.uai` normalization.
-- Package check passed and excludes `docs/prompts`.
-- Deployment dry-run resolved the MemoryEndpoints.com FTP root, but no-upload connection checks for explicit FTPS and plain FTP failed at login with `error_perm`; no files were uploaded.
+- Unit/integration suite passes through `python -m unittest discover -s tests`.
+- WSGI route verifier passes for 21 required public routes and current source SHA.
+- Static MultiAgentMemory.com source verifier passes locally.
+- `.uai` required-field and date-free audit passes for the active typed memory suite.
+- Secret scan passes with zero hits.
+- Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.
+- Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.
+- Live public route verifier reports `0` failures for the currently deployed MemoryEndpoints.com surface.
+- Latest-code live verifier expects `7234135b80753ae29e1042727ac9955aa92b0b44`, observes `None`, and matches `false`.
+- No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
 
-## Implemented In This Pass
+## Implemented Locally
 
 - `.uai/totem.uai` marks local `.uai` as always active.
-- All active `.uai` files now include purpose, verification status, memory scope, public-safe status, update route, source of truth, next actions, and must-not-expose fields without embedding dates.
+- Active `.uai` files are typed, date-free, and audited; catch-all active memory files remain forbidden.
 - Memory events are firewall-reviewed and typed before persistence.
 - Review queue and review decision routes are protected and idempotent.
 - Quarantined/rejected memory is excluded from normal search.
-- Dogfood runner exercises workspace setup, agent registration, memory submit/search, review queue readback, current-message creation/readback, notification acknowledgement, receipt readback, and post-ack readback.
+- File storage and stdlib SQLite relational tables support the implemented MATM workflows.
+- Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.
+- Dogfood runner exercises workspace setup, agent registration, memory submit/search, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.
 
 ## Not Yet Proven
 
-- New routes and code have not yet been deployed live in this pass.
-- Live dogfooding has not yet been performed in this pass.
-- Full production database adapter remains gated by the no-third-party-runtime constraint.
-- Live deploy of the new firewall/review/dogfood tranche is blocked until hosting login/server access is refreshed outside the repository.
-- The full objective still needs a final completion audit after live deploy and verification.
+- Latest code is not proven live because live `/api/version` does not report the expected source SHA.
+- Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.
+- Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.
+- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.
+- Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.
+- The full objective still needs a final completion audit after live deploy, live dogfood, companion live publish, CI, and gated-capability evidence pass.
