@@ -74,7 +74,8 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T19:10:39Z",
+  "generatedAt": "2026-07-09T19:16:46Z",
+  "gitHeadAtReportGeneration": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
@@ -82,6 +83,7 @@
   "multiAgentMemoryStaticSiteVerified": true,
   "noCatchAllActiveMemoryFile": true,
   "ok": true,
+  "reportScope": "point_in_time_snapshot",
   "repositoryBoundaryOk": true,
   "routeCount": 21,
   "routeFailureCount": 0,

@@ -22,6 +22,20 @@ def load_json(name):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def git_head_sha():
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+    )
+    if completed.returncode == 0:
+        return completed.stdout.strip()
+    return None
+
+
 def write_json(name, data):
     path = REPORTS / name
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -82,6 +96,8 @@ def build_local_report():
     report = {
         "schemaVersion": "memoryendpoints.local_verification_report.v1",
         "generatedAt": utc_now(),
+        "gitHeadAtReportGeneration": git_head_sha(),
+        "reportScope": "point_in_time_snapshot",
         "scope": "local worktree, WSGI route handlers, package plan, .uai startup memory, and local dogfood runner",
         "ok": all(item["status"] == "pass" for item in checks),
         "checks": checks,
@@ -118,6 +134,7 @@ def build_final_markdown(local_report):
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
+    report_source_sha = git_head_sha()
 
     latest_deployed = bool(
         (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
@@ -133,13 +150,15 @@ def build_final_markdown(local_report):
         "",
         "Status: not complete. `completionClaimAllowed` is `false`.",
         "",
+        "Report source snapshot: `%s`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit." % (report_source_sha or "unknown"),
+        "",
         "## Verified",
         "",
         "- Local verification report: `%s`, see `docs/reports/local-verification-report.json`." % ("pass" if local_report.get("ok") else "not pass"),
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
-        "- Live latest-code SHA verification: expected `%s`, observed `%s`, match `%s`." % (
+        "- Live latest-code SHA verification snapshot: expected `%s`, observed `%s`, match `%s`." % (
             live_latest_code.get("expectedSourceSha"),
             live_latest_code.get("observedSourceSha"),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
@@ -158,7 +177,7 @@ def build_final_markdown(local_report):
             multiagentmemory_live.get("uploadedCount"),
         ),
         "- MultiAgentMemory.com live site verification: %s failures; home page is not serving expected companion links yet." % (multiagentmemory_live_site.get("failureCount")),
-        "- GitHub Actions CI: `%s`; latest run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
+        "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
         "",
         "## Blocked Or Gated",
         "",
@@ -179,7 +198,7 @@ def build_final_markdown(local_report):
         )
     lines.extend(
         [
-            "- GitHub Actions CI: blocked. %s" % (github_ci.get("blocker") or "The latest run is not a passing CI signal."),
+            "- GitHub Actions CI: blocked in the tracked snapshot. %s" % (github_ci.get("blocker") or "The observed run is not a passing CI signal."),
             "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.",
             "",
             "## Claim Boundary",
@@ -187,7 +206,7 @@ def build_final_markdown(local_report):
             "The repository has strong local MATM evidence, current live core dogfood evidence, public route evidence, package evidence, and secret-safety evidence. Latest-contract live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code live deployment, latest-contract live dogfood, GitHub Actions CI, and remaining gated items are verified.",
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "valuesRedacted": True}, indent=2, sort_keys=True),
             "```",
         ]
     )

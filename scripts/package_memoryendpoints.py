@@ -115,6 +115,7 @@ def main(argv=None):
     files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.package_plan.v1",
+        "reportScope": "point_in_time_snapshot",
         "status": "ready",
         "checkOnly": args.check_only,
         "fileCount": len(files),

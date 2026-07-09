@@ -1,11 +1,12 @@
 {
-  "expectedSourceSha": "921b07710b81efb322cfea89575b1b5f1f5884fd",
+  "expectedSourceSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
+  "expectedSourceShaSource": "git_head",
   "failureCount": 1,
   "failures": [
     {
-      "expectedSourceSha": "921b07710b81efb322cfea89575b1b5f1f5884fd",
+      "expectedSourceSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
       "missing": [
-        "expected source sha 921b07710b81efb322cfea89575b1b5f1f5884fd"
+        "expected source sha 2f5cccba3578e5be462d2bfa8b1a35382a5532e5"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -15,6 +16,7 @@
       "status": 200
     }
   ],
+  "gitHeadAtVerification": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
   "items": [
     {
       "missing": [],
@@ -53,9 +55,9 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "921b07710b81efb322cfea89575b1b5f1f5884fd",
+      "expectedSourceSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
       "missing": [
-        "expected source sha 921b07710b81efb322cfea89575b1b5f1f5884fd"
+        "expected source sha 2f5cccba3578e5be462d2bfa8b1a35382a5532e5"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -149,8 +151,10 @@
       "status": 200
     }
   ],
+  "mode": "http",
   "observedSourceSha": null,
   "ok": false,
+  "reportScope": "point_in_time_snapshot",
   "routeCount": 21,
   "schemaVersion": "memoryendpoints.verifier.v1",
   "sourceShaMatchesExpected": false

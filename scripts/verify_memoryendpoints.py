@@ -104,8 +104,11 @@ def main(argv=None):
     parser.add_argument("--expect-git-head", action="store_true")
     args = parser.parse_args(argv)
     expected_source_sha = args.expect_source_sha
+    expected_source_sha_source = "argument" if expected_source_sha else None
+    git_head_at_verification = git_head_sha()
     if args.expect_git_head and not expected_source_sha:
-        expected_source_sha = git_head_sha()
+        expected_source_sha = git_head_at_verification
+        expected_source_sha_source = "git_head"
 
     items = []
     observed_source_sha = None
@@ -136,12 +139,16 @@ def main(argv=None):
     failures = [item for item in items if item["status"] != 200 or item["missing"] or item["secretHitCount"]]
     report = {
         "schemaVersion": "memoryendpoints.verifier.v1",
+        "reportScope": "point_in_time_snapshot",
+        "mode": "wsgi" if args.wsgi else "http",
         "ok": not failures,
         "routeCount": len(items),
         "failureCount": len(failures),
         "items": items,
         "failures": failures,
         "expectedSourceSha": expected_source_sha,
+        "expectedSourceShaSource": expected_source_sha_source,
+        "gitHeadAtVerification": git_head_at_verification,
         "observedSourceSha": observed_source_sha,
         "sourceShaMatchesExpected": bool(expected_source_sha and observed_source_sha == expected_source_sha) if expected_source_sha else None,
     }

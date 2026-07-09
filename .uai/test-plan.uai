@@ -24,6 +24,7 @@ Current local gate:
 
 External evidence refresh:
 - `python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json` updates GitHub Actions evidence. It exits nonzero while CI is not successful, so use its report as a gate signal rather than as a local code-test failure.
+- GitHub CI must run the WSGI verifier with source-SHA provenance, using the pushed commit SHA as the expected build identity.
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.

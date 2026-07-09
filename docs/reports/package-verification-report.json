@@ -1,11 +1,11 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "921b07710b81efb322cfea89575b1b5f1f5884fd",
-    "sourceShaShort": "921b07710b81",
+    "sourceSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
+    "sourceShaShort": "2f5cccba3578",
     "valuesRedacted": true
   },
-  "bytes": 113086,
+  "bytes": 113745,
   "checkOnly": false,
   "excludedDirs": [
     ".git",
@@ -45,6 +45,7 @@
   "excludesSecrets": true,
   "fileCount": 76,
   "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
+  "reportScope": "point_in_time_snapshot",
   "schemaVersion": "memoryendpoints.package_plan.v1",
   "status": "ready",
   "thirdPartyRuntimeDependencies": false,

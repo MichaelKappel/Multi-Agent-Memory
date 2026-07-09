@@ -82,3 +82,5 @@ python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-
 ```
 
 The checker exits nonzero when the latest matching run is not successful. A failed run with zero recorded job steps means GitHub did not execute the workflow commands, so treat it as an external GitHub runner/account gate, not as a passing CI signal and not as a local test failure. The current public-safe status is recorded in `docs/reports/github-ci-status-report.json`.
+
+The CI workflow sets `MEMORYENDPOINTS_SOURCE_SHA` from the GitHub commit SHA and runs the WSGI verifier with `--expect-source-sha`, so a successful CI run must prove `/api/version` build provenance as well as route availability.
