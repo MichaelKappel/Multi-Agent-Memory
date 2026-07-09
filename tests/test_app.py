@@ -43,6 +43,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
         Path(self.tempdir).mkdir(parents=True, exist_ok=True)
         os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "store.json")
+        os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = os.path.join(self.tempdir, "missing-mysql.json")
 
     def tearDown(self):
         shutil.rmtree(self.tempdir, ignore_errors=True)
@@ -774,6 +775,31 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         config = _mysql_config_from_env()
         self.assertEqual("db.internal.example", config["host"])
         self.assertEqual(3307, config["port"])
+        self.assertEqual("memoryendpoints_test", config["database"])
+        self.assertEqual("memory_user", config["user"])
+        self.assertEqual("pw", config["password"])
+
+    def test_mysql_secret_file_overrides_individual_env_settings(self):
+        from memoryendpoints.storage import _mysql_config_from_env
+
+        os.environ["MEMORYENDPOINTS_MYSQL_DATABASE"] = "wrong_database"
+        os.environ["MEMORYENDPOINTS_MYSQL_USER"] = "wrong_user"
+        os.environ["MEMORYENDPOINTS_MYSQL_PASSWORD"] = "bad"
+        secret_path = Path(self.tempdir) / "mysql.json"
+        secret_path.write_text(
+            json.dumps(
+                {
+                    "host": "db.internal.example",
+                    "database": "memoryendpoints_test",
+                    "user": "memory_user",
+                    "password": "pw",
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = str(secret_path)
+
+        config = _mysql_config_from_env()
         self.assertEqual("memoryendpoints_test", config["database"])
         self.assertEqual("memory_user", config["user"])
         self.assertEqual("pw", config["password"])
