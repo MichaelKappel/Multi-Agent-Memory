@@ -1,5 +1,16 @@
 Progress
 
+Purpose:
+- Public-safe progress ledger for MemoryEndpoints.com implementation, verification, deployment, and dogfooding work.
+
+Last verified: 2026-07-09
+Memory scope: chronological progress, verification evidence, and current completion boundary.
+Public-safe status: safe for source control; contains no credential values.
+Update route: append public-safe verified progress here; submit durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: current repository state, command output, verification reports, Git commits, and `.uai/totem.uai`.
+Next action for agents: add concise evidence-backed entries after real verification; do not claim full goal completion without a requirement-by-requirement audit.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or unredacted deployment handoff values.
+
 2026-07-09:
 - Created initial pure stdlib WSGI MATM scaffold.
 - Added file-backed storage, public discovery routes, protected memory/message APIs, and UAIX-style file handoff files.
@@ -22,3 +33,7 @@ Progress
 - Recorded the UAIX.org request to add `#setup-MATM` and `#setup-file-handoff-MATM` wizard/spec guidance, including MATM update URL fields and MemoryEndpoints.com as a suggested example endpoint.
 - Prompt drafts are now local-only artifacts excluded from source control.
 - Reorganized public repository presentation: moved MultiAgentMemory.com under `sites/multiagentmemory.com/`, added CI and repository structure docs, removed raw handoff reports from the public front door, and added handoff ignore rules.
+- Added `.uai/totem.uai` to record the invariant that local `.uai` stays active always; hosted MATM augments durable memory but never replaces local startup continuity.
+- 2026-07-09T14:58:38Z: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
+- 2026-07-09: Normalized all active `.uai/*.uai` files with purpose, last verified date, memory scope, public-safe status, update route, source of truth, next actions, and must-not-expose boundaries. Required-field audit passed for 9 files.
+- 2026-07-09: Added local memory firewall, typed memory event fields, review queue readback/decision routes, redacted dogfood runner, NeuralWikis concept intake report, current implementation audit, and enterprise gap matrix. Local verification passed: 7 tests, 21 WSGI public routes with 0 failures, package check, secret scan with 0 hits, and `git diff --check`.

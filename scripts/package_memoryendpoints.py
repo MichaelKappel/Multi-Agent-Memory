@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 PACKAGE = DIST / "MemoryEndpoints.com-Production.zip"
 EXCLUDE_DIRS = {".git", "__pycache__", ".pytest_cache", "var", "dist", ".local-secrets"}
+EXCLUDE_PATH_PREFIXES = {"docs/prompts"}
 EXCLUDE_NAMES = {"ftp_Deploy.txt"}
 EXCLUDE_SUFFIXES = {
     ".db",
@@ -36,8 +37,11 @@ def iter_files():
         if path.is_dir():
             continue
         rel = path.relative_to(ROOT)
+        rel_text = str(rel).replace(os.sep, "/")
         parts = set(rel.parts)
         if parts & EXCLUDE_DIRS:
+            continue
+        if any(rel_text == prefix or rel_text.startswith(prefix + "/") for prefix in EXCLUDE_PATH_PREFIXES):
             continue
         if path.name in EXCLUDE_NAMES or path.suffix == ".pyc":
             continue
@@ -64,6 +68,7 @@ def main(argv=None):
         "excludesLocalRuntimeState": True,
         "excludedDirs": sorted(EXCLUDE_DIRS),
         "excludedNames": sorted(EXCLUDE_NAMES),
+        "excludedPathPrefixes": sorted(EXCLUDE_PATH_PREFIXES),
         "excludedSuffixes": sorted(EXCLUDE_SUFFIXES),
         "thirdPartyRuntimeDependencies": False,
     }

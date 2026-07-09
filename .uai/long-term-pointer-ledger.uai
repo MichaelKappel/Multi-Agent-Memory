@@ -1,5 +1,16 @@
 Long-term pointer ledger
 
+Purpose:
+- Local durable-memory map for docs, reports, release evidence, and hosted MATM routing.
+
+Last verified: 2026-07-09
+Memory scope: local durable documentation pointers and promotion rules.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local ledger when durable docs/reports change; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: `docs/long-term-memory`, `docs/reports`, `.uai/long-term-memory.uai`, and `.uai/totem.uai`.
+Next action for agents: promote facts only after code, docs, tests, release notes, or reviewed reports prove them.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
+
 Durable docs memory root:
 - docs/long-term-memory/
 
@@ -19,6 +30,7 @@ Hosted memory:
 - MemoryEndpoints.com is the mid-to-long-term MATM memory endpoint for this project.
 - MultiAgentMemory.com is documentation only and should point agents back to MemoryEndpoints.com for hosted memory operations.
 - Repository layout documentation lives at docs/repository-structure.md.
+- Totem invariant: local `.uai` stays active always and is never retired by hosted MATM verification.
 
 Promotion rule:
 Facts in session memory become durable only after they are written to docs, code, tests, release notes, or reviewed reports.

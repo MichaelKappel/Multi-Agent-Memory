@@ -1,15 +1,27 @@
 MemoryEndpoints.com startup packet
 
+Purpose:
+- Cold-start packet for agents entering the MemoryEndpoints.com repository.
+
+Last verified: 2026-07-09
+Memory scope: startup order, product target, and active memory boundary.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file for startup-order changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: `.uai/totem.uai`, repository files, and verified reports under `docs/reports`.
+Next action for agents: follow the read order below before acting.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
+
 Read order:
-1. .uai/constraints.uai
-2. .uai/file-handoff.uai
-3. .uai/short-term-memory.uai
-4. .uai/long-term-memory.uai
-5. .uai/long-term-pointer-ledger.uai
-6. .uai/progress.uai
+1. .uai/totem.uai
+2. .uai/constraints.uai
+3. .uai/file-handoff.uai
+4. .uai/short-term-memory.uai
+5. .uai/long-term-memory.uai
+6. .uai/long-term-pointer-ledger.uai
+7. .uai/progress.uai
 
 Target:
 Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.
 
 Current boundary:
-Use .uai as short-term/startup memory. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.
+Use .uai as short-term/startup memory. Read `.uai/totem.uai` as the invariant: local .uai stays active always, even when MemoryEndpoints.com is live. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint when reachable and authenticated. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.

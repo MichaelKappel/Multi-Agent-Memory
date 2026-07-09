@@ -7,6 +7,7 @@ import threading
 import uuid
 
 from .config import PUBLIC_STORAGE_BYTES, utc_now
+from .security import evaluate_memory_firewall, redact_text
 
 
 _LOCK = threading.RLock()
@@ -37,12 +38,24 @@ def _blank_store():
         "apiKeys": {},
         "agents": {},
         "memoryEvents": [],
+        "reviewQueue": [],
         "messages": [],
         "notifications": [],
         "receipts": [],
+        "outboxEvents": [],
+        "storageLedger": [],
         "auditLog": [],
         "idempotency": {},
     }
+
+
+def _normalize_store(data):
+    blank = _blank_store()
+    if not isinstance(data, dict):
+        return blank
+    for key, value in blank.items():
+        data.setdefault(key, value)
+    return data
 
 
 class FileStore(object):
@@ -62,7 +75,7 @@ class FileStore(object):
             if not self.path.exists():
                 return _blank_store()
             with self.path.open("r", encoding="utf-8") as handle:
-                return json.load(handle)
+                return _normalize_store(json.load(handle))
 
     def _save(self, data):
         with _LOCK:
@@ -82,13 +95,15 @@ class FileStore(object):
                 except OSError:
                     pass
 
-    def audit(self, data, action, actor, target):
+    def audit(self, data, action, actor, target, workspace_id=None, details=None):
         data["auditLog"].append(
             {
                 "auditId": _id("audit"),
+                "workspaceId": workspace_id,
                 "action": action,
                 "actor": actor,
                 "target": target,
+                "details": details or {},
                 "createdAt": utc_now(),
                 "valuesRedacted": True,
             }
@@ -100,7 +115,7 @@ class FileStore(object):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
-        for key in ("memoryEvents", "messages", "notifications", "receipts"):
+        for key in ("memoryEvents", "reviewQueue", "messages", "notifications", "receipts", "outboxEvents", "storageLedger"):
             for item in data.get(key, []):
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
@@ -191,7 +206,7 @@ class FileStore(object):
             "lastUsedAt": None,
             "revokedAt": None,
         }
-        self.audit(data, "workspace.create_free_account", "system", workspace_id)
+        self.audit(data, "workspace.create_free_account", "system", workspace_id, workspace_id)
         self._save(data)
         return workspace_id, key_id, token
 
@@ -219,28 +234,113 @@ class FileStore(object):
             "registeredAt": utc_now(),
             "status": "active",
         }
-        self.audit(data, "agent.register", agent_id, workspace_id)
+        self.audit(data, "agent.register", agent_id, workspace_id, workspace_id)
         self._save(data)
         return data["agents"][agent_key]
 
-    def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source):
+    def _append_outbox(self, data, workspace_id, event_type, aggregate_type, aggregate_id, payload=None):
+        item = {
+            "outboxEventId": _id("outbox"),
+            "workspaceId": workspace_id,
+            "eventType": event_type,
+            "aggregateType": aggregate_type,
+            "aggregateId": aggregate_id,
+            "payloadHash": _canonical_hash(payload or {}),
+            "status": "pending",
+            "createdAt": utc_now(),
+            "valuesRedacted": True,
+        }
+        data.setdefault("outboxEvents", []).append(item)
+        return item
+
+    def _append_storage_ledger(self, data, workspace_id, object_type, object_id, value):
+        item = {
+            "ledgerId": _id("ledger"),
+            "workspaceId": workspace_id,
+            "objectType": object_type,
+            "objectId": object_id,
+            "bytesDelta": _json_size(value),
+            "createdAt": utc_now(),
+            "valuesRedacted": True,
+        }
+        data.setdefault("storageLedger", []).append(item)
+        return item
+
+    def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None):
         data = self._load()
+        memory_type = (memory_type or "decision").strip().lower()
+        if memory_type not in ("fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"):
+            memory_type = "note"
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.75
+        confidence_value = max(0.0, min(1.0, confidence_value))
+        firewall = evaluate_memory_firewall(
+            {
+                "title": title,
+                "summary": summary,
+                "tags": tags or [],
+                "source": source or "api",
+                "memoryType": memory_type,
+                "subject": subject or title,
+            }
+        )
+        sanitized = firewall["sanitizedPayload"]
+        redacted_tags = sanitized.get("tags") if isinstance(sanitized.get("tags"), list) else []
+        event_status = "quarantined" if firewall["decision"] == "quarantine_for_review" else "active"
+        review_status = "quarantined" if firewall["decision"] == "quarantine_for_review" else "pending"
+        promotion_state = "quarantined" if event_status == "quarantined" else "review_pending"
         event = {
             "eventId": _id("mem"),
             "workspaceId": workspace_id,
             "actorAgentId": actor_agent_id,
             "scope": scope or "workspace",
-            "title": title,
-            "summary": summary,
-            "tags": tags or [],
-            "source": source or "api",
+            "memoryType": memory_type,
+            "subject": sanitized.get("subject") or redact_text(subject or title),
+            "title": sanitized.get("title") or redact_text(title),
+            "summary": sanitized.get("summary") or redact_text(summary),
+            "tags": [redact_text(tag) for tag in redacted_tags],
+            "source": sanitized.get("source") or "api",
+            "confidence": confidence_value,
+            "promotionState": promotion_state,
+            "reviewStatus": review_status,
+            "bodyHash": _canonical_hash(sanitized),
+            "revision": 1,
+            "firewall": {
+                "schemaVersion": firewall["schemaVersion"],
+                "decision": firewall["decision"],
+                "riskScore": firewall["riskScore"],
+                "detectedThreats": firewall["detectedThreats"],
+                "valuesRedacted": firewall["valuesRedacted"],
+            },
             "createdAt": utc_now(),
-            "status": "active",
+            "status": event_status,
             "rawPrivatePayloadStored": False,
             "valuesRedacted": True,
         }
         data["memoryEvents"].append(event)
-        self.audit(data, "memory.submit", actor_agent_id, event["eventId"])
+        review = {
+            "reviewId": _id("review"),
+            "workspaceId": workspace_id,
+            "memoryEventId": event["eventId"],
+            "proposedByAgentId": actor_agent_id,
+            "reviewType": "memory_promotion",
+            "status": review_status,
+            "publicSafeSummary": event["summary"][:1000],
+            "firewallDecision": firewall["decision"],
+            "riskScore": firewall["riskScore"],
+            "detectedThreats": firewall["detectedThreats"],
+            "createdAt": utc_now(),
+            "decidedAt": None,
+            "reviewerAgentId": None,
+            "reviewerNoteHash": None,
+            "valuesRedacted": True,
+        }
+        data.setdefault("reviewQueue", []).append(review)
+        self._append_outbox(data, workspace_id, "matm.memory_event.submitted", "memory_event", event["eventId"], event)
+        self._append_storage_ledger(data, workspace_id, "memory_event", event["eventId"], event)
+        self.audit(data, "memory.submit", actor_agent_id, event["eventId"], workspace_id, {"reviewId": review["reviewId"], "firewallDecision": firewall["decision"]})
         self._save(data)
         return event
 
@@ -250,6 +350,8 @@ class FileStore(object):
         items = []
         for event in data["memoryEvents"]:
             if event.get("workspaceId") != workspace_id:
+                continue
+            if event.get("status") in ("rejected", "quarantined"):
                 continue
             haystack = " ".join(
                 [
@@ -263,8 +365,55 @@ class FileStore(object):
                 items.append(event)
         return items
 
+    def review_queue(self, workspace_id, status=None):
+        data = self._load()
+        wanted = (status or "").strip().lower()
+        items = []
+        for item in data.get("reviewQueue", []):
+            if item.get("workspaceId") != workspace_id:
+                continue
+            if wanted and item.get("status") != wanted:
+                continue
+            items.append(item)
+        return items
+
+    def decide_review(self, workspace_id, review_id, reviewer_agent_id, decision, review_note=None):
+        data = self._load()
+        normalized = (decision or "").strip().lower()
+        target_status = {
+            "promote": "promoted",
+            "approve": "promoted",
+            "reject": "rejected",
+            "quarantine": "quarantined",
+        }.get(normalized)
+        if not target_status:
+            return None, "invalid_decision"
+        review = None
+        for item in data.get("reviewQueue", []):
+            if item.get("workspaceId") == workspace_id and item.get("reviewId") == review_id:
+                review = item
+                break
+        if not review:
+            return None, "not_found"
+        review["status"] = target_status
+        review["decidedAt"] = utc_now()
+        review["reviewerAgentId"] = reviewer_agent_id
+        review["reviewerNoteHash"] = _canonical_hash({"reviewNote": review_note or ""}) if review_note else None
+        for event in data.get("memoryEvents", []):
+            if event.get("workspaceId") == workspace_id and event.get("eventId") == review.get("memoryEventId"):
+                event["reviewStatus"] = target_status
+                event["promotionState"] = target_status
+                event["status"] = "active" if target_status == "promoted" else target_status
+                event["updatedAt"] = utc_now()
+                break
+        self._append_outbox(data, workspace_id, "matm.review.decision", "review_queue", review_id, review)
+        self.audit(data, "review.decide", reviewer_agent_id, review_id, workspace_id, {"decision": target_status})
+        self._save(data)
+        return review, None
+
     def submit_message(self, workspace_id, sender_agent_id, target_agent_id, safe_summary, response_required):
         data = self._load()
+        safe_summary = redact_text(safe_summary)
         message = {
             "messageId": _id("msg"),
             "workspaceId": workspace_id,
@@ -288,7 +437,9 @@ class FileStore(object):
         }
         data["messages"].append(message)
         data["notifications"].append(note)
-        self.audit(data, "message.submit", sender_agent_id, message["messageId"])
+        self._append_outbox(data, workspace_id, "matm.agent_message.submitted", "message", message["messageId"], message)
+        self._append_storage_ledger(data, workspace_id, "message", message["messageId"], message)
+        self.audit(data, "message.submit", sender_agent_id, message["messageId"], workspace_id)
         self._save(data)
         return message, note
 
@@ -337,7 +488,7 @@ class FileStore(object):
                     "valuesRedacted": True,
                 }
                 data["receipts"].append(receipt)
-                self.audit(data, "notification.ack", consumer_agent_id, notification_id)
+                self.audit(data, "notification.ack", consumer_agent_id, notification_id, workspace_id)
                 self._save(data)
                 return receipt
         return None
@@ -376,7 +527,7 @@ class SQLiteStore(FileStore):
                 ).fetchone()
                 if not row:
                     return _blank_store()
-                return json.loads(row[0])
+                return _normalize_store(json.loads(row[0]))
 
     def _save(self, data):
         with _LOCK:

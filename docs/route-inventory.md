@@ -25,6 +25,8 @@ Current protected MATM routes:
 - `/api/matm/memory-events/submit`
 - `/api/matm/memory-events`
 - `/api/matm/search`
+- `/api/matm/review-queue`
+- `/api/matm/review-queue/decide`
 - `/api/matm/agent-messages`
 - `/api/matm/current-message`
 - `/api/matm/agent-inbox`

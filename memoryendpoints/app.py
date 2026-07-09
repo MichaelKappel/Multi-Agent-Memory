@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from . import __version__
 from .config import DOCS_DIR, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
+from .security import redact_text
 from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
 from .storage import FileStore, SQLiteStore
 
@@ -432,10 +433,52 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Memory event summaries must be at most 4000 characters.", "summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this memory event.", "quota_exceeded")
-        event = store.submit_memory(workspace_id, body.get("actorAgentId") or body.get("actor_agent_id"), body.get("scope"), title, summary, body.get("tags") or [], body.get("source"))
+        event = store.submit_memory(
+            workspace_id,
+            body.get("actorAgentId") or body.get("actor_agent_id"),
+            body.get("scope"),
+            title,
+            summary,
+            body.get("tags") or [],
+            body.get("source"),
+            body.get("memoryType") or body.get("memory_type"),
+            body.get("subject"),
+            body.get("confidence"),
+        )
         payload = {"ok": True, "event": event}
         store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
+    if path == "/api/matm/review-queue" and method == "GET":
+        items = store.review_queue(workspace_id, query.get("status"))
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "items": items,
+                "count": len(items),
+                "valuesRedacted": True,
+                "promotionRoute": "/api/matm/review-queue/decide",
+            },
+        )
+    if path == "/api/matm/review-queue/decide" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "review-decide", body)
+        if replay:
+            return replay
+        review_id = body.get("reviewId") or body.get("review_id")
+        reviewer_agent_id = body.get("reviewerAgentId") or body.get("reviewer_agent_id")
+        decision = body.get("decision")
+        if not review_id:
+            return problem(start_response, "422 Unprocessable Entity", "Review id required", "Review decisions require reviewId.", "review_id_required")
+        if not reviewer_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Reviewer agent id required", "Review decisions require reviewerAgentId.", "reviewer_agent_id_required")
+        review, error = store.decide_review(workspace_id, review_id, reviewer_agent_id, decision, redact_text(body.get("reviewNote") or body.get("review_note") or ""))
+        if error == "invalid_decision":
+            return problem(start_response, "422 Unprocessable Entity", "Invalid review decision", "Decision must be promote, approve, reject, or quarantine.", "invalid_review_decision")
+        if error == "not_found":
+            return problem(start_response, "404 Not Found", "Review item not found", "No matching review queue item exists for this workspace.", "review_item_not_found")
+        payload = {"ok": True, "review": review, "valuesRedacted": True}
+        store.record_idempotency(workspace_id, idem, "review-decide", body, payload, "200 OK")
+        return json_response(start_response, payload)
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
         items = store.search_memory(workspace_id, query.get("q") or query.get("query"))
         docs_items = _docs_memory(query.get("q") or query.get("query"))

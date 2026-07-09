@@ -29,6 +29,8 @@ ROUTE_TABLE = [
     {"route": "/api/matm/memory-events/submit", "access": "protected", "methods": ["POST"], "purpose": "Workspace memory summary write."},
     {"route": "/api/matm/memory-events", "access": "protected", "methods": ["GET"], "purpose": "Workspace memory event search."},
     {"route": "/api/matm/search", "access": "protected", "methods": ["GET"], "purpose": "Workspace and docs-backed memory search."},
+    {"route": "/api/matm/review-queue", "access": "protected", "methods": ["GET"], "purpose": "Memory review and promotion queue readback."},
+    {"route": "/api/matm/review-queue/decide", "access": "protected", "methods": ["POST"], "purpose": "Idempotent memory promotion, rejection, or quarantine decision."},
     {"route": "/api/matm/agent-messages", "access": "protected", "methods": ["POST"], "purpose": "Current-message creation."},
     {"route": "/api/matm/current-message", "access": "protected", "methods": ["GET"], "purpose": "Current-message lane readback."},
     {"route": "/api/matm/agent-inbox", "access": "protected", "methods": ["GET"], "purpose": "Unread inbox readback."},
@@ -61,10 +63,22 @@ def capability_matrix():
         "memoryLevels": [
             {"level": "session", "status": "live", "storage": ".uai/short-term-memory.uai"},
             {"level": "project", "status": "live", "storage": "docs/long-term-memory"},
-            {"level": "workspace", "status": "live", "storage": "file store"},
+            {"level": "workspace", "status": "live", "storage": "file store with memory firewall and review queue"},
             {"level": "workspace_database", "status": "live_optional", "storage": "stdlib sqlite"},
             {"level": "client", "status": "planned", "storage": "review-gated durable memory"},
         ],
+        "memoryFirewall": {
+            "status": "live",
+            "redactsBeforePersistence": True,
+            "quarantineRoute": "/api/matm/review-queue",
+            "rawPrivatePayloadStored": False,
+        },
+        "reviewPromotionQueue": {
+            "status": "live",
+            "readRoute": "/api/matm/review-queue",
+            "decisionRoute": "/api/matm/review-queue/decide",
+            "idempotencyRequiredForDecision": True,
+        },
         "storageBackends": [
             {"backend": "file", "status": "live", "dependency": "python_stdlib"},
             {"backend": "sqlite", "status": "live_optional", "dependency": "python_stdlib_sqlite3"},
@@ -164,7 +178,12 @@ def readiness_result():
             {
                 "id": "privacy_and_secret_handling",
                 "status": "pass_local",
-                "evidence": ["one-time key return", "token hash storage", "redacted receipts"],
+                "evidence": ["one-time key return", "token hash storage", "redacted receipts", "memory firewall redacts secret-like input before persistence"],
+            },
+            {
+                "id": "review_promotion_queue",
+                "status": "pass_local",
+                "evidence": ["/api/matm/review-queue", "/api/matm/review-queue/decide", "idempotent promotion decisions"],
             },
             {
                 "id": "agent_file_handoff",

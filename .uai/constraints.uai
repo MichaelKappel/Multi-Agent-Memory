@@ -1,5 +1,16 @@
 MemoryEndpoints.com constraints
 
+Purpose:
+- Runtime, repository, safety, licensing, and claim-boundary constraints for MemoryEndpoints.com agents.
+
+Last verified: 2026-07-09
+Memory scope: active guardrails and policy constraints.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file for constraint changes; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: user objective, repository policy docs, `.uai/totem.uai`, `SECURITY.md`, `LICENSE`, and `NOTICE`.
+Next action for agents: apply these constraints before code, docs, deploy, or GitHub work.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
+
 - Do not print or commit raw credentials.
 - Do not commit E:\ftp_Deploy.txt or derived secret values.
 - Runtime must remain pure Python stdlib, TypeScript, and HTML5 unless the human explicitly approves a dependency.

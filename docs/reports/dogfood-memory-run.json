@@ -1,0 +1,133 @@
+{
+  "currentMessageUnreadCount": 1,
+  "generatedAt": "2026-07-09T14:58:38Z",
+  "liveDogfoodVerified": false,
+  "localDogfoodVerified": true,
+  "mode": "local_wsgi",
+  "oneTimeKeyReturned": true,
+  "postAckUnreadCount": 0,
+  "rawCredentialValuesStored": false,
+  "rawPrivatePayloadsStored": false,
+  "rawWorkspaceIdStoredInReport": false,
+  "receiptCount": 1,
+  "schemaVersion": "memoryendpoints.dogfood_run.v1",
+  "searchReadbackCount": 1,
+  "steps": [
+    {
+      "httpStatus": "201 Created",
+      "name": "create_free_workspace",
+      "ok": true,
+      "payloadShape": [
+        "apiKeySecret",
+        "checkoutRequired",
+        "idempotencySupported",
+        "keyId",
+        "ok",
+        "rawKeyStoredByServer",
+        "showKeyOnce",
+        "storageLimitBytes",
+        "storeKeySafely",
+        "workspaceId"
+      ]
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "register_agent",
+      "ok": true,
+      "payloadShape": [
+        "agent",
+        "ok"
+      ]
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "submit_memory",
+      "ok": true,
+      "payloadShape": [
+        "event",
+        "ok"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "search_memory",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "docsMemory",
+        "docsMemoryCount",
+        "items",
+        "ok"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_review_queue",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "items",
+        "ok",
+        "promotionRoute",
+        "valuesRedacted"
+      ]
+    },
+    {
+      "httpStatus": "202 Accepted",
+      "name": "create_current_message",
+      "ok": true,
+      "payloadShape": [
+        "message",
+        "notification",
+        "ok"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_current_message",
+      "ok": true,
+      "payloadShape": [
+        "currentMessageLane",
+        "items",
+        "ok",
+        "responseStates",
+        "unreadCount"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "acknowledge_notification",
+      "ok": true,
+      "payloadShape": [
+        "ok",
+        "receipt"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_redacted_receipts",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "items",
+        "ok",
+        "valuesRedacted"
+      ]
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_current_message_after_ack",
+      "ok": true,
+      "payloadShape": [
+        "currentMessageLane",
+        "items",
+        "ok",
+        "responseStates",
+        "unreadCount"
+      ]
+    }
+  ],
+  "uaiProgressUpdated": true,
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:f6c74b20ed92cd6f9a9045e55fcd9e31ea687aac8efee19cb60a0346357bcf6c"
+}

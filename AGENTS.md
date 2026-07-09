@@ -4,15 +4,16 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 
 ## Startup Order
 
-1. Read `.uai/constraints.uai`.
+1. Read `.uai/totem.uai`.
 2. Read `.uai/startup-packet.uai`.
-3. Inspect active file handoff buckets:
+3. Read `.uai/constraints.uai`.
+4. Inspect active file handoff buckets:
    - `agent-file-handoff/Content`
    - `agent-file-handoff/Improvement`
-4. Use `.uai/` as short-term/startup memory.
-5. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory boundary.
-6. Use MultiAgentMemory.com as the GitHub companion documentation site.
-7. Record progress in `.uai/progress.uai` and reports under `docs/reports/`.
+5. Use `.uai/` as short-term/startup memory.
+6. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory boundary when reachable and authenticated.
+7. Use MultiAgentMemory.com as the GitHub companion documentation site.
+8. Record progress in `.uai/progress.uai` and reports under `docs/reports/`.
 
 ## Hard Rules
 
@@ -24,6 +25,7 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 - Protected MATM mutation routes must use public-safe summaries and idempotency keys when retrying writes.
 - Agent current-message work enters through `/api/matm/current-message`; acknowledge handled notifications through `/api/matm/notifications/ack`.
 - Check `/api/matm/workspace` before large writes. Free agent workspaces have a 200 MB quota.
+- Local `.uai` stays active always. Hosted MATM augments durable memory; it never replaces local startup continuity.
 
 ## Verification
 

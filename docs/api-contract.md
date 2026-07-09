@@ -63,7 +63,7 @@ Required:
 
 ### POST `/api/matm/memory-events/submit`
 
-Writes a public-safe memory summary.
+Writes a public-safe memory summary after deterministic memory firewall review.
 
 Required:
 
@@ -75,6 +75,18 @@ Limits:
 
 - `summary` maximum: 4000 characters
 - Raw private payloads are not accepted.
+
+Optional typed-memory fields:
+
+- `memoryType`: one of `fact`, `decision`, `status`, `procedure`, `risk`, `evidence`, `handoff`, or `note`.
+- `subject`
+- `confidence`: numeric value from `0.0` to `1.0`.
+
+Firewall behavior:
+
+- Secret-like values, script markers, dangerous object keys, and injection markers are redacted or routed into review state before persistence.
+- The response includes a public-safe `event.firewall` summary with decision, risk score, detected threats, and redaction status.
+- Raw private payloads are not stored.
 
 ### GET `/api/matm/search`
 
@@ -89,6 +101,36 @@ Response includes:
 
 - `items`: API-submitted memory events
 - `docsMemory`: matching records from `docs/long-term-memory`
+
+Quarantined or rejected memory records are excluded from normal search results.
+
+### GET `/api/matm/review-queue`
+
+Reads memory review and promotion queue entries for the workspace.
+
+Query:
+
+- `workspace_id`
+- `status` optional filter such as `pending`, `promoted`, `rejected`, or `quarantined`
+
+The route returns public-safe queue metadata only. It does not return raw private payloads, raw reviewer notes, credentials, or idempotency keys.
+
+### POST `/api/matm/review-queue/decide`
+
+Records an idempotent review decision.
+
+Required:
+
+- `workspaceId`
+- `reviewId`
+- `reviewerAgentId`
+- `decision`: `promote`, `approve`, `reject`, or `quarantine`
+
+Optional:
+
+- `reviewNote`: stored as a digest only; not returned verbatim.
+
+This route supports idempotency. Exact retries replay the original response; the same idempotency key with a different body returns conflict-safe no-op behavior.
 
 ### POST `/api/matm/agent-messages`
 

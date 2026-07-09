@@ -1,0 +1,31 @@
+MemoryEndpoints MATM Totem
+
+Purpose:
+- This file records the non-negotiable memory invariant for MemoryEndpoints.com.
+- It is loaded as startup continuity memory before relying on hosted MATM routes.
+
+Last verified: 2026-07-09
+Memory scope: startup continuity, offline continuity, and non-retirement invariant.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file for invariant changes; submit only public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: this file and `.uai/startup-packet.uai`.
+Next action for agents: read this file first, then load the rest of `.uai`.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
+
+Totem rule:
+- Local `.uai` stays active always.
+- MemoryEndpoints.com is the mid-to-long-term MATM endpoint, but it never replaces local `.uai` startup memory.
+- If an agent cannot connect to MemoryEndpoints.com, the agent must continue from the local `.uai` folder instead of forgetting the project context.
+- Local `.uai` files are not retired after live MATM verification.
+- Hosted MATM can augment, search, coordinate, and preserve durable memory, but `.uai` remains the local continuity anchor.
+
+Required agent behavior:
+- Read `.uai/startup-packet.uai`, `.uai/totem.uai`, `.uai/constraints.uai`, `.uai/short-term-memory.uai`, `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, `.uai/file-handoff.uai`, and `.uai/progress.uai` at startup when local filesystem access is available.
+- Use `https://memoryendpoints.com/api/matm/memory-events/submit` for safe authenticated MATM memory updates when configured credentials and connectivity exist.
+- If hosted MATM is unavailable, record public-safe progress in `.uai/progress.uai` and continue from local memory.
+- Do not place raw API keys, bearer tokens, FTP credentials, database passwords, private keys, or private handoff payloads in `.uai`.
+
+Truth boundary:
+- `.uai` is short-term/startup continuity memory and break-glass local memory.
+- MemoryEndpoints.com is the durable MATM system of record when reachable and authenticated.
+- The two layers are additive. Neither layer silently deletes, retires, or invalidates the other.
