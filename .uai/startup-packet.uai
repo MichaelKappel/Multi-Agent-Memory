@@ -15,10 +15,11 @@ Read order:
 1. .uai/totem.uai
 2. .uai/constraints.uai
 3. .uai/file-handoff.uai
-4. .uai/short-term-memory.uai
-5. .uai/long-term-memory.uai
-6. .uai/long-term-pointer-ledger.uai
-7. .uai/progress.uai
+4. .uai/intake-outcome-ledger.uai
+5. .uai/short-term-memory.uai
+6. .uai/long-term-memory.uai
+7. .uai/long-term-pointer-ledger.uai
+8. .uai/progress.uai
 
 Target:
 Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.

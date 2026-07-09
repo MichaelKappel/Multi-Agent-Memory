@@ -1,0 +1,165 @@
+{
+  "blockers": [
+    {
+      "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
+      "evidence": [
+        "docs/reports/deploy-attempt-20260709.json"
+      ],
+      "requirement": "latest_code_live_deployed",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "requirement": "live_dogfooding",
+      "status": "blocked"
+    }
+  ],
+  "checkResults": [
+    {
+      "command": "python -m unittest discover -s tests",
+      "exitCode": 0,
+      "name": "unit_and_integration_tests",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/verify_memoryendpoints.py --wsgi",
+      "exitCode": 0,
+      "name": "wsgi_route_verifier",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/audit_uai_memory.py",
+      "exitCode": 0,
+      "name": "uai_memory_audit",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/package_memoryendpoints.py --check-only",
+      "exitCode": 0,
+      "name": "package_check",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/secret_scan.py",
+      "exitCode": 0,
+      "name": "secret_scan",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0,
+      "name": "diff_check",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    }
+  ],
+  "checksOk": true,
+  "checksRun": true,
+  "completionClaimAllowed": false,
+  "generatedFromCurrentWorktree": true,
+  "ok": false,
+  "requirements": [
+    {
+      "blocker": null,
+      "evidence": [
+        "README.md",
+        "AGENTS.md",
+        "docs/repository-structure.md",
+        "sites/multiagentmemory.com/"
+      ],
+      "requirement": "local_repository_organized",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        ".uai/totem.uai",
+        "scripts/audit_uai_memory.py",
+        "local .uai stays active always"
+      ],
+      "requirement": "uai_memory_complete_and_active",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        "tests/test_app.py covers free account, hash boundary, registration, memory submit/search, firewall redaction, review queue, current-message, ack, receipts, idempotency, and safe no-op errors"
+      ],
+      "requirement": "critical_protected_workflows_integration_tested",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "requirement": "local_dogfooding",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/local-route-verification.json"
+      ],
+      "requirement": "public_wsgi_routes",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/live-route-verification.json"
+      ],
+      "requirement": "live_public_routes",
+      "status": "pass_live_current_public_surface"
+    },
+    {
+      "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
+      "evidence": [
+        "docs/reports/deploy-attempt-20260709.json"
+      ],
+      "requirement": "latest_code_live_deployed",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "requirement": "live_dogfooding",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Python stdlib has no MySQL client; SQLite/file storage is active while MySQL remains schema-ready/gated.",
+      "evidence": [
+        "docs/database-schema-canonical.sql",
+        "docs/storage-backends.md"
+      ],
+      "requirement": "mysql_runtime_adapter",
+      "status": "gated"
+    }
+  ],
+  "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
+  "summary": {
+    "latestCodeLiveDeployed": false,
+    "liveDogfoodVerified": false,
+    "livePublicRoutesVerified": true,
+    "localHardeningVerified": true,
+    "promptDraftsTracked": false,
+    "valuesRedacted": true
+  },
+  "valuesRedacted": true
+}

@@ -1,0 +1,113 @@
+{
+  "expectedStartupReadOrder": [
+    ".uai/totem.uai",
+    ".uai/constraints.uai",
+    ".uai/file-handoff.uai",
+    ".uai/intake-outcome-ledger.uai",
+    ".uai/short-term-memory.uai",
+    ".uai/long-term-memory.uai",
+    ".uai/long-term-pointer-ledger.uai",
+    ".uai/progress.uai"
+  ],
+  "fileCount": 9,
+  "items": [
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/constraints.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/file-handoff.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/intake-outcome-ledger.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/long-term-memory.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/long-term-pointer-ledger.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/progress.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/short-term-memory.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/startup-packet.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/totem.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    }
+  ],
+  "localUaiStaysActiveAlways": true,
+  "missingFiles": [],
+  "ok": true,
+  "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
+  "startupReadOrder": [
+    ".uai/totem.uai",
+    ".uai/constraints.uai",
+    ".uai/file-handoff.uai",
+    ".uai/intake-outcome-ledger.uai",
+    ".uai/short-term-memory.uai",
+    ".uai/long-term-memory.uai",
+    ".uai/long-term-pointer-ledger.uai",
+    ".uai/progress.uai"
+  ],
+  "startupReadOrderMatchesExpected": true,
+  "startupReadOrderTotemFirst": true,
+  "valuesRedacted": true
+}

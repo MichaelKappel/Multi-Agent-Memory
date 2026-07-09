@@ -13,9 +13,12 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 ## Evidence
 
 - [Current implementation audit](reports/current-implementation-audit.md)
+- [Enterprise readiness audit](reports/enterprise-readiness-audit.json)
+- [UAI memory audit](reports/uai-memory-audit.json)
 - [NeuralWikis concept intake](reports/neuralwikis-concept-intake.md)
 - [Enterprise MATM gap matrix](reports/enterprise-gap-matrix.md)
 - [Local dogfood memory run](reports/dogfood-memory-run.json)
+- [Deploy attempt report](reports/deploy-attempt-20260709.json)
 - [Final verification report](reports/final-verification-report.md)
 - [Local route verification](reports/local-route-verification.json)
 - [Live route verification](reports/live-route-verification.json)
