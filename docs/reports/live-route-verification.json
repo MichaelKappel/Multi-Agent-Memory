@@ -3,7 +3,7 @@
   "expectedSourceShaSource": null,
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+  "gitHeadAtVerification": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
   "items": [
     {
       "leakHitCount": 0,
@@ -41,6 +41,14 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "route": "/console",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
       "route": "/memory-lifecycle",
       "secretHitCount": 0,
       "status": 200
@@ -59,8 +67,8 @@
       "missing": [],
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
-      "sourceShaShort": "239975b9b1cc",
+      "sourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+      "sourceShaShort": "9d1b91a0c500",
       "status": 200
     },
     {
@@ -177,10 +185,10 @@
     }
   ],
   "mode": "http",
-  "observedSourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+  "observedSourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
   "ok": true,
   "reportScope": "point_in_time_snapshot",
-  "routeCount": 21,
+  "routeCount": 22,
   "schemaVersion": "memoryendpoints.verifier.v1",
   "sourceShaMatchesExpected": null
 }

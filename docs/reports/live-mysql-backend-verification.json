@@ -1,12 +1,12 @@
 {
   "baseUrl": "https://memoryendpoints.com",
-  "configuredStoreBackend": "",
+  "configuredStoreBackend": "file",
   "httpStatus": 200,
   "mysqlBackendVerified": false,
   "ok": false,
   "schemaVersion": "memoryendpoints.mysql_backend_verifier.v1",
-  "sourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+  "sourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
   "storeBackend": "file",
-  "storeBackendVerified": false,
+  "storeBackendVerified": true,
   "valuesRedacted": true
 }
