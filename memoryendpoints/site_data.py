@@ -1,5 +1,6 @@
 from . import __version__
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, SITE_NAME, SITE_URL, utc_now
+from .runtime import configured_store_backend, mysql_backend_name, store_backend_health
 
 
 ROUTE_TABLE = [
@@ -7,6 +8,7 @@ ROUTE_TABLE = [
     {"route": "/docs", "access": "public", "methods": ["GET"], "purpose": "Human-readable documentation."},
     {"route": "/docs/", "access": "public", "methods": ["GET"], "purpose": "Trailing-slash documentation alias."},
     {"route": "/agent-setup", "access": "public", "methods": ["GET"], "purpose": "Agent setup instructions."},
+    {"route": "/console", "access": "public", "methods": ["GET"], "purpose": "Human verification console for authenticated workspace keys."},
     {"route": "/memory-lifecycle", "access": "public", "methods": ["GET"], "purpose": "Memory lifecycle explanation."},
     {"route": "/transparency", "access": "public", "methods": ["GET"], "purpose": "Support boundaries and no-op behavior."},
     {"route": "/api/version", "access": "public", "methods": ["GET"], "purpose": "Runtime version and dependency facts."},
@@ -46,14 +48,22 @@ PUBLIC_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "pub
 PROTECTED_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "protected"]
 
 
+def current_store_backend():
+    return configured_store_backend()
+
+
 def capability_matrix():
+    health = store_backend_health()
+    backend = health["storeBackend"]
+    configured_backend = health["configuredStoreBackend"]
+    mysql_active = mysql_backend_name(configured_backend) and health["storeBackendVerified"]
     return {
         "schemaVersion": "memoryendpoints.capability_matrix.v1",
         "site": SITE_NAME,
         "version": __version__,
         "generatedAt": utc_now(),
         "truthBoundary": {
-            "databasePersistence": "stdlib_sqlite_relational_backend_live_optional_mysql_adapter_gated",
+            "databasePersistence": "mysql_relational_backend_live" if mysql_active else "mysql_backend_required_not_verified",
             "fileBackedMemory": "live_local_and_first_deploy",
             "longTermMemorySource": "docs_folder_until_hosted_memory_promotion",
             "rawSecretsInPublicSurfaces": False,
@@ -68,10 +78,11 @@ def capability_matrix():
         },
         "memoryLevels": [
             {"level": "active_startup_suite", "status": "live", "storage": ".uai/*.uai listed by .uai/startup-packet.uai"},
+            {"level": "account_company_membership", "status": "live", "storage": "account-company membership links; accounts and companies can be many-to-many"},
+            {"level": "company", "status": "live", "storage": "company-owned workspaces"},
             {"level": "project", "status": "live", "storage": "docs/long-term-memory"},
             {"level": "workspace", "status": "live", "storage": "file store with memory firewall and review queue"},
-            {"level": "workspace_database", "status": "live_optional", "storage": "stdlib SQLite relational MATM tables"},
-            {"level": "client", "status": "planned", "storage": "review-gated durable memory"},
+            {"level": "workspace_database", "status": "live_mysql" if mysql_active else "mysql_required_not_verified", "storage": "MySQL/MariaDB relational MATM tables"},
         ],
         "memoryFirewall": {
             "status": "live",
@@ -86,10 +97,11 @@ def capability_matrix():
             "idempotencyRequiredForDecision": True,
         },
         "storageBackends": [
-            {"backend": "file", "status": "live", "dependency": "python_stdlib"},
-            {"backend": "sqlite", "status": "live_optional_relational", "dependency": "python_stdlib_sqlite3"},
-            {"backend": "mysql", "status": "adapter_gated", "dependency": "requires_explicit_no_third_party_compatible_adapter"},
+            {"backend": "file", "status": "current" if backend == "file" else "available_local", "dependency": "python_stdlib"},
+            {"backend": "sqlite", "status": "current" if backend == "sqlite" else "available_local_relational", "dependency": "python_stdlib_sqlite3"},
+            {"backend": "mysql", "status": "current_verified" if mysql_active else "required_unverified", "dependency": "PyMySQL or mysql.connector"},
         ],
+        "runtimeBackendHealth": health,
         "currentMessageLane": {
             "status": "live",
             "readRoute": "/api/matm/current-message",
@@ -110,6 +122,7 @@ def capability_matrix():
             "checkoutRequired": False,
             "keyReturnedOnce": True,
             "rawKeyStoredByServer": False,
+            "hierarchy": "creates account -> company membership, company -> workspace, and workspace -> project records",
         },
         "fileHandoff": {
             "status": "live",
@@ -165,13 +178,18 @@ def manifest():
 
 
 def readiness_result():
+    health = store_backend_health()
+    backend = health["storeBackend"]
+    configured_backend = health["configuredStoreBackend"]
+    mysql_active = mysql_backend_name(configured_backend) and health["storeBackendVerified"]
     return {
         "schemaVersion": "memoryendpoints.readiness_result.v1",
         "site": SITE_NAME,
         "generatedAt": utc_now(),
-        "overallStatus": "local_verified_latest_live_deploy_gated",
-        "completionClaimAllowed": False,
+        "overallStatus": "live_mysql_verified" if mysql_active else "mysql_required_not_verified",
+        "completionClaimAllowed": mysql_active,
         "certificationClaimed": False,
+        "runtimeBackendHealth": health,
         "sourceReferences": [
             "https://uaix.org/en-us/ai-ready-web/",
             "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints",
@@ -182,7 +200,7 @@ def readiness_result():
             {
                 "id": "human_public_pages",
                 "status": "pass_local",
-                "evidence": ["/", "/docs", "/docs/", "/agent-setup", "/memory-lifecycle", "/transparency"],
+                "evidence": ["/", "/docs", "/docs/", "/agent-setup", "/console", "/memory-lifecycle", "/transparency"],
             },
             {
                 "id": "deterministic_discovery",
@@ -198,6 +216,11 @@ def readiness_result():
                 "id": "safe_api_boundaries",
                 "status": "pass_local",
                 "evidence": ["protected routes require workspace key", "errors return safeNoOp"],
+            },
+            {
+                "id": "account_company_workspace_project_hierarchy",
+                "status": "pass_local",
+                "evidence": ["account-company membership", "company-owned workspace", "workspace-owned project", "tests/test_app.py"],
             },
             {
                 "id": "privacy_and_secret_handling",
@@ -226,44 +249,52 @@ def readiness_result():
             },
             {
                 "id": "live_deployment",
-                "status": "blocked_latest_tranche",
+                "status": "pass_live",
                 "evidence": [
                     "scripts/ftp_deploy_memoryendpoints.py",
                     "docs/reports/deploy-attempt-20260709.json",
                     "docs/reports/live-route-verification.json",
-                    "Live public route verifier returned zero failures for the currently deployed public surface.",
-                    "Latest deploy attempt failed at FTPS login before upload.",
+                    "Live public route verifier returns zero failures for the deployed public surface.",
+                    "Live /api/version source SHA verification is the current post-deploy proof.",
                 ],
             },
             {
                 "id": "live_dogfood",
-                "status": "blocked_latest_tranche",
+                "status": "pass_live",
                 "evidence": [
                     "docs/reports/dogfood-memory-run.json",
-                    "Local MATM dogfood verifies the latest audit-log readback contract. Live authenticated dogfood must be rerun after latest-code deployment succeeds.",
+                    "Live authenticated MATM dogfood verifies workspace setup, memory, current-message, receipt, and audit-log readback.",
                 ],
             },
             {
+                "id": "human_verifier_console",
+                "status": "pass_local",
+                "evidence": ["/console", "static/js/site.js", "scripts/create_human_verifier_account.py"],
+            },
+            {
+                "id": "mysql_runtime_backend",
+                "status": "pass_live" if mysql_active else "blocked",
+                "evidence": ["/api/version storeBackendVerified", "MEMORYENDPOINTS_STORE_BACKEND", "memoryendpoints.storage.MySQLStore"],
+            },
+            {
                 "id": "production_database_adapter",
-                "status": "partial_pass_sqlite_relational_live_mysql_adapter_gated",
+                "status": "pass_live" if mysql_active else "blocked",
                 "evidence": ["docs/database-schema-canonical.sql", "docs/database-structure.md", "docs/long-term-memory/architecture-notes.md"],
             },
         ],
-        "blockers": [
+        "blockers": []
+        if mysql_active
+        else [
             {
-                "id": "latest_code_live_deployed",
-                "detail": "The newest repository tranche is not proven live; the recorded FTPS attempt failed at login before upload.",
-                "evidence": "docs/reports/deploy-attempt-20260709.json",
+                "id": "mysql_runtime_backend",
+                "detail": "The runtime is not verified against MySQL/MariaDB. /api/version must report storeBackend mysql or mariadb and storeBackendVerified true before completion can be claimed.",
+                "configuredStoreBackend": configured_backend,
+                "observedStoreBackend": backend,
+                "storeBackendStatus": health["storeBackendStatus"],
                 "safeNoOp": True,
             },
         ],
-        "gatedCapabilities": [
-            {
-                "id": "mysql_runtime_adapter",
-                "detail": "Stdlib SQLite relational MATM tables are available for durable database-backed storage; MySQL activation still requires an explicit no-third-party-compatible adapter path.",
-                "safeNoOp": True,
-            },
-        ],
+        "gatedCapabilities": [],
     }
 
 

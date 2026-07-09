@@ -4,7 +4,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 ## Python Engineering Targets
 
-- Preserve the pure stdlib runtime until a human explicitly approves new dependencies.
+- Keep dependencies explicit and minimal; the MySQL/MariaDB Python driver is approved because production completion requires a real MySQL/MariaDB backend.
 - Keep `memoryendpoints/` as the application package boundary and avoid unrelated framework migration.
 - Continue expanding tests around storage backends, protected MATM workflows, idempotency, memory firewall behavior, and report generation.
 - Add abstractions only where they reduce real duplication or clarify a repeated route/storage contract.
@@ -13,15 +13,15 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 ## Testing And Verification Targets
 
 - Maintain the required local gate: unit tests, WSGI verifier, `.uai` audit, package check, secret scan, enterprise readiness audit, and `git diff --check`.
-- Maintain live gates separately: live public-route verifier, live MATM dogfood, and latest-code deployment verification.
+- Maintain live gates separately: live public-route verifier, live MySQL/MariaDB backend verification, live MATM dogfood, and latest-code deployment verification.
 - Keep dogfood reports public-safe: no raw workspace ids, API keys, bearer tokens, one-time keys, FTP credentials, database passwords, or private payload bodies.
 - Expand integration tests for review queue decisions, SQLite parity, quota boundaries, idempotency replay, and redacted receipt guarantees.
 - Add regression checks whenever a readiness report changes claim boundaries.
 
 ## Database And MySQL Targets
 
-- Keep file storage and stdlib SQLite relational MATM tables active now.
-- Keep MySQL/MariaDB as schema-ready but adapter-gated until a no-third-party-compatible runtime path or human-approved dependency exists.
+- Keep file storage and SQLite relational MATM tables active for local development and verification only.
+- Require MySQL/MariaDB for production completion, with `/api/version` proving `storeBackendVerified: true`.
 - Preserve canonical schema coverage for hierarchy memory, crawl/search metadata, current messages, receipts, review queue, idempotency, outbox, quota ledger, and audit.
 - Before any MySQL production claim, require migration dry runs, restore drills, least-privilege role review, TLS/encryption review, observability, and RPO/RTO documentation.
 - Avoid database topology overclaims. Distinguish single instance, source/replica, managed HA, InnoDB Cluster, cross-region DR, and sharding.

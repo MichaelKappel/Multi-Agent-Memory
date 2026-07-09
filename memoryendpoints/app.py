@@ -7,9 +7,10 @@ from . import __version__
 from .build import build_provenance
 from .config import COMPANION_DOCS_URL, DOCS_DIR, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
+from .runtime import store_backend_health
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
-from .storage import FileStore, SQLiteStore
+from .storage import FileStore, MySQLStore, SQLiteStore
 
 
 STATIC_ROOT = ROOT / "static"
@@ -46,6 +47,8 @@ def _idempotency_key(environ):
 
 def _store():
     backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file"
+    if backend in ("mysql", "mariadb"):
+        return MySQLStore()
     if backend == "sqlite":
         return SQLiteStore()
     return FileStore()
@@ -87,6 +90,7 @@ def html_page(title, main):
     <nav aria-label="Primary">
       <a href="/docs">Docs</a>
       <a href="/agent-setup">Agent Setup</a>
+      <a href="/console">Console</a>
       <a href="/memory-lifecycle">Memory</a>
       <a href="/transparency">Transparency</a>
       <a href="{companion_docs_url}">MultiAgentMemory.com</a>
@@ -120,6 +124,7 @@ def route_home(start_response):
     <p class="lead">MemoryEndpoints.com exposes a practical MATM surface for workspace memory, current messages, redacted receipts, and AI-ready discovery without third-party runtime dependencies.</p>
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
+      <a class="button" href="/console">Open human console</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
       <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
@@ -164,12 +169,105 @@ def route_agent_setup(start_response):
   <h1>Agent Setup</h1>
   <p>Agents create a free workspace with <code>POST /api/matm/agent-setup/free-account</code>. The returned key is shown once and must be saved by the human or host. MemoryEndpoints stores only a hash.</p>
   <p>The free workspace quota is <strong>200 MB</strong>. Checkout, coupon use, and human-only setup are not required.</p>
+  <p>The <a href="/console">human verification console</a> lets a human-side agent enter a saved key, inspect the company/workspace/project boundary, read memory, send current messages to all agents or a particular agent, acknowledge notifications, and see redacted receipts.</p>
   <pre><code>curl -X POST /api/matm/agent-setup/free-account \\
   -H "Content-Type: application/json" \\
-  -d "{\"label\":\"Example Workspace\"}"</code></pre>
+  -d "{\"companyLabel\":\"Example Company\",\"label\":\"Example Workspace\",\"projectLabel\":\"Example Project\"}"</code></pre>
 </section>
 """
     return response(start_response, "200 OK", html_page("Agent Setup", body), "text/html; charset=utf-8")
+
+
+def route_console(start_response):
+    body = """
+<section class="console-shell" data-matm-console>
+  <h1>Human Verification Console</h1>
+  <p>Enter a workspace key returned by the setup route. The key is used only in this browser session and is never printed back by this console.</p>
+  <form class="console-grid" data-console-auth>
+    <label>Workspace key
+      <input type="password" name="workspaceKey" autocomplete="off" placeholder="me_live_..." required>
+    </label>
+    <label>Human agent id
+      <input name="agentId" value="human-verifier-agent" required>
+    </label>
+    <button class="button primary" type="submit">Load workspace</button>
+  </form>
+  <div class="console-status" data-console-status>Waiting for a key.</div>
+  <section class="console-panel">
+    <h2>Account Boundary</h2>
+    <pre data-console-workspace>{}</pre>
+  </section>
+  <section class="console-panel">
+    <h2>Memory</h2>
+    <form class="console-grid" data-console-memory>
+      <label>Actor agent
+        <input name="actorAgentId" value="human-verifier-agent" required>
+      </label>
+      <label>Scope
+        <select name="scope">
+          <option value="company">company</option>
+          <option value="workspace" selected>workspace</option>
+          <option value="project">project</option>
+        </select>
+      </label>
+      <label>Title
+        <input name="title" value="Human-side verification note" required>
+      </label>
+      <label>Tags
+        <input name="tags" value="human-verification,matm">
+      </label>
+      <label class="wide">Public-safe summary
+        <textarea name="summary" rows="4" required>Human verifier can read company, workspace, project, and memory state from the browser console.</textarea>
+      </label>
+      <button class="button primary" type="submit">Save memory</button>
+    </form>
+    <form class="console-grid" data-console-search>
+      <label class="wide">Search memory
+        <input name="query" value="verification">
+      </label>
+      <button class="button" type="submit">Search</button>
+    </form>
+    <pre data-console-memory-output>[]</pre>
+  </section>
+  <section class="console-panel">
+    <h2>Messages</h2>
+    <form class="console-grid" data-console-message>
+      <label>Sender agent
+        <input name="senderAgentId" value="human-verifier-agent" required>
+      </label>
+      <label>Target agent
+        <input name="targetAgentId" placeholder="blank means every agent">
+      </label>
+      <label class="wide">Safe summary
+        <textarea name="safeSummary" rows="3" required>Hello Codex swarm: please confirm this workspace memory and message lane are readable from the human console.</textarea>
+      </label>
+      <label class="checkline">
+        <input type="checkbox" name="responseRequired" checked>
+        Response required
+      </label>
+      <button class="button primary" type="submit">Send message</button>
+    </form>
+    <form class="console-grid" data-console-inbox>
+      <label>Inbox agent
+        <input name="agentId" value="human-verifier-agent" required>
+      </label>
+      <button class="button" type="submit">Refresh inbox</button>
+      <button class="button" type="button" data-console-ack>Mark first unread read</button>
+    </form>
+    <pre data-console-inbox-output>[]</pre>
+  </section>
+  <section class="console-panel">
+    <h2>Receipts And Audit</h2>
+    <div class="actions">
+      <button class="button" type="button" data-console-receipts>Refresh receipts</button>
+      <button class="button" type="button" data-console-audit>Refresh audit</button>
+    </div>
+    <pre data-console-receipts-output>[]</pre>
+    <pre data-console-audit-output>[]</pre>
+  </section>
+</section>
+"""
+    return response(start_response, "200 OK", html_page("Console", body), "text/html; charset=utf-8")
 
 
 def route_memory_lifecycle(start_response):
@@ -181,7 +279,7 @@ def route_memory_lifecycle(start_response):
     <li>File handoff enters <code>agent-file-handoff/Content</code> or <code>agent-file-handoff/Improvement</code>.</li>
     <li>Reviewed durable notes live under <code>docs/long-term-memory</code> until hosted memory promotion is proven.</li>
     <li>Current messages are read through <code>/api/matm/current-message</code> and acknowledged through <code>/api/matm/notifications/ack</code>.</li>
-    <li>Production database persistence remains gated while the runtime is stdlib-only.</li>
+    <li>Production database persistence requires the live MySQL/MariaDB backend to connect and pass protected workflow verification.</li>
   </ol>
 </section>
 """
@@ -234,17 +332,22 @@ def text_discovery(name):
 
 def route_public_json(path, start_response):
     if path == "/api/version":
+        backend_health = store_backend_health()
         return json_response(
             start_response,
             {
-                "ok": True,
+                "ok": backend_health["storeBackendVerified"],
                 "site": SITE_NAME,
                 "version": __version__,
                 "generatedAt": utc_now(),
                 "build": build_provenance(),
                 "runtime": "python-stdlib-wsgi",
-                "storeBackend": os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file",
-                "thirdPartyRuntimeDependencies": False,
+                "configuredStoreBackend": backend_health["configuredStoreBackend"],
+                "storeBackend": backend_health["storeBackend"],
+                "storeBackendVerified": backend_health["storeBackendVerified"],
+                "storeBackendStatus": backend_health["storeBackendStatus"],
+                "storeBackendHealth": backend_health,
+                "thirdPartyRuntimeDependencies": backend_health["thirdPartyRuntimeDependencies"],
             },
         )
     if path == "/api/matm/live-capability-matrix":
@@ -343,6 +446,12 @@ def route_setup(environ, start_response):
                 "route": "/api/matm/agent-setup/free-account",
                 "method": "POST",
                 "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+                "hierarchy": {
+                    "account": "identity or owner boundary",
+                    "company": "organization boundary; accounts and companies are many-to-many through memberships",
+                    "workspace": "workspace belongs to company",
+                    "project": "project belongs to workspace",
+                },
                 "keyHandling": "The api key is returned once; save it outside public files and ordinary chat.",
                 "idempotencySupported": False,
                 "checkoutRequired": False,
@@ -351,14 +460,30 @@ def route_setup(environ, start_response):
     body = _read_body(environ)
     if body is None:
         return problem(start_response, "400 Bad Request", "Invalid JSON", "Request body must be JSON.", "invalid_json")
-    workspace_id, key_id, token = _store().create_free_account(body.get("label"))
+    workspace_id, key_id, token, account_id, company_id, project_id = _store().create_free_account(
+        body.get("label") or body.get("workspaceLabel") or body.get("workspace_label"),
+        body.get("companyLabel") or body.get("company_label"),
+        body.get("projectLabel") or body.get("project_label"),
+    )
     return json_response(
         start_response,
         {
             "ok": True,
+            "accountId": account_id,
+            "companyId": company_id,
             "workspaceId": workspace_id,
+            "projectId": project_id,
             "keyId": key_id,
             "apiKeySecret": token,
+            "hierarchy": {
+                "accountId": account_id,
+                "companyId": company_id,
+                "workspaceId": workspace_id,
+                "projectId": project_id,
+                "accountToCompanyMembership": True,
+                "companyToWorkspace": True,
+                "workspaceToProject": True,
+            },
             "showKeyOnce": True,
             "storeKeySafely": True,
             "rawKeyStoredByServer": False,
@@ -484,6 +609,7 @@ def route_protected(environ, start_response, path):
             body.get("memoryType") or body.get("memory_type"),
             body.get("subject"),
             body.get("confidence"),
+            body.get("scopeId") or body.get("scope_id"),
         )
         payload = {"ok": True, "event": event}
         store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
@@ -596,6 +722,8 @@ def application(environ, start_response):
         return route_docs(start_response)
     if path == "/agent-setup" and method == "GET":
         return route_agent_setup(start_response)
+    if path == "/console" and method == "GET":
+        return route_console(start_response)
     if path == "/memory-lifecycle" and method == "GET":
         return route_memory_lifecycle(start_response)
     if path == "/transparency" and method == "GET":

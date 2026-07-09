@@ -4,7 +4,7 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 
 ## Python Engineering
 
-- Keep runtime dependencies conservative. For MemoryEndpoints.com, the active constraint remains Python standard library, TypeScript source, committed browser JavaScript, HTML5, and CSS unless a human explicitly approves runtime dependencies.
+- Keep runtime dependencies conservative and explicit. For MemoryEndpoints.com production, the human-approved exception is the MySQL/MariaDB driver needed for the required production database backend.
 - Prefer small modules with explicit contracts over framework-shaped indirection. The app should keep route handling, storage, memory policy, packaging, deployment, and verification responsibilities separated.
 - Make behavior deterministic where agents or deploy tooling rely on it: explicit environment variables, stable JSON shapes, idempotency keys, redacted reports, repeatable package manifests, and command-line verification entry points.
 - Use typed boundaries even when no external type checker is required: predictable dictionaries, documented payload fields, schema files, and tests that enforce response shape.
@@ -20,8 +20,8 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 
 ## MySQL And Database Operations
 
-- Keep the canonical MySQL/MariaDB schema as a production target while the runtime adapter remains gated by the no-third-party-runtime constraint.
-- Continue supporting file storage and stdlib SQLite relational MATM tables as active local backends; use the canonical schema to keep future MySQL activation disciplined.
+- Treat MySQL/MariaDB as the production-completion backend, not a future optional adapter. `/api/version` must verify `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true`.
+- Continue supporting file storage and SQLite relational MATM tables as active local-development backends, but do not let them satisfy production readiness.
 - Require stable primary keys, explicit indexes, migration-driven schema changes, idempotency tables, quota ledgers, audit trails, and review queues in durable storage designs.
 - For future enterprise MySQL deployment planning, prefer an LTS track, InnoDB, explicit backup and point-in-time recovery drills, TLS, least-privilege roles, audit logging, and observability before claiming production readiness.
 - Do not treat read replicas as automatic HA unless the chosen managed service explicitly supports that failover mode. Record RPO/RTO assumptions before selecting topology.

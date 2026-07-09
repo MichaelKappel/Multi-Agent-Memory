@@ -1,5 +1,29 @@
 {
-  "blockers": [],
+  "blockers": [
+    {
+      "blocker": "Live latest-code no-write verifier failed; inspect checkResults for live_latest_code_verifier.",
+      "evidence": [
+        "docs/reports/deploy-attempt-20260709.json",
+        "docs/reports/deploy-connection-check-latest.json",
+        "docs/reports/deploy-connection-check-ftp-latest.json",
+        "docs/reports/live-latest-code-verification.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
+      ],
+      "requirement": "latest_code_live_deployed",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Live /api/version does not verify a working MySQL/MariaDB backend. It must report storeBackend mysql or mariadb and storeBackendVerified true.",
+      "evidence": [
+        "scripts/verify_mysql_backend.py",
+        "docs/reports/live-mysql-backend-verification.json",
+        "docs/database-schema-canonical.sql",
+        "docs/storage-backends.md"
+      ],
+      "requirement": "live_mysql_database_backend",
+      "status": "blocked"
+    }
+  ],
   "checkResults": [
     {
       "command": "python -m unittest discover -s tests",
@@ -50,6 +74,44 @@
       "valuesRedacted": true
     },
     {
+      "command": "python scripts/verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head",
+      "exitCode": 1,
+      "name": "live_latest_code_verifier",
+      "ok": false,
+      "outputCaptured": true,
+      "stderrTail": "",
+      "stdoutTail": " \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/llms.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/llms-full.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/ai.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/ai-manifest.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/.well-known/mcp.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/.well-known/ai-agent.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    }\n  ],\n  \"mode\": \"http\",\n  \"observedSourceSha\": \"0282c8619408dfa0b620de49bb3108ccd34f1eab\",\n  \"ok\": false,\n  \"reportScope\": \"point_in_time_snapshot\",\n  \"routeCount\": 22,\n  \"schemaVersion\": \"memoryendpoints.verifier.v1\",\n  \"sourceShaMatchesExpected\": true\n}\n",
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out C:\\Users\\mkapp\\AppData\\Local\\Temp\\memoryendpoints-readiness-mysql.json",
+      "exitCode": 1,
+      "name": "live_mysql_backend_verifier",
+      "ok": false,
+      "outputCaptured": true,
+      "stderrTail": "",
+      "stdoutTail": "{\n  \"baseUrl\": \"https://memoryendpoints.com\",\n  \"configuredStoreBackend\": \"\",\n  \"httpStatus\": 200,\n  \"mysqlBackendVerified\": false,\n  \"ok\": false,\n  \"schemaVersion\": \"memoryendpoints.mysql_backend_verifier.v1\",\n  \"sourceSha\": \"0282c8619408dfa0b620de49bb3108ccd34f1eab\",\n  \"storeBackend\": \"file\",\n  \"storeBackendVerified\": false,\n  \"valuesRedacted\": true\n}\n",
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com --no-progress-update --json-out C:\\Users\\mkapp\\AppData\\Local\\Temp\\memoryendpoints-readiness-dogfood.json",
+      "exitCode": null,
+      "name": "live_dogfood_verifier",
+      "ok": false,
+      "outputCaptured": false,
+      "skipReason": "live_mysql_backend_verifier_failed",
+      "skipped": true,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/verify_static_site.py --base-url https://multiagentmemory.com",
+      "exitCode": 0,
+      "name": "multiagentmemory_live_site",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
       "command": "python scripts/secret_scan.py",
       "exitCode": 0,
       "name": "secret_scan",
@@ -66,11 +128,11 @@
       "valuesRedacted": true
     }
   ],
-  "checksOk": true,
+  "checksOk": false,
   "checksRun": true,
-  "completionClaimAllowed": true,
+  "completionClaimAllowed": false,
   "generatedFromCurrentWorktree": true,
-  "ok": true,
+  "ok": false,
   "requirements": [
     {
       "blocker": null,
@@ -172,7 +234,8 @@
     {
       "blocker": null,
       "evidence": [
-        "docs/reports/live-route-verification.json"
+        "docs/reports/live-route-verification.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "live_public_routes",
       "status": "pass_live_current_public_surface"
@@ -186,20 +249,22 @@
       "status": "pass_live_current_public_surface"
     },
     {
-      "blocker": null,
+      "blocker": "Live latest-code no-write verifier failed; inspect checkResults for live_latest_code_verifier.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
         "docs/reports/deploy-connection-check-latest.json",
         "docs/reports/deploy-connection-check-ftp-latest.json",
-        "docs/reports/live-latest-code-verification.json"
+        "docs/reports/live-latest-code-verification.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "latest_code_live_deployed",
-      "status": "pass_live"
+      "status": "blocked"
     },
     {
       "blocker": null,
       "evidence": [
-        "docs/reports/dogfood-memory-run.json"
+        "docs/reports/dogfood-memory-run.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "live_dogfooding",
       "status": "pass_live"
@@ -214,33 +279,40 @@
       "status": "not_required"
     },
     {
-      "blocker": "Python stdlib has no MySQL client; file storage and stdlib SQLite relational MATM tables are active while MySQL remains schema-ready/gated.",
+      "blocker": "Live /api/version does not verify a working MySQL/MariaDB backend. It must report storeBackend mysql or mariadb and storeBackendVerified true.",
       "evidence": [
+        "scripts/verify_mysql_backend.py",
+        "docs/reports/live-mysql-backend-verification.json",
         "docs/database-schema-canonical.sql",
         "docs/storage-backends.md"
       ],
-      "requirement": "mysql_runtime_adapter",
-      "status": "gated"
+      "requirement": "live_mysql_database_backend",
+      "status": "blocked"
     }
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+    "currentGitHead": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
     "githubCiGateDecision": "not_required",
-    "githubCiReportCurrent": true,
+    "githubCiReportCurrent": false,
     "githubCiRequired": false,
-    "latestCodeLiveDeployed": true,
+    "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": true,
     "liveCoreDogfoodVerified": true,
+    "liveDogfoodCommandEvidenceCurrent": false,
     "liveDogfoodVerified": true,
-    "liveLatestCodeReportCurrent": true,
+    "liveLatestCodeCommandEvidenceCurrent": false,
+    "liveLatestCodeReportCurrent": false,
+    "liveMysqlBackendCommandEvidenceCurrent": false,
+    "liveMysqlBackendVerified": false,
     "livePublicRoutesVerified": true,
-    "localHardeningVerified": true,
+    "localHardeningVerified": false,
     "localRouteEvidenceCurrent": true,
     "localRouteReportCurrent": true,
     "multiAgentMemoryLiveDeployed": true,
+    "multiAgentMemoryLiveSiteCommandEvidenceCurrent": true,
     "multiAgentMemoryLiveSiteVerified": true,
     "multiAgentMemoryStaticSiteVerified": true,
     "noForbiddenActiveMemoryFilename": true,

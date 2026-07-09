@@ -126,7 +126,9 @@ def main(argv=None):
         "excludedNames": sorted(EXCLUDE_NAMES),
         "excludedPathPrefixes": sorted(EXCLUDE_PATH_PREFIXES),
         "excludedSuffixes": sorted(EXCLUDE_SUFFIXES),
-        "thirdPartyRuntimeDependencies": False,
+        "thirdPartyRuntimeDependencies": True,
+        "thirdPartyRuntimeDependencyNames": ["PyMySQL"],
+        "productionDatabaseBackend": "mysql_or_mariadb_required",
         "build": {
             "sourceSha": build_info["sourceSha"],
             "sourceShaShort": build_info["sourceShaShort"],

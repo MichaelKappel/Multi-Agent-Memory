@@ -29,6 +29,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Review queue and review decision routes are protected and idempotent.
 - Quarantined/rejected memory is excluded from normal search.
 - File storage and stdlib SQLite relational tables support the implemented MATM workflows.
+- MySQL/MariaDB runtime support exists, but production completion requires live backend verification.
 - Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.
 - Dogfood runner exercises workspace setup, agent registration, memory submit/search, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.
 
@@ -38,5 +39,5 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Full live dogfood contract verified for the currently deployed API.
 - After each latest-code deploy, rerun live dogfood and refresh `docs/reports/dogfood-memory-run.json`.
 - MultiAgentMemory.com live companion site is verified.
-- Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.
+- Live MySQL/MariaDB backend verification is blocked; `/api/version` must report `storeBackendVerified: true`.
 - The full objective still needs a final current-commit audit after commit, push, deploy, live verification, and remote SHA verification.

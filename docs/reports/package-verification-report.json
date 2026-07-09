@@ -1,8 +1,8 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
-    "sourceShaShort": "239975b9b1cc",
+    "sourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+    "sourceShaShort": "0282c8619408",
     "valuesRedacted": true
   },
   "checkOnly": true,
@@ -42,10 +42,14 @@
   ],
   "excludesLocalRuntimeState": true,
   "excludesSecrets": true,
-  "fileCount": 81,
+  "fileCount": 83,
   "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
+  "productionDatabaseBackend": "mysql_or_mariadb_required",
   "reportScope": "point_in_time_snapshot",
   "schemaVersion": "memoryendpoints.package_plan.v1",
   "status": "ready",
-  "thirdPartyRuntimeDependencies": false
+  "thirdPartyRuntimeDependencies": true,
+  "thirdPartyRuntimeDependencyNames": [
+    "PyMySQL"
+  ]
 }

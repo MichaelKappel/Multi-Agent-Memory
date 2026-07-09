@@ -1,10 +1,12 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 import secrets
 import sqlite3
 import threading
 import uuid
+from urllib.parse import urlparse
 
 from .config import PUBLIC_STORAGE_BYTES, utc_now
 from .security import evaluate_memory_firewall, redact_text
@@ -44,7 +46,11 @@ def _blank_store():
     return {
         "schemaVersion": "memoryendpoints.file_store.v1",
         "createdAt": utc_now(),
+        "accounts": {},
+        "companies": {},
+        "accountCompanies": {},
         "workspaces": {},
+        "projects": {},
         "apiKeys": {},
         "agents": {},
         "memoryEvents": [],
@@ -68,6 +74,20 @@ def _normalize_store(data):
     return data
 
 
+class _ClosingConnection(object):
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc, traceback):
+        close = getattr(self.connection, "close", None)
+        if close:
+            close()
+        return False
+
+
 class FileStore(object):
     def __init__(self, path=None):
         self.path = path or os.environ.get("MEMORYENDPOINTS_STORE_PATH")
@@ -79,6 +99,10 @@ class FileStore(object):
             from pathlib import Path
 
             self.path = Path(self.path)
+
+    def healthcheck(self):
+        self._load()
+        return True
 
     def _load(self):
         with _LOCK:
@@ -159,6 +183,20 @@ class FileStore(object):
 
     def workspace_usage_bytes(self, data, workspace_id):
         usage = _json_size(data.get("workspaces", {}).get(workspace_id))
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        company_id = workspace.get("companyId")
+        company = data.get("companies", {}).get(company_id)
+        if company:
+            usage += _json_size(company)
+        for membership in data.get("accountCompanies", {}).values():
+            if membership.get("companyId") == company_id:
+                usage += _json_size(membership)
+                account = data.get("accounts", {}).get(membership.get("accountId"))
+                if account:
+                    usage += _json_size(account)
+        for project in data.get("projects", {}).values():
+            if project.get("workspaceId") == workspace_id:
+                usage += _json_size(project)
         for key in ("agents",):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
@@ -176,9 +214,41 @@ class FileStore(object):
             return None
         used = self.workspace_usage_bytes(data, workspace_id)
         limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+        company_id = workspace.get("companyId")
+        company = data.get("companies", {}).get(company_id) or {}
+        memberships = [
+            membership
+            for membership in data.get("accountCompanies", {}).values()
+            if membership.get("companyId") == company_id
+        ]
+        memberships.sort(key=lambda item: item.get("createdAt") or "")
+        account_items = []
+        for membership in memberships:
+            account = data.get("accounts", {}).get(membership.get("accountId"))
+            if account:
+                item = dict(account)
+                item["role"] = membership.get("role")
+                account_items.append(item)
+        projects = [
+            project
+            for project in data.get("projects", {}).values()
+            if project.get("workspaceId") == workspace_id
+        ]
+        projects.sort(key=lambda item: item.get("createdAt") or "")
         return {
             "workspaceId": workspace_id,
             "label": workspace.get("label"),
+            "accountId": workspace.get("primaryAccountId"),
+            "companyId": company_id,
+            "primaryProjectId": workspace.get("primaryProjectId"),
+            "company": {
+                "companyId": company.get("companyId") or company_id,
+                "label": company.get("label") or "Free Agent Company",
+                "status": company.get("status") or "active",
+            },
+            "accounts": account_items,
+            "accountCompanyMemberships": memberships,
+            "projects": projects,
             "plan": workspace.get("plan"),
             "status": workspace.get("status"),
             "storageLimitBytes": limit,
@@ -243,30 +313,81 @@ class FileStore(object):
         }
         self._save(data)
 
-    def create_free_account(self, label):
+    def create_free_account(self, label, company_label=None, project_label=None):
         data = self._load()
+        created_at = utc_now()
+        account_id = _id("account")
+        company_id = _id("company")
+        membership_id = _id("membership")
         workspace_id = _id("workspace")
+        project_id = _id("project")
         token = "me_live_" + secrets.token_urlsafe(32)
         key_id = _id("key")
+        data.setdefault("accounts", {})[account_id] = {
+            "accountId": account_id,
+            "label": redact_text((company_label or label or "Free Agent Account") + " Account"),
+            "status": "active",
+            "createdAt": created_at,
+            "valuesRedacted": True,
+        }
+        data.setdefault("companies", {})[company_id] = {
+            "companyId": company_id,
+            "label": redact_text(company_label or label or "Free Agent Company"),
+            "status": "active",
+            "createdAt": created_at,
+            "valuesRedacted": True,
+        }
+        data.setdefault("accountCompanies", {})[membership_id] = {
+            "membershipId": membership_id,
+            "accountId": account_id,
+            "companyId": company_id,
+            "role": "owner",
+            "status": "active",
+            "createdAt": created_at,
+            "valuesRedacted": True,
+        }
         data["workspaces"][workspace_id] = {
             "workspaceId": workspace_id,
-            "label": label or "Free Agent Workspace",
+            "primaryAccountId": account_id,
+            "companyId": company_id,
+            "primaryProjectId": project_id,
+            "label": redact_text(label or "Free Agent Workspace"),
             "plan": "free_agent",
             "storageLimitBytes": PUBLIC_STORAGE_BYTES,
-            "createdAt": utc_now(),
+            "createdAt": created_at,
             "status": "active",
+        }
+        data.setdefault("projects", {})[project_id] = {
+            "projectId": project_id,
+            "workspaceId": workspace_id,
+            "label": redact_text(project_label or "MemoryEndpoints Verification Project"),
+            "status": "active",
+            "createdAt": created_at,
+            "valuesRedacted": True,
         }
         data["apiKeys"][key_id] = {
             "keyId": key_id,
             "workspaceId": workspace_id,
             "tokenHash": _hash(token),
-            "createdAt": utc_now(),
+            "createdAt": created_at,
             "lastUsedAt": None,
             "revokedAt": None,
         }
-        self.audit(data, "workspace.create_free_account", "system", workspace_id, workspace_id)
+        self.audit(
+            data,
+            "workspace.create_free_account",
+            "system",
+            workspace_id,
+            workspace_id,
+            {
+                "accountId": account_id,
+                "companyId": company_id,
+                "accountCompanyMembershipId": membership_id,
+                "projectId": project_id,
+            },
+        )
         self._save(data)
-        return workspace_id, key_id, token
+        return workspace_id, key_id, token, account_id, company_id, project_id
 
     def authenticate(self, token, workspace_id=None):
         if not token:
@@ -324,7 +445,7 @@ class FileStore(object):
         data.setdefault("storageLedger", []).append(item)
         return item
 
-    def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None):
+    def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None, scope_id=None):
         data = self._load()
         memory_type = (memory_type or "decision").strip().lower()
         if memory_type not in ("fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"):
@@ -354,6 +475,7 @@ class FileStore(object):
             "workspaceId": workspace_id,
             "actorAgentId": actor_agent_id,
             "scope": scope or "workspace",
+            "scopeId": scope_id or workspace_id,
             "memoryType": memory_type,
             "subject": sanitized.get("subject") or redact_text(subject or title),
             "title": sanitized.get("title") or redact_text(title),
@@ -417,6 +539,7 @@ class FileStore(object):
                     event.get("summary", ""),
                     " ".join(event.get("tags", [])),
                     event.get("scope", ""),
+                    event.get("scopeId", ""),
                 ]
             ).lower()
             if not q or q in haystack:
@@ -571,7 +694,9 @@ class SQLiteStore(FileStore):
         "matm_memory_records",
         "matm_projects",
         "matm_workspaces",
-        "matm_clients",
+        "matm_account_companies",
+        "matm_companies",
+        "matm_accounts",
     ]
 
     def __init__(self, path=None):
@@ -597,29 +722,55 @@ class SQLiteStore(FileStore):
         self._ensure_schema(connection)
         return connection
 
+    def _open_connection(self):
+        return _ClosingConnection(self._connect())
+
     def _ensure_schema(self, connection):
         connection.executescript(
             """
-            CREATE TABLE IF NOT EXISTS matm_clients (
-              client_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS matm_accounts (
+              account_id TEXT PRIMARY KEY,
               label TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'active',
               created_at TEXT NOT NULL,
               updated_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS matm_companies (
+              company_id TEXT PRIMARY KEY,
+              label TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS matm_account_companies (
+              membership_id TEXT PRIMARY KEY,
+              account_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (account_id, company_id),
+              FOREIGN KEY (account_id) REFERENCES matm_accounts (account_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_account_companies_account ON matm_account_companies (account_id);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_account_companies_company ON matm_account_companies (company_id);
+
             CREATE TABLE IF NOT EXISTS matm_workspaces (
               workspace_id TEXT PRIMARY KEY,
-              client_id TEXT,
+              company_id TEXT NOT NULL,
               label TEXT NOT NULL,
               plan TEXT NOT NULL,
               storage_limit_bytes INTEGER NOT NULL,
               status TEXT NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT,
-              FOREIGN KEY (client_id) REFERENCES matm_clients (client_id)
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
             );
-            CREATE INDEX IF NOT EXISTS ix_sqlite_workspaces_client ON matm_workspaces (client_id);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_workspaces_company ON matm_workspaces (company_id);
 
             CREATE TABLE IF NOT EXISTS matm_projects (
               project_id TEXT PRIMARY KEY,
@@ -661,6 +812,7 @@ class SQLiteStore(FileStore):
               workspace_id TEXT NOT NULL,
               actor_agent_id TEXT,
               scope_type TEXT NOT NULL,
+              scope_id TEXT,
               memory_type TEXT NOT NULL,
               subject TEXT,
               title TEXT NOT NULL,
@@ -878,40 +1030,51 @@ class SQLiteStore(FileStore):
     def _memory_revision_id(self, memory_id, revision_number):
         return "rev-" + _hash("%s:%s" % (memory_id, revision_number))[:20]
 
-    def _legacy_json_state(self, connection):
-        exists = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'matm_json_store'"
-        ).fetchone()
-        if not exists:
-            return None
-        row = connection.execute("SELECT payload FROM matm_json_store WHERE store_key = ?", ("main",)).fetchone()
-        if not row:
-            return None
-        try:
-            return _normalize_store(json.loads(row["payload"]))
-        except ValueError:
-            return None
-
-    def _has_relational_state(self, connection):
-        for table in ("matm_workspaces", "matm_memory_records", "matm_messages", "matm_audit_log", "matm_idempotency"):
-            row = connection.execute("SELECT COUNT(*) AS count FROM %s" % table).fetchone()
-            if row and row["count"]:
-                return True
-        return False
-
     def _load(self):
         with _LOCK:
-            with self._connect() as connection:
-                if not self._has_relational_state(connection):
-                    legacy = self._legacy_json_state(connection)
-                    if legacy is not None:
-                        return legacy
+            with self._open_connection() as connection:
                 data = _blank_store()
                 data["schemaVersion"] = "memoryendpoints.sqlite_relational_store.v1"
+
+                for row in connection.execute("SELECT * FROM matm_accounts ORDER BY created_at, account_id"):
+                    data["accounts"][row["account_id"]] = {
+                        "accountId": row["account_id"],
+                        "label": row["label"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": True,
+                    }
+                    if row["updated_at"]:
+                        data["accounts"][row["account_id"]]["updatedAt"] = row["updated_at"]
+
+                for row in connection.execute("SELECT * FROM matm_companies ORDER BY created_at, company_id"):
+                    data["companies"][row["company_id"]] = {
+                        "companyId": row["company_id"],
+                        "label": row["label"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": True,
+                    }
+                    if row["updated_at"]:
+                        data["companies"][row["company_id"]]["updatedAt"] = row["updated_at"]
+
+                for row in connection.execute("SELECT * FROM matm_account_companies ORDER BY created_at, membership_id"):
+                    data["accountCompanies"][row["membership_id"]] = {
+                        "membershipId": row["membership_id"],
+                        "accountId": row["account_id"],
+                        "companyId": row["company_id"],
+                        "role": row["role"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": True,
+                    }
+                    if row["updated_at"]:
+                        data["accountCompanies"][row["membership_id"]]["updatedAt"] = row["updated_at"]
 
                 for row in connection.execute("SELECT * FROM matm_workspaces ORDER BY created_at, workspace_id"):
                     data["workspaces"][row["workspace_id"]] = {
                         "workspaceId": row["workspace_id"],
+                        "companyId": row["company_id"],
                         "label": row["label"],
                         "plan": row["plan"],
                         "storageLimitBytes": row["storage_limit_bytes"],
@@ -920,6 +1083,25 @@ class SQLiteStore(FileStore):
                     }
                     if row["updated_at"]:
                         data["workspaces"][row["workspace_id"]]["updatedAt"] = row["updated_at"]
+                    for membership in data["accountCompanies"].values():
+                        if membership.get("companyId") == row["company_id"]:
+                            data["workspaces"][row["workspace_id"]]["primaryAccountId"] = membership.get("accountId")
+                            break
+
+                for row in connection.execute("SELECT * FROM matm_projects ORDER BY created_at, project_id"):
+                    data["projects"][row["project_id"]] = {
+                        "projectId": row["project_id"],
+                        "workspaceId": row["workspace_id"],
+                        "label": row["label"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": True,
+                    }
+                    if row["updated_at"]:
+                        data["projects"][row["project_id"]]["updatedAt"] = row["updated_at"]
+                    workspace = data["workspaces"].get(row["workspace_id"])
+                    if workspace and not workspace.get("primaryProjectId"):
+                        workspace["primaryProjectId"] = row["project_id"]
 
                 for row in connection.execute("SELECT * FROM matm_api_keys ORDER BY created_at, key_id"):
                     data["apiKeys"][row["key_id"]] = {
@@ -950,6 +1132,7 @@ class SQLiteStore(FileStore):
                         "workspaceId": row["workspace_id"],
                         "actorAgentId": row["actor_agent_id"],
                         "scope": row["scope_type"],
+                        "scopeId": row["scope_id"],
                         "memoryType": row["memory_type"],
                         "subject": row["subject"],
                         "title": row["title"],
@@ -1093,27 +1276,94 @@ class SQLiteStore(FileStore):
 
     def _save(self, data):
         with _LOCK:
-            with self._connect() as connection:
+            with self._open_connection() as connection:
                 with connection:
                     for table in self.DELETE_ORDER:
                         connection.execute("DELETE FROM %s" % table)
+
+                    for account in data.get("accounts", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_accounts (
+                              account_id, label, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                account.get("accountId"),
+                                account.get("label") or "Free Agent Account",
+                                account.get("status") or "active",
+                                account.get("createdAt") or utc_now(),
+                                account.get("updatedAt"),
+                            ),
+                        )
+
+                    for company in data.get("companies", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_companies (
+                              company_id, label, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                company.get("companyId"),
+                                company.get("label") or "Free Agent Company",
+                                company.get("status") or "active",
+                                company.get("createdAt") or utc_now(),
+                                company.get("updatedAt"),
+                            ),
+                        )
+
+                    for membership in data.get("accountCompanies", {}).values():
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE INTO matm_account_companies (
+                              membership_id, account_id, company_id, role, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                membership.get("membershipId"),
+                                membership.get("accountId"),
+                                membership.get("companyId"),
+                                membership.get("role") or "member",
+                                membership.get("status") or "active",
+                                membership.get("createdAt") or utc_now(),
+                                membership.get("updatedAt"),
+                            ),
+                        )
 
                     for workspace in data.get("workspaces", {}).values():
                         connection.execute(
                             """
                             INSERT INTO matm_workspaces (
-                              workspace_id, client_id, label, plan, storage_limit_bytes, status, created_at, updated_at
+                              workspace_id, company_id, label, plan, storage_limit_bytes, status, created_at, updated_at
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 workspace.get("workspaceId"),
-                                workspace.get("clientId"),
+                                workspace.get("companyId"),
                                 workspace.get("label") or "Free Agent Workspace",
                                 workspace.get("plan") or "free_agent",
                                 int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES),
                                 workspace.get("status") or "active",
                                 workspace.get("createdAt") or utc_now(),
                                 workspace.get("updatedAt"),
+                            ),
+                        )
+
+                    for project in data.get("projects", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_projects (
+                              project_id, workspace_id, label, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                project.get("projectId"),
+                                project.get("workspaceId"),
+                                project.get("label") or "MemoryEndpoints Verification Project",
+                                project.get("status") or "active",
+                                project.get("createdAt") or utc_now(),
+                                project.get("updatedAt"),
                             ),
                         )
 
@@ -1159,17 +1409,18 @@ class SQLiteStore(FileStore):
                         connection.execute(
                             """
                             INSERT INTO matm_memory_records (
-                              memory_id, workspace_id, actor_agent_id, scope_type, memory_type, subject, title,
+                              memory_id, workspace_id, actor_agent_id, scope_type, scope_id, memory_type, subject, title,
                               public_safe_summary, source_uri, confidence, promotion_state, review_status,
                               body_hash, revision, firewall_json, status, raw_private_payload_stored,
                               values_redacted, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 memory_id,
                                 event.get("workspaceId"),
                                 event.get("actorAgentId"),
                                 event.get("scope") or "workspace",
+                                event.get("scopeId") or event.get("workspaceId"),
                                 event.get("memoryType") or "note",
                                 event.get("subject"),
                                 event.get("title") or "Untitled memory",
@@ -1396,4 +1647,138 @@ class SQLiteStore(FileStore):
                                 self._int_bool(item.get("idempotencyKeyExposed")),
                             ),
                         )
-                    connection.execute("DROP TABLE IF EXISTS matm_json_store")
+
+
+class _DbCursor(object):
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def __iter__(self):
+        return iter(self.cursor.fetchall())
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+
+
+class _DbConnection(object):
+    def __init__(self, connection, dialect, cursor_options=None):
+        self.connection = connection
+        self.dialect = dialect
+        self.cursor_options = cursor_options or {}
+        self._depth = 0
+        self._closed = False
+
+    def _sql(self, sql):
+        out = sql
+        if self.dialect == "mysql":
+            out = out.replace("INSERT OR REPLACE INTO", "REPLACE INTO")
+            out = out.replace("INSERT OR IGNORE INTO", "INSERT IGNORE INTO")
+            out = out.replace("?", "%s")
+        return out
+
+    def execute(self, sql, params=None):
+        cursor = self.connection.cursor(**self.cursor_options)
+        cursor.execute(self._sql(sql), params or ())
+        return _DbCursor(cursor)
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            sql = statement.strip()
+            if sql:
+                self.execute(sql)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        if not self._closed:
+            self.connection.close()
+            self._closed = True
+
+    def __enter__(self):
+        self._depth += 1
+        return self
+
+    def __exit__(self, exc_type, _exc, _traceback):
+        if self._depth <= 1:
+            if exc_type:
+                self.rollback()
+            else:
+                self.commit()
+            self._depth = 0
+            self.close()
+        else:
+            self._depth -= 1
+        return False
+
+
+def _mysql_config_from_env():
+    url = os.environ.get("MEMORYENDPOINTS_MYSQL_URL") or os.environ.get("DATABASE_URL")
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("mysql", "mariadb"):
+            raise RuntimeError("MEMORYENDPOINTS_MYSQL_URL must use mysql:// or mariadb://.")
+        return {
+            "host": parsed.hostname or "localhost",
+            "port": parsed.port or 3306,
+            "user": parsed.username or "",
+            "password": parsed.password or "",
+            "database": parsed.path.lstrip("/"),
+        }
+    return {
+        "host": os.environ.get("MEMORYENDPOINTS_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "localhost",
+        "port": int(os.environ.get("MEMORYENDPOINTS_MYSQL_PORT") or os.environ.get("MYSQL_PORT") or "3306"),
+        "user": os.environ.get("MEMORYENDPOINTS_MYSQL_USER") or os.environ.get("MYSQL_USER") or "",
+        "password": os.environ.get("MEMORYENDPOINTS_MYSQL_PASSWORD") or os.environ.get("MYSQL_PASSWORD") or "",
+        "database": os.environ.get("MEMORYENDPOINTS_MYSQL_DATABASE") or os.environ.get("MYSQL_DATABASE") or "",
+    }
+
+
+class MySQLStore(SQLiteStore):
+    def _connect(self):
+        config = _mysql_config_from_env()
+        missing = [key for key in ("user", "password", "database") if not config.get(key)]
+        if missing:
+            raise RuntimeError("MySQL backend is selected but required database settings are missing.")
+        try:
+            import pymysql
+
+            connection = pymysql.connect(
+                host=config["host"],
+                port=int(config["port"]),
+                user=config["user"],
+                password=config["password"],
+                database=config["database"],
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+                autocommit=False,
+            )
+        except ImportError:
+            try:
+                import mysql.connector
+            except ImportError as exc:
+                raise RuntimeError("MySQL backend is selected but no MySQL Python driver is installed.") from exc
+            connection = mysql.connector.connect(
+                host=config["host"],
+                port=int(config["port"]),
+                user=config["user"],
+                password=config["password"],
+                database=config["database"],
+            )
+        cursor_options = {}
+        if connection.__class__.__module__.startswith("mysql.connector"):
+            cursor_options = {"dictionary": True}
+        wrapped = _DbConnection(connection, "mysql", cursor_options)
+        self._ensure_schema(wrapped)
+        return wrapped
+
+    def _ensure_schema(self, connection):
+        schema = (Path(__file__).resolve().parents[1] / "docs" / "database-schema-canonical.sql").read_text(encoding="utf-8")
+        connection.executescript(schema)
+        connection.commit()

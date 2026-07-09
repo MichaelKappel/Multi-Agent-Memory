@@ -4,7 +4,7 @@ The first implementation uses a Python stdlib WSGI app with a JSON file store by
 
 The app also supports a stdlib SQLite backend by setting `MEMORYENDPOINTS_STORE_BACKEND=sqlite`. SQLite gives MemoryEndpoints a relational database-backed durable mode for the implemented MATM workflows without adding third-party runtime dependencies.
 
-The MySQL/MariaDB production adapter is still gated because the Python standard library does not include a MySQL client. A future adapter may use an approved driver, host-provided command boundary, or a reviewed pure-Python protocol adapter after explicit review.
+The MySQL/MariaDB production adapter exists through `memoryendpoints.storage.MySQLStore` and requires a configured Python MySQL driver plus `MEMORYENDPOINTS_STORE_BACKEND=mysql` or `mariadb`. The live site is not using real MySQL unless `/api/version` reports `storeBackend` as `mysql` or `mariadb`.
 
 The canonical database structure is `docs/database-schema-canonical.sql`. It separates account hierarchy, durable memory, crawl/search records, current-message delivery, receipts, review promotion, idempotency, outbox events, quota ledger, and audit log.
 

@@ -7,10 +7,10 @@ Current verified state:
 - Live site: `https://memoryendpoints.com`
 - Public route verification: 21 checked routes, 0 failures for the deployed public surface.
 - `/docs` and `/docs/`: both valid documentation pages.
-- GitHub Actions is retained as a repository workflow but is not a required completion gate per human direction. MySQL/MariaDB runtime support remains adapter-gated under the no-third-party-runtime constraint.
+- GitHub Actions is retained as a repository workflow but is not a required completion gate per human direction. MySQL/MariaDB runtime verification is required before production completion.
 - MultiAgentMemory.com source is populated locally under `sites/multiagentmemory.com/`, published through the FileZilla-backed explicit FTPS profile, and live-verified with zero route/discovery failures. The stale handoff section for this domain still fails login and is retained only as redacted diagnostic evidence.
 - Package check: excludes local stores, journals, logs, caches, `dist`, `.uai`, local prompts, raw Agent File Handoff bucket contents, and credential handoff files.
-- Storage: file backend and stdlib SQLite relational MATM tables are active locally; MySQL/MariaDB remains adapter-gated.
+- Storage: file backend and SQLite relational MATM tables are active locally; production completion requires live MySQL/MariaDB verification.
 - Secrets: package-eligible plus `.uai` secret scan passes with 0 hits; deploy reports are redacted.
 
 Durable evidence:

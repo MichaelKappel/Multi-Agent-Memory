@@ -8,8 +8,8 @@ This repository contains two coordinated surfaces:
 
 | Surface | Role | Status |
 | --- | --- | --- |
-| [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Current public routes live-verified; latest-code deployment gated |
-| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public memory model | Local source ready; live publish gated by FTPS login |
+| [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Live-verified and deployed from the pushed source SHA |
+| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public memory model | Live-published companion documentation |
 
 The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no third-party runtime packages.
 
@@ -19,10 +19,11 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 
 - Public AI-ready discovery files and evidence routes.
 - Free agent workspace setup with a 200 MB quota.
+- Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
 - Protected workspace status, agent registration, memory submit/search, current-message, acknowledgement, and redacted receipt routes.
-- File-backed storage plus optional stdlib SQLite relational storage.
-- A canonical MySQL/MariaDB schema with activation gated until a no-third-party-compatible adapter is explicitly approved.
+- A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
+- File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
 
 MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the architecture, memory boundary, GitHub repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API; MemoryEndpoints.com owns that runtime.
 
@@ -70,7 +71,7 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 - [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
 - [AI manifest](https://memoryendpoints.com/ai-manifest.json)
 
-Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface has public route evidence, but live authenticated dogfood for the latest audit-log contract is not proven until the FTPS login blocker is resolved, the latest code is deployed, and post-deploy verification passes.
+Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). Tracked reports are point-in-time evidence; rerun the verification commands after source changes before claiming the live site is current.
 
 ## Quick Start
 
@@ -80,13 +81,15 @@ python run_dev.py
 
 Open `http://127.0.0.1:8088/`.
 
-Default storage is JSON under `var/`. For stdlib SQLite relational database-backed storage:
+Default local storage is JSON under `var/`. For stdlib SQLite relational database-backed storage:
 
 ```powershell
 $env:MEMORYENDPOINTS_STORE_BACKEND='sqlite'
 $env:MEMORYENDPOINTS_SQLITE_PATH='E:\MemoryEndpoints.com\var\matm_store.sqlite3'
 python run_dev.py
 ```
+
+Production MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus `MEMORYENDPOINTS_MYSQL_*` credentials outside Git. `/api/version` must report `storeBackend: mysql` or `mariadb` before the live site is considered to be using real MySQL.
 
 ## Verification
 
@@ -107,19 +110,17 @@ Deployment credentials stay outside this repository. The local `E:\ftp_Deploy.tx
 
 ```powershell
 python scripts\package_memoryendpoints.py
-python scripts\ftp_deploy_memoryendpoints.py --dry-run --handoff E:\ftp_Deploy.txt --remote-dir .
+python scripts\ftp_deploy_memoryendpoints.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps
 ```
 
-The FTP login directory is the MemoryEndpoints.com deployment root, so live deployment also uses `--remote-dir .`.
-
-The latest recorded live upload attempt failed during FTPS login before any file upload. See [docs/reports/deploy-attempt-20260709.json](docs/reports/deploy-attempt-20260709.json).
+The verified deployment path uses the FileZilla MemoryEndpoints profile with explicit FTPS. Plain FTP is not the verified publish route.
 
 ## Security And Claims
 
 - No raw secrets belong in repository files, reports, examples, logs, public pages, or final answers.
 - Unsupported, malformed, unauthorized, or authority-gated operations return safe no-op JSON.
 - No certification, endorsement, hidden credential validation, hosted agent execution, automatic repository writes, or automatic memory promotion is claimed.
-- MySQL/MariaDB runtime activation remains gated by the no-third-party-runtime requirement.
+- MySQL/MariaDB runtime activation requires real environment configuration and must be verified through `/api/version`; file storage is not a production database claim.
 
 ## License
 

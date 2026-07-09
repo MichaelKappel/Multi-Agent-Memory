@@ -268,6 +268,7 @@ def build_enterprise_gap_matrix():
     dogfood = load_json("dogfood-memory-run.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
+    live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
     deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
@@ -286,6 +287,7 @@ def build_enterprise_gap_matrix():
         (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
         and live_latest_code.get("sourceShaMatchesExpected")
     )
+    mysql_verified = bool(live_mysql_backend.get("ok"))
     lines = [
         "# Enterprise MATM Gap Matrix",
         "",
@@ -302,6 +304,7 @@ def build_enterprise_gap_matrix():
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
         "| Live dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified full live contract" if dogfood.get("liveDogfoodVerified") else ("Verified current deployed core surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified")),
         "| MultiAgentMemory.com live companion site | %s | `docs/reports/multiagentmemory-deploy-live-attempt-latest.json` and `docs/reports/multiagentmemory-live-site-verification.json`. |" % ("Verified" if multiagentmemory_verified else "Not verified"),
+        "| Live MySQL/MariaDB database backend | %s | `docs/reports/live-mysql-backend-verification.json` and `/api/version` `storeBackendVerified`. |" % ("Verified" if mysql_verified else "Not verified"),
         "| Prompt drafts | Local-only | `docs/prompts/*.md` is ignored and excluded from packaging. |",
         "",
         "## Remaining Gaps Before Full Goal Completion",
@@ -320,7 +323,7 @@ def build_enterprise_gap_matrix():
             "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
         ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
-        "| Relational production database | Schema-ready and stdlib SQLite relational table-backed; MySQL/MariaDB runtime remains adapter-gated. | Approved adapter path or honest continued gated status. Do not claim MySQL/MariaDB is live. |",
+        "| Relational production database | %s | Configure real MySQL/MariaDB credentials outside Git, deploy, then rerun `scripts/verify_mysql_backend.py` until `/api/version` reports `storeBackendVerified: true`. |" % ("Verified live MySQL/MariaDB" if mysql_verified else "Blocked; live runtime is not verified on MySQL/MariaDB"),
         "| GitHub Actions CI | %s | %s |" % (
             "Not required by human direction; workflow retained in repository" if ci_not_required else "`%s` for current observed SHA `%s`; %s" % (
                 github_ci.get("conclusion") or "unknown",
@@ -330,13 +333,13 @@ def build_enterprise_gap_matrix():
             "Use local verification plus live deploy, live route, and live dogfood evidence; see `docs/reports/github-ci-gate-decision.json`." if ci_not_required else "Resolve GitHub account/Actions blocker, then require a passing CI run for the pushed SHA.",
         ),
         "| Full enterprise completion audit | %s | %s |" % (
-            "Ready when current-commit deploy/live verification is refreshed after the final commit; MySQL adapter remains honestly gated" if ci_not_required else "Partial because CI and MySQL adapter gates remain unresolved",
-            "Rerun package, deploy, live SHA/routes, dogfood, secret scan, `.uai` audit, and remote SHA verification after the final commit." if ci_not_required else "Requirement-by-requirement completion audit against the goal objective after CI and gated capability evidence are resolved.",
+            "Ready only when current-commit deploy/live verification and live MySQL verification pass" if ci_not_required else "Partial because CI and live MySQL gates remain unresolved",
+            "Rerun package, deploy, live SHA/routes, MySQL backend verification, dogfood, secret scan, `.uai` audit, and remote SHA verification after the final commit." if ci_not_required else "Requirement-by-requirement completion audit against the goal objective after CI and live MySQL evidence are resolved.",
         ),
         "",
         "## Claim Boundary",
         "",
-        "The repository is improved. Current evidence supports local MATM hardening, latest-code MemoryEndpoints.com deployment, full live dogfood, and live MultiAgentMemory.com companion publishing. GitHub Actions is not required by human direction; after the final commit, rerun current-commit deployment/live verification before any completion claim.",
+        "The repository is improved, but completion is blocked until the live MemoryEndpoints.com runtime is verified on real MySQL/MariaDB and the current commit is redeployed and dogfooded.",
     ]
     path = REPORTS / "enterprise-gap-matrix.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -346,6 +349,7 @@ def build_enterprise_gap_matrix():
 def build_current_implementation_audit():
     dogfood = load_json("dogfood-memory-run.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
+    live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
     deploy_connection_ftp = load_json("deploy-connection-check-ftp-latest.json") or {}
@@ -357,6 +361,7 @@ def build_current_implementation_audit():
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
+    mysql_verified = bool(live_mysql_backend.get("ok"))
     lines = [
         "# Current Implementation Audit",
         "",
@@ -393,6 +398,7 @@ def build_current_implementation_audit():
         "- Review queue and review decision routes are protected and idempotent.",
         "- Quarantined/rejected memory is excluded from normal search.",
         "- File storage and stdlib SQLite relational tables support the implemented MATM workflows.",
+        "- MySQL/MariaDB runtime support exists, but production completion requires live backend verification.",
         "- Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.",
         "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.",
         "",
@@ -402,7 +408,7 @@ def build_current_implementation_audit():
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
         "- MultiAgentMemory.com live companion site is verified." if multiagentmemory_verified else "- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.",
-        "- Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.",
+        "- Live MySQL/MariaDB backend verification is proven." if mysql_verified else "- Live MySQL/MariaDB backend verification is blocked; `/api/version` must report `storeBackendVerified: true`.",
         "- The full objective still needs a final current-commit audit after commit, push, deploy, live verification, and remote SHA verification.",
     ]
     path = REPORTS / "current-implementation-audit.md"
@@ -413,10 +419,12 @@ def build_current_implementation_audit():
 def build_final_verification_alias():
     dogfood = load_json("dogfood-memory-run.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
+    live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
+    mysql_verified = bool(live_mysql_backend.get("ok"))
     ci_not_required = github_ci_not_required()
     lines = [
         "# Final Verification Report",
@@ -425,7 +433,7 @@ def build_final_verification_alias():
         "",
         "Status: superseded by `docs/reports/final-readiness-report.md`.",
         "",
-        "This report name is retained for compatibility with older repository links. The previous contents overclaimed the current state after later hosting login failures blocked deployment of the newest tranche.",
+        "This report redirects readers to the current readiness report because older snapshots overclaimed the deployed state.",
         "",
         "Current boundary:",
         "",
@@ -439,6 +447,7 @@ def build_final_verification_alias():
         ),
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
+        "- Live MySQL/MariaDB backend verification: `%s`." % str(mysql_verified).lower(),
         "- MultiAgentMemory.com live companion verification currently reports `%s` failures." % multiagentmemory_live_site.get("failureCount"),
         "- GitHub Actions is not required by human direction." if ci_not_required else "- GitHub Actions remains an external CI gate.",
         "- Full goal completion must be based on current-commit local checks, deploy, live verification, dogfood, package/secret evidence, and pushed remote SHA.",
@@ -452,6 +461,7 @@ def build_final_markdown(local_report):
     enterprise = load_json("enterprise-readiness-audit.json") or {}
     local_routes = load_json("local-route-verification.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
+    live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
     deploy_dry_run = load_json("deploy-dry-run-latest.json") or {}
@@ -469,19 +479,27 @@ def build_final_markdown(local_report):
     github_blocker = github_blocker_text(github_ci)
     report_source_sha = git_head_sha()
     freshness = (local_report or {}).get("reportFreshness") or {}
+    enterprise_summary = enterprise.get("summary") or {}
 
-    latest_deployed = bool(
-        (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
-        and live_latest_code.get("sourceShaMatchesExpected")
-    )
+    if "latestCodeLiveDeployed" in enterprise_summary:
+        latest_deployed = bool(enterprise_summary.get("latestCodeLiveDeployed"))
+    else:
+        latest_deployed = bool(
+            (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
+            and live_latest_code.get("sourceShaMatchesExpected")
+        )
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
+    mysql_verified = bool(
+        live_mysql_backend.get("ok")
+        or (enterprise.get("summary") or {}).get("liveMysqlBackendVerified")
+    )
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
     ci_not_required = github_ci_not_required()
-    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and live_dogfood and not enterprise.get("blockers"))
-    status_line = "Status: complete pending post-commit current-sha redeploy. `completionClaimAllowed` is `true` for this evidence snapshot." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
+    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and not enterprise.get("blockers"))
+    status_line = "Status: complete for this evidence snapshot. `completionClaimAllowed` is `true`." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
     lines = [
         "# Final Readiness Report",
         "",
@@ -515,6 +533,12 @@ def build_final_markdown(local_report):
             live_latest_code.get("observedSourceSha"),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
         ),
+        "- Live MySQL/MariaDB backend verification: `%s`; observed backend `%s`, configured backend `%s`, connection verified `%s`." % (
+            "pass" if mysql_verified else "blocked",
+            live_mysql_backend.get("storeBackend"),
+            live_mysql_backend.get("configuredStoreBackend"),
+            str(bool(live_mysql_backend.get("storeBackendVerified"))).lower(),
+        ),
         "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and forbidden active-memory filenames are absent.",
         "- Local dogfooding: %s through WSGI; live core dogfooding on current deployed API: %s; latest live dogfood contract: %s." % (
             str(bool(dogfood.get("localDogfoodVerified"))).lower(),
@@ -544,7 +568,7 @@ def build_final_markdown(local_report):
         ),
         "- GitHub Actions CI: not required by human direction; workflow remains in the repository and the old runner/billing status is background evidence only." if ci_not_required else "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_blocker),
         "",
-        "## Blocked Or Gated",
+        "## Blocked",
         "",
     ]
     if not latest_deployed:
@@ -575,17 +599,20 @@ def build_final_markdown(local_report):
             if live_core_dogfood
             else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
         )
+    if not mysql_verified:
+        lines.append(
+            "- Live MySQL/MariaDB backend: blocked. `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified: true`; file storage is not acceptable for production completion."
+        )
     lines.extend(
         [
             "- GitHub Actions CI: not required by human direction; see `docs/reports/github-ci-gate-decision.json`." if ci_not_required else "- GitHub Actions CI: blocked in the tracked snapshot. %s" % github_blocker,
-            "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.",
             "",
             "## Claim Boundary",
             "",
-            "The repository has strong local MATM evidence, latest-code MemoryEndpoints.com live deployment evidence, full live dogfood evidence, public route evidence, package evidence, live MultiAgentMemory.com companion evidence, and secret-safety evidence. GitHub Actions is not required by human direction. MySQL/MariaDB remains adapter-gated under the no-third-party-runtime constraint rather than claimed live.",
+            "The repository has strong local MATM evidence and public route evidence, but completion is blocked until the current commit is live, live dogfood passes, and the live MemoryEndpoints.com runtime is verified on real MySQL/MariaDB.",
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "githubCiGateDecision": (github_ci_gate or {}).get("decision"), "githubCiRequired": not ci_not_required, "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "githubCiGateDecision": (github_ci_gate or {}).get("decision"), "githubCiRequired": not ci_not_required, "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "liveMysqlBackendVerified": mysql_verified, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "valuesRedacted": True}, indent=2, sort_keys=True),
             "```",
         ]
     )

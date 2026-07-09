@@ -4,7 +4,7 @@ The authoritative relational proposal is `docs/database-schema-canonical.sql`.
 
 The schema is organized around MATM responsibilities:
 
-- Account boundary: `matm_clients`, `matm_workspaces`, `matm_projects`
+- Account and organization boundary: `matm_accounts`, `matm_companies`, `matm_account_companies`, `matm_workspaces`, `matm_projects`
 - Access boundary: `matm_api_keys`, `matm_agents`
 - Durable memory: `matm_memory_records`, `matm_memory_revisions`, `matm_memory_tags`
 - Crawlable/searchable memory: `matm_crawl_sources`, `matm_search_documents`
@@ -16,14 +16,15 @@ The schema is organized around MATM responsibilities:
 Runtime state today:
 
 - File backend: live default.
-- SQLite backend: live stdlib relational database-backed option for the implemented MATM workflows. The runtime creates separate SQLite tables for clients, workspaces, projects, API keys, agents, memory records, memory revisions, tags, crawl sources, search documents, review queue, messages, notifications, receipts, idempotency records, outbox events, storage ledger entries, and audit logs.
-- MySQL/MariaDB: schema prepared, adapter gated by the no-third-party runtime requirement.
+- SQLite backend: live stdlib relational database-backed option for the implemented MATM workflows. The runtime creates separate SQLite tables for accounts, companies, account-company memberships, workspaces, projects, API keys, agents, memory records, memory revisions, tags, crawl sources, search documents, review queue, messages, notifications, receipts, idempotency records, outbox events, storage ledger entries, and audit logs.
+- MySQL/MariaDB: required for production completion; `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true`.
 
 Design rules:
 
 - Store public-safe summaries instead of raw private payloads.
 - Store token hashes, never raw API keys.
+- Model `project -> workspace -> company`, and model accounts as many-to-many company memberships.
 - Keep current messages separate from promoted durable memory.
-- Record review/promotion decisions before client, workspace, or project long-term memory is treated as authoritative.
+- Record review/promotion decisions before company, workspace, or project long-term memory is treated as authoritative.
 - Use idempotency records for protected mutation retries.
 - Use storage ledger entries to enforce the 200 MB free account quota.

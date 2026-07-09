@@ -140,6 +140,7 @@ def main(argv=None):
     checks = []
     if args.run_checks:
         dogfood_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-dogfood.json")
+        mysql_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-mysql.json")
         checks = [
             run_check("unit_and_integration_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
             run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi", "--expect-git-head"]),
@@ -148,13 +149,33 @@ def main(argv=None):
             run_check("repository_boundary_audit", [sys.executable, "scripts/audit_repository_boundary.py"]),
             run_check("package_check", [sys.executable, "scripts/package_memoryendpoints.py", "--check-only"]),
             run_check("live_latest_code_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--base-url", "https://memoryendpoints.com", "--expect-git-head"]),
-            run_check("live_dogfood_verifier", [sys.executable, "scripts/dogfood_memoryendpoints.py", "--mode", "both", "--base-url", "https://memoryendpoints.com", "--no-progress-update", "--json-out", dogfood_temp]),
+            run_check("live_mysql_backend_verifier", [sys.executable, "scripts/verify_mysql_backend.py", "--base-url", "https://memoryendpoints.com", "--json-out", mysql_temp]),
+        ]
+        if check_passed(checks, "live_mysql_backend_verifier"):
+            checks.append(run_check("live_dogfood_verifier", [sys.executable, "scripts/dogfood_memoryendpoints.py", "--mode", "both", "--base-url", "https://memoryendpoints.com", "--no-progress-update", "--json-out", dogfood_temp]))
+        else:
+            checks.append(
+                {
+                    "name": "live_dogfood_verifier",
+                    "command": "python scripts/dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com --no-progress-update --json-out %s" % dogfood_temp,
+                    "exitCode": None,
+                    "ok": False,
+                    "outputCaptured": False,
+                    "skipped": True,
+                    "skipReason": "live_mysql_backend_verifier_failed",
+                    "valuesRedacted": True,
+                }
+            )
+        checks.extend(
+            [
             run_check("multiagentmemory_live_site", [sys.executable, "scripts/verify_static_site.py", "--base-url", "https://multiagentmemory.com"]),
             run_check("secret_scan", [sys.executable, "scripts/secret_scan.py"]),
             run_check("diff_check", ["git", "diff", "--check"]),
-        ]
+            ]
+        )
 
     live_routes = load_json(Path("docs") / "reports" / "live-route-verification.json")
+    live_mysql_backend = load_json(Path("docs") / "reports" / "live-mysql-backend-verification.json")
     live_latest_code = load_json(Path("docs") / "reports" / "live-latest-code-verification.json")
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
     uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
@@ -189,6 +210,7 @@ def main(argv=None):
     package_check_current = check_passed(checks, "package_check")
     repository_boundary_check_current = check_passed(checks, "repository_boundary_audit")
     live_latest_code_check_current = check_passed(checks, "live_latest_code_verifier")
+    live_mysql_backend_check_current = check_passed(checks, "live_mysql_backend_verifier")
     live_dogfood_check_current = check_passed(checks, "live_dogfood_verifier")
     multiagentmemory_live_site_check_current = check_passed(checks, "multiagentmemory_live_site")
     local_route_evidence_current = bool(
@@ -274,6 +296,9 @@ def main(argv=None):
         checks, "multiagentmemory_static_site"
     )
     live_public_routes_verified = bool((live_routes and live_routes.get("ok")) or live_latest_code_check_current)
+    live_mysql_backend_verified = bool(
+        (live_mysql_backend and live_mysql_backend.get("ok")) or live_mysql_backend_check_current
+    )
     live_dogfood_verified = bool((dogfood and dogfood.get("liveDogfoodVerified")) or live_dogfood_check_current)
     multiagentmemory_live_site_verified = bool(
         (multiagentmemory_live_site and multiagentmemory_live_site.get("ok"))
@@ -422,10 +447,17 @@ def main(argv=None):
             None if github_ci_ok else github_ci_blocker,
         ),
         evidence_item(
-            "mysql_runtime_adapter",
-            "gated",
-            ["docs/database-schema-canonical.sql", "docs/storage-backends.md"],
-            "Python stdlib has no MySQL client; file storage and stdlib SQLite relational MATM tables are active while MySQL remains schema-ready/gated.",
+            "live_mysql_database_backend",
+            "pass_live" if live_mysql_backend_verified else "blocked",
+            [
+                "scripts/verify_mysql_backend.py",
+                "docs/reports/live-mysql-backend-verification.json",
+                "docs/database-schema-canonical.sql",
+                "docs/storage-backends.md",
+            ],
+            None
+            if live_mysql_backend_verified
+            else "Live /api/version does not verify a working MySQL/MariaDB backend. It must report storeBackend mysql or mariadb and storeBackendVerified true.",
         ),
     ]
 
@@ -435,6 +467,7 @@ def main(argv=None):
         (all_checks_ok is not False)
         and not blockers
         and latest_code_live_verified
+        and live_mysql_backend_verified
         and live_dogfood_verified
         and live_public_routes_verified
         and multiagentmemory_live_site_verified
@@ -464,6 +497,8 @@ def main(argv=None):
             "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
             "liveLatestCodeReportCurrent": live_latest_report_current,
             "liveLatestCodeCommandEvidenceCurrent": live_latest_code_check_current,
+            "liveMysqlBackendCommandEvidenceCurrent": live_mysql_backend_check_current,
+            "liveMysqlBackendVerified": live_mysql_backend_verified,
             "liveDogfoodCommandEvidenceCurrent": live_dogfood_check_current,
             "multiAgentMemoryLiveSiteCommandEvidenceCurrent": multiagentmemory_live_site_check_current,
             "githubCiReportCurrent": github_ci_report_current,

@@ -17,6 +17,7 @@ All responses are JSON unless the route is explicitly a human HTML or text disco
 | `/.well-known/mcp.json` | MCP discovery pointer. |
 | `/.well-known/ai-agent.json` | AI agent discovery pointer. |
 | `/docs` and `/docs/` | Human-readable documentation page. |
+| `/console` | Human verification console for a saved workspace key. |
 
 ## Authentication
 
@@ -29,6 +30,18 @@ Authorization: Bearer <WORKSPACE_KEY>
 The setup route returns the workspace key once. The server stores a hash, not the raw key.
 
 Free agent workspaces receive 200 MB of storage. Checkout and coupon use are not required.
+
+## Account Hierarchy
+
+The setup route creates linked hierarchy records:
+
+- `accountId`: account or identity boundary.
+- `companyId`: organization boundary.
+- `accountCompanyMembership`: account-to-company membership; accounts and companies are many-to-many.
+- `workspaceId`: workspace under a company.
+- `projectId`: project under a workspace.
+
+The relationship chain for normal memory use is `project -> workspace -> company`, with accounts attached to companies by membership.
 
 ## Idempotency
 
@@ -46,7 +59,7 @@ The free-account setup route does not support replay because replay would requir
 
 ### GET `/api/matm/workspace`
 
-Returns workspace quota, usage, plan, and raw-key storage facts.
+Returns workspace quota, usage, plan, raw-key storage facts, account-company memberships, company metadata, and workspace projects.
 
 Query:
 
@@ -134,7 +147,7 @@ This route supports idempotency. Exact retries replay the original response; the
 
 ### POST `/api/matm/agent-messages`
 
-Submits a current-message safe summary for a target agent.
+Submits a current-message safe summary. Omitting `targetAgentId` broadcasts the unread message to the swarm; setting `targetAgentId` routes it to one particular agent.
 
 Required:
 
@@ -146,6 +159,10 @@ Limits:
 
 - `safeSummary` maximum: 1000 characters
 - Raw message bodies are not stored.
+
+Optional:
+
+- `targetAgentId`: target one agent. Leave absent or blank to broadcast to all agents in the workspace.
 
 The response disposition is one of:
 

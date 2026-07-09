@@ -82,7 +82,7 @@ Reports must remain public-safe and evidence-bound. If a report is stale or over
 
 The repository has a CI workflow under `.github/workflows/ci.yml`, but GitHub Actions is not a required completion gate per human direction. Do not keep retrying the GitHub API checker unless the human re-enables this gate.
 
-If the gate is re-enabled later, refresh the public-safe CI evidence with the stdlib-only public API checker:
+If the gate is re-enabled later, refresh the public-safe CI evidence with the public API checker:
 
 ```powershell
 python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json

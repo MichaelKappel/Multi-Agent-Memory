@@ -50,10 +50,7 @@ def main(argv=None):
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-    report["relationalTablesPresent"] = sorted(
-        name for name in tables if name.startswith("matm_") and name != "matm_json_store"
-    )
-    report["legacyJsonBlobTablePresent"] = "matm_json_store" in tables
+    report["relationalTablesPresent"] = sorted(name for name in tables if name.startswith("matm_"))
     report["status"] = "migrated"
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

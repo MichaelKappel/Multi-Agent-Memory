@@ -131,7 +131,8 @@ h1 {
 }
 
 .grid article,
-.page {
+.page,
+.console-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 20px;
@@ -151,6 +152,74 @@ pre {
   padding: 14px;
 }
 
+.console-shell {
+  max-width: 1180px;
+  margin: 32px auto;
+  padding: 0 20px;
+}
+
+.console-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 16px 0;
+}
+
+.console-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.console-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.console-grid input,
+.console-grid select,
+.console-grid textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+.console-grid textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.console-grid .checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.console-grid .checkline input {
+  width: auto;
+}
+
+.console-status {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+.console-status.error {
+  border-left-color: #9a2f2f;
+}
+
+.console-panel {
+  margin-top: 18px;
+}
+
 footer {
   padding: 24px clamp(18px, 4vw, 56px);
   color: var(--muted);
@@ -160,7 +229,8 @@ footer {
 @media (max-width: 780px) {
   .topbar,
   .hero,
-  .grid {
+  .grid,
+  .console-grid {
     grid-template-columns: 1fr;
   }
 

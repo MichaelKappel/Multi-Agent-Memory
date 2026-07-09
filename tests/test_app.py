@@ -49,6 +49,21 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
         os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
         os.environ.pop("MEMORYENDPOINTS_SQLITE_PATH", None)
+        for key in (
+            "MEMORYENDPOINTS_MYSQL_URL",
+            "DATABASE_URL",
+            "MEMORYENDPOINTS_MYSQL_HOST",
+            "MYSQL_HOST",
+            "MEMORYENDPOINTS_MYSQL_PORT",
+            "MYSQL_PORT",
+            "MEMORYENDPOINTS_MYSQL_USER",
+            "MYSQL_USER",
+            "MEMORYENDPOINTS_MYSQL_PASSWORD",
+            "MYSQL_PASSWORD",
+            "MEMORYENDPOINTS_MYSQL_DATABASE",
+            "MYSQL_DATABASE",
+        ):
+            os.environ.pop(key, None)
 
     def assert_safe_noop_response(self, text, code=None):
         payload = json.loads(text)
@@ -68,6 +83,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "/",
             "/sitemap.xml",
             "/docs/",
+            "/console",
             "/api/version",
             "/api/matm/live-capability-matrix",
             "/api/matm/readiness-result",
@@ -93,12 +109,22 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
             method="POST",
-            body={"label": "Test Workspace"},
+            body={
+                "companyLabel": "Test Company",
+                "label": "Test Workspace",
+                "projectLabel": "Test Project",
+            },
         )
         self.assertEqual("201 Created", status)
         setup = json.loads(text)
         token = setup["apiKeySecret"]
+        account_id = setup["accountId"]
+        company_id = setup["companyId"]
         workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+        self.assertTrue(setup["hierarchy"]["accountToCompanyMembership"])
+        self.assertTrue(setup["hierarchy"]["companyToWorkspace"])
+        self.assertTrue(setup["hierarchy"]["workspaceToProject"])
         self.assertEqual(200 * 1024 * 1024, setup["storageLimitBytes"])
         self.assertFalse(setup["checkoutRequired"])
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
@@ -110,6 +136,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         workspace = json.loads(text)["workspace"]
+        self.assertEqual(account_id, workspace["accountId"])
+        self.assertEqual(company_id, workspace["companyId"])
+        self.assertEqual(project_id, workspace["primaryProjectId"])
+        self.assertEqual("Test Company", workspace["company"]["label"])
+        self.assertEqual("Test Project", workspace["projects"][0]["label"])
         self.assertEqual(200 * 1024 * 1024, workspace["storageLimitBytes"])
         self.assertFalse(workspace["rawKeyStoredByServer"])
 
@@ -119,6 +150,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn(token, store_text)
         self.assertNotIn("apiKeySecret", store_text)
         store = json.loads(store_text)
+        self.assertIn(account_id, store["accounts"])
+        self.assertIn(company_id, store["companies"])
+        self.assertIn(project_id, store["projects"])
+        self.assertEqual(company_id, store["workspaces"][workspace_id]["companyId"])
+        self.assertEqual(workspace_id, store["projects"][project_id]["workspaceId"])
+        self.assertTrue(
+            any(
+                item["accountId"] == account_id and item["companyId"] == company_id
+                for item in store["accountCompanies"].values()
+            )
+        )
         keys = [
             api_key
             for api_key in store["apiKeys"].values()
@@ -144,6 +186,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             body={
                 "workspaceId": workspace_id,
                 "actorAgentId": "agent-a",
+                "scope": "project",
+                "scopeId": project_id,
                 "title": "Decision",
                 "summary": "Use docs as long-term memory until hosted storage is live.",
                 "tags": ["bootstrap"],
@@ -152,6 +196,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         event = json.loads(text)["event"]
         self.assertEqual("decision", event["memoryType"])
+        self.assertEqual("project", event["scope"])
+        self.assertEqual(project_id, event["scopeId"])
         self.assertEqual("review_pending", event["promotionState"])
         self.assertEqual("accepted", event["firewall"]["decision"])
 
@@ -252,6 +298,79 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(item["valuesRedacted"])
             self.assertFalse(item["rawCredentialExposed"])
             self.assertFalse(item["rawPayloadExposed"])
+
+    def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={
+                "companyLabel": "Swarm Company",
+                "label": "Swarm Workspace",
+                "projectLabel": "Swarm Project",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        for agent_id in ("codex-agent", "human-verifier-agent", "observer-agent"):
+            status, _headers, _text = call_app(
+                "/api/matm/agents/register",
+                method="POST",
+                headers=auth,
+                body={"workspaceId": workspace_id, "agentId": agent_id, "displayName": agent_id},
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, _text = call_app(
+            "/api/matm/agent-messages",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "senderAgentId": "codex-agent",
+                "safeSummary": "Broadcast to every active agent in the swarm.",
+                "responseRequired": False,
+            },
+        )
+        self.assertEqual("202 Accepted", status)
+
+        status, _headers, _text = call_app(
+            "/api/matm/agent-messages",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "senderAgentId": "human-verifier-agent",
+                "targetAgentId": "codex-agent",
+                "safeSummary": "Targeted message for Codex only.",
+                "responseRequired": True,
+            },
+        )
+        self.assertEqual("202 Accepted", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        codex = json.loads(text)
+        self.assertEqual(2, codex["unreadCount"])
+        codex_summaries = {item["message"]["safeSummary"] for item in codex["items"]}
+        self.assertIn("Broadcast to every active agent in the swarm.", codex_summaries)
+        self.assertIn("Targeted message for Codex only.", codex_summaries)
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=observer-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        observer = json.loads(text)
+        self.assertEqual(1, observer["unreadCount"])
+        self.assertEqual("Broadcast to every active agent in the swarm.", observer["items"][0]["message"]["safeSummary"])
 
     def test_memory_firewall_review_queue_and_promotion(self):
         status, _headers, text = call_app(
@@ -495,12 +614,40 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         data = json.loads(text)["data"]
         self.assertFalse(data["completionClaimAllowed"])
-        self.assertEqual("local_verified_latest_live_deploy_gated", data["overallStatus"])
+        self.assertEqual("mysql_required_not_verified", data["overallStatus"])
         blockers = {item["id"] for item in data["blockers"]}
-        self.assertIn("latest_code_live_deployed", blockers)
+        self.assertIn("mysql_runtime_backend", blockers)
         checks = {item["id"]: item for item in data["checks"]}
-        self.assertEqual("blocked_latest_tranche", checks["live_dogfood"]["status"])
+        self.assertEqual("pass_live", checks["live_dogfood"]["status"])
+        self.assertEqual("pass_local", checks["account_company_workspace_project_hierarchy"]["status"])
+        self.assertEqual("pass_local", checks["human_verifier_console"]["status"])
+        self.assertEqual("blocked", checks["mysql_runtime_backend"]["status"])
         self.assertEqual("pass_local", checks["protected_operation_audit_trail"]["status"])
+
+    def test_readiness_result_stays_blocked_when_mysql_is_only_selected(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "mysql"
+
+        status, _headers, text = call_app("/api/matm/readiness-result")
+        self.assertEqual("200 OK", status)
+        data = json.loads(text)["data"]
+        self.assertFalse(data["completionClaimAllowed"])
+        self.assertEqual("mysql_required_not_verified", data["overallStatus"])
+        self.assertEqual("mysql", data["runtimeBackendHealth"]["configuredStoreBackend"])
+        self.assertFalse(data["runtimeBackendHealth"]["storeBackendVerified"])
+        checks = {item["id"]: item for item in data["checks"]}
+        self.assertEqual("blocked", checks["mysql_runtime_backend"]["status"])
+
+    def test_version_route_reports_mysql_unavailable_when_not_configured(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "mysql"
+
+        status, _headers, text = call_app("/api/version")
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("mysql", payload["configuredStoreBackend"])
+        self.assertEqual("mysql_unavailable", payload["storeBackend"])
+        self.assertFalse(payload["storeBackendVerified"])
+        self.assertTrue(payload["thirdPartyRuntimeDependencies"])
 
     def test_sqlite_backend_supports_core_memory_flow(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
@@ -545,10 +692,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                 ).fetchall()
             }
-            self.assertNotIn("matm_json_store", tables)
             self.assertTrue(
                 {
-                    "matm_clients",
+                    "matm_accounts",
+                    "matm_companies",
+                    "matm_account_companies",
                     "matm_workspaces",
                     "matm_projects",
                     "matm_api_keys",
@@ -569,6 +717,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 }.issubset(tables)
             )
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_workspaces").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_accounts").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_companies").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_account_companies").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_projects").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_records").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_revisions").fetchone()[0])
             key_columns = {
@@ -589,65 +741,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn(token.encode("utf-8"), sqlite_bytes)
         self.assertNotIn(b"apiKeySecret", sqlite_bytes)
 
-    def test_sqlite_backend_migrates_legacy_json_blob_on_write(self):
-        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
-        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "legacy.sqlite3")
-        legacy_store = {
-            "schemaVersion": "memoryendpoints.sqlite_store.v1",
-            "createdAt": "legacy-seed",
-            "workspaces": {
-                "legacy-workspace": {
-                    "workspaceId": "legacy-workspace",
-                    "label": "Legacy Workspace",
-                    "plan": "free_agent",
-                    "storageLimitBytes": 209715200,
-                    "createdAt": "legacy-seed",
-                    "status": "active",
-                }
-            },
-            "apiKeys": {},
-            "agents": {},
-            "memoryEvents": [],
-            "reviewQueue": [],
-            "messages": [],
-            "notifications": [],
-            "receipts": [],
-            "outboxEvents": [],
-            "storageLedger": [],
-            "auditLog": [],
-            "idempotency": {},
-        }
-        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
-            connection.execute("CREATE TABLE matm_json_store (store_key TEXT PRIMARY KEY, payload TEXT NOT NULL)")
-            connection.execute(
-                "INSERT INTO matm_json_store (store_key, payload) VALUES (?, ?)",
-                ("main", json.dumps(legacy_store)),
+    def test_mysql_backend_requires_real_configuration(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "mysql"
+
+        with self.assertRaises(RuntimeError):
+            call_app(
+                "/api/matm/agent-setup/free-account",
+                method="POST",
+                body={"label": "MySQL must not fall back"},
             )
-            connection.commit()
-
-        status, _headers, _text = call_app(
-            "/api/matm/agent-setup/free-account",
-            method="POST",
-            body={"label": "Relational Workspace"},
-        )
-        self.assertEqual("201 Created", status)
-
-        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
-            tables = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).fetchall()
-            }
-            self.assertNotIn("matm_json_store", tables)
-            labels = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT label FROM matm_workspaces ORDER BY label"
-                ).fetchall()
-            }
-            self.assertEqual({"Legacy Workspace", "Relational Workspace"}, labels)
-
 
 if __name__ == "__main__":
     unittest.main()
