@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 7234135b8075, current HEAD 963b93ba3740.",
+      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Could not read GitHub Actions public API: HTTPError status 403.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -241,7 +241,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 7234135b8075, current HEAD 963b93ba3740.",
+      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Could not read GitHub Actions public API: HTTPError status 403.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -260,7 +260,7 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "963b93ba374003c709d85fb97e429de2e20e9cc5",
+    "currentGitHead": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
     "githubCiReportCurrent": false,
@@ -268,7 +268,7 @@
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": false,
+    "liveLatestCodeReportCurrent": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,

@@ -10,7 +10,7 @@ Current boundary:
 
 - Local verification is strong and repeatable.
 - Live public route verification currently reports `0` failures for the deployed public surface.
-- Latest-code live deployment is not verified; expected `7234135b80753ae29e1042727ac9955aa92b0b44`, observed `None`, match `false`.
+- Latest-code live deployment is not verified; expected `7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c`, observed `None`, match `false`.
 - Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.
 - Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.
 - Full goal completion must not be claimed until live deployment, latest-contract live dogfood, companion live publish, CI, and gated-capability blockers are cleared.

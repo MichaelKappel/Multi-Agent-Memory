@@ -44,6 +44,15 @@ SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),
 ]
 
+PUBLIC_LEAK_PATTERNS = [
+    ("windows_local_path", re.compile(r"\b[A-Za-z]:[\\/][^\s<>'\")]+")),
+    ("file_uri", re.compile(r"\bfile://[^\s<>'\")]+", re.I)),
+    ("posix_home_path", re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s<>'\")]+")),
+    ("private_runtime_path", re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9._-])/(?:tmp|var/tmp|private/var)/[^\s<>'\")]+")),
+    ("python_traceback", re.compile(r"Traceback \(most recent call last\):")),
+    ("python_traceback_frame", re.compile(r"File \"[^\"]+\", line \d+, in ")),
+]
+
 
 def fetch(url):
     try:
@@ -95,6 +104,10 @@ def parse_json(text):
         return None
 
 
+def pattern_hits(patterns, text):
+    return [name for name, pattern in patterns if pattern.search(text)]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8088")
@@ -122,7 +135,15 @@ def main(argv=None):
         if "MemoryEndpoints" not in body and route not in ("/robots.txt",):
             missing.append("MemoryEndpoints")
         secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(body)]
-        item = {"route": route, "status": status, "missing": missing, "secretHitCount": len(secret_hits)}
+        leak_hits = pattern_hits(PUBLIC_LEAK_PATTERNS, body)
+        item = {
+            "route": route,
+            "status": status,
+            "missing": missing,
+            "secretHitCount": len(secret_hits),
+            "leakHitCount": len(leak_hits),
+            "leakRules": leak_hits,
+        }
         if route == "/api/version":
             payload = parse_json(body) or {}
             build = payload.get("build") or {}
@@ -136,7 +157,11 @@ def main(argv=None):
                     missing.append("expected source sha %s" % expected_source_sha)
         items.append(item)
 
-    failures = [item for item in items if item["status"] != 200 or item["missing"] or item["secretHitCount"]]
+    failures = [
+        item
+        for item in items
+        if item["status"] != 200 or item["missing"] or item["secretHitCount"] or item["leakHitCount"]
+    ]
     report = {
         "schemaVersion": "memoryendpoints.verifier.v1",
         "reportScope": "point_in_time_snapshot",

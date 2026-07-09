@@ -9,14 +9,14 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 ## Evidence Gathered
 
 - Unit/integration suite passes through `python -m unittest discover -s tests`.
-- WSGI route verifier passes for 21 required public routes and current source SHA.
-- Static MultiAgentMemory.com source verifier passes locally.
+- WSGI route verifier passes for 21 required public routes, current source SHA, and zero public leak hits.
+- Static MultiAgentMemory.com source verifier passes locally with zero public leak hits.
 - `.uai` required-field and date-free audit passes for the active typed memory suite.
 - Secret scan passes with zero hits.
 - Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.
 - Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.
-- Live public route verifier reports `0` failures for the currently deployed MemoryEndpoints.com surface.
-- Latest-code live verifier expects `7234135b80753ae29e1042727ac9955aa92b0b44`, observes `None`, and matches `false`.
+- Live public route verifier reports `0` failures and `0` public leak hits for the currently deployed MemoryEndpoints.com surface.
+- Latest-code live verifier expects `7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c`, observes `None`, and matches `false`.
 - No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
 
 ## Implemented Locally

@@ -7,54 +7,72 @@
     {
       "exists": true,
       "file": "index.html",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "docs/how-it-works.html",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "docs/memory-boundary.html",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "llms.txt",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "ai.txt",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "ai-manifest.json",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": ".well-known/ai-agent.json",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": ".well-known/mcp.json",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     },
     {
       "exists": true,
       "file": "sitemap.xml",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missingStrings": [],
       "secretHitCount": 0
     }

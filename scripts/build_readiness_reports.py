@@ -63,6 +63,10 @@ def report_matches_head(data, head_sha, candidate_paths):
     return report_sha(data, candidate_paths) == head_sha
 
 
+def leak_hit_count(report):
+    return sum(int(item.get("leakHitCount") or 0) for item in (report or {}).get("items", []))
+
+
 def write_json(name, data):
     path = REPORTS / name
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -145,6 +149,7 @@ def dogfood_gap_state(dogfood):
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
+    live_routes = load_json("live-route-verification.json")
     uai = load_json("uai-memory-audit.json")
     dogfood = load_json("dogfood-memory-run.json")
     package = load_json("package-verification-report.json")
@@ -205,6 +210,8 @@ def build_local_report():
         "checks": checks,
         "routeCount": (local_routes or {}).get("routeCount"),
         "routeFailureCount": (local_routes or {}).get("failureCount"),
+        "localRoutePublicLeakHitCount": leak_hit_count(local_routes),
+        "liveRoutePublicLeakHitCount": leak_hit_count(live_routes),
         "reportFreshness": {
             "model": REPORT_FRESHNESS_MODEL,
             "postCommitNoWriteVerificationRequired": True,
@@ -230,6 +237,7 @@ def build_local_report():
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
         "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
+        "multiAgentMemoryStaticPublicLeakHitCount": leak_hit_count(static_site),
         "deployDryRunMatchesPackage": deploy_dry_run_matches_package,
         "externalSignals": {
             "githubCiConclusion": (github_ci or {}).get("conclusion"),
@@ -314,13 +322,13 @@ def build_current_implementation_audit():
         "## Evidence Gathered",
         "",
         "- Unit/integration suite passes through `python -m unittest discover -s tests`.",
-        "- WSGI route verifier passes for 21 required public routes and current source SHA.",
-        "- Static MultiAgentMemory.com source verifier passes locally.",
+        "- WSGI route verifier passes for 21 required public routes, current source SHA, and zero public leak hits.",
+        "- Static MultiAgentMemory.com source verifier passes locally with zero public leak hits.",
         "- `.uai` required-field and date-free audit passes for the active typed memory suite.",
         "- Secret scan passes with zero hits.",
         "- Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.",
         "- Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.",
-        "- Live public route verifier reports `%s` failures for the currently deployed MemoryEndpoints.com surface." % live_routes.get("failureCount"),
+        "- Live public route verifier reports `%s` failures and `%s` public leak hits for the currently deployed MemoryEndpoints.com surface." % (live_routes.get("failureCount"), leak_hit_count(live_routes)),
         "- Latest-code live verifier expects `%s`, observes `%s`, and matches `%s`." % (
             live_latest_code.get("expectedSourceSha"),
             live_latest_code.get("observedSourceSha"),
@@ -439,8 +447,8 @@ def build_final_markdown(local_report):
             str(bool(freshness.get("packageEvidenceCurrent"))).lower(),
         ),
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
-        "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
-        "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
+        "- Local WSGI route verification: %s routes, %s failures, %s public leak hits." % (local_routes.get("routeCount"), local_routes.get("failureCount"), leak_hit_count(local_routes)),
+        "- Live public route verification: %s routes, %s failures, %s public leak hits for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount"), leak_hit_count(live_routes)),
         "- Live latest-code SHA verification snapshot: expected `%s`, observed `%s`, match `%s`." % (
             live_latest_code.get("expectedSourceSha"),
             live_latest_code.get("observedSourceSha"),

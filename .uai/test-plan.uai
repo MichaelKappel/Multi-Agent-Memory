@@ -30,5 +30,6 @@ External evidence refresh:
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.
+- Public route and companion-site verifiers must report zero secret hits and zero public leak hits for local filesystem paths, file URIs, or raw traceback fragments.
 - Storage tests must prove one-time workspace keys are persisted only as hashes, raw keys are absent from file and SQLite storage, SQLite relational tables exist, memory revisions are represented, and the active tested path does not rely on a single JSON blob table.
 - Dogfood must create or use a workspace, register an agent, submit/search memory, create/read/ack current messages, read receipts, read audit log, generate a redacted report, and update `.uai` progress without dates.

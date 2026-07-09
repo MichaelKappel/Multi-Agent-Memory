@@ -59,6 +59,15 @@ SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),
 ]
 
+PUBLIC_LEAK_PATTERNS = [
+    ("windows_local_path", re.compile(r"\b[A-Za-z]:[\\/][^\s<>'\")]+")),
+    ("file_uri", re.compile(r"\bfile://[^\s<>'\")]+", re.I)),
+    ("posix_home_path", re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9._-])/(?:Users|home)/[^\s<>'\")]+")),
+    ("private_runtime_path", re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9._-])/(?:tmp|var/tmp|private/var)/[^\s<>'\")]+")),
+    ("python_traceback", re.compile(r"Traceback \(most recent call last\):")),
+    ("python_traceback_frame", re.compile(r"File \"[^\"]+\", line \d+, in ")),
+]
+
 
 def read_text(path):
     return path.read_text(encoding="utf-8", errors="replace")
@@ -82,6 +91,16 @@ def fetch_live(base_url, rel):
         return None, "", exc.__class__.__name__
 
 
+def pattern_hits(patterns, text):
+    return [name for name, pattern in patterns if pattern.search(text)]
+
+
+def apply_public_text_checks(item, text):
+    item["secretHitCount"] = sum(1 for pattern in SECRET_PATTERNS if pattern.search(text))
+    item["leakRules"] = pattern_hits(PUBLIC_LEAK_PATTERNS, text)
+    item["leakHitCount"] = len(item["leakRules"])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--site-root", default=str(DEFAULT_SITE_ROOT))
@@ -94,7 +113,7 @@ def main(argv=None):
     required = LIVE_FILES if args.base_url else REQUIRED_FILES
     for rel in required:
         path = site_root / rel
-        item = {"file": rel, "missingStrings": [], "secretHitCount": 0}
+        item = {"file": rel, "missingStrings": [], "secretHitCount": 0, "leakHitCount": 0, "leakRules": []}
         if args.base_url:
             status, text, error_type = fetch_live(args.base_url, rel)
             item["route"] = live_route_for(rel)
@@ -105,15 +124,16 @@ def main(argv=None):
         else:
             item["exists"] = path.exists()
             text = read_text(path) if path.exists() else ""
+        if text:
+            apply_public_text_checks(item, text)
         if item["exists"]:
             item["missingStrings"] = [value for value in REQUIRED_STRINGS.get(rel, []) if value not in text]
-            item["secretHitCount"] = sum(1 for pattern in SECRET_PATTERNS if pattern.search(text))
         items.append(item)
 
     failures = [
         item
         for item in items
-        if not item["exists"] or item["missingStrings"] or item["secretHitCount"]
+        if not item["exists"] or item["missingStrings"] or item["secretHitCount"] or item["leakHitCount"]
     ]
     report = {
         "schemaVersion": "static_site.verifier.v1",

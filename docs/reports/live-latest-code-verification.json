@@ -1,12 +1,14 @@
 {
-  "expectedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+  "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
   "expectedSourceShaSource": "git_head",
   "failureCount": 1,
   "failures": [
     {
-      "expectedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+      "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [
-        "expected source sha 7234135b80753ae29e1042727ac9955aa92b0b44"
+        "expected source sha 7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -16,48 +18,62 @@
       "status": 200
     }
   ],
-  "gitHeadAtVerification": "7234135b80753ae29e1042727ac9955aa92b0b44",
+  "gitHeadAtVerification": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
   "items": [
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/docs",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/docs/",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/agent-setup",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/memory-lifecycle",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/transparency",
       "secretHitCount": 0,
       "status": 200
     },
     {
-      "expectedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+      "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [
-        "expected source sha 7234135b80753ae29e1042727ac9955aa92b0b44"
+        "expected source sha 7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -67,84 +83,112 @@
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/api/matm/live-capability-matrix",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/api/matm/route-inventory",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/api/matm/readiness-result",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/api/matm/redacted-example-receipts",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/api/matm/agent-setup/free-account",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/mcp/resources",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/robots.txt",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/sitemap.xml",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/llms.txt",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/llms-full.txt",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/ai.txt",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/ai-manifest.json",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/.well-known/mcp.json",
       "secretHitCount": 0,
       "status": 200
     },
     {
+      "leakHitCount": 0,
+      "leakRules": [],
       "missing": [],
       "route": "/.well-known/ai-agent.json",
       "secretHitCount": 0,
