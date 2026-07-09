@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -7,10 +9,10 @@ from . import __version__
 from .build import build_provenance
 from .config import COMPANION_DOCS_URL, DOCS_DIR, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
-from .runtime import store_backend_health
+from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
-from .storage import FileStore, MySQLStore, SQLiteStore
+from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics
 
 
 STATIC_ROOT = ROOT / "static"
@@ -43,6 +45,36 @@ def _token(environ):
 
 def _idempotency_key(environ):
     return environ.get("HTTP_IDEMPOTENCY_KEY", "").strip()
+
+
+def _admin_diagnostics_path():
+    return Path(
+        os.environ.get(
+            "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
+            str(ROOT / ".local-secrets" / "admin-diagnostics.json"),
+        )
+    )
+
+
+def _admin_diagnostics_authorized(environ):
+    path = _admin_diagnostics_path()
+    if not path.exists():
+        return False, "not_configured"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False, "invalid_config"
+    expected_hash = str(payload.get("tokenHash") or "").strip().lower()
+    if not expected_hash:
+        return False, "missing_token_hash"
+    token_hash = hashlib.sha256(_token(environ).encode("utf-8")).hexdigest()
+    return hmac.compare_digest(token_hash, expected_hash), "configured"
+
+
+def _diagnostic_fingerprint(value):
+    if value is None:
+        return None
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
 
 
 def _store():
@@ -436,6 +468,50 @@ def route_public_json(path, start_response):
     return None
 
 
+def route_admin_mysql_diagnostics(environ, start_response):
+    if environ["REQUEST_METHOD"] != "GET":
+        return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET for MySQL diagnostics.", "method_not_allowed")
+    authorized, auth_status = _admin_diagnostics_authorized(environ)
+    if auth_status == "not_configured":
+        return problem(start_response, "404 Not Found", "Not found", "The requested route does not exist.", "not_found")
+    if not authorized:
+        return problem(start_response, "401 Unauthorized", "Diagnostics token required", "Send the diagnostics token in Authorization: Bearer.", "auth_required")
+    diagnostics = mysql_config_diagnostics()
+    connect_attempt = {
+        "ok": False,
+        "valuesRedacted": True,
+    }
+    try:
+        MySQLStore().healthcheck()
+        connect_attempt["ok"] = True
+        connect_attempt["errorCode"] = None
+    except Exception as exc:
+        args = getattr(exc, "args", ()) or ()
+        mysql_error_number = args[0] if args and isinstance(args[0], int) else None
+        connect_attempt.update(
+            {
+                "errorCode": backend_error_code("mysql", exc),
+                "errorType": exc.__class__.__name__,
+                "mysqlErrorNumber": mysql_error_number,
+                "sqlState": getattr(exc, "sqlstate", None),
+                "messageFingerprint": _diagnostic_fingerprint(str(exc)),
+            }
+        )
+    payload = {
+        "ok": connect_attempt["ok"],
+        "site": SITE_NAME,
+        "generatedAt": utc_now(),
+        "build": build_provenance(),
+        "schemaVersion": "memoryendpoints.admin_mysql_diagnostics.v1",
+        "authStatus": auth_status,
+        "configuredStoreBackend": os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file",
+        "configDiagnostics": diagnostics,
+        "connectAttempt": connect_attempt,
+        "valuesRedacted": True,
+    }
+    return json_response(start_response, payload)
+
+
 def route_setup(environ, start_response):
     if environ["REQUEST_METHOD"] == "GET":
         return json_response(
@@ -739,6 +815,8 @@ def application(environ, start_response):
     public = route_public_json(path, start_response) if method == "GET" else None
     if public:
         return public
+    if path == "/api/admin/mysql-diagnostics":
+        return route_admin_mysql_diagnostics(environ, start_response)
     if path == "/api/matm/agent-setup/free-account":
         return route_setup(environ, start_response)
     if path.startswith("/api/matm/"):

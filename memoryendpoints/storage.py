@@ -1718,9 +1718,19 @@ class _DbConnection(object):
         return False
 
 
-def _mysql_config_from_secret_file():
+def _mysql_secret_config_path():
     configured = os.environ.get("MEMORYENDPOINTS_MYSQL_CONFIG_PATH")
-    path = Path(configured) if configured else ROOT / ".local-secrets" / "mysql.json"
+    return Path(configured) if configured else ROOT / ".local-secrets" / "mysql.json"
+
+
+def _diagnostic_fingerprint(value):
+    if value is None:
+        return None
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _mysql_config_from_secret_file():
+    path = _mysql_secret_config_path()
     if not path.exists():
         return {}
     try:
@@ -1736,6 +1746,64 @@ def _mysql_config_from_secret_file():
         "password": payload.get("password") or "",
         "database": payload.get("database") or payload.get("db") or "",
     }
+
+
+def mysql_config_diagnostics():
+    path = _mysql_secret_config_path()
+    env_keys = [
+        "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
+        "MEMORYENDPOINTS_MYSQL_URL",
+        "DATABASE_URL",
+        "MEMORYENDPOINTS_MYSQL_HOST",
+        "MYSQL_HOST",
+        "MEMORYENDPOINTS_MYSQL_PORT",
+        "MYSQL_PORT",
+        "MEMORYENDPOINTS_MYSQL_USER",
+        "MYSQL_USER",
+        "MEMORYENDPOINTS_MYSQL_PASSWORD",
+        "MYSQL_PASSWORD",
+        "MEMORYENDPOINTS_MYSQL_DATABASE",
+        "MYSQL_DATABASE",
+    ]
+    report = {
+        "schemaVersion": "memoryendpoints.mysql_config_diagnostics.v1",
+        "secretConfigPathFingerprint": _diagnostic_fingerprint(str(path)),
+        "secretConfigPathExists": path.exists(),
+        "secretConfigPathConfigured": bool(os.environ.get("MEMORYENDPOINTS_MYSQL_CONFIG_PATH")),
+        "environmentPresence": {key: bool(os.environ.get(key)) for key in env_keys},
+        "valuesRedacted": True,
+    }
+    url = os.environ.get("MEMORYENDPOINTS_MYSQL_URL") or os.environ.get("DATABASE_URL")
+    if path.exists():
+        source = "secret_file"
+    elif url:
+        source = "url"
+    elif any(os.environ.get(key) for key in env_keys if not key.endswith("_URL") and key != "DATABASE_URL"):
+        source = "individual_environment"
+    else:
+        source = "default_missing_settings"
+    report["selectedCredentialSource"] = source
+    try:
+        config = _mysql_config_from_env()
+        host = config.get("host") or ""
+        report["selectedConfig"] = {
+            "hostCategory": "localhost" if host in ("localhost", "127.0.0.1", "::1") else "remote",
+            "hostFingerprint": _diagnostic_fingerprint(host),
+            "port": int(config.get("port") or 0),
+            "databaseFingerprint": _diagnostic_fingerprint(config.get("database")),
+            "databaseLength": len(str(config.get("database") or "")),
+            "userFingerprint": _diagnostic_fingerprint(config.get("user")),
+            "userLength": len(str(config.get("user") or "")),
+            "passwordFingerprint": _diagnostic_fingerprint(config.get("password")),
+            "passwordLength": len(str(config.get("password") or "")),
+        }
+    except Exception as exc:
+        report["configLoadError"] = {
+            "errorType": exc.__class__.__name__,
+            "errorFingerprint": _diagnostic_fingerprint(str(exc)),
+            "valuesRedacted": True,
+        }
+    return report
 
 
 def _mysql_config_from_env():

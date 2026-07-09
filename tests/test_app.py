@@ -44,6 +44,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         Path(self.tempdir).mkdir(parents=True, exist_ok=True)
         os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "store.json")
         os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = os.path.join(self.tempdir, "missing-mysql.json")
+        os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = os.path.join(self.tempdir, "missing-admin-diagnostics.json")
 
     def tearDown(self):
         shutil.rmtree(self.tempdir, ignore_errors=True)
@@ -64,6 +65,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "MEMORYENDPOINTS_MYSQL_DATABASE",
             "MYSQL_DATABASE",
             "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
+            "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
         ):
             os.environ.pop(key, None)
 
@@ -106,6 +108,38 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("sourceSha", payload["build"])
         self.assertTrue(payload["build"]["valuesRedacted"])
         self.assertNotIn("E:\\", json.dumps(payload))
+
+    def test_admin_mysql_diagnostics_is_hidden_when_not_configured(self):
+        status, _headers, text = call_app("/api/admin/mysql-diagnostics")
+
+        self.assertEqual("404 Not Found", status)
+        self.assertEqual("not_found", json.loads(text)["error"]["code"])
+
+    def test_admin_mysql_diagnostics_requires_token_and_redacts_values(self):
+        sample_bearer = "diagnostic bearer for test"
+        token_path = Path(self.tempdir) / "admin-diagnostics.json"
+        token_path.write_text(
+            json.dumps({"tokenHash": hashlib.sha256(sample_bearer.encode("utf-8")).hexdigest()}),
+            encoding="utf-8",
+        )
+        os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = str(token_path)
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "mysql"
+
+        status, _headers, text = call_app("/api/admin/mysql-diagnostics")
+        self.assertEqual("401 Unauthorized", status)
+
+        status, _headers, text = call_app(
+            "/api/admin/mysql-diagnostics",
+            headers={"HTTP_AUTHORIZATION": "Bearer " + sample_bearer},
+        )
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["valuesRedacted"])
+        self.assertEqual("mysql_missing_settings", payload["connectAttempt"]["errorCode"])
+        self.assertFalse(payload["configDiagnostics"]["secretConfigPathExists"])
+        self.assertNotIn(sample_bearer, text)
+        self.assertNotIn(str(token_path), text)
 
     def test_free_account_memory_message_ack_flow(self):
         status, _headers, text = call_app(
