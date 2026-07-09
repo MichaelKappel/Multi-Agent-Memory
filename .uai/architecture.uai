@@ -18,5 +18,5 @@ Current architecture state:
 - Public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`.
 - Protected MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, redacted receipts, and redacted audit-log readback.
 - File storage remains the default local backend.
-- Stdlib SQLite is a live optional relational backend for implemented MATM workflows. It uses separate MATM tables instead of a single JSON blob table in the active tested path.
+- Stdlib SQLite is a live optional relational backend for implemented MATM workflows. It uses separate MATM tables, including memory revisions, instead of a single JSON blob table in the active tested path.
 - MySQL/MariaDB remains adapter-gated because the runtime cannot claim a live MySQL client without approved non-stdlib support.

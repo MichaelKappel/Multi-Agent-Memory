@@ -505,11 +505,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertNotIn("matm_json_store", tables)
             self.assertTrue(
                 {
+                    "matm_clients",
                     "matm_workspaces",
+                    "matm_projects",
                     "matm_api_keys",
                     "matm_agents",
                     "matm_memory_records",
+                    "matm_memory_revisions",
                     "matm_memory_tags",
+                    "matm_crawl_sources",
+                    "matm_search_documents",
                     "matm_review_queue",
                     "matm_messages",
                     "matm_notifications",
@@ -522,6 +527,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             )
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_workspaces").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_records").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_revisions").fetchone()[0])
 
     def test_sqlite_backend_migrates_legacy_json_blob_on_write(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"

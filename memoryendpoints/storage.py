@@ -546,6 +546,7 @@ class SQLiteStore(FileStore):
     DELETE_ORDER = [
         "matm_search_documents",
         "matm_crawl_sources",
+        "matm_memory_revisions",
         "matm_memory_tags",
         "matm_review_queue",
         "matm_receipts",
@@ -669,6 +670,21 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_memory_workspace_status ON matm_memory_records (workspace_id, status, promotion_state);
+
+            CREATE TABLE IF NOT EXISTS matm_memory_revisions (
+              revision_id TEXT PRIMARY KEY,
+              memory_id TEXT NOT NULL,
+              revision_number INTEGER NOT NULL,
+              public_safe_summary TEXT NOT NULL,
+              change_summary TEXT NOT NULL,
+              body_hash TEXT NOT NULL,
+              created_by_agent_id TEXT,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              UNIQUE (memory_id, revision_number),
+              FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_memory_revisions_memory ON matm_memory_revisions (memory_id, revision_number);
 
             CREATE TABLE IF NOT EXISTS matm_memory_tags (
               memory_id TEXT NOT NULL,
@@ -848,6 +864,9 @@ class SQLiteStore(FileStore):
 
     def _agent_record_id(self, workspace_id, agent_id):
         return "agent-" + _hash("%s:%s" % (workspace_id, agent_id))[:20]
+
+    def _memory_revision_id(self, memory_id, revision_number):
+        return "rev-" + _hash("%s:%s" % (memory_id, revision_number))[:20]
 
     def _legacy_json_state(self, connection):
         exists = connection.execute(
@@ -1159,6 +1178,39 @@ class SQLiteStore(FileStore):
                                 event.get("updatedAt"),
                             ),
                         )
+                        revisions = event.get("revisions") or [
+                            {
+                                "revisionId": self._memory_revision_id(memory_id, int(event.get("revision") or 1)),
+                                "revisionNumber": int(event.get("revision") or 1),
+                                "publicSafeSummary": event.get("summary") or "",
+                                "changeSummary": "initial memory submission",
+                                "bodyHash": event.get("bodyHash") or _canonical_hash(event),
+                                "createdByAgentId": event.get("actorAgentId"),
+                                "createdAt": event.get("createdAt") or utc_now(),
+                                "valuesRedacted": event.get("valuesRedacted", True),
+                            }
+                        ]
+                        for revision in revisions:
+                            revision_number = int(revision.get("revisionNumber") or revision.get("revision") or 1)
+                            connection.execute(
+                                """
+                                INSERT OR REPLACE INTO matm_memory_revisions (
+                                  revision_id, memory_id, revision_number, public_safe_summary,
+                                  change_summary, body_hash, created_by_agent_id, created_at, values_redacted
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    revision.get("revisionId") or self._memory_revision_id(memory_id, revision_number),
+                                    memory_id,
+                                    revision_number,
+                                    revision.get("publicSafeSummary") or revision.get("summary") or event.get("summary") or "",
+                                    revision.get("changeSummary") or "memory revision",
+                                    revision.get("bodyHash") or event.get("bodyHash") or _canonical_hash(event),
+                                    revision.get("createdByAgentId") or event.get("actorAgentId"),
+                                    revision.get("createdAt") or event.get("createdAt") or utc_now(),
+                                    self._int_bool(revision.get("valuesRedacted", True)),
+                                ),
+                            )
                         for tag in event.get("tags") or []:
                             connection.execute(
                                 "INSERT OR IGNORE INTO matm_memory_tags (memory_id, tag) VALUES (?, ?)",

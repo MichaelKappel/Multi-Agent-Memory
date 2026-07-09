@@ -24,5 +24,5 @@ Current local gate:
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.
-- Storage tests must prove SQLite relational tables exist and the active tested path does not rely on a single JSON blob table.
+- Storage tests must prove SQLite relational tables exist, include memory revisions, and the active tested path does not rely on a single JSON blob table.
 - Dogfood must create or use a workspace, register an agent, submit/search memory, create/read/ack current messages, read receipts, read audit log, generate a redacted report, and update `.uai` progress without dates.

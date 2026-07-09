@@ -21,7 +21,7 @@ $env:MEMORYENDPOINTS_STORE_BACKEND='sqlite'
 $env:MEMORYENDPOINTS_SQLITE_PATH='E:\MemoryEndpoints.com\var\matm_store.sqlite3'
 ```
 
-The SQLite backend stores implemented MATM workflow state in relational tables using Python's standard `sqlite3` module. It creates separate tables for workspaces, API keys, agents, memory records, memory tags, review queue entries, current messages, notifications, receipts, idempotency records, outbox events, storage ledger entries, and audit logs.
+The SQLite backend stores implemented MATM workflow state in relational tables using Python's standard `sqlite3` module. It creates separate tables for clients, workspaces, projects, API keys, agents, memory records, memory revisions, memory tags, crawl sources, search documents, review queue entries, current messages, notifications, receipts, idempotency records, outbox events, storage ledger entries, and audit logs.
 
 The SQLite backend no longer relies on a single JSON blob table for the active tested workflows. It preserves the same route-level behavior as the file backend, uses SQLite `TRUNCATE` journal mode for compatibility with constrained shared-host filesystems, and requires no third-party runtime packages.
 
