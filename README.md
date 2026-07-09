@@ -9,7 +9,7 @@ This repository contains two coordinated surfaces:
 | Surface | Role | Status |
 | --- | --- | --- |
 | [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Current public routes live-verified; latest-code deployment gated |
-| `sites/multiagentmemory.com/` | GitHub companion documentation site for the public memory model | Repository docs |
+| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public memory model | Local source ready; live publish gated by FTPS login |
 
 The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no third-party runtime packages.
 
@@ -24,7 +24,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - File-backed storage plus optional stdlib SQLite storage.
 - A canonical MySQL/MariaDB schema with activation gated until a no-third-party-compatible adapter is explicitly approved.
 
-MultiAgentMemory.com is documentation only. It explains the architecture, memory boundary, and GitHub-facing handoff model.
+MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the architecture, memory boundary, GitHub repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API; MemoryEndpoints.com owns that runtime.
 
 ## Memory Boundary
 
@@ -32,7 +32,7 @@ MultiAgentMemory.com is documentation only. It explains the architecture, memory
 | --- | --- | --- |
 | Short-term/startup memory | `.uai/` | Current instructions, constraints, progress, and pointer ledgers |
 | Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory, current messages, notifications, and receipts |
-| Public documentation | `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
+| Public documentation | [MultiAgentMemory.com](https://multiagentmemory.com) and `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
 
@@ -91,6 +91,7 @@ python run_dev.py
 ```powershell
 python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi
+python scripts\verify_static_site.py
 python scripts\secret_scan.py
 python scripts\package_memoryendpoints.py --check-only
 python scripts\audit_uai_memory.py

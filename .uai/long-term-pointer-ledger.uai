@@ -24,6 +24,7 @@ Initial records:
 - docs/long-term-memory/release-verification-summary.md
 - .uai/long-term-memory.uai
 - sites/multiagentmemory.com/README.md
+- sites/multiagentmemory.com/docs/how-it-works.html
 
 Deep-linked strategy records:
 - Best practices: docs/long-term-memory/enterprise-engineering-best-practices.md#python-engineering
@@ -34,11 +35,15 @@ Deep-linked strategy records:
 - Python engineering targets: docs/long-term-memory/system-targets.md#python-engineering-targets
 - Database and MySQL targets: docs/long-term-memory/system-targets.md#database-and-mysql-targets
 - Inbound-link targets: docs/long-term-memory/system-targets.md#inbound-link-and-documentation-targets
+- MultiAgentMemory detailed guide: sites/multiagentmemory.com/docs/how-it-works.html
 
 Release evidence:
 - docs/reports/final-verification-report.md
 - docs/reports/local-route-verification.json
 - docs/reports/live-route-verification.json
+- docs/reports/multiagentmemory-deploy-dry-run-latest.json
+- docs/reports/multiagentmemory-deploy-live-attempt-latest.json
+- docs/reports/multiagentmemory-live-site-verification.json
 
 Hosted memory:
 - MemoryEndpoints.com is the mid-to-long-term MATM memory endpoint for this project.

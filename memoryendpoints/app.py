@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from . import __version__
-from .config import DOCS_DIR, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
+from .config import COMPANION_DOCS_URL, DOCS_DIR, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
@@ -88,6 +88,7 @@ def html_page(title, main):
       <a href="/agent-setup">Agent Setup</a>
       <a href="/memory-lifecycle">Memory</a>
       <a href="/transparency">Transparency</a>
+      <a href="{companion_docs_url}">MultiAgentMemory.com</a>
     </nav>
   </header>
   <main>{main}</main>
@@ -96,7 +97,7 @@ def html_page(title, main):
   </footer>
   <script src="/static/js/site.js"></script>
 </body>
-</html>""".format(title=escape_html(title), main=main, json_ld=json_ld)
+</html>""".format(title=escape_html(title), main=main, json_ld=json_ld, companion_docs_url=COMPANION_DOCS_URL)
 
 
 def escape_html(value):
@@ -119,6 +120,7 @@ def route_home(start_response):
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
+      <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
   </div>
   <figure class="system-map" aria-label="MATM memory flow diagram">
@@ -130,8 +132,9 @@ def route_home(start_response):
   <article><h2>For humans</h2><p>Readable pages explain what is live, planned, gated, and unsupported.</p></article>
   <article><h2>For agents</h2><p>Deterministic JSON and text routes define setup, memory, inbox, and acknowledgement flows.</p></article>
   <article><h2>For operators</h2><p>Secrets stay outside the repo; deployment and database use require explicit proof.</p></article>
+  <article><h2>For implementers</h2><p><a href="{companion_docs_url}">MultiAgentMemory.com</a> explains the repository, GitHub handoff, and MATM memory boundary.</p></article>
 </section>
-"""
+""".format(companion_docs_url=COMPANION_DOCS_URL)
     return response(start_response, "200 OK", html_page("Home", body), "text/html; charset=utf-8")
 
 
@@ -140,6 +143,8 @@ def route_docs(start_response):
 <section class="page">
   <h1>Documentation</h1>
   <p>MemoryEndpoints follows an AI-ready web model: human-first pages, deterministic discovery files, safe APIs, bounded capability claims, privacy-preserving receipts, and validation evidence.</p>
+  <h2>Companion documentation</h2>
+  <p><a href="{companion_docs_url}">MultiAgentMemory.com</a> is the public GitHub companion documentation site. It explains how the repository, `.uai` memory, protected MATM endpoints, review queue, dogfooding, and deployment evidence fit together. The source repository is <a href="{github_repo_url}">MichaelKappel/Multi-Agent-Memory</a>.</p>
   <h2>Discovery routes</h2>
   <ul>
     <li><code>/llms.txt</code> and <code>/llms-full.txt</code> summarize public agent guidance.</li>
@@ -148,7 +153,7 @@ def route_docs(start_response):
     <li><code>/.well-known/mcp.json</code> and <code>/mcp/resources</code> expose resource discovery.</li>
   </ul>
 </section>
-"""
+""".format(companion_docs_url=COMPANION_DOCS_URL, github_repo_url=GITHUB_REPO_URL)
     return response(start_response, "200 OK", html_page("Docs", body), "text/html; charset=utf-8")
 
 
@@ -214,6 +219,8 @@ def text_discovery(name):
         "Purpose: pure MATM Multi-Agent Transactive Memory endpoint reference.",
         "Live public routes: " + ", ".join(matrix["publicRoutes"]),
         "Protected MATM routes: " + ", ".join(matrix["protectedRoutes"]),
+        "Companion documentation: %s." % COMPANION_DOCS_URL,
+        "Source repository: %s." % GITHUB_REPO_URL,
         "Memory boundary: docs-backed long-term memory until hosted persistence is proven.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "Readiness evidence: /api/matm/readiness-result.",
@@ -272,6 +279,8 @@ def route_public_json(path, start_response):
                 "name": SITE_NAME,
                 "capabilities": ["matm_memory", "current_message_inbox", "redacted_receipts", "workspace_quota", "readiness_evidence"],
                 "manifest": "%s/ai-manifest.json" % SITE_URL,
+                "companionDocumentation": COMPANION_DOCS_URL,
+                "sourceRepository": GITHUB_REPO_URL,
             },
         )
     if path == "/.well-known/mcp.json":
@@ -281,6 +290,7 @@ def route_public_json(path, start_response):
                 "schemaVersion": "mcp.well_known.v1",
                 "name": SITE_NAME,
                 "resources": "%s/mcp/resources" % SITE_URL,
+                "companionDocumentation": COMPANION_DOCS_URL,
                 "boundary": "Public resources only; protected MATM APIs require workspace key.",
             },
         )
@@ -309,6 +319,12 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints Route Inventory",
                 "mimeType": "application/json",
                 "route": "/api/matm/route-inventory",
+            },
+            {
+                "uri": "memoryendpoints://docs/companion-site",
+                "name": "MultiAgentMemory.com Companion Documentation",
+                "mimeType": "text/html",
+                "url": COMPANION_DOCS_URL,
             },
         ]
         return json_response(start_response, {"ok": True, "resources": resources})

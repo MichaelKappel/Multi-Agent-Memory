@@ -420,7 +420,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("local_verified_latest_live_deploy_gated", data["overallStatus"])
         blockers = {item["id"] for item in data["blockers"]}
         self.assertIn("latest_code_live_deployed", blockers)
-        self.assertIn("live_dogfood_verified", blockers)
+        checks = {item["id"]: item for item in data["checks"]}
+        self.assertEqual("pass_live_current_public_surface", checks["live_dogfood"]["status"])
 
     def test_sqlite_backend_supports_core_memory_flow(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"

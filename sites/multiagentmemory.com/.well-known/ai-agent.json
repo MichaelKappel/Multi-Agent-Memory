@@ -3,10 +3,13 @@
   "name": "MultiAgentMemory.com",
   "description": "Public documentation companion for the MemoryEndpoints.com MATM endpoint reference.",
   "manifest": "https://multiagentmemory.com/ai-manifest.json",
+  "howItWorks": "https://multiagentmemory.com/docs/how-it-works.html",
+  "sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory",
   "primaryEndpointSite": "https://memoryendpoints.com",
   "capabilities": [
     "public_documentation",
     "memory_boundary_explanation",
+    "repository_handoff_explanation",
     "ai_ready_discovery"
   ],
   "protectedActions": "Use MemoryEndpoints.com protected MATM routes with a workspace key.",

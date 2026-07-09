@@ -12,7 +12,7 @@ The repository is organized around a deployable endpoint app plus a documentatio
 ## Documentation Surface
 
 - `docs/` contains curated architecture, API, storage, schema, reports, prompts, and long-term memory records.
-- `sites/multiagentmemory.com/` contains the public documentation companion site.
+- `sites/multiagentmemory.com/` contains the public documentation companion site for https://multiagentmemory.com, including its GitHub repository links and AI-readable discovery files.
 - `examples/` contains public-safe request examples.
 
 ## Agent Memory Surface
@@ -22,12 +22,12 @@ The repository is organized around a deployable endpoint app plus a documentatio
 
 ## Operational Surface
 
-- `scripts/` contains stdlib verification, packaging, migration, and deployment helpers.
+- `scripts/` contains stdlib verification, packaging, migration, static-site deployment, endpoint deployment, and readiness helpers.
 - `tests/` contains the standard-library unit test suite.
 - `.github/` contains repository hygiene automation.
 
 ## Publishing Boundary
 
-The repository root remains deployable for MemoryEndpoints.com. The companion documentation site lives under `sites/multiagentmemory.com/` so it is visible but not confused with the runtime package.
+The repository root remains deployable for MemoryEndpoints.com. The companion documentation site lives under `sites/multiagentmemory.com/` so it is visible but not confused with the runtime package. MultiAgentMemory.com deploys as static files from that folder.
 
 Local stores, deployment packages, logs, caches, FTP handoff files, and dropped raw intake files are excluded from version control.

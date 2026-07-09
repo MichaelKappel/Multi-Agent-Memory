@@ -1,6 +1,22 @@
 {
   "blockers": [
     {
+      "blocker": "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+      "evidence": [
+        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json"
+      ],
+      "requirement": "multiagentmemory_live_deployed",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Live MultiAgentMemory.com does not yet serve the expected companion-site routes and discovery files.",
+      "evidence": [
+        "docs/reports/multiagentmemory-live-site-verification.json"
+      ],
+      "requirement": "multiagentmemory_live_site_routes",
+      "status": "blocked"
+    },
+    {
       "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json"
@@ -30,6 +46,14 @@
       "command": "python scripts/verify_memoryendpoints.py --wsgi",
       "exitCode": 0,
       "name": "wsgi_route_verifier",
+      "ok": true,
+      "outputCaptured": false,
+      "valuesRedacted": true
+    },
+    {
+      "command": "python scripts/verify_static_site.py",
+      "exitCode": 0,
+      "name": "multiagentmemory_static_site",
       "ok": true,
       "outputCaptured": false,
       "valuesRedacted": true
@@ -122,6 +146,31 @@
     {
       "blocker": null,
       "evidence": [
+        "sites/multiagentmemory.com/",
+        "docs/reports/multiagentmemory-static-site-verification.json"
+      ],
+      "requirement": "multiagentmemory_static_site",
+      "status": "pass_local"
+    },
+    {
+      "blocker": "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+      "evidence": [
+        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json"
+      ],
+      "requirement": "multiagentmemory_live_deployed",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Live MultiAgentMemory.com does not yet serve the expected companion-site routes and discovery files.",
+      "evidence": [
+        "docs/reports/multiagentmemory-live-site-verification.json"
+      ],
+      "requirement": "multiagentmemory_live_site_routes",
+      "status": "blocked"
+    },
+    {
+      "blocker": null,
+      "evidence": [
         "docs/reports/live-route-verification.json"
       ],
       "requirement": "live_public_routes",
@@ -167,6 +216,9 @@
     "liveDogfoodVerified": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
+    "multiAgentMemoryLiveDeployed": false,
+    "multiAgentMemoryLiveSiteVerified": false,
+    "multiAgentMemoryStaticSiteVerified": true,
     "promptDraftsTracked": false,
     "valuesRedacted": true
   },

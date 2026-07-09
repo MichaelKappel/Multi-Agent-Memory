@@ -1,0 +1,31 @@
+{
+  "dryRun": false,
+  "errorType": "error_perm",
+  "failedPhase": "login",
+  "hasResolvedHost": true,
+  "hasResolvedPassword": true,
+  "hasResolvedPort": true,
+  "hasResolvedUser": true,
+  "plannedUploadCount": 12,
+  "remoteDirFingerprint": "cdb4ee2aea69cc6a",
+  "remoteDirResolved": true,
+  "remoteDirSource": "argument_or_handoff",
+  "safeNoOp": true,
+  "schemaVersion": "static_site.ftp_deploy.v1",
+  "signals": {
+    "hasFtp": true,
+    "hasHost": true,
+    "hasPassword": true,
+    "hasUser": true,
+    "mentionsTarget": true,
+    "sectionCount": 6,
+    "selectedSectionMentionsTarget": true,
+    "valuesRedacted": true
+  },
+  "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
+  "siteRootExists": true,
+  "status": "connection_or_upload_failed",
+  "targetDomain": "multiagentmemory.com",
+  "uploadedCount": 0,
+  "valuesRedacted": true
+}

@@ -62,6 +62,7 @@ def main(argv=None):
         checks = [
             run_check("unit_and_integration_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
             run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi"]),
+            run_check("multiagentmemory_static_site", [sys.executable, "scripts/verify_static_site.py"]),
             run_check("uai_memory_audit", [sys.executable, "scripts/audit_uai_memory.py"]),
             run_check("package_check", [sys.executable, "scripts/package_memoryendpoints.py", "--check-only"]),
             run_check("secret_scan", [sys.executable, "scripts/secret_scan.py"]),
@@ -72,7 +73,13 @@ def main(argv=None):
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
+    multiagentmemory_live = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-live-attempt-latest.json")
+    multiagentmemory_static = load_json(Path("docs") / "reports" / "multiagentmemory-static-site-verification.json")
+    multiagentmemory_live_site = load_json(Path("docs") / "reports" / "multiagentmemory-live-site-verification.json")
     github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
+    multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
+        item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
+    )
 
     requirements = [
         evidence_item(
@@ -104,6 +111,24 @@ def main(argv=None):
             "public_wsgi_routes",
             "pass_local" if local_routes and local_routes.get("ok") else "missing",
             ["docs/reports/local-route-verification.json"],
+        ),
+        evidence_item(
+            "multiagentmemory_static_site",
+            "pass_local" if multiagentmemory_static_ok else "missing",
+            ["sites/multiagentmemory.com/", "docs/reports/multiagentmemory-static-site-verification.json"],
+            None if multiagentmemory_static_ok else "Run scripts/verify_static_site.py before claiming companion-site source readiness.",
+        ),
+        evidence_item(
+            "multiagentmemory_live_deployed",
+            "pass_live" if multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded" else "blocked",
+            ["docs/reports/multiagentmemory-deploy-live-attempt-latest.json"],
+            None if multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded" else "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+        ),
+        evidence_item(
+            "multiagentmemory_live_site_routes",
+            "pass_live" if multiagentmemory_live_site and multiagentmemory_live_site.get("ok") else "blocked",
+            ["docs/reports/multiagentmemory-live-site-verification.json"],
+            None if multiagentmemory_live_site and multiagentmemory_live_site.get("ok") else "Live MultiAgentMemory.com does not yet serve the expected companion-site routes and discovery files.",
         ),
         evidence_item(
             "live_public_routes",
@@ -151,6 +176,9 @@ def main(argv=None):
             "localHardeningVerified": all_checks_ok is True or all_checks_ok is None,
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
             "latestCodeLiveDeployed": False,
+            "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,
+            "multiAgentMemoryLiveDeployed": bool(multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded"),
+            "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site and multiagentmemory_live_site.get("ok")),
             "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
             "promptDraftsTracked": False,
             "valuesRedacted": True,

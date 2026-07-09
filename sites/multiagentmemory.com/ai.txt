@@ -1,5 +1,8 @@
 MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.com.
 
+Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
+Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
+
 Agents should use repository `.uai/` files for short-term/startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication.
 
 Unsupported actions should no-op safely and route back to human review.

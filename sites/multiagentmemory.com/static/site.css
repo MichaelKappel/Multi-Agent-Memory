@@ -85,6 +85,14 @@ p {
   max-width: 760px;
 }
 
+code {
+  background: #edf3f7;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.95em;
+  padding: 1px 4px;
+}
+
 .actions,
 .grid {
   display: flex;
@@ -113,6 +121,12 @@ p {
   margin-top: 24px;
 }
 
+.band {
+  border-top: 1px solid var(--line);
+  margin-top: 38px;
+  padding-top: 32px;
+}
+
 article {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -124,6 +138,39 @@ article {
 .page {
   max-width: 920px;
   padding-top: 48px;
+}
+
+.page h2 {
+  border-top: 1px solid var(--line);
+  margin-top: 34px;
+  padding-top: 24px;
+}
+
+.page li {
+  margin: 8px 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 16px 0 0;
+  min-width: 680px;
+  width: 100%;
+}
+
+th,
+td {
+  border: 1px solid var(--line);
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #edf3f7;
 }
 
 footer {

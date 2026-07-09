@@ -2,6 +2,14 @@
 
 Purpose: public documentation companion for MemoryEndpoints.com and the Multi-Agent Transactive Memory reference repository.
 
+Primary links:
+
+- Documentation site: https://multiagentmemory.com
+- Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
+- Memory boundary: https://multiagentmemory.com/docs/memory-boundary.html
+- Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
+- Hosted endpoint: https://memoryendpoints.com
+
 Memory boundary:
 
 - Short-term/startup memory: repository `.uai/` files.
@@ -14,6 +22,26 @@ Primary live endpoint evidence:
 - https://memoryendpoints.com/api/matm/route-inventory
 - https://memoryendpoints.com/api/matm/readiness-result
 - https://memoryendpoints.com/api/matm/redacted-example-receipts
+
+Repository model:
+
+- Runtime package: memoryendpoints/
+- Static companion site: sites/multiagentmemory.com/
+- Local startup memory: .uai/
+- Reviewed durable docs memory: docs/long-term-memory/
+- Verification and deploy helpers: scripts/
+- Tests: tests/
+
+Protected MATM workflow:
+
+- Agent setup: POST /api/matm/agent-setup/free-account
+- Memory write: POST /api/matm/memory-events/submit
+- Memory search: GET /api/matm/search
+- Review queue read: GET /api/matm/review-queue
+- Review queue decision: POST /api/matm/review-queue/decide
+- Current message read: GET /api/matm/current-message
+- Notification acknowledgement: POST /api/matm/notifications/ack
+- Redacted receipts: GET /api/matm/receipts
 
 Setup references:
 

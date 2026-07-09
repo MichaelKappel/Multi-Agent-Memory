@@ -25,6 +25,9 @@ jobs:
       - name: Verify WSGI routes
         run: python scripts/verify_memoryendpoints.py --wsgi
 
+      - name: Verify MultiAgentMemory static site
+        run: python scripts/verify_static_site.py
+
       - name: Run secret scan
         run: python scripts/secret_scan.py
 

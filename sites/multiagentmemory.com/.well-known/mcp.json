@@ -4,6 +4,12 @@
   "description": "Documentation resources for the MemoryEndpoints.com MATM endpoint project.",
   "resources": [
     {
+      "uri": "multiagentmemory://docs/how-it-works",
+      "name": "How Multi-Agent Memory Works",
+      "mimeType": "text/html",
+      "route": "/docs/how-it-works.html"
+    },
+    {
       "uri": "multiagentmemory://docs/memory-boundary",
       "name": "Memory Boundary",
       "mimeType": "text/html",
@@ -14,6 +20,12 @@
       "name": "LLM-readable Documentation Summary",
       "mimeType": "text/plain",
       "route": "/llms.txt"
+    },
+    {
+      "uri": "multiagentmemory://repo/github",
+      "name": "Source Repository",
+      "mimeType": "text/html",
+      "url": "https://github.com/MichaelKappel/Multi-Agent-Memory"
     }
   ],
   "boundary": "Documentation metadata only; protected MATM APIs live at MemoryEndpoints.com."

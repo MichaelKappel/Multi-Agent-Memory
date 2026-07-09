@@ -1,0 +1,75 @@
+{
+  "baseUrl": null,
+  "failureCount": 0,
+  "failures": [],
+  "fileCount": 10,
+  "items": [
+    {
+      "exists": true,
+      "file": "index.html",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "docs/how-it-works.html",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "docs/memory-boundary.html",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "README.md",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "llms.txt",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "ai.txt",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "ai-manifest.json",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": ".well-known/ai-agent.json",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": ".well-known/mcp.json",
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "sitemap.xml",
+      "missingStrings": [],
+      "secretHitCount": 0
+    }
+  ],
+  "mode": "local",
+  "ok": true,
+  "schemaVersion": "static_site.verifier.v1",
+  "site": "MultiAgentMemory.com",
+  "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
+  "staticHtmlCompanion": true,
+  "valuesRedacted": true
+}

@@ -1,0 +1,184 @@
+{
+  "baseUrl": "https://multiagentmemory.com",
+  "failureCount": 9,
+  "failures": [
+    {
+      "exists": true,
+      "file": "index.html",
+      "missingStrings": [
+        "https://github.com/MichaelKappel/Multi-Agent-Memory",
+        "https://memoryendpoints.com",
+        "/docs/how-it-works.html"
+      ],
+      "route": "/",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "docs/how-it-works.html",
+      "missingStrings": [],
+      "route": "/docs/how-it-works.html",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "docs/memory-boundary.html",
+      "missingStrings": [],
+      "route": "/docs/memory-boundary.html",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "llms.txt",
+      "missingStrings": [],
+      "route": "/llms.txt",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "ai.txt",
+      "missingStrings": [],
+      "route": "/ai.txt",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "ai-manifest.json",
+      "missingStrings": [],
+      "route": "/ai-manifest.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": ".well-known/ai-agent.json",
+      "missingStrings": [],
+      "route": "/.well-known/ai-agent.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": ".well-known/mcp.json",
+      "missingStrings": [],
+      "route": "/.well-known/mcp.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "sitemap.xml",
+      "missingStrings": [],
+      "route": "/sitemap.xml",
+      "secretHitCount": 0,
+      "status": 404
+    }
+  ],
+  "fileCount": 9,
+  "items": [
+    {
+      "exists": true,
+      "file": "index.html",
+      "missingStrings": [
+        "https://github.com/MichaelKappel/Multi-Agent-Memory",
+        "https://memoryendpoints.com",
+        "/docs/how-it-works.html"
+      ],
+      "route": "/",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "docs/how-it-works.html",
+      "missingStrings": [],
+      "route": "/docs/how-it-works.html",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "docs/memory-boundary.html",
+      "missingStrings": [],
+      "route": "/docs/memory-boundary.html",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "llms.txt",
+      "missingStrings": [],
+      "route": "/llms.txt",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "ai.txt",
+      "missingStrings": [],
+      "route": "/ai.txt",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "ai-manifest.json",
+      "missingStrings": [],
+      "route": "/ai-manifest.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": ".well-known/ai-agent.json",
+      "missingStrings": [],
+      "route": "/.well-known/ai-agent.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": ".well-known/mcp.json",
+      "missingStrings": [],
+      "route": "/.well-known/mcp.json",
+      "secretHitCount": 0,
+      "status": 404
+    },
+    {
+      "errorType": "HTTPError",
+      "exists": false,
+      "file": "sitemap.xml",
+      "missingStrings": [],
+      "route": "/sitemap.xml",
+      "secretHitCount": 0,
+      "status": 404
+    }
+  ],
+  "mode": "live",
+  "ok": false,
+  "schemaVersion": "static_site.verifier.v1",
+  "site": "MultiAgentMemory.com",
+  "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
+  "staticHtmlCompanion": true,
+  "valuesRedacted": true
+}

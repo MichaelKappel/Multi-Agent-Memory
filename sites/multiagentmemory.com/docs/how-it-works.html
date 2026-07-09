@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How It Works | MultiAgentMemory.com</title>
+  <meta name="description" content="Detailed system guide for the Multi-Agent Memory repository, MemoryEndpoints.com endpoint, and MultiAgentMemory.com documentation site.">
+  <link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">MultiAgentMemory.com</a>
+    <nav aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/docs/memory-boundary.html">Memory Boundary</a>
+      <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub Repo</a>
+      <a href="/llms.txt">llms.txt</a>
+      <a href="/ai-manifest.json">AI Manifest</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>How The Multi-Agent Memory System Works</h1>
+    <p>MultiAgentMemory.com is the public documentation companion for the <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">MichaelKappel/Multi-Agent-Memory</a> repository. The repository implements MemoryEndpoints.com as the hosted MATM endpoint surface and keeps this companion site focused on architecture, setup boundaries, GitHub-facing guidance, and AI-readable discovery.</p>
+
+    <h2>System roles</h2>
+    <p>The system deliberately separates endpoint behavior, public documentation, source control, and active agent memory. That separation keeps claims inspectable and keeps agents from confusing documentation with authenticated memory operations.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Location</th>
+            <th>Responsibility</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Hosted MATM endpoint</td>
+            <td><a href="https://memoryendpoints.com">MemoryEndpoints.com</a></td>
+            <td>Protected workspace memory, current-message coordination, agent inboxes, acknowledgement receipts, public route inventory, readiness evidence, and capability matrix.</td>
+          </tr>
+          <tr>
+            <td>Companion documentation</td>
+            <td><a href="https://multiagentmemory.com">MultiAgentMemory.com</a></td>
+            <td>Readable architecture docs, setup boundary docs, GitHub companion explanation, and deterministic discovery files for agents.</td>
+          </tr>
+          <tr>
+            <td>Source repository</td>
+            <td><a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub</a></td>
+            <td>Runtime code, static site source, tests, verification scripts, reports, `.uai` startup memory, and deployment/package tooling.</td>
+          </tr>
+          <tr>
+            <td>Local active memory</td>
+            <td><code>.uai/</code></td>
+            <td>Short-term startup continuity, totem invariants, progress ledger, pointer ledger, intake outcomes, and offline fallback when hosted MATM is unreachable.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Memory layers</h2>
+    <p>The system treats memory as layered rather than monolithic. Local `.uai` files stay active always. Hosted MATM augments durable memory; it does not retire local startup memory.</p>
+    <ul>
+      <li><strong>Short-term startup memory:</strong> `.uai/totem.uai`, `.uai/startup-packet.uai`, `.uai/short-term-memory.uai`, and related ledgers tell an agent what must be loaded before work begins.</li>
+      <li><strong>Reviewed local long-term memory:</strong> `docs/long-term-memory/` stores public-safe strategy, architecture, system targets, and release evidence that survived review.</li>
+      <li><strong>Hosted workspace memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, and redacted receipts for authenticated workspaces.</li>
+      <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
+    </ul>
+
+    <h2>Endpoint workflow</h2>
+    <ol>
+      <li>A human or host creates a workspace with <code>POST /api/matm/agent-setup/free-account</code>. The workspace key is returned once and the server stores only a hash.</li>
+      <li>Agents authenticate protected MATM calls with the workspace key. Public pages and discovery files remain readable without credentials.</li>
+      <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
+      <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
+      <li>Agents send current messages through <code>/api/matm/agent-messages</code>, read them through <code>/api/matm/current-message</code> or <code>/api/matm/agent-inbox</code>, and acknowledge notifications through <code>/api/matm/notifications/ack</code>.</li>
+      <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; raw private payloads and credential values are not exposed in public documentation.</li>
+    </ol>
+
+    <h2>Repository structure</h2>
+    <ul>
+      <li><code>memoryendpoints/</code>: pure Python WSGI runtime, route handlers, storage, HTTP helpers, security helpers, and site data.</li>
+      <li><code>static/</code>: MemoryEndpoints.com browser CSS, JavaScript, and image assets.</li>
+      <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
+      <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
+      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, and SQLite parity.</li>
+      <li><code>docs/reports/</code>: public-safe verification, deployment, readiness, package, and audit evidence.</li>
+    </ul>
+
+    <h2>Verification model</h2>
+    <p>The repository distinguishes local proof from live proof. Local WSGI tests prove the current code. Live route verification proves the currently deployed public surface. Live dogfooding proves the authenticated deployed workflow. Latest-code deployment remains a separate gate until a deploy succeeds and is verified after upload.</p>
+    <ul>
+      <li>Unit tests cover core routes, protected flows, error safe-noops, review decisions, and storage parity.</li>
+      <li>The WSGI verifier checks public routes for expected content and accidental secret exposure.</li>
+      <li>The `.uai` audit checks required local memory files, startup order, and the invariant that local `.uai` stays active always.</li>
+      <li>The package builder excludes `.git`, `.github`, `.uai`, local prompts, raw file-handoff intake, runtime stores, databases, logs, caches, and credential handoffs.</li>
+      <li>Secret scanning verifies package-eligible files and `.uai` memory do not contain obvious credential material.</li>
+      <li>Enterprise readiness reports keep completion claims bounded when CI, deploy, database, or live-dogfood gates are not proven.</li>
+    </ul>
+
+    <h2>Setup guidance</h2>
+    <p>The intended UAIX setup option is <a href="https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints">MemoryEndpoints.com MATM</a>. UAIX uses setup-option fragments because the wizard has multiple modes. Inbound links to MemoryEndpoints.com should use <a href="https://memoryendpoints.com">the home page</a> because MemoryEndpoints.com currently has one setup surface.</p>
+
+    <h2>Safety boundary</h2>
+    <p>This documentation does not claim certification, endorsement, hidden credential validation, automatic repository writes, or authority to store secrets. Unsupported actions should return safe no-op behavior and route back to human review.</p>
+  </main>
+  <footer>
+    <p>Source: <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">MichaelKappel/Multi-Agent-Memory</a>. Endpoint: <a href="https://memoryendpoints.com">MemoryEndpoints.com</a>.</p>
+  </footer>
+</body>
+</html>

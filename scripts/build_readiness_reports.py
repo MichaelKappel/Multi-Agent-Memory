@@ -61,6 +61,7 @@ def build_local_report():
     package = load_json("package-verification-report.json")
     secret = load_json("secret-scan-report.json")
     boundary = load_json("repository-boundary-audit.json")
+    static_site = load_json("multiagentmemory-static-site-verification.json")
     github_ci = load_json("github-ci-status-report.json")
 
     checks = [
@@ -75,6 +76,7 @@ def build_local_report():
         {"id": "package_check", "status": status(bool(package and package.get("status") == "ready")), "evidence": ["docs/reports/package-verification-report.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool(boundary and boundary.get("ok"))), "evidence": ["docs/reports/repository-boundary-audit.json", "sites/multiagentmemory.com/"]},
+        {"id": "multiagentmemory_static_site", "status": status(bool(static_site and static_site.get("ok"))), "evidence": ["docs/reports/multiagentmemory-static-site-verification.json", "sites/multiagentmemory.com/"]},
         {"id": "diff_check", "status": status((check_result(enterprise, "diff_check") or {}).get("ok")), "evidence": ["git diff --check"]},
     ]
     report = {
@@ -90,6 +92,7 @@ def build_local_report():
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
+        "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
         "externalSignals": {
             "githubCiConclusion": (github_ci or {}).get("conclusion"),
             "githubCiEvidence": "docs/reports/github-ci-status-report.json" if github_ci else None,
@@ -102,8 +105,11 @@ def build_local_report():
 
 def build_final_markdown(local_report):
     enterprise = load_json("enterprise-readiness-audit.json") or {}
+    local_routes = load_json("local-route-verification.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
+    multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
+    multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     package = load_json("package-verification-report.json") or {}
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
@@ -123,17 +129,25 @@ def build_final_markdown(local_report):
         "",
         "- Local verification report: `%s`, see `docs/reports/local-verification-report.json`." % ("pass" if local_report.get("ok") else "not pass"),
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
-        "- Local WSGI route verification: %s routes, %s failures." % (live_routes.get("routeCount", 21), (load_json("local-route-verification.json") or {}).get("failureCount")),
+        "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
         "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, and `.uai/totem.uai` is first in the required memory order.",
         "- Local dogfooding: %s through WSGI; live dogfooding: %s." % (str(bool(dogfood.get("localDogfoodVerified"))).lower(), str(live_dogfood).lower()),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
+        "- MultiAgentMemory.com static source: %s; live publish status `%s`, uploaded count `%s`." % (
+            "pass" if (load_json("multiagentmemory-static-site-verification.json") or {}).get("ok") else "not pass",
+            multiagentmemory_live.get("status"),
+            multiagentmemory_live.get("uploadedCount"),
+        ),
+        "- MultiAgentMemory.com live site verification: %s failures; home page is not serving expected companion links yet." % (multiagentmemory_live_site.get("failureCount")),
         "- GitHub Actions CI: `%s`; latest run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
         "",
         "## Blocked Or Gated",
         "",
         "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % ((deploy.get("liveAttempt") or {}).get("failedPhase"), (deploy.get("liveAttempt") or {}).get("errorType"), (deploy.get("liveAttempt") or {}).get("uploadedCount")),
+        "- MultiAgentMemory.com live publish: blocked. The recorded static-site FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % (multiagentmemory_live.get("failedPhase"), multiagentmemory_live.get("errorType"), multiagentmemory_live.get("uploadedCount")),
+        "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
     ]
     if not live_dogfood:
         lines.append("- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.")
@@ -147,7 +161,7 @@ def build_final_markdown(local_report):
             "The repository has strong local MATM evidence, live dogfood evidence, public route evidence, package evidence, and secret-safety evidence. It must not be described as fully done until latest-code live deployment, GitHub Actions CI, and remaining gated items are verified.",
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "valuesRedacted": True}, indent=2, sort_keys=True),
             "```",
         ]
     )

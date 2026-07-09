@@ -3,7 +3,14 @@
   "name": "MultiAgentMemory.com",
   "url": "https://multiagentmemory.com",
   "role": "github_companion_documentation_site",
+  "sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory",
   "primaryEndpointSite": "https://memoryendpoints.com",
+  "humanRoutes": {
+    "home": "https://multiagentmemory.com",
+    "howItWorks": "https://multiagentmemory.com/docs/how-it-works.html",
+    "memoryBoundary": "https://multiagentmemory.com/docs/memory-boundary.html",
+    "githubRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory"
+  },
   "memoryBoundary": {
     "shortTermStartup": "repository .uai files",
     "midToLongTerm": "MemoryEndpoints.com protected MATM routes",
@@ -22,7 +29,16 @@
   "evidence": {
     "liveCapabilityMatrix": "https://memoryendpoints.com/api/matm/live-capability-matrix",
     "routeInventory": "https://memoryendpoints.com/api/matm/route-inventory",
-    "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result"
+    "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result",
+    "redactedExampleReceipts": "https://memoryendpoints.com/api/matm/redacted-example-receipts"
+  },
+  "repositoryMap": {
+    "runtime": "memoryendpoints/",
+    "companionSite": "sites/multiagentmemory.com/",
+    "startupMemory": ".uai/",
+    "longTermMemoryDocs": "docs/long-term-memory/",
+    "verificationScripts": "scripts/",
+    "tests": "tests/"
   },
   "supportBoundary": {
     "noCertificationClaimed": true,

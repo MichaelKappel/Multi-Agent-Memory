@@ -11,6 +11,7 @@ Run from `E:\MemoryEndpoints.com`:
 ```powershell
 python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi --json-out docs\reports\local-route-verification.json
+python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json
 python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json
 python scripts\package_memoryendpoints.py --check-only
 python scripts\secret_scan.py --json-out docs\reports\secret-scan-report.json
@@ -22,6 +23,7 @@ Expected current local state:
 
 - Unit/integration tests pass.
 - WSGI route verifier checks 21 required public routes with 0 failures.
+- MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/totem.uai` first in the required memory order, and `localUaiStaysActiveAlways=true`.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Secret scan reports 0 hits.
@@ -34,6 +36,14 @@ python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com 
 ```
 
 This proves the currently deployed public surface responds correctly. It does not prove the newest local commit was deployed.
+
+## Live Companion Site Gate
+
+```powershell
+python scripts\verify_static_site.py --base-url https://multiagentmemory.com --json-out docs\reports\multiagentmemory-live-site-verification.json
+```
+
+This proves the currently deployed MultiAgentMemory.com static files, not merely the local `sites/multiagentmemory.com/` source tree. The current live domain must not be treated as ready while this check fails.
 
 ## Dogfood Gate
 

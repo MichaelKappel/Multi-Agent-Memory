@@ -1,5 +1,5 @@
 from . import __version__
-from .config import SITE_NAME, SITE_URL, utc_now
+from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, SITE_NAME, SITE_URL, utc_now
 
 
 ROUTE_TABLE = [
@@ -60,6 +60,11 @@ def capability_matrix():
         },
         "publicRoutes": PUBLIC_ROUTES,
         "protectedRoutes": PROTECTED_ROUTES,
+        "companionDocumentation": {
+            "site": COMPANION_DOCS_URL,
+            "role": "GitHub companion documentation for MATM architecture, repository handoff, and memory boundary details.",
+            "sourceRepository": GITHUB_REPO_URL,
+        },
         "memoryLevels": [
             {"level": "session", "status": "live", "storage": ".uai/short-term-memory.uai"},
             {"level": "project", "status": "live", "storage": "docs/long-term-memory"},
@@ -118,6 +123,11 @@ def manifest():
         "url": SITE_URL,
         "description": "Pure Python/TypeScript/HTML5 MATM endpoint reference implementation.",
         "version": __version__,
+        "companionDocumentation": {
+            "site": COMPANION_DOCS_URL,
+            "role": "GitHub companion documentation site for the repository, MATM setup, and public memory model.",
+            "sourceRepository": GITHUB_REPO_URL,
+        },
         "aiReadyWeb": {
             "humanFirst": True,
             "deterministicDiscovery": True,
@@ -131,6 +141,8 @@ def manifest():
             "capabilityMatrix": "%s/api/matm/live-capability-matrix" % SITE_URL,
             "sitemap": "%s/sitemap.xml" % SITE_URL,
             "llmsTxt": "%s/llms.txt" % SITE_URL,
+            "companionDocs": COMPANION_DOCS_URL,
+            "sourceRepository": GITHUB_REPO_URL,
         },
         "supportBoundary": {
             "noCertificationClaimed": True,
@@ -153,8 +165,9 @@ def readiness_result():
         "certificationClaimed": False,
         "sourceReferences": [
             "https://uaix.org/en-us/ai-ready-web/",
-            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM",
-            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM",
+            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints",
+            COMPANION_DOCS_URL,
+            GITHUB_REPO_URL,
         ],
         "checks": [
             {
@@ -210,8 +223,11 @@ def readiness_result():
             },
             {
                 "id": "live_dogfood",
-                "status": "blocked",
-                "evidence": ["docs/reports/dogfood-memory-run.json"],
+                "status": "pass_live_current_public_surface",
+                "evidence": [
+                    "docs/reports/dogfood-memory-run.json",
+                    "Live MATM dogfood is verified for the currently deployed API; latest-code deployment remains a separate gate.",
+                ],
             },
             {
                 "id": "production_database_adapter",
@@ -224,12 +240,6 @@ def readiness_result():
                 "id": "latest_code_live_deployed",
                 "detail": "The newest repository tranche is not proven live; the recorded FTPS attempt failed at login before upload.",
                 "evidence": "docs/reports/deploy-attempt-20260709.json",
-                "safeNoOp": True,
-            },
-            {
-                "id": "live_dogfood_verified",
-                "detail": "Dogfooding is verified locally through WSGI, not against the live authenticated MemoryEndpoints.com deployment.",
-                "evidence": "docs/reports/dogfood-memory-run.json",
                 "safeNoOp": True,
             },
         ],

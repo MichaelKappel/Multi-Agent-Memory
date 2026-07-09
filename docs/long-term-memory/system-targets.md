@@ -28,7 +28,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 ## MATM Product Targets
 
-- Keep MemoryEndpoints.com as the mid-to-long-term MATM endpoint and MultiAgentMemory.com as companion documentation.
+- Keep MemoryEndpoints.com as the mid-to-long-term MATM endpoint and MultiAgentMemory.com as companion documentation with direct links to the GitHub repository and detailed architecture guidance.
 - Keep `.uai/totem.uai` as a non-retirement invariant: local `.uai` stays active always.
 - Make every protected mutation idempotent where retries are realistic.
 - Keep public evidence routes current and bounded: readiness, capability matrix, route inventory, redacted receipts, AI manifest, and discovery files.
@@ -48,3 +48,4 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 - MemoryEndpoints.com currently has one setup surface; inbound links should use the home page.
 - Future MemoryEndpoints setup URLs should be clean readable routes, not fragment-style option URLs.
 - MultiAgentMemory.com should explain architecture and memory boundaries, not act as the hosted endpoint.
+- MultiAgentMemory.com live publishing must be verified separately from MemoryEndpoints.com deployment; a local companion site source tree is not enough to claim the domain is live.

@@ -59,3 +59,27 @@ python scripts\build_readiness_reports.py --write
 Do not claim the newest code is live until the live upload succeeds, Passenger restart is requested, and live route verification passes for the required public routes.
 
 Do not claim live dogfooding until the live authenticated MATM workflow is verified and a redacted report proves it.
+
+## MultiAgentMemory.com Companion Site
+
+MultiAgentMemory.com is a static documentation companion site, not the Python WSGI endpoint. Its source lives in `sites/multiagentmemory.com/`.
+
+Dry-run the target-specific static deploy:
+
+```powershell
+python scripts\ftp_deploy_static_site.py --dry-run --discover-remote-dir --target-domain multiagentmemory.com --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
+```
+
+Publish to the target login root only after the dry run resolves the intended target:
+
+```powershell
+python scripts\ftp_deploy_static_site.py --target-domain multiagentmemory.com --remote-dir . --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
+```
+
+Current status: live upload is blocked. The latest recorded attempt selected the MultiAgentMemory target section and resolved host, user, password, and port, but FTPS login was rejected before upload. Uploaded file count was zero.
+
+After a successful static upload, verify the public domain:
+
+```powershell
+python scripts\verify_static_site.py --base-url https://multiagentmemory.com --json-out docs\reports\multiagentmemory-live-site-verification.json
+```

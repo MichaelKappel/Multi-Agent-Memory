@@ -26,3 +26,4 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 - Strategy intake has been distilled into `docs/long-term-memory/strategy-index.md`, `enterprise-engineering-best-practices.md`, `matm-architecture-strategy.md`, and `system-targets.md`.
 - Active system strategy: preserve pure stdlib runtime, strengthen tests and dogfood, keep `.uai` hot, keep MemoryEndpoints.com as hosted MATM, keep MySQL adapter gated until approved, and use timestamp-free semantic/provenance/utility ranking by default.
 - Prompt drafts are local-only artifacts and must not be included in source control.
+- MultiAgentMemory.com must not be treated as live just because `sites/multiagentmemory.com/` exists. Verify the domain after static deploy; latest attempt is blocked by FTPS login rejection before upload.

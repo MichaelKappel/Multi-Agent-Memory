@@ -54,6 +54,14 @@
     },
     {
       "evidence": [
+        "docs/reports/multiagentmemory-static-site-verification.json",
+        "sites/multiagentmemory.com/"
+      ],
+      "id": "multiagentmemory_static_site",
+      "status": "pass"
+    },
+    {
+      "evidence": [
         "git diff --check"
       ],
       "id": "diff_check",
@@ -64,10 +72,11 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T17:03:53Z",
+  "generatedAt": "2026-07-09T17:38:25Z",
   "liveDogfoodVerified": true,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,
+  "multiAgentMemoryStaticSiteVerified": true,
   "ok": true,
   "repositoryBoundaryOk": true,
   "routeCount": 21,
