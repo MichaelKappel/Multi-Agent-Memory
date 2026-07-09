@@ -79,6 +79,16 @@ python scripts\verify_mysql_backend.py --base-url https://memoryendpoints.com --
 
 The verifier must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before live dogfood or the human-verifier account should be created.
 
+If the database values are stored in a local ignored `.local-secrets/mysql.json` file, upload only that secret file to the application root with:
+
+```powershell
+python scripts\upload_mysql_secret_config.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps
+python scripts\upload_mysql_secret_config.py --connection-check --filezilla-site-match memoryendpoints --protocol ftps
+python scripts\upload_mysql_secret_config.py --filezilla-site-match memoryendpoints --protocol ftps
+```
+
+The upload report is redacted and must not print the host, user, password, database name, or raw remote path.
+
 Do not claim live dogfooding until the live authenticated MATM workflow is verified and a redacted report proves it.
 
 ## MultiAgentMemory.com Companion Site

@@ -54,6 +54,6 @@ If Passenger/cPanel cannot expose environment variables reliably, the runtime ca
 }
 ```
 
-The `.local-secrets/` directory is ignored by Git and excluded from the deployment package. Create or upload that file directly on the host outside source control.
+The `.local-secrets/` directory is ignored by Git and excluded from the deployment package. Create or upload that file directly on the host outside source control. When this file exists and `MEMORYENDPOINTS_STORE_BACKEND` is not explicitly set, the runtime treats it as the host-side selection for the MySQL backend.
 
 The canonical MySQL/MariaDB relational schema is in `docs/database-schema-canonical.sql`. The app initializes missing tables on connection. `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before the site can be claimed to be using real MySQL.

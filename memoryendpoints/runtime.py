@@ -1,8 +1,21 @@
 import os
+from pathlib import Path
+
+from .config import ROOT
 
 
 def configured_store_backend():
-    return os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file"
+    configured = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND")
+    if configured and configured.strip():
+        return configured.strip().lower()
+    if mysql_secret_config_path().exists():
+        return "mysql"
+    return "file"
+
+
+def mysql_secret_config_path():
+    configured = os.environ.get("MEMORYENDPOINTS_MYSQL_CONFIG_PATH")
+    return Path(configured) if configured else ROOT / ".local-secrets" / "mysql.json"
 
 
 def mysql_backend_name(backend):

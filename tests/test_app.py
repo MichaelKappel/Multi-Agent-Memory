@@ -777,5 +777,24 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("memory_user", config["user"])
         self.assertEqual("pw", config["password"])
 
+    def test_runtime_selects_mysql_when_secret_file_exists(self):
+        from memoryendpoints.runtime import configured_store_backend
+
+        secret_path = Path(self.tempdir) / "mysql.json"
+        secret_path.write_text(
+            json.dumps(
+                {
+                    "host": "db.internal.example",
+                    "database": "memoryendpoints_test",
+                    "user": "memory_user",
+                    "password": "pw",
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = str(secret_path)
+
+        self.assertEqual("mysql", configured_store_backend())
+
 if __name__ == "__main__":
     unittest.main()
