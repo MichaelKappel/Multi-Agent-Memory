@@ -1,0 +1,77 @@
+{
+  "accountId": "account-af54ca05dad14c23bfaa",
+  "apiKeySecretHash": "sha256:0da328d7d995c71ba064e2ed413a8629ee910020e1c62c5b344326a4af12224c",
+  "auditLogCount": 16,
+  "baseUrl": "https://memoryendpoints.com",
+  "companyId": "company-5e652f98dd034a44ab4f",
+  "consoleUrl": "https://memoryendpoints.com/console",
+  "hierarchyVerified": true,
+  "inboxCounts": {
+    "codex-agent": 2,
+    "human-verifier-agent": 2,
+    "swarm-observer-agent": 1
+  },
+  "messagingVerified": true,
+  "ok": true,
+  "projectId": "project-7474be75df6643b89953",
+  "rawCredentialValuesStoredInReport": false,
+  "schemaVersion": "memoryendpoints.human_verifier_account.v1",
+  "searchReadbackCount": 2,
+  "secretFile": ".local-secrets/human-verifier-account.json",
+  "secretFileTrackedByGit": false,
+  "seededMemoryCount": 3,
+  "steps": [
+    {
+      "name": "create_account",
+      "ok": true,
+      "status": 201
+    },
+    {
+      "name": "verify_hierarchy",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "count": 3,
+      "name": "register_agents",
+      "ok": true,
+      "status": 201
+    },
+    {
+      "count": 3,
+      "name": "seed_company_workspace_project_memory",
+      "ok": true,
+      "status": 201
+    },
+    {
+      "count": 3,
+      "name": "seed_broadcast_and_targeted_messages",
+      "ok": true,
+      "status": 202
+    },
+    {
+      "count": 2,
+      "name": "search_memory",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "inboxCounts": {
+        "codex-agent": 2,
+        "human-verifier-agent": 2,
+        "swarm-observer-agent": 1
+      },
+      "name": "verify_broadcast_and_targeted_inboxes",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "count": 16,
+      "name": "read_redacted_audit_log",
+      "ok": true,
+      "status": 200
+    }
+  ],
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}
