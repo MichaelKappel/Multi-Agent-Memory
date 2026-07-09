@@ -31,11 +31,16 @@ def problem(start_response, status, title, detail, code):
         start_response,
         {
             "ok": False,
+            "safeNoOp": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
             "error": {
                 "code": code,
                 "title": title,
                 "detail": detail,
                 "safeNoOp": True,
+                "valuesRedacted": True,
             },
         },
         status,

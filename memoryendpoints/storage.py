@@ -209,7 +209,17 @@ class FileStore(object):
                 "ok": False,
                 "status": "idempotency_conflict",
                 "safeNoOp": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
                 "idempotencyKeyExposed": False,
+                "error": {
+                    "code": "idempotency_conflict",
+                    "title": "Idempotency conflict",
+                    "detail": "The same idempotency key was reused with a different request body.",
+                    "safeNoOp": True,
+                    "valuesRedacted": True,
+                },
             }
         replay = dict(record.get("response") or {})
         replay["idempotentReplay"] = True

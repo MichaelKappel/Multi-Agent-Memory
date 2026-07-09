@@ -203,4 +203,4 @@ The route returns action names, actors, targets, counts, route metadata, timesta
 
 ## No-Op Boundary
 
-Unsupported, unauthenticated, malformed, or authority-gated actions return an error object with `safeNoOp=true`.
+Unsupported, unauthenticated, malformed, idempotency-conflicted, or authority-gated actions return a JSON no-op envelope with `ok=false`, `safeNoOp=true`, `valuesRedacted=true`, `rawCredentialExposed=false`, and `rawPayloadExposed=false`. The nested `error` object repeats `safeNoOp=true` and contains the stable error code.

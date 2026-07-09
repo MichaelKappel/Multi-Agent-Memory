@@ -3,7 +3,7 @@ MemoryEndpoints.com workspace coordinator
 Purpose:
 - Public-safe workspace coordinator for the MemoryEndpoints.com repository and companion documentation site.
 
-Verification status: current-state workspace memory; verify against `AGENTS.md`, `.uai/startup-packet.uai`, and repository layout before relying on it.
+Verification status: active workspace memory; verify against `AGENTS.md`, `.uai/startup-packet.uai`, and repository layout before relying on it.
 Memory scope: workspace routing, site roles, package boundaries, and authority separation.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this coordinator when workspace roots, site roles, package authority, or deployment boundaries change.

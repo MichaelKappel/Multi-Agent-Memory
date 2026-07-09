@@ -49,6 +49,19 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
         os.environ.pop("MEMORYENDPOINTS_SQLITE_PATH", None)
 
+    def assert_safe_noop_response(self, text, code=None):
+        payload = json.loads(text)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["safeNoOp"])
+        self.assertTrue(payload["valuesRedacted"])
+        self.assertFalse(payload["rawCredentialExposed"])
+        self.assertFalse(payload["rawPayloadExposed"])
+        self.assertTrue(payload["error"]["safeNoOp"])
+        self.assertTrue(payload["error"]["valuesRedacted"])
+        if code:
+            self.assertEqual(code, payload["error"]["code"])
+        return payload
+
     def test_public_discovery_routes(self):
         for route in [
             "/",
@@ -367,17 +380,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             body=conflict_body,
         )
         self.assertEqual("409 Conflict", status)
-        self.assertTrue(json.loads(text)["safeNoOp"])
+        conflict = self.assert_safe_noop_response(text, "idempotency_conflict")
+        self.assertFalse(conflict["idempotencyKeyExposed"])
 
     def test_safe_noop_error_surfaces(self):
+        status, _headers, text = call_app("/unsupported-public-route")
+        self.assertEqual("404 Not Found", status)
+        self.assert_safe_noop_response(text, "not_found")
+
         status, _headers, text = call_app(
             "/api/matm/workspace",
             query="workspace_id=workspace-missing",
         )
         self.assertEqual("401 Unauthorized", status)
-        payload = json.loads(text)
-        self.assertFalse(payload["ok"])
-        self.assertTrue(payload["error"]["safeNoOp"])
+        self.assert_safe_noop_response(text, "auth_required")
 
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -407,7 +423,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             start_response,
         )
         self.assertEqual("400 Bad Request", captured["status"])
-        self.assertTrue(json.loads(b"".join(chunks).decode("utf-8"))["error"]["safeNoOp"])
+        self.assert_safe_noop_response(b"".join(chunks).decode("utf-8"), "invalid_json")
 
         status, _headers, text = call_app(
             "/api/matm/unsupported-action",
@@ -415,7 +431,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             query="workspace_id=%s" % setup["workspaceId"],
         )
         self.assertEqual("404 Not Found", status)
-        self.assertTrue(json.loads(text)["error"]["safeNoOp"])
+        self.assert_safe_noop_response(text, "not_found")
 
         status, _headers, text = call_app(
             "/api/matm/review-queue/decide",
@@ -429,7 +445,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("422 Unprocessable Entity", status)
-        self.assertTrue(json.loads(text)["error"]["safeNoOp"])
+        self.assert_safe_noop_response(text, "invalid_review_decision")
 
     def test_route_inventory_is_public(self):
         status, _headers, text = call_app("/api/matm/route-inventory")

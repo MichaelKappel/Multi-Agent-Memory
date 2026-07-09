@@ -3,7 +3,7 @@ Deployment memory and test report
 Purpose:
 - UAIX release-bound report surface for deployment, memory, and test evidence pointers.
 
-Verification status: current-state report; verify with generated reports under `docs/reports` before relying on it.
+Verification status: active deployment report; verify with generated reports under `docs/reports` before relying on it.
 Memory scope: deployment posture, memory setup, test evidence, and completion blockers.
 Public-safe status: safe for source control; contains no credential values.
 Update route: refresh this report surface after deployment attempts, test-gate changes, or memory-package changes.
