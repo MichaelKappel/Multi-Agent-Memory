@@ -22,7 +22,7 @@ Expected current local state:
 
 - Unit/integration tests pass.
 - WSGI route verifier checks 21 required public routes with 0 failures.
-- `.uai` audit passes with `.uai/totem.uai` first and `localUaiStaysActiveAlways=true`.
+- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/totem.uai` first in the required memory order, and `localUaiStaysActiveAlways=true`.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Secret scan reports 0 hits.
 - Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy and live dogfooding are proven.
@@ -41,7 +41,15 @@ This proves the currently deployed public surface responds correctly. It does no
 python scripts\dogfood_memoryendpoints.py
 ```
 
-Current dogfooding is local WSGI only. Do not claim live dogfooding until an authenticated live run is implemented and verified without exposing raw workspace keys, FTP credentials, database passwords, or one-time secrets.
+Current dogfooding can run locally and against the live HTTP API. Reports must distinguish local WSGI dogfooding from live HTTP dogfooding.
+
+To exercise the current live HTTP API as well:
+
+```powershell
+python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com
+```
+
+Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. Optional newer routes can still be absent from the live site until deployment succeeds; required dogfood steps are recorded separately from optional step failures.
 
 ## Report Refresh
 

@@ -1,7 +1,7 @@
 {
   "claimBoundary": {
     "blocker": "FTPS login rejected before upload; credential or server access must be refreshed outside the repository.",
-    "liveDogfoodVerified": false,
+    "liveDogfoodVerified": true,
     "localDogfoodVerified": true,
     "newCodeLiveDeployed": false
   },

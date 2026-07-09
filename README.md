@@ -68,7 +68,7 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 - [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
 - [AI manifest](https://memoryendpoints.com/ai-manifest.json)
 
-Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface verifies successfully, but the latest repository tranche is not proven live until the FTPS login blocker is resolved and a new live dogfood run succeeds.
+Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface and required live MATM dogfood workflow verify successfully, but the latest repository tranche is not proven live until the FTPS login blocker is resolved and post-deploy verification passes.
 
 ## Quick Start
 

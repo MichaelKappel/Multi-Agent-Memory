@@ -24,6 +24,7 @@ def main(argv=None):
 
     dry = load(args.dry_run_report) or {}
     live = load(args.live_report) or {}
+    dogfood = load("dogfood-memory-run.json") or {}
     live_status = live.get("status")
     live_uploaded = live.get("uploadedCount", 0)
     latest_live = live_status == "uploaded" and live_uploaded > 0
@@ -54,8 +55,8 @@ def main(argv=None):
         },
         "claimBoundary": {
             "newCodeLiveDeployed": latest_live,
-            "liveDogfoodVerified": False,
-            "localDogfoodVerified": True,
+            "liveDogfoodVerified": bool(dogfood.get("liveDogfoodVerified")),
+            "localDogfoodVerified": bool(dogfood.get("localDogfoodVerified")),
             "blocker": None if latest_live else "FTPS login rejected before upload; credential or server access must be refreshed outside the repository.",
         },
         "valuesRedacted": True,

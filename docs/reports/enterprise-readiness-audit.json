@@ -9,14 +9,6 @@
       "status": "blocked"
     },
     {
-      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
-      "evidence": [
-        "docs/reports/dogfood-memory-run.json"
-      ],
-      "requirement": "live_dogfooding",
-      "status": "blocked"
-    },
-    {
       "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
@@ -95,6 +87,7 @@
     {
       "blocker": null,
       "evidence": [
+        ".uai/startup-packet.uai",
         ".uai/totem.uai",
         "scripts/audit_uai_memory.py",
         "local .uai stays active always"
@@ -143,12 +136,12 @@
       "status": "blocked"
     },
     {
-      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "blocker": null,
       "evidence": [
         "docs/reports/dogfood-memory-run.json"
       ],
       "requirement": "live_dogfooding",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
       "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
@@ -171,7 +164,7 @@
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
     "latestCodeLiveDeployed": false,
-    "liveDogfoodVerified": false,
+    "liveDogfoodVerified": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "promptDraftsTracked": false,

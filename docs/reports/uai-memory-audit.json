@@ -1,4 +1,7 @@
 {
+  "bootstrapFile": ".uai/startup-packet.uai",
+  "bootstrapFilePresent": true,
+  "bootstrapPointsToTotem": true,
   "expectedStartupReadOrder": [
     ".uai/totem.uai",
     ".uai/constraints.uai",
@@ -109,5 +112,6 @@
   ],
   "startupReadOrderMatchesExpected": true,
   "startupReadOrderTotemFirst": true,
+  "unexpectedFiles": [],
   "valuesRedacted": true
 }

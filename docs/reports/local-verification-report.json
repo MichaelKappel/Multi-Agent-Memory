@@ -17,6 +17,7 @@
     {
       "evidence": [
         "docs/reports/uai-memory-audit.json",
+        ".uai/startup-packet.uai",
         ".uai/totem.uai"
       ],
       "id": "uai_startup_memory",
@@ -63,8 +64,8 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T15:37:19Z",
-  "liveDogfoodVerified": false,
+  "generatedAt": "2026-07-09T15:50:15Z",
+  "liveDogfoodVerified": true,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,
   "ok": true,

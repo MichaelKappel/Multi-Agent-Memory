@@ -83,7 +83,12 @@ def main(argv=None):
         evidence_item(
             "uai_memory_complete_and_active",
             "pass_local",
-            [".uai/totem.uai", "scripts/audit_uai_memory.py", "local .uai stays active always"],
+            [
+                ".uai/startup-packet.uai",
+                ".uai/totem.uai",
+                "scripts/audit_uai_memory.py",
+                "local .uai stays active always",
+            ],
         ),
         evidence_item(
             "critical_protected_workflows_integration_tested",
@@ -113,9 +118,9 @@ def main(argv=None):
         ),
         evidence_item(
             "live_dogfooding",
-            "blocked",
+            "pass_live" if dogfood and dogfood.get("liveDogfoodVerified") else "blocked",
             ["docs/reports/dogfood-memory-run.json"],
-            "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+            None if dogfood and dogfood.get("liveDogfoodVerified") else "Only local WSGI dogfooding is verified; live deployment/access is gated.",
         ),
         evidence_item(
             "github_actions_ci",
@@ -146,7 +151,7 @@ def main(argv=None):
             "localHardeningVerified": all_checks_ok is True or all_checks_ok is None,
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
             "latestCodeLiveDeployed": False,
-            "liveDogfoodVerified": False,
+            "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
             "promptDraftsTracked": False,
             "valuesRedacted": True,
         },

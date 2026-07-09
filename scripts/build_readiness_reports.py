@@ -66,7 +66,11 @@ def build_local_report():
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
         {"id": "wsgi_public_routes", "status": status(bool(local_routes and local_routes.get("ok"))), "evidence": ["docs/reports/local-route-verification.json"]},
-        {"id": "uai_startup_memory", "status": status(bool(uai and uai.get("ok"))), "evidence": ["docs/reports/uai-memory-audit.json", ".uai/totem.uai"]},
+        {
+            "id": "uai_startup_memory",
+            "status": status(bool(uai and uai.get("ok"))),
+            "evidence": ["docs/reports/uai-memory-audit.json", ".uai/startup-packet.uai", ".uai/totem.uai"],
+        },
         {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
         {"id": "package_check", "status": status(bool(package and package.get("status") == "ready")), "evidence": ["docs/reports/package-verification-report.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
@@ -121,7 +125,7 @@ def build_final_markdown(local_report):
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (live_routes.get("routeCount", 21), (load_json("local-route-verification.json") or {}).get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
-        "- `.uai` memory audit: pass; local `.uai` stays active always and `.uai/totem.uai` is first in startup order.",
+        "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, and `.uai/totem.uai` is first in the required memory order.",
         "- Local dogfooding: %s through WSGI; live dogfooding: %s." % (str(bool(dogfood.get("localDogfoodVerified"))).lower(), str(live_dogfood).lower()),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
@@ -130,18 +134,23 @@ def build_final_markdown(local_report):
         "## Blocked Or Gated",
         "",
         "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % ((deploy.get("liveAttempt") or {}).get("failedPhase"), (deploy.get("liveAttempt") or {}).get("errorType"), (deploy.get("liveAttempt") or {}).get("uploadedCount")),
-        "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.",
-        "- GitHub Actions CI: blocked by repository/account billing state before job execution, so the latest run is not a passing CI signal.",
-        "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file and stdlib SQLite storage are active locally.",
-        "",
-        "## Claim Boundary",
-        "",
-        "The repository has strong local MATM evidence, public route evidence, package evidence, and secret-safety evidence. It must not be described as fully done until latest-code live deployment and live dogfooding are verified.",
-        "",
-        "```json",
-        json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "valuesRedacted": True}, indent=2, sort_keys=True),
-        "```",
     ]
+    if not live_dogfood:
+        lines.append("- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.")
+    lines.extend(
+        [
+            "- GitHub Actions CI: blocked by repository/account billing state before job execution, so the latest run is not a passing CI signal.",
+            "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file and stdlib SQLite storage are active locally.",
+            "",
+            "## Claim Boundary",
+            "",
+            "The repository has strong local MATM evidence, live dogfood evidence, public route evidence, package evidence, and secret-safety evidence. It must not be described as fully done until latest-code live deployment, GitHub Actions CI, and remaining gated items are verified.",
+            "",
+            "```json",
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "valuesRedacted": True}, indent=2, sort_keys=True),
+            "```",
+        ]
+    )
     path = REPORTS / "final-readiness-report.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 UAI_DIR = ROOT / ".uai"
+BOOTSTRAP_FILE = ".uai/startup-packet.uai"
 REQUIRED_FIELDS = [
     "Purpose:",
     "Last verified:",
@@ -93,16 +94,29 @@ def main(argv=None):
     }
     present_names = {Path(item["path"]).name for item in items}
     missing_files = sorted(required_names - present_names)
+    unexpected_files = sorted(present_names - required_names)
     read_order = startup_read_order()
     read_order_matches = read_order == STARTUP_READ_ORDER
+    bootstrap_path = UAI_DIR / "startup-packet.uai"
+    bootstrap_text = read(bootstrap_path) if bootstrap_path.exists() else ""
+    bootstrap_points_to_totem = ".uai/totem.uai" in bootstrap_text and "bootstrap" in bootstrap_text.lower()
     local_uai_stays_active = (UAI_DIR / "totem.uai").exists() and "Local `.uai` stays active always." in read(
         UAI_DIR / "totem.uai"
     )
     report = {
         "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
-        "ok": all(item["ok"] for item in items) and not missing_files and read_order_matches and local_uai_stays_active,
+        "ok": all(item["ok"] for item in items)
+        and not missing_files
+        and not unexpected_files
+        and read_order_matches
+        and bootstrap_points_to_totem
+        and local_uai_stays_active,
+        "bootstrapFile": BOOTSTRAP_FILE,
+        "bootstrapFilePresent": bootstrap_path.exists(),
+        "bootstrapPointsToTotem": bootstrap_points_to_totem,
         "fileCount": len(items),
         "missingFiles": missing_files,
+        "unexpectedFiles": unexpected_files,
         "startupReadOrder": read_order,
         "expectedStartupReadOrder": STARTUP_READ_ORDER,
         "startupReadOrderMatchesExpected": read_order_matches,

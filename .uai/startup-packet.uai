@@ -11,6 +11,11 @@ Source of truth: `.uai/totem.uai`, repository files, and verified reports under 
 Next action for agents: follow the read order below before acting.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
 
+Bootstrap:
+- This file is the cold-start index for the local `.uai` memory folder.
+- After loading this file, read `.uai/totem.uai` first so the non-retirement invariant is active before any hosted MATM assumption.
+- Every active `.uai` memory file must be represented in the read order or the memory setup is incomplete.
+
 Read order:
 1. .uai/totem.uai
 2. .uai/constraints.uai
