@@ -5,7 +5,9 @@
     "sourceShaShort": "3c7c5cf94fbe",
     "valuesRedacted": true
   },
-  "dryRun": true,
+  "dryRun": false,
+  "errorType": "error_perm",
+  "failedPhase": "login",
   "hasResolvedHost": true,
   "hasResolvedPassword": true,
   "hasResolvedPort": true,
@@ -17,7 +19,7 @@
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
   "remoteDirSource": "argument_or_handoff",
-  "safeNoOp": false,
+  "safeNoOp": true,
   "schemaVersion": "memoryendpoints.ftp_deploy.v1",
   "signals": {
     "hasFtp": true,
@@ -29,7 +31,8 @@
     "selectedSectionMentionsMemoryEndpoints": true,
     "valuesRedacted": true
   },
-  "status": "ready",
+  "status": "connection_check_failed",
   "transportSecurity": "explicit_ftps",
+  "uploadedCount": 0,
   "valuesRedacted": true
 }

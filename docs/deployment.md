@@ -38,15 +38,25 @@ python scripts\ftp_deploy_memoryendpoints.py --dry-run --handoff E:\ftp_Deploy.t
 
 The dry run must resolve host, user, password, package, and remote directory without printing credential values.
 
+## Connection Check
+
+Before a live upload, verify the selected transport and remote directory without uploading files:
+
+```powershell
+python scripts\ftp_deploy_memoryendpoints.py --connection-check --handoff E:\ftp_Deploy.txt --remote-dir . --protocol ftps --json-out docs\reports\deploy-connection-check-latest.json
+```
+
+The default protocol is explicit FTPS. If the hosting handoff explicitly requires plain FTP, rerun the connection check with `--protocol ftp` before attempting upload. Connection-check reports are redacted and always use `uploadedCount: 0`.
+
 ## Live Upload
 
 Run only after the local gate and dry run pass:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --handoff E:\ftp_Deploy.txt --remote-dir . --json-out docs\reports\deploy-live-attempt-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --handoff E:\ftp_Deploy.txt --remote-dir . --protocol ftps --json-out docs\reports\deploy-live-attempt-latest.json
 ```
 
-Current status: live upload is blocked. The latest recorded attempt failed during FTPS login with zero files uploaded. See `docs/reports/deploy-attempt-20260709.json`.
+Current status: live upload is blocked. The latest recorded no-upload connection checks failed during login for both explicit FTPS and plain FTP with zero files uploaded. See `docs/reports/deploy-connection-check-latest.json`, `docs/reports/deploy-connection-check-ftp-latest.json`, and `docs/reports/deploy-attempt-20260709.json`.
 
 ## Post-Deploy Gate
 
@@ -70,16 +80,22 @@ MultiAgentMemory.com is a static documentation companion site, not the Python WS
 Dry-run the target-specific static deploy:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --dry-run --discover-remote-dir --target-domain multiagentmemory.com --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
+python scripts\ftp_deploy_static_site.py --dry-run --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
+```
+
+Verify login and the target directory without uploading:
+
+```powershell
+python scripts\ftp_deploy_static_site.py --connection-check --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-connection-check-latest.json
 ```
 
 Publish to the target login root only after the dry run resolves the intended target:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --target-domain multiagentmemory.com --remote-dir . --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
+python scripts\ftp_deploy_static_site.py --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
 ```
 
-Current status: live upload is blocked. The latest recorded attempt selected the MultiAgentMemory target section and resolved host, user, password, and port, but FTPS login was rejected before upload. Uploaded file count was zero.
+Current status: live upload is blocked. The latest recorded no-upload connection checks selected the MultiAgentMemory target section and resolved host, user, password, and port, but login was rejected for both explicit FTPS and plain FTP before upload. Uploaded file count was zero.
 
 After a successful static upload, verify the public domain:
 

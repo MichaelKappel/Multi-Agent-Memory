@@ -16,6 +16,6 @@ Current ordered actions:
 - Keep relational SQLite storage covered by integration and migration tests.
 - Refresh local verification reports after memory and storage changes, including public-safe CI evidence through `scripts/check_github_actions.py`.
 - Commit and push source-controlled improvements once checks pass and prompt drafts remain untracked.
-- Resolve FTPS access outside the repo before attempting live deployment or live companion-site publish.
+- Resolve hosting login access outside the repo before attempting live deployment or live companion-site publish.
 - Rerun live route verification and authenticated live dogfood only after latest code is deployed.
 - Do not claim full completion until live deployment, live dogfood, companion live publish, CI, and gated capabilities are resolved or explicitly waived.

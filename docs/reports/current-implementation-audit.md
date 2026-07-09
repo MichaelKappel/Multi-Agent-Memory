@@ -16,7 +16,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after add
 - `.uai` required-field audit passed for all active `.uai/*.uai` files.
 - Secret scan passed with zero hits after `.uai` normalization.
 - Package check passed and excludes `docs/prompts`.
-- Deployment dry-run resolved the MemoryEndpoints.com FTP root, but the live upload attempt failed before upload at FTPS login with `error_perm`; no files were uploaded.
+- Deployment dry-run resolved the MemoryEndpoints.com FTP root, but no-upload connection checks for explicit FTPS and plain FTP failed at login with `error_perm`; no files were uploaded.
 
 ## Implemented In This Pass
 
@@ -32,5 +32,5 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after add
 - New routes and code have not yet been deployed live in this pass.
 - Live dogfooding has not yet been performed in this pass.
 - Full production database adapter remains gated by the no-third-party-runtime constraint.
-- Live deploy of the new firewall/review/dogfood tranche is blocked until FTP login/server access is refreshed outside the repository.
+- Live deploy of the new firewall/review/dogfood tranche is blocked until hosting login/server access is refreshed outside the repository.
 - The full objective still needs a final completion audit after live deploy and verification.

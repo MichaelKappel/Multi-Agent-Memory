@@ -118,7 +118,24 @@ def fingerprint(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
-def discover_remote_dir(host, user, password, port, fields):
+def connect_ftp(host, user, password, port, protocol):
+    if protocol == "ftp":
+        ftp = ftplib.FTP()
+        ftp.connect(host, port, timeout=20)
+        ftp.login(user, password)
+        return ftp
+    ftp = ftplib.FTP_TLS()
+    ftp.connect(host, port, timeout=20)
+    ftp.login(user, password)
+    ftp.prot_p()
+    return ftp
+
+
+def transport_security(protocol):
+    return "plain_ftp" if protocol == "ftp" else "explicit_ftps"
+
+
+def discover_remote_dir(host, user, password, port, fields, protocol):
     report = {
         "attempted": False,
         "candidateCount": 0,
@@ -135,12 +152,8 @@ def discover_remote_dir(host, user, password, port, fields):
     report["attempted"] = True
     phase = "connect"
     try:
-        with ftplib.FTP_TLS() as ftp:
-            ftp.connect(host, port, timeout=20)
-            phase = "login"
-            ftp.login(user, password)
-            phase = "protect_data_channel"
-            ftp.prot_p()
+        phase = "login"
+        with connect_ftp(host, user, password, port, protocol) as ftp:
             home = ftp.pwd()
             for label, path in candidates:
                 try:
@@ -173,6 +186,8 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--discover-remote-dir", action="store_true")
     parser.add_argument("--allow-discovered-live-upload", action="store_true")
+    parser.add_argument("--protocol", choices=["ftps", "ftp"], default="ftps")
+    parser.add_argument("--connection-check", action="store_true")
     args = parser.parse_args(argv)
 
     parsed = parse_handoff(args.handoff)
@@ -185,7 +200,7 @@ def main(argv=None):
     discovered_dir = None
     discovery_report = None
     if args.discover_remote_dir and not remote_dir:
-        discovered_dir, discovery_report = discover_remote_dir(host, user, password, port, fields)
+        discovered_dir, discovery_report = discover_remote_dir(host, user, password, port, fields, args.protocol)
         if args.dry_run or args.allow_discovered_live_upload:
             remote_dir = discovered_dir
 
@@ -201,6 +216,8 @@ def main(argv=None):
         "hasResolvedUser": bool(user),
         "hasResolvedPassword": bool(password),
         "hasResolvedPort": bool(port),
+        "protocol": args.protocol,
+        "transportSecurity": transport_security(args.protocol),
         "remoteDirResolved": bool(remote_dir),
         "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])) else ("discovery" if remote_dir else None),
         "passengerRestartPlanned": bool(remote_dir),
@@ -233,15 +250,32 @@ def main(argv=None):
         report["status"] = "missing_ftp_fields"
         emit_report(report, args)
         return 1
+    if args.connection_check:
+        phase = "login"
+        try:
+            with connect_ftp(host, user, password, port, args.protocol) as ftp:
+                phase = "cwd_remote_dir"
+                ftp.cwd(remote_dir)
+                phase = "pwd"
+                ftp.pwd()
+        except Exception as exc:
+            report["status"] = "connection_check_failed"
+            report["uploadedCount"] = 0
+            report["errorType"] = exc.__class__.__name__
+            report["failedPhase"] = phase
+            report["safeNoOp"] = True
+            emit_report(report, args)
+            return 1
+        report["status"] = "connection_check_passed"
+        report["uploadedCount"] = 0
+        report["safeNoOp"] = True
+        emit_report(report, args)
+        return 0
     uploaded_count = 0
     phase = "connect"
     try:
-        with ftplib.FTP_TLS() as ftp:
-            ftp.connect(host, port, timeout=20)
-            phase = "login"
-            ftp.login(user, password)
-            phase = "protect_data_channel"
-            ftp.prot_p()
+        phase = "login"
+        with connect_ftp(host, user, password, port, args.protocol) as ftp:
             phase = "cwd_remote_dir"
             ftp.cwd(remote_dir)
             made_dirs = set(["."])

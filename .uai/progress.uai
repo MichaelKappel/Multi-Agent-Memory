@@ -22,8 +22,9 @@ Current progress state:
 - Strategy intake has been distilled into reviewed long-term docs for enterprise engineering, MATM architecture, timestamp-free memory, and system targets.
 - Raw strategy reports and prompt drafts remain local-only and must not be committed.
 - `/api/version` exposes public-safe build provenance and the verifier can require the live `build.sourceSha` to match the current Git head before claiming latest-code deployment.
-- Live MemoryEndpoints.com public routes and live core MATM dogfood are verified for the currently deployed surface, but latest-code deployment and latest audit-log dogfood contract remain blocked by FTPS login failure before upload.
-- Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
+- Live MemoryEndpoints.com public routes and live core MATM dogfood are verified for the currently deployed surface, but latest-code deployment and latest audit-log dogfood contract remain blocked by hosting login failure before upload.
+- Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by hosting login failure before upload.
+- No-upload deployment connection checks for both explicit FTPS and plain FTP fail at login with zero uploads for MemoryEndpoints.com and MultiAgentMemory.com, so the deployment blocker is credential/account access rather than package contents or remote path discovery.
 - GitHub Actions CI for the pushed commit failed before any job steps executed; `scripts/check_github_actions.py` refreshes this public-safe evidence without requiring `gh`.
 - Dogfood status: Live core MATM dogfood run verified against `https://memoryendpoints.com`; latest audit-log readback contract is not live yet; report `docs/reports/dogfood-memory-run.json`; local audit-log readback verified: true; live audit-log readback verified: false; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
 - Completion must not be claimed until latest-code live deployment, MultiAgentMemory.com live static publish, live companion route verification, CI, and gated capabilities are resolved or explicitly waived.

@@ -15,6 +15,38 @@ def load(name):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def connection_item(report):
+    if not report:
+        return None
+    return {
+        "protocol": report.get("protocol"),
+        "transportSecurity": report.get("transportSecurity"),
+        "status": report.get("status"),
+        "errorType": report.get("errorType"),
+        "failedPhase": report.get("failedPhase"),
+        "uploadedCount": report.get("uploadedCount", 0),
+        "safeNoOp": report.get("safeNoOp", True),
+        "valuesRedacted": True,
+    }
+
+
+def connection_blocker(reports):
+    present = [report for report in reports if report]
+    if not present:
+        return None
+    failed_protocols = [
+        report.get("protocol")
+        for report in present
+        if report.get("status") == "connection_check_failed"
+        and report.get("failedPhase") == "login"
+        and report.get("uploadedCount") == 0
+        and report.get("protocol")
+    ]
+    if failed_protocols and len(failed_protocols) == len(present):
+        return "Connection checks for protocol(s) %s failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository." % ", ".join(sorted(set(failed_protocols)))
+    return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run-report", default="deploy-dry-run-latest.json")
@@ -24,6 +56,8 @@ def main(argv=None):
 
     dry = load(args.dry_run_report) or {}
     live = load(args.live_report) or {}
+    connection_ftps = load("deploy-connection-check-latest.json")
+    connection_ftp = load("deploy-connection-check-ftp-latest.json")
     dogfood = load("dogfood-memory-run.json") or {}
     live_status = live.get("status")
     live_uploaded = live.get("uploadedCount", 0)
@@ -47,6 +81,9 @@ def main(argv=None):
             "safeNoOp": live.get("safeNoOp", live_uploaded == 0),
             "valuesRedacted": True,
         },
+        "connectionChecks": [
+            item for item in (connection_item(connection_ftps), connection_item(connection_ftp)) if item
+        ],
         "secretBoundary": {
             "hostPrinted": False,
             "userPrinted": False,
@@ -57,7 +94,10 @@ def main(argv=None):
             "newCodeLiveDeployed": latest_live,
             "liveDogfoodVerified": bool(dogfood.get("liveDogfoodVerified")),
             "localDogfoodVerified": bool(dogfood.get("localDogfoodVerified")),
-            "blocker": None if latest_live else "FTPS login rejected before upload; credential or server access must be refreshed outside the repository.",
+            "blocker": None if latest_live else (
+                connection_blocker([connection_ftps, connection_ftp])
+                or "FTPS login rejected before upload; credential or server access must be refreshed outside the repository."
+            ),
         },
         "valuesRedacted": True,
     }

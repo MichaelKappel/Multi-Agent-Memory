@@ -4,7 +4,7 @@ Date: 2026-07-09
 
 Status: superseded by `docs/reports/final-readiness-report.md`.
 
-This report name is retained for compatibility with older repository links. The previous contents overclaimed the current state after a later FTPS login failure blocked deployment of the newest tranche.
+This report name is retained for compatibility with older repository links. The previous contents overclaimed the current state after later hosting login failures blocked deployment of the newest tranche.
 
 Current boundary:
 

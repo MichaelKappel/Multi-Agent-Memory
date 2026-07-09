@@ -7,6 +7,7 @@
   "hasResolvedPort": true,
   "hasResolvedUser": true,
   "plannedUploadCount": 12,
+  "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
   "remoteDirSource": "argument_or_handoff",
@@ -26,6 +27,7 @@
   "siteRootExists": true,
   "status": "connection_or_upload_failed",
   "targetDomain": "multiagentmemory.com",
+  "transportSecurity": "explicit_ftps",
   "uploadedCount": 0,
   "valuesRedacted": true
 }

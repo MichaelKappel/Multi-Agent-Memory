@@ -12,7 +12,7 @@ Next action for agents: do not silently assume answers to unresolved authority, 
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private contact data, raw one-time keys, or credential inventory values.
 
 Current open questions:
-- Which FTPS credential or hosting account change is needed to deploy latest MemoryEndpoints.com and MultiAgentMemory.com source?
+- Which hosting credential or account change is needed to deploy latest MemoryEndpoints.com and MultiAgentMemory.com source?
 - When GitHub account or billing state is repaired, will Actions pass on the latest pushed commit?
 - What approved runtime adapter path should be used before claiming live MySQL/MariaDB support?
 - When live deployment succeeds, which authenticated workspace and credential inventory should be used for live dogfood without exposing secrets?

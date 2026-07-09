@@ -51,6 +51,27 @@ def evidence_item(requirement, status, evidence, blocker=None):
     }
 
 
+def connection_check_blocker(label, reports):
+    present = [report for report in reports if report]
+    if not present:
+        return None
+    failed_login_protocols = [
+        report.get("protocol")
+        for report in present
+        if report.get("status") == "connection_check_failed"
+        and report.get("failedPhase") == "login"
+        and report.get("uploadedCount") == 0
+        and report.get("protocol")
+    ]
+    if failed_login_protocols and len(failed_login_protocols) == len(present):
+        protocols = ", ".join(sorted(set(failed_login_protocols)))
+        return "%s no-upload connection checks failed at login for protocol(s): %s; uploadedCount was 0." % (
+            label,
+            protocols,
+        )
+    return None
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-checks", action="store_true")
@@ -75,7 +96,11 @@ def main(argv=None):
     uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
+    deploy_connection_ftps = load_json(Path("docs") / "reports" / "deploy-connection-check-latest.json")
+    deploy_connection_ftp = load_json(Path("docs") / "reports" / "deploy-connection-check-ftp-latest.json")
     multiagentmemory_live = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-live-attempt-latest.json")
+    multiagentmemory_connection_ftps = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-connection-check-latest.json")
+    multiagentmemory_connection_ftp = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-connection-check-ftp-latest.json")
     multiagentmemory_static = load_json(Path("docs") / "reports" / "multiagentmemory-static-site-verification.json")
     multiagentmemory_live_site = load_json(Path("docs") / "reports" / "multiagentmemory-live-site-verification.json")
     github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
@@ -94,7 +119,10 @@ def main(argv=None):
     )
     latest_code_blocker = None
     if not latest_code_live_verified:
-        if deploy_attempt and not (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed"):
+        connection_blocker = connection_check_blocker("MemoryEndpoints.com", [deploy_connection_ftps, deploy_connection_ftp])
+        if connection_blocker:
+            latest_code_blocker = connection_blocker
+        elif deploy_attempt and not (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed"):
             latest_code_blocker = "FTPS login rejected before upload; uploadedCount was 0."
         elif live_latest_code and not live_latest_code.get("sourceShaMatchesExpected"):
             latest_code_blocker = "Live /api/version did not report the expected source SHA for the latest deploy package."
@@ -102,6 +130,10 @@ def main(argv=None):
             latest_code_blocker = "Run live latest-code SHA verification after deployment."
     multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
         item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
+    )
+    multiagentmemory_connection_blocker = connection_check_blocker(
+        "MultiAgentMemory.com",
+        [multiagentmemory_connection_ftps, multiagentmemory_connection_ftp],
     )
 
     requirements = [
@@ -147,8 +179,15 @@ def main(argv=None):
         evidence_item(
             "multiagentmemory_live_deployed",
             "pass_live" if multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded" else "blocked",
-            ["docs/reports/multiagentmemory-deploy-live-attempt-latest.json"],
-            None if multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded" else "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+            [
+                "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
+                "docs/reports/multiagentmemory-deploy-connection-check-latest.json",
+                "docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json",
+            ],
+            None if multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded" else (
+                multiagentmemory_connection_blocker
+                or "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish."
+            ),
         ),
         evidence_item(
             "multiagentmemory_live_site_routes",
@@ -170,7 +209,12 @@ def main(argv=None):
         evidence_item(
             "latest_code_live_deployed",
             "pass_live" if latest_code_live_verified else "blocked",
-            ["docs/reports/deploy-attempt-20260709.json", "docs/reports/live-latest-code-verification.json"],
+            [
+                "docs/reports/deploy-attempt-20260709.json",
+                "docs/reports/deploy-connection-check-latest.json",
+                "docs/reports/deploy-connection-check-ftp-latest.json",
+                "docs/reports/live-latest-code-verification.json",
+            ],
             latest_code_blocker,
         ),
         evidence_item(

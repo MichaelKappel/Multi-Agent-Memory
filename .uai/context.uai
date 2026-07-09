@@ -14,6 +14,6 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Current context:
 - The active goal is to mature MemoryEndpoints.com into an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site.
 - The repository has working local route, storage, package, secret-scan, `.uai`, static-site, and dogfood evidence.
-- The latest-code public deployment and live companion-site publish remain blocked by external FTPS access.
+- The latest-code public deployment and live companion-site publish remain blocked by external hosting login access.
 - The active memory correction is to align with UAIX file-handoff setup while preserving the human rule that the `.uai` suite is active memory and no catch-all active-memory file is allowed.
 - Active handoff buckets must be empty or placeholder-only after processed intake is archived or otherwise dispositioned.

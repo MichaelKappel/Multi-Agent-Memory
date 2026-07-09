@@ -37,7 +37,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 ## Operational System Targets
 
-- Resolve latest-code live deployment only through refreshed FTPS/server access outside the repository.
+- Resolve latest-code live deployment only through refreshed hosting credential/server access outside the repository.
 - Treat GitHub Actions failure as blocked by GitHub account/billing state while public job metadata continues to show no recorded steps.
 - Keep package exclusions strict for `.git`, `.github`, `.uai`, local prompts, raw Agent File Handoff bucket contents, runtime stores, databases, logs, caches, `dist`, and credential handoffs.
 - Keep deploy reports redacted and safe no-op when credentials or remote access fail before upload.

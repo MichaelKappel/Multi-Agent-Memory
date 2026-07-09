@@ -1,9 +1,11 @@
 {
   "blockers": [
     {
-      "blocker": "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+      "blocker": "MultiAgentMemory.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
-        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json"
+        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
+        "docs/reports/multiagentmemory-deploy-connection-check-latest.json",
+        "docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json"
       ],
       "requirement": "multiagentmemory_live_deployed",
       "status": "blocked"
@@ -17,9 +19,11 @@
       "status": "blocked"
     },
     {
-      "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
+      "blocker": "MemoryEndpoints.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
+        "docs/reports/deploy-connection-check-latest.json",
+        "docs/reports/deploy-connection-check-ftp-latest.json",
         "docs/reports/live-latest-code-verification.json"
       ],
       "requirement": "latest_code_live_deployed",
@@ -165,9 +169,11 @@
       "status": "pass_local"
     },
     {
-      "blocker": "MultiAgentMemory.com FTPS login rejected before upload; live domain still requires successful static publish.",
+      "blocker": "MultiAgentMemory.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
-        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json"
+        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
+        "docs/reports/multiagentmemory-deploy-connection-check-latest.json",
+        "docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json"
       ],
       "requirement": "multiagentmemory_live_deployed",
       "status": "blocked"
@@ -197,9 +203,11 @@
       "status": "pass_live_current_public_surface"
     },
     {
-      "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
+      "blocker": "MemoryEndpoints.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
+        "docs/reports/deploy-connection-check-latest.json",
+        "docs/reports/deploy-connection-check-ftp-latest.json",
         "docs/reports/live-latest-code-verification.json"
       ],
       "requirement": "latest_code_live_deployed",

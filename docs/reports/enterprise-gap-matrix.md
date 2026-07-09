@@ -17,7 +17,7 @@ Generated: 2026-07-09
 
 | Requirement | Current state | Needed evidence before claiming done |
 | --- | --- | --- |
-| Live deployment of new firewall/review/dogfood changes | Blocked by FTPS login rejection before upload | Refresh FTP credential/server access outside the repo, then rerun package, dry-run deploy, live deploy, Passenger restart, and live route verification. See `docs/reports/deploy-attempt-20260709.json`. |
+| Live deployment of new firewall/review/dogfood changes | Blocked by hosting login rejection before upload; explicit FTPS and plain FTP no-upload checks both fail at login with zero uploads | Refresh hosting credential/server access outside the repo, then rerun package, dry-run deploy, no-upload connection check, live deploy, Passenger restart, and live route verification. See `docs/reports/deploy-attempt-20260709.json`. |
 | Live dogfooding | Not yet proven | Authenticated live MemoryEndpoints dogfood run or explicit evidence that live credentials and workspace are configured without exposing secrets. |
 | Relational production database | Schema-ready and stdlib SQLite relational table-backed, MySQL gated | Approved adapter path or honest continued gated status. Do not claim MySQL is live. |
 | Full enterprise audit | Partial | Requirement-by-requirement completion audit against the goal objective after live verification. |

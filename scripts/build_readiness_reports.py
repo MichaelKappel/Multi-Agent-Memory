@@ -67,6 +67,23 @@ def status(ok, blocked=False, gated=False):
     return "pass" if ok else "missing_or_failed"
 
 
+def connection_status(*reports):
+    present = [report for report in reports if report]
+    if not present:
+        return "not recorded"
+    parts = []
+    for report in present:
+        parts.append(
+            "%s/%s/%s uploads"
+            % (
+                report.get("protocol") or "unknown",
+                report.get("status") or "unknown",
+                report.get("uploadedCount", 0),
+            )
+        )
+    return ", ".join(parts)
+
+
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
@@ -128,7 +145,11 @@ def build_final_markdown(local_report):
     live_routes = load_json("live-route-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
+    deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
+    deploy_connection_ftp = load_json("deploy-connection-check-ftp-latest.json") or {}
     multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
+    multiagentmemory_connection_ftps = load_json("multiagentmemory-deploy-connection-check-latest.json") or {}
+    multiagentmemory_connection_ftp = load_json("multiagentmemory-deploy-connection-check-ftp-latest.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     package = load_json("package-verification-report.json") or {}
     secret = load_json("secret-scan-report.json") or {}
@@ -176,18 +197,28 @@ def build_final_markdown(local_report):
             multiagentmemory_live.get("status"),
             multiagentmemory_live.get("uploadedCount"),
         ),
+        "- No-upload deployment connection checks: MemoryEndpoints.com `%s`; MultiAgentMemory.com `%s`." % (
+            connection_status(deploy_connection_ftps, deploy_connection_ftp),
+            connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
+        ),
         "- MultiAgentMemory.com live site verification: %s failures; home page is not serving expected companion links yet." % (multiagentmemory_live_site.get("failureCount")),
         "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
         "",
         "## Blocked Or Gated",
         "",
-        "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; live source SHA match is `%s`." % (
+        "- Latest-code live deployment: blocked. The recorded upload attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; connection checks `%s`; live source SHA match is `%s`." % (
             (deploy.get("liveAttempt") or {}).get("failedPhase"),
             (deploy.get("liveAttempt") or {}).get("errorType"),
             (deploy.get("liveAttempt") or {}).get("uploadedCount"),
+            connection_status(deploy_connection_ftps, deploy_connection_ftp),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
         ),
-        "- MultiAgentMemory.com live publish: blocked. The recorded static-site FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % (multiagentmemory_live.get("failedPhase"), multiagentmemory_live.get("errorType"), multiagentmemory_live.get("uploadedCount")),
+        "- MultiAgentMemory.com live publish: blocked. The recorded static-site upload attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; connection checks `%s`." % (
+            multiagentmemory_live.get("failedPhase"),
+            multiagentmemory_live.get("errorType"),
+            multiagentmemory_live.get("uploadedCount"),
+            connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
+        ),
         "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
     ]
     if not live_dogfood:

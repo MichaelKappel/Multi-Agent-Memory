@@ -1,13 +1,35 @@
 {
   "claimBoundary": {
-    "blocker": "FTPS login rejected before upload; credential or server access must be refreshed outside the repository.",
+    "blocker": "Connection checks for protocol(s) ftp, ftps failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository.",
     "liveDogfoodVerified": false,
     "localDogfoodVerified": true,
     "newCodeLiveDeployed": false
   },
+  "connectionChecks": [
+    {
+      "errorType": "error_perm",
+      "failedPhase": "login",
+      "protocol": "ftps",
+      "safeNoOp": true,
+      "status": "connection_check_failed",
+      "transportSecurity": "explicit_ftps",
+      "uploadedCount": 0,
+      "valuesRedacted": true
+    },
+    {
+      "errorType": "error_perm",
+      "failedPhase": "login",
+      "protocol": "ftp",
+      "safeNoOp": true,
+      "status": "connection_check_failed",
+      "transportSecurity": "plain_ftp",
+      "uploadedCount": 0,
+      "valuesRedacted": true
+    }
+  ],
   "dryRun": {
     "packageExists": true,
-    "plannedUploadCount": 73,
+    "plannedUploadCount": 77,
     "status": "ready",
     "valuesRedacted": true
   },

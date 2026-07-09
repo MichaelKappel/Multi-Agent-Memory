@@ -1,15 +1,17 @@
 {
-  "dryRun": true,
+  "dryRun": false,
+  "errorType": "error_perm",
+  "failedPhase": "login",
   "hasResolvedHost": true,
   "hasResolvedPassword": true,
   "hasResolvedPort": true,
   "hasResolvedUser": true,
   "plannedUploadCount": 12,
-  "protocol": "ftps",
+  "protocol": "ftp",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
   "remoteDirSource": "argument_or_handoff",
-  "safeNoOp": false,
+  "safeNoOp": true,
   "schemaVersion": "static_site.ftp_deploy.v1",
   "signals": {
     "hasFtp": true,
@@ -23,8 +25,9 @@
   },
   "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
   "siteRootExists": true,
-  "status": "ready",
+  "status": "connection_check_failed",
   "targetDomain": "multiagentmemory.com",
-  "transportSecurity": "explicit_ftps",
+  "transportSecurity": "plain_ftp",
+  "uploadedCount": 0,
   "valuesRedacted": true
 }
