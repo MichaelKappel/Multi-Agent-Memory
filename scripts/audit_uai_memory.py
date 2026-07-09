@@ -16,9 +16,10 @@ FORBIDDEN_ACTIVE_MEMORY_FILENAMES = {
     "working-state.uai",
 }
 FORBIDDEN_ACTIVE_MEMORY_POLICY = (
-    "The .uai folder is the active startup memory suite; do not create a "
-    "generic catch-all active memory file, including short-term-memory.uai "
-    "or current-state.uai, even while public UAIX wizard guidance catches up."
+    "The .uai folder is the active startup memory suite; files named "
+    "short-term-memory.uai, current-state.uai, active-memory.uai, "
+    "project-state.uai, or working-state.uai are forbidden under any purpose "
+    "or interpretation, even while public UAIX wizard guidance catches up."
 )
 REQUIRED_FIELDS = [
     "Purpose:",
@@ -148,6 +149,12 @@ def manifest_read_order():
         return []
 
 
+def forbidden_active_memory_paths(paths):
+    return sorted(
+        path for path in paths if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+    )
+
+
 def audit_handoff_buckets():
     items = []
     for bucket in HANDOFF_ACTIVE_BUCKETS:
@@ -205,9 +212,7 @@ def main(argv=None):
     present_paths = {item["path"] for item in items}
     missing_files = sorted(required_paths - present_paths)
     unexpected_files = sorted(present_paths - required_paths)
-    forbidden_active_memory_files = sorted(
-        path for path in present_paths if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
-    )
+    forbidden_active_memory_files = forbidden_active_memory_paths(present_paths)
     missing_support_files = sorted(
         path for path in required_support_paths if not (ROOT / path).exists()
     )
@@ -215,9 +220,7 @@ def main(argv=None):
     manifest_order = manifest_read_order()
     read_order_matches = read_order == STARTUP_READ_ORDER
     manifest_read_order_matches = manifest_order == STARTUP_READ_ORDER
-    manifest_forbidden_active_memory_files = sorted(
-        path for path in manifest_order if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
-    )
+    manifest_forbidden_active_memory_files = forbidden_active_memory_paths(manifest_order)
     bootstrap_path = UAI_DIR / "startup-packet.uai"
     bootstrap_text = read(bootstrap_path) if bootstrap_path.exists() else ""
     bootstrap_points_to_totem = ".uai/totem.uai" in bootstrap_text and "bootstrap" in bootstrap_text.lower()
@@ -261,7 +264,7 @@ def main(argv=None):
         "anchorFilesPresent": all((UAI_DIR / name).exists() for name in ("totem.uai", "taboo.uai", "talisman.uai")),
         "localUaiStaysActiveAlways": local_uai_stays_active,
         "dateFreeHotMemory": all(item["dateFree"] for item in items),
-        "noCatchAllActiveMemoryFile": not forbidden_active_memory_files,
+        "noForbiddenActiveMemoryFilename": not forbidden_active_memory_files,
         "handoffBucketsReady": handoff_buckets_ready,
         "handoffBucketItems": handoff_items,
         "items": items,

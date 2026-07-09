@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 7234135b8075, current HEAD 963b93ba3740.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -241,7 +241,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 7234135b8075, current HEAD 963b93ba3740.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -260,15 +260,15 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "7234135b80753ae29e1042727ac9955aa92b0b44",
+    "currentGitHead": "963b93ba374003c709d85fb97e429de2e20e9cc5",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
-    "githubCiReportCurrent": true,
+    "githubCiReportCurrent": false,
     "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": true,
+    "liveLatestCodeReportCurrent": false,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,
@@ -276,7 +276,7 @@
     "multiAgentMemoryLiveDeployed": false,
     "multiAgentMemoryLiveSiteVerified": false,
     "multiAgentMemoryStaticSiteVerified": true,
-    "noCatchAllActiveMemoryFile": true,
+    "noForbiddenActiveMemoryFilename": true,
     "packageEvidenceCurrent": true,
     "packageReportCurrent": true,
     "postCommitNoWriteVerificationRequired": true,

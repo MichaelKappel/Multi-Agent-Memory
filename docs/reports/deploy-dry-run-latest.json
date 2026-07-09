@@ -1,8 +1,8 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
-    "sourceShaShort": "7234135b8075",
+    "sourceSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
+    "sourceShaShort": "963b93ba3740",
     "valuesRedacted": true
   },
   "dryRun": true,

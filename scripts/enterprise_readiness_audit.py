@@ -397,7 +397,7 @@ def main(argv=None):
             "liveLatestCodeReportCurrent": live_latest_report_current,
             "githubCiReportCurrent": github_ci_report_current,
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
-            "noCatchAllActiveMemoryFile": bool(uai_audit and uai_audit.get("noCatchAllActiveMemoryFile")),
+            "noForbiddenActiveMemoryFilename": bool(uai_audit and uai_audit.get("noForbiddenActiveMemoryFilename")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
             "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
             "latestCodeLiveDeployed": latest_code_live_verified,

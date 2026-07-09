@@ -30,6 +30,25 @@ class UaiAuditContractTests(unittest.TestCase):
         self.assertNotIn(".uai/short-term-memory.uai", audit_uai_memory.manifest_read_order())
         self.assertNotIn(".uai/current-state.uai", audit_uai_memory.manifest_read_order())
 
+    def test_forbidden_active_memory_names_are_exact_filename_bans(self):
+        paths = {
+            ".uai/context.uai",
+            ".uai/current-state.uai",
+            ".uai/short-term-memory.uai",
+            ".uai/archives/current-state.uai",
+            ".uai/exports/llms-full.uai",
+        }
+        forbidden_paths = set(audit_uai_memory.forbidden_active_memory_paths(paths))
+        self.assertEqual(
+            {
+                ".uai/current-state.uai",
+                ".uai/short-term-memory.uai",
+                ".uai/archives/current-state.uai",
+            },
+            forbidden_paths,
+        )
+        self.assertIn("forbidden under any purpose", audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_POLICY)
+
     def test_active_uai_files_are_date_free_and_typed(self):
         items = [audit_uai_memory.audit_file(path) for path in sorted((ROOT / ".uai").rglob("*.uai"))]
         self.assertTrue(items)

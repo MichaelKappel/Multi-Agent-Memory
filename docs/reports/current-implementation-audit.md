@@ -22,7 +22,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 ## Implemented Locally
 
 - `.uai/totem.uai` marks local `.uai` as always active.
-- Active `.uai` files are typed, date-free, and audited; catch-all active memory files remain forbidden.
+- Active `.uai` files are typed, date-free, and audited; forbidden duration/state filenames are absent.
 - Memory events are firewall-reviewed and typed before persistence.
 - Review queue and review decision routes are protected and idempotent.
 - Quarantined/rejected memory is excluded from normal search.

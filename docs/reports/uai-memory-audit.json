@@ -48,7 +48,7 @@
     "working-state.uai"
   ],
   "forbiddenActiveMemoryFiles": [],
-  "forbiddenActiveMemoryPolicy": "The .uai folder is the active startup memory suite; do not create a generic catch-all active memory file, including short-term-memory.uai or current-state.uai, even while public UAIX wizard guidance catches up.",
+  "forbiddenActiveMemoryPolicy": "The .uai folder is the active startup memory suite; files named short-term-memory.uai, current-state.uai, active-memory.uai, project-state.uai, or working-state.uai are forbidden under any purpose or interpretation, even while public UAIX wizard guidance catches up.",
   "handoffBucketItems": [
     {
       "activePayloadCount": 0,
@@ -542,7 +542,7 @@
   "manifestReadOrderMatchesExpected": true,
   "missingFiles": [],
   "missingSupportFiles": [],
-  "noCatchAllActiveMemoryFile": true,
+  "noForbiddenActiveMemoryFilename": true,
   "ok": true,
   "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
   "startupReadOrder": [

@@ -15,7 +15,7 @@ Maintenance rules:
 - The `.uai/` folder is the active startup memory suite.
 - Every `.uai/*.uai` file listed in `.uai/startup-packet.uai` is active memory.
 - Active `.uai` files are date-free active operational records; chronology belongs in durable reports, archives, CI logs, deployment logs, or MATM records.
-- Do not create catch-all files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, or equivalent; these names are forbidden here even while public UAIX wizard guidance catches up.
+- Do not create files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent anywhere under `.uai`; these names are forbidden under any purpose or interpretation even while public UAIX wizard guidance catches up.
 - Keep facts distributed by responsibility: constraints, identity, context, progress, operations, testing, decisions, owners, risks, handoff state, and durable pointers each have their own typed files.
 - Keep README files out of the memory package and active intake buckets. README files may document the repository for humans but must not be the `.uai` setup.
 - Totem, Taboo, and Talisman are active instruction anchors. Do not weaken, replace, delete, or bypass them unless the human names the exact artifact and operation.

@@ -26,7 +26,7 @@ Expected current local state:
 - WSGI route verifier checks 21 required public routes with 0 failures.
 - Tracked route and package reports are point-in-time snapshots. When used as standalone evidence they must record the target Git SHA; after any commit or push, rerun no-write WSGI/package/live/CI checks for current-commit proof rather than treating the containing commit's tracked reports as self-proving.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
-- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard ban on catch-all files such as `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, and `.uai/current-state.uai`.
+- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard filename ban on `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, `.uai/current-state.uai`, `.uai/project-state.uai`, `.uai/working-state.uai`, and equivalents.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Deploy dry-run evidence must match the package report file count and source SHA, and dry-run reports must be marked `safeNoOp=true`.
 - Secret scan reports 0 hits.

@@ -1,9 +1,9 @@
 {
-  "expectedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+  "expectedSourceSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
   "expectedSourceShaSource": "git_head",
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "7234135b80753ae29e1042727ac9955aa92b0b44",
+  "gitHeadAtVerification": "963b93ba374003c709d85fb97e429de2e20e9cc5",
   "items": [
     {
       "missing": [],
@@ -42,13 +42,13 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+      "expectedSourceSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
       "missing": [],
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+      "sourceSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
       "sourceShaMatchesExpected": true,
-      "sourceShaShort": "7234135b8075",
+      "sourceShaShort": "963b93ba3740",
       "status": 200
     },
     {
@@ -137,7 +137,7 @@
     }
   ],
   "mode": "wsgi",
-  "observedSourceSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+  "observedSourceSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
   "ok": true,
   "reportScope": "point_in_time_snapshot",
   "routeCount": 21,

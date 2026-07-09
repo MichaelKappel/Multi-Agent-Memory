@@ -17,7 +17,7 @@ The repository is organized around a deployable endpoint app plus a documentatio
 
 ## Agent Memory Surface
 
-- `.uai/` contains the typed active startup memory suite, pointer ledgers, totem invariant, and local continuity records. No single catch-all `.uai` file is the active memory; every file in the startup read order is active memory.
+- `.uai/` contains the typed active startup memory suite, pointer ledgers, totem invariant, and local continuity records. Every file in the startup read order is active memory, and forbidden duration/state filenames such as `short-term-memory.uai` and `current-state.uai` are not allowed.
 - `agent-file-handoff/` contains local intake buckets. Raw active intake files are ignored by Git and should be summarized into reviewed reports or `.uai` ledgers.
 
 ## Operational Surface

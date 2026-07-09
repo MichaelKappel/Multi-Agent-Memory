@@ -20,7 +20,7 @@ The transactive-memory dimensions to preserve are specialization, credibility, a
 ## Hierarchical And Crawlable Memory
 
 - Use the typed `.uai` suite for compact operational memory and startup continuity.
-- Do not create a catch-all `.uai` file such as `short-term-memory.uai`, `active-memory.uai`, or `current-state.uai`; every startup-loaded typed `.uai` file is active memory.
+- Do not create `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation; every startup-loaded typed `.uai` file is active memory.
 - Use `docs/long-term-memory` for reviewed durable strategy and release memory.
 - Use MemoryEndpoints.com protected MATM routes for authenticated workspace memory and current-message coordination.
 - Keep pointer ledgers link-rich and context-rich: stable id, path, routing summary, authority/source, review status, evidence, and truth boundary.

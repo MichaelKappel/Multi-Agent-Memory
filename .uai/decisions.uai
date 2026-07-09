@@ -15,7 +15,7 @@ Current governing decisions:
 - Keep `E:\MemoryEndpoints.com` as the single source of truth for MemoryEndpoints.com and MultiAgentMemory.com content.
 - Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
 - Keep active `.uai` date-free active operational memory only.
-- Do not add generic catch-all `.uai` files such as `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, or `project-state.uai`.
+- Do not add `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation.
 - Store deep detail in docs, reports, MATM records, or other durable targets, then point to those from typed `.uai` files.
 - Do not copy public NeuralWikis wiki content, branding, or generated public site material.
 - Do not claim certification, endorsement, hidden credential validation, automatic repository writes, or live production database support that is not actually verified.

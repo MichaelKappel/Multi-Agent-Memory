@@ -15,7 +15,7 @@ Suggested continuation:
 Continue hardening MemoryEndpoints.com as an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site. First load the full `.uai` startup read order, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Then run the current local verification gate, fix any failures, keep prompt drafts untracked, commit source-controlled changes, push to `MichaelKappel/Multi-Agent-Memory`, and report remaining live deployment, live dogfood, companion-site, CI, and MySQL adapter gates.
 
 Acceptance checks:
-- `.uai` audit passes with the expanded typed suite and no catch-all active-memory files.
+- `.uai` audit passes with the expanded typed suite and no forbidden duration/state filenames.
 - Active `.uai` files remain date-free.
 - File handoff active buckets are empty or have recorded kept-active blocker reasons.
 - Local tests, route verifiers, static-site verifier, package check, secret scan, dogfood, readiness audit, and diff check pass.

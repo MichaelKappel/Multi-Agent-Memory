@@ -21,4 +21,4 @@ Safe assumptions:
 - Keep local `.uai` active always.
 - Keep MySQL runtime support gated.
 - Treat live deployment and CI as blocked until fresh evidence says otherwise.
-- Treat deployed UAIX wizard guidance as possibly behind the human-approved rule: `.uai/short-term-memory.uai` and `.uai/current-state.uai` are forbidden catch-all active-memory files.
+- Treat deployed UAIX wizard guidance as possibly behind the human-approved rule: `.uai/short-term-memory.uai` and `.uai/current-state.uai` are forbidden filenames under any purpose or interpretation.
