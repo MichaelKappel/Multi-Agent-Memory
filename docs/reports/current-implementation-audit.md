@@ -17,8 +17,9 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.
 - Live public route verifier reports `0` failures and `0` public leak hits for the currently deployed MemoryEndpoints.com surface.
 - MultiAgentMemory.com live companion verification reports `0` failures after publish status `uploaded`.
-- Latest-code live verifier expects `6c38ab3c4d8b889a3691435c696bf25972bb3675`, observes `None`, and matches `false`.
-- No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
+- GitHub Actions is not a required completion gate per human direction.
+- Latest-code live verifier expects `239975b9b1cc30d5340c9c5fbed1592ca2699c31`, observes `239975b9b1cc30d5340c9c5fbed1592ca2699c31`, and matches `true`.
+- No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_passed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
 
 ## Implemented Locally
 
@@ -31,11 +32,11 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.
 - Dogfood runner exercises workspace setup, agent registration, memory submit/search, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.
 
-## Not Yet Proven
+## Remaining Boundaries
 
-- Latest code is not proven live because live `/api/version` does not report the expected source SHA.
-- Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.
-- Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.
+- Latest code is proven live by `/api/version` source SHA verification.
+- Full live dogfood contract verified for the currently deployed API.
+- After each latest-code deploy, rerun live dogfood and refresh `docs/reports/dogfood-memory-run.json`.
 - MultiAgentMemory.com live companion site is verified.
 - Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.
-- The full objective still needs a final completion audit after latest-code MemoryEndpoints.com live deploy, live dogfood, CI, and gated-capability evidence pass.
+- The full objective still needs a final current-commit audit after commit, push, deploy, live verification, and remote SHA verification.

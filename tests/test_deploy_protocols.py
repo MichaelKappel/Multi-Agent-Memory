@@ -1,3 +1,4 @@
+import json
 import unittest
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ class DeployProtocolTests(unittest.TestCase):
         static_script = (ROOT / "scripts" / "ftp_deploy_static_site.py").read_text(encoding="utf-8")
         for script in (endpoint_script, static_script):
             self.assertIn("--connection-check", script)
+            self.assertIn("--filezilla-site-match", script)
             self.assertIn("connection_check_passed", script)
             self.assertIn("uploadedCount", script)
             self.assertIn("args.dry_run or args.connection_check", script)
@@ -103,6 +105,57 @@ Password: multi-secret
         self.assertNotIn("multi-secret", str(report))
         self.assertNotIn("multi-user", str(report))
         self.assertNotIn("example.invalid", str(report))
+
+    def test_endpoint_filezilla_dry_run_is_redacted_and_uses_login_root(self):
+        original_loader = ftp_deploy_memoryendpoints.load_filezilla_site
+
+        def fake_loader(path, match):
+            return (
+                {
+                    "ftp server": "example.invalid",
+                    "ftp username": "endpoint-user",
+                    "password": "endpoint-secret",
+                    "ftp & explicit ftps port": "21",
+                },
+                {
+                    "status": "filezilla_site_matched",
+                    "siteIndex": 1,
+                    "siteNameFingerprint": "abc123",
+                    "siteMatch": match,
+                    "hasRemoteDir": False,
+                    "valuesRedacted": True,
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            handoff = Path(tmp) / "handoff.txt"
+            report_path = Path(tmp) / "report.json"
+            handoff.write_text("Stale handoff\nFTP Server: stale.invalid\n", encoding="utf-8")
+            try:
+                ftp_deploy_memoryendpoints.load_filezilla_site = fake_loader
+                exit_code = ftp_deploy_memoryendpoints.main(
+                    [
+                        "--dry-run",
+                        "--handoff",
+                        str(handoff),
+                        "--filezilla-site-match",
+                        "memoryendpoints",
+                        "--json-out",
+                        str(report_path),
+                    ]
+                )
+            finally:
+                ftp_deploy_memoryendpoints.load_filezilla_site = original_loader
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("filezilla_site_manager", report["credentialSource"])
+        self.assertEqual("filezilla_login_root", report["remoteDirSource"])
+        self.assertTrue(report["safeNoOp"])
+        text = str(report)
+        self.assertNotIn("endpoint-secret", text)
+        self.assertNotIn("endpoint-user", text)
+        self.assertNotIn("example.invalid", text)
 
     def test_deploy_attempt_freshness_matches_package(self):
         freshness = build_deploy_attempt_report.build_freshness(

@@ -14,6 +14,7 @@ PACKAGE = ROOT / "dist" / "MemoryEndpoints.com-Production.zip"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 from package_memoryendpoints import iter_files, write_build_info
+from ftp_deploy_static_site import DEFAULT_FILEZILLA_SITEMANAGER, load_filezilla_site
 
 
 def emit_report(report, args):
@@ -188,15 +189,53 @@ def main(argv=None):
     parser.add_argument("--allow-discovered-live-upload", action="store_true")
     parser.add_argument("--protocol", choices=["ftps", "ftp"], default="ftps")
     parser.add_argument("--connection-check", action="store_true")
+    parser.add_argument("--filezilla-site-match")
+    parser.add_argument("--filezilla-path", default=str(DEFAULT_FILEZILLA_SITEMANAGER))
     args = parser.parse_args(argv)
 
     parsed = parse_handoff(args.handoff)
+    filezilla_report = None
+    credential_source = "handoff"
+    if args.filezilla_site_match:
+        filezilla_fields, filezilla_report = load_filezilla_site(args.filezilla_path, args.filezilla_site_match)
+        credential_source = "filezilla_site_manager"
+        if filezilla_fields:
+            match = args.filezilla_site_match.lower()
+            parsed = {
+                "raw": filezilla_fields,
+                "signals": {
+                    "hasFtp": True,
+                    "hasHost": bool(filezilla_fields.get("ftp server")),
+                    "hasUser": bool(filezilla_fields.get("ftp username")),
+                    "hasPassword": bool(filezilla_fields.get("password")),
+                    "mentionsMemoryEndpoints": "memoryendpoints" in match,
+                    "sectionCount": None,
+                    "selectedSectionMentionsMemoryEndpoints": "memoryendpoints" in match,
+                    "valuesRedacted": True,
+                },
+            }
+        else:
+            parsed = {
+                "raw": {},
+                "signals": {
+                    "hasFtp": False,
+                    "hasHost": False,
+                    "hasUser": False,
+                    "hasPassword": False,
+                    "mentionsMemoryEndpoints": "memoryendpoints" in args.filezilla_site_match.lower(),
+                    "sectionCount": None,
+                    "selectedSectionMentionsMemoryEndpoints": False,
+                    "valuesRedacted": True,
+                },
+            }
     fields = parsed["raw"]
     host = pick(fields, ["ftp server", "ftp host", "server", "host"])
     user = pick(fields, ["ftp username", "ftp user", "username", "user"])
     password = pick(fields, ["ftp password", "ftp pass", "password", "pass"])
     port = pick_port(fields)
     remote_dir = args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])
+    if args.filezilla_site_match and not remote_dir and host and user and password:
+        remote_dir = "."
     discovered_dir = None
     discovery_report = None
     if args.discover_remote_dir and not remote_dir:
@@ -219,7 +258,8 @@ def main(argv=None):
         "protocol": args.protocol,
         "transportSecurity": transport_security(args.protocol),
         "remoteDirResolved": bool(remote_dir),
-        "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])) else ("discovery" if remote_dir else None),
+        "credentialSource": credential_source,
+        "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])) else ("filezilla_login_root" if (args.filezilla_site_match and remote_dir == ".") else ("discovery" if remote_dir else None)),
         "passengerRestartPlanned": bool(remote_dir),
         "valuesRedacted": True,
         "build": {
@@ -229,6 +269,8 @@ def main(argv=None):
             "valuesRedacted": True,
         },
     }
+    if filezilla_report:
+        report["filezilla"] = filezilla_report
     if remote_dir:
         report["remoteDirFingerprint"] = fingerprint(remote_dir)
     if discovery_report:

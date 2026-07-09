@@ -1,0 +1,16 @@
+{
+  "decision": "not_required",
+  "decidedBy": "human",
+  "doNotRetryAutomatically": true,
+  "generatedAt": "2026-07-09",
+  "rationale": "The human clarified that GitHub Actions is not needed for the MemoryEndpoints.com completion path. Keep the workflow in the repository, but do not keep trying to clear the GitHub account billing lock as a product or deployment gate.",
+  "replacementEvidence": [
+    "python -m unittest discover -s tests",
+    "python scripts/enterprise_readiness_audit.py --run-checks",
+    "python scripts/verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head",
+    "python scripts/dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com"
+  ],
+  "requirement": "github_actions_ci",
+  "schemaVersion": "memoryendpoints.github_ci_gate_decision.v1",
+  "valuesRedacted": true
+}

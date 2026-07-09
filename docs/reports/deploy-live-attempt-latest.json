@@ -1,25 +1,33 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
-    "sourceShaShort": "3c7c5cf94fbe",
+    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+    "sourceShaShort": "239975b9b1cc",
     "valuesRedacted": true
   },
+  "credentialSource": "filezilla_site_manager",
   "dryRun": false,
-  "errorType": "error_perm",
-  "failedPhase": "login",
+  "filezilla": {
+    "hasRemoteDir": false,
+    "siteIndex": 1,
+    "siteMatch": "memoryendpoints",
+    "siteNameFingerprint": "cc8ad3a2e5e0bad9",
+    "status": "filezilla_site_matched",
+    "valuesRedacted": true
+  },
   "hasResolvedHost": true,
   "hasResolvedPassword": true,
   "hasResolvedPort": true,
   "hasResolvedUser": true,
   "packageExists": true,
   "passengerRestartPlanned": true,
-  "plannedUploadCount": 77,
+  "passengerRestartRequested": true,
+  "plannedUploadCount": 81,
   "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
-  "remoteDirSource": "argument_or_handoff",
-  "safeNoOp": true,
+  "remoteDirSource": "filezilla_login_root",
+  "safeNoOp": false,
   "schemaVersion": "memoryendpoints.ftp_deploy.v1",
   "signals": {
     "hasFtp": true,
@@ -27,12 +35,12 @@
     "hasPassword": true,
     "hasUser": true,
     "mentionsMemoryEndpoints": true,
-    "sectionCount": 6,
+    "sectionCount": null,
     "selectedSectionMentionsMemoryEndpoints": true,
     "valuesRedacted": true
   },
-  "status": "connection_or_upload_failed",
+  "status": "uploaded",
   "transportSecurity": "explicit_ftps",
-  "uploadedCount": 0,
+  "uploadedCount": 81,
   "valuesRedacted": true
 }

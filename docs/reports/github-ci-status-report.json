@@ -2,9 +2,9 @@
   "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
   "branch": "main",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T20:58:32Z",
-  "latestObservedHeadSha": "2c4f9f0d9247913315fd17d5d0e0e8bc9c79c3cf",
-  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048875993",
+  "generatedAt": "2026-07-09T21:07:46Z",
+  "latestObservedHeadSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29050000735",
   "latestObservedJobAnnotationCount": 1,
   "latestObservedJobAnnotations": [
     {
@@ -21,6 +21,32 @@
   "latestObservedJobStepCount": 0,
   "observedRunCount": 5,
   "observedRuns": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T21:02:16Z",
+      "displayTitle": "Publish MultiAgentMemory companion site",
+      "headBranch": "main",
+      "headSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29050000735",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29050000735,
+      "runNumber": 36,
+      "status": "completed",
+      "updatedAt": "2026-07-09T21:02:20Z"
+    },
     {
       "conclusion": "failure",
       "createdAt": "2026-07-09T20:43:09Z",
@@ -124,32 +150,6 @@
       "runNumber": 32,
       "status": "completed",
       "updatedAt": "2026-07-09T20:12:12Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T20:05:54Z",
-      "displayTitle": "Clarify readiness evidence freshness",
-      "headBranch": "main",
-      "headSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046687986",
-      "jobAnnotationCount": 1,
-      "jobAnnotations": [
-        {
-          "annotationLevel": "failure",
-          "endLine": 1,
-          "message": "The job was not started because your account is locked due to a billing issue.",
-          "path": ".github",
-          "startLine": 1,
-          "title": "",
-          "valuesRedacted": true
-        }
-      ],
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29046687986,
-      "runNumber": 31,
-      "status": "completed",
-      "updatedAt": "2026-07-09T20:05:57Z"
     }
   ],
   "ok": false,

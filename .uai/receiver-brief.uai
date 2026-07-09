@@ -19,4 +19,4 @@ Receiver instructions:
 - Keep active `.uai` date-free and concise.
 - Use MemoryEndpoints.com MATM only through configured authenticated routes.
 - Keep prompt drafts untracked.
-- Do not claim completion while latest-code MemoryEndpoints.com deploy, latest-contract live dogfood, or CI gates remain blocked.
+- Do not rely on GitHub Actions as a required gate unless the human re-enables it; after any commit, rerun live deploy and live verification before claiming current-commit deployment.

@@ -10,8 +10,9 @@ Current boundary:
 
 - Local verification is strong and repeatable.
 - Live public route verification currently reports `0` failures for the deployed public surface.
-- Latest-code live deployment is not verified; expected `6c38ab3c4d8b889a3691435c696bf25972bb3675`, observed `None`, match `false`.
-- Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.
-- Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.
+- Latest-code live deployment is verified; expected `239975b9b1cc30d5340c9c5fbed1592ca2699c31`, observed `239975b9b1cc30d5340c9c5fbed1592ca2699c31`, match `true`.
+- Full live dogfood contract verified for the currently deployed API.
+- After each latest-code deploy, rerun live dogfood and refresh `docs/reports/dogfood-memory-run.json`.
 - MultiAgentMemory.com live companion verification currently reports `0` failures.
-- Full goal completion must not be claimed until latest-code MemoryEndpoints.com live deployment, latest-contract live dogfood, CI, and gated-capability blockers are cleared.
+- GitHub Actions is not required by human direction.
+- Full goal completion must be based on current-commit local checks, deploy, live verification, dogfood, package/secret evidence, and pushed remote SHA.

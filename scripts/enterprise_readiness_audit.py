@@ -161,6 +161,7 @@ def main(argv=None):
     multiagentmemory_static = load_json(Path("docs") / "reports" / "multiagentmemory-static-site-verification.json")
     multiagentmemory_live_site = load_json(Path("docs") / "reports" / "multiagentmemory-live-site-verification.json")
     github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
+    github_ci_gate = load_json(Path("docs") / "reports" / "github-ci-gate-decision.json")
     head_sha = git_head_sha()
     local_route_report_current = report_matches_head(
         local_routes,
@@ -186,8 +187,18 @@ def main(argv=None):
     package_evidence_current = bool(
         (package and package.get("status") == "ready" and package_report_current) or package_check_current
     )
-    github_ci_ok = bool(github_ci and github_ci_report_current and github_ci.get("conclusion") == "success")
-    if github_ci and github_ci.get("status") == "unavailable":
+    github_ci_not_required = bool(
+        github_ci_gate
+        and github_ci_gate.get("requirement") == "github_actions_ci"
+        and github_ci_gate.get("decision") in ("not_required", "waived")
+    )
+    github_ci_ok = bool(
+        github_ci_not_required
+        or (github_ci and github_ci_report_current and github_ci.get("conclusion") == "success")
+    )
+    if github_ci_not_required:
+        github_ci_blocker = None
+    elif github_ci and github_ci.get("status") == "unavailable":
         previous = github_ci.get("previousReport") or {}
         prior = previous.get("blocker")
         github_ci_blocker = "%s Previous public-safe CI evidence: %s" % (
@@ -377,8 +388,15 @@ def main(argv=None):
         ),
         evidence_item(
             "github_actions_ci",
-            "pass_github" if github_ci_ok else "blocked",
-            ["docs/reports/github-ci-status-report.json"],
+            "not_required" if github_ci_not_required else ("pass_github" if github_ci_ok else "blocked"),
+            [
+                item
+                for item in (
+                    "docs/reports/github-ci-status-report.json",
+                    "docs/reports/github-ci-gate-decision.json" if github_ci_not_required else None,
+                )
+                if item
+            ],
             None if github_ci_ok else github_ci_blocker,
         ),
         evidence_item(
@@ -391,10 +409,24 @@ def main(argv=None):
 
     all_checks_ok = all(item["ok"] for item in checks) if checks else None
     blockers = [item for item in requirements if item["status"] in ("blocked", "missing")]
+    completion_allowed = bool(
+        (all_checks_ok is not False)
+        and not blockers
+        and latest_code_live_verified
+        and dogfood
+        and dogfood.get("liveDogfoodVerified")
+        and live_routes
+        and live_routes.get("ok")
+        and multiagentmemory_live_site
+        and multiagentmemory_live_site.get("ok")
+        and package_evidence_current
+        and local_route_evidence_current
+        and ((uai_audit and uai_audit.get("ok")) or any(item.get("name") == "uai_memory_audit" and item.get("ok") for item in checks))
+    )
     report = {
         "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
-        "ok": False,
-        "completionClaimAllowed": False,
+        "ok": completion_allowed,
+        "completionClaimAllowed": completion_allowed,
         "generatedFromCurrentWorktree": True,
         "checksRun": bool(checks),
         "checksOk": all_checks_ok,
@@ -413,6 +445,8 @@ def main(argv=None):
             "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
             "liveLatestCodeReportCurrent": live_latest_report_current,
             "githubCiReportCurrent": github_ci_report_current,
+            "githubCiRequired": not github_ci_not_required,
+            "githubCiGateDecision": (github_ci_gate or {}).get("decision"),
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
             "noForbiddenActiveMemoryFilename": bool(uai_audit and uai_audit.get("noForbiddenActiveMemoryFilename")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),

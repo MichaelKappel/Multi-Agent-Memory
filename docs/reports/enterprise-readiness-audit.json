@@ -1,33 +1,5 @@
 {
-  "blockers": [
-    {
-      "blocker": "MemoryEndpoints.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
-      "evidence": [
-        "docs/reports/deploy-attempt-20260709.json",
-        "docs/reports/deploy-connection-check-latest.json",
-        "docs/reports/deploy-connection-check-ftp-latest.json",
-        "docs/reports/live-latest-code-verification.json"
-      ],
-      "requirement": "latest_code_live_deployed",
-      "status": "blocked"
-    },
-    {
-      "blocker": "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified.",
-      "evidence": [
-        "docs/reports/dogfood-memory-run.json"
-      ],
-      "requirement": "live_dogfooding",
-      "status": "blocked"
-    },
-    {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
-      "evidence": [
-        "docs/reports/github-ci-status-report.json"
-      ],
-      "requirement": "github_actions_ci",
-      "status": "blocked"
-    }
-  ],
+  "blockers": [],
   "checkResults": [
     {
       "command": "python -m unittest discover -s tests",
@@ -96,9 +68,9 @@
   ],
   "checksOk": true,
   "checksRun": true,
-  "completionClaimAllowed": false,
+  "completionClaimAllowed": true,
   "generatedFromCurrentWorktree": true,
-  "ok": false,
+  "ok": true,
   "requirements": [
     {
       "blocker": null,
@@ -214,7 +186,7 @@
       "status": "pass_live_current_public_surface"
     },
     {
-      "blocker": "MemoryEndpoints.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
+      "blocker": null,
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
         "docs/reports/deploy-connection-check-latest.json",
@@ -222,23 +194,24 @@
         "docs/reports/live-latest-code-verification.json"
       ],
       "requirement": "latest_code_live_deployed",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
-      "blocker": "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified.",
+      "blocker": null,
       "evidence": [
         "docs/reports/dogfood-memory-run.json"
       ],
       "requirement": "live_dogfooding",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": null,
       "evidence": [
-        "docs/reports/github-ci-status-report.json"
+        "docs/reports/github-ci-status-report.json",
+        "docs/reports/github-ci-gate-decision.json"
       ],
       "requirement": "github_actions_ci",
-      "status": "blocked"
+      "status": "not_required"
     },
     {
       "blocker": "Python stdlib has no MySQL client; file storage and stdlib SQLite relational MATM tables are active while MySQL remains schema-ready/gated.",
@@ -252,15 +225,17 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "2c4f9f0d9247913315fd17d5d0e0e8bc9c79c3cf",
+    "currentGitHead": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
+    "githubCiGateDecision": "not_required",
     "githubCiReportCurrent": true,
-    "latestCodeLiveDeployed": false,
-    "latestCodeSourceShaMatchesExpected": false,
+    "githubCiRequired": false,
+    "latestCodeLiveDeployed": true,
+    "latestCodeSourceShaMatchesExpected": true,
     "liveCoreDogfoodVerified": true,
-    "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": false,
+    "liveDogfoodVerified": true,
+    "liveLatestCodeReportCurrent": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,

@@ -32,7 +32,7 @@ Expected current local state:
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Deploy dry-run evidence must match the package report file count and source SHA, and dry-run reports must be marked `safeNoOp=true`.
 - Secret scan reports 0 hits.
-- Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy, live dogfooding, and external CI are proven.
+- Enterprise readiness audit reports local hardening, live deployment, live dogfooding, and companion publishing as verified. GitHub Actions is retained as a repository workflow but is not a required completion gate per human direction; required evidence is local verification plus live deployment, live route, live dogfood, package, `.uai`, and secret-scan proof.
 
 ## Live Public Route Gate
 
@@ -65,7 +65,7 @@ To exercise the current live HTTP API as well:
 python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com
 ```
 
-Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. The report distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`: the current deployed API can prove the core MATM workflow even while the latest protected audit-log readback contract remains blocked until the latest route tranche is deployed.
+Live dogfood proves the deployed MemoryEndpoints.com API workflow. The report distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`; full live dogfood requires protected audit-log readback as part of the deployed contract.
 
 ## Report Refresh
 
@@ -80,14 +80,16 @@ Reports must remain public-safe and evidence-bound. If a report is stale or over
 
 ## GitHub CI Signal
 
-The repository has a CI workflow under `.github/workflows/ci.yml`. Refresh the public-safe CI evidence with the stdlib-only public API checker:
+The repository has a CI workflow under `.github/workflows/ci.yml`, but GitHub Actions is not a required completion gate per human direction. Do not keep retrying the GitHub API checker unless the human re-enables this gate.
+
+If the gate is re-enabled later, refresh the public-safe CI evidence with the stdlib-only public API checker:
 
 ```powershell
 python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json
 ```
 
-The checker exits nonzero when the latest matching run is not successful. A failed run with zero recorded job steps means GitHub did not execute the workflow commands, so treat it as an external GitHub runner/account gate, not as a passing CI signal and not as a local test failure. The checker also reads public check-run annotations when available; the current public-safe status is recorded in `docs/reports/github-ci-status-report.json`.
+The checker exits nonzero when the latest matching run is not successful. A failed run with zero recorded job steps means GitHub did not execute the workflow commands, so treat it as an external GitHub runner/account gate, not as a passing CI signal and not as a local test failure. The current human decision is recorded in `docs/reports/github-ci-gate-decision.json`: do not keep retrying GitHub Actions unless the human re-enables it.
 
-The readiness audit treats the CI report as current only when `latestObservedHeadSha` equals the current local Git HEAD. After every push, rerun this checker before using the CI report as evidence for the pushed commit.
+When the gate is re-enabled, the readiness audit should treat the CI report as current only when `latestObservedHeadSha` equals the current local Git HEAD.
 
 The CI workflow sets `MEMORYENDPOINTS_SOURCE_SHA` from the GitHub commit SHA and runs the WSGI verifier with `--expect-source-sha`, so a successful CI run must prove `/api/version` build provenance as well as route availability.

@@ -8,14 +8,14 @@ Memory scope: current operational gates, deploy boundaries, and safe runbook poi
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when operational gates change; submit durable public-safe operations summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
 Source of truth: `docs/deployment.md`, `docs/verification.md`, `docs/reports/final-readiness-report.md`, deploy attempt reports, and live verifier reports.
-Next action for agents: keep local evidence separate from live evidence and never claim completion while deploy, live dogfood, or CI gates remain blocked.
+Next action for agents: keep local evidence separate from live evidence and never claim completion while current-commit live verification or gated capability evidence is missing.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, FTP host/user/password values, private handoff payloads, or raw one-time keys.
 
 Current operations state:
 - Local WSGI verification is the current reliable code-path proof.
 - Package generation excludes `.git`, `.github`, `.uai`, root `workspace.uai`, root `reports/`, local prompts, raw handoff buckets, runtime stores, databases, logs, caches, credential handoff files, and deployment packages.
-- Latest-code MemoryEndpoints.com live deployment remains gated by hosting login failure before upload.
+- Latest-code MemoryEndpoints.com live deployment is verified through the FileZilla-backed explicit FTPS path; deploy reports remain redacted and credential values stay outside Git.
 - MultiAgentMemory.com static companion docs are published through the FileZilla-backed explicit FTPS path, and live static-site verification passes.
-- GitHub Actions currently does not prove code health because the job fails before execution due to account or billing lock state.
-- Live public route verification proves the currently deployed public surface only. It does not prove that the newest local code is deployed.
-- Live authenticated dogfood must be rerun after the latest route/storage tranche is deployed.
+- GitHub Actions is not a required completion gate per human direction; keep the workflow but do not keep retrying the billing-locked runner unless re-enabled.
+- Live public route verification plus `/api/version` SHA verification proves the currently deployed public surface and deployed source SHA.
+- Live authenticated dogfood with protected audit-log readback is verified for the deployed route/storage tranche.

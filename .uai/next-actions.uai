@@ -16,6 +16,6 @@ Current ordered actions:
 - Keep relational SQLite storage covered by integration and migration tests.
 - Refresh local verification reports after memory and storage changes, including public-safe CI evidence through `scripts/check_github_actions.py`.
 - Commit and push source-controlled improvements once checks pass and prompt drafts remain untracked.
-- Resolve MemoryEndpoints.com hosting login access outside the repo before attempting latest-code endpoint deployment.
-- Rerun live route verification and authenticated live dogfood only after latest code is deployed.
-- Do not claim full completion until latest-code MemoryEndpoints.com live deployment, latest-contract live dogfood, CI, and gated capabilities are resolved or explicitly waived.
+- Keep deployment evidence current after every new commit by rerunning package, FileZilla-backed FTPS deploy, live latest-code SHA verification, live route verification, and dogfood.
+- Do not keep trying GitHub Actions unless the human re-enables it; the human clarified it is not needed as a completion gate.
+- Do not claim full completion until current-commit local verification, live deployment, live route verification, dogfood, package, secret scan, and gated capability documentation are current.

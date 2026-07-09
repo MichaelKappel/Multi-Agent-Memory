@@ -1,31 +1,31 @@
 {
-  "auditLogCount": 0,
-  "auditTrailReadbackVerified": false,
+  "auditLogCount": 10,
+  "auditTrailReadbackVerified": true,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-09T18:59:50Z",
-  "latestDogfoodContractVerified": false,
-  "liveAuditTrailReadbackVerified": false,
+  "generatedAt": "2026-07-09T21:07:22Z",
+  "latestDogfoodContractVerified": true,
+  "liveAuditTrailReadbackVerified": true,
   "liveCoreDogfoodVerified": true,
-  "liveDogfoodVerified": false,
+  "liveDogfoodVerified": true,
   "localAuditTrailReadbackVerified": true,
   "localDogfoodVerified": true,
   "mode": "combined",
-  "ok": false,
+  "ok": true,
   "oneTimeKeyReturned": true,
-  "optionalStepFailureCount": 1,
+  "optionalStepFailureCount": 0,
   "postAckUnreadCount": 0,
   "rawCredentialValuesStored": false,
   "rawPrivatePayloadsStored": false,
   "rawWorkspaceIdStoredInReport": false,
   "receiptCount": 1,
-  "requiredStepFailureCount": 1,
+  "requiredStepFailureCount": 0,
   "runs": [
     {
       "auditLogCount": 10,
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T18:59:47Z",
+      "generatedAt": "2026-07-09T21:07:19Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": false,
       "liveDogfoodVerified": false,
@@ -183,28 +183,28 @@
       ],
       "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:ec1b970e4f1173582b18a850c48386aa7e33de20bb8c7823ca5a6a51e9c00b0a"
+      "workspaceIdHash": "sha256:60d5a406e8d8aad2cb1ad744b1e8aae69c3054dfcaab5a19910ba79972d4ed6a"
     },
     {
-      "auditLogCount": 0,
-      "auditTrailReadbackVerified": false,
+      "auditLogCount": 10,
+      "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T18:59:47Z",
-      "latestDogfoodContractVerified": false,
+      "generatedAt": "2026-07-09T21:07:20Z",
+      "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": true,
-      "liveDogfoodVerified": false,
+      "liveDogfoodVerified": true,
       "localDogfoodVerified": false,
       "mode": "live_http",
-      "ok": false,
+      "ok": true,
       "oneTimeKeyReturned": true,
-      "optionalStepFailureCount": 1,
+      "optionalStepFailureCount": 0,
       "postAckUnreadCount": 0,
       "rawCredentialValuesStored": false,
       "rawPrivatePayloadsStored": false,
       "rawWorkspaceIdStoredInReport": false,
       "receiptCount": 1,
-      "requiredStepFailureCount": 1,
+      "requiredStepFailureCount": 0,
       "searchReadbackCount": 1,
       "steps": [
         {
@@ -259,12 +259,15 @@
           "required": true
         },
         {
-          "httpStatus": "404 Not Found",
+          "httpStatus": "200 OK",
           "name": "read_review_queue",
-          "ok": false,
+          "ok": true,
           "payloadShape": [
-            "error",
-            "ok"
+            "count",
+            "items",
+            "ok",
+            "promotionRoute",
+            "valuesRedacted"
           ],
           "required": false
         },
@@ -315,12 +318,17 @@
           "required": true
         },
         {
-          "httpStatus": "404 Not Found",
+          "httpStatus": "200 OK",
           "name": "read_audit_log",
-          "ok": false,
+          "ok": true,
           "payloadShape": [
-            "error",
-            "ok"
+            "count",
+            "items",
+            "ok",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "schemaVersion",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -340,7 +348,7 @@
       ],
       "target": "https://memoryendpoints.com",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:cd9bc75a20aa46ad8dbbc13b7ecae3cb639fdbc5408f180bacab8fc8d4b215bc"
+      "workspaceIdHash": "sha256:4c8cc7b9119fa2ad59b8c27588e6946c426ba99b6c8aaf4700717960fa8bdaa2"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -398,12 +406,15 @@
       "required": true
     },
     {
-      "httpStatus": "404 Not Found",
+      "httpStatus": "200 OK",
       "name": "read_review_queue",
-      "ok": false,
+      "ok": true,
       "payloadShape": [
-        "error",
-        "ok"
+        "count",
+        "items",
+        "ok",
+        "promotionRoute",
+        "valuesRedacted"
       ],
       "required": false
     },
@@ -454,12 +465,17 @@
       "required": true
     },
     {
-      "httpStatus": "404 Not Found",
+      "httpStatus": "200 OK",
       "name": "read_audit_log",
-      "ok": false,
+      "ok": true,
       "payloadShape": [
-        "error",
-        "ok"
+        "count",
+        "items",
+        "ok",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "schemaVersion",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -479,5 +495,5 @@
   ],
   "uaiProgressUpdated": true,
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:cd9bc75a20aa46ad8dbbc13b7ecae3cb639fdbc5408f180bacab8fc8d4b215bc"
+  "workspaceIdHash": "sha256:4c8cc7b9119fa2ad59b8c27588e6946c426ba99b6c8aaf4700717960fa8bdaa2"
 }

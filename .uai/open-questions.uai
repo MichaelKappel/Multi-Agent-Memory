@@ -12,13 +12,10 @@ Next action for agents: do not silently assume answers to unresolved authority, 
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private contact data, raw one-time keys, or credential inventory values.
 
 Current open questions:
-- Which hosting credential or account change is needed to deploy latest MemoryEndpoints.com and MultiAgentMemory.com source?
-- When GitHub account or billing state is repaired, will Actions pass on the latest pushed commit?
 - What approved runtime adapter path should be used before claiming live MySQL/MariaDB support?
-- When live deployment succeeds, which authenticated workspace and credential inventory should be used for live dogfood without exposing secrets?
 
 Safe assumptions:
 - Keep local `.uai` active always.
 - Keep MySQL runtime support gated.
-- Treat live deployment and CI as blocked until fresh evidence says otherwise.
+- Treat GitHub Actions as not required unless the human re-enables it; treat live deployment evidence as current only after the pushed commit is deployed and `/api/version` matches that commit.
 - Treat deployed UAIX wizard guidance as possibly behind the human-approved rule: `.uai/short-term-memory.uai` and `.uai/current-state.uai` are forbidden filenames under any purpose or interpretation.

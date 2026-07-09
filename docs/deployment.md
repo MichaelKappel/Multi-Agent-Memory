@@ -30,10 +30,10 @@ The package builder writes ignored public-safe build provenance to `memoryendpoi
 
 ## Dry Run
 
-The FTP login directory is the MemoryEndpoints.com deployment root, so use `--remote-dir .`:
+The FileZilla MemoryEndpoints.com profile logs into the MemoryEndpoints.com deployment root, so the deploy script can use the login root without printing credential values:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --dry-run --handoff E:\ftp_Deploy.txt --remote-dir . --json-out docs\reports\deploy-dry-run-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-dry-run-latest.json
 ```
 
 The dry run must resolve host, user, password, package, and remote directory without printing credential values.
@@ -43,7 +43,7 @@ The dry run must resolve host, user, password, package, and remote directory wit
 Before a live upload, verify the selected transport and remote directory without uploading files:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --connection-check --handoff E:\ftp_Deploy.txt --remote-dir . --protocol ftps --json-out docs\reports\deploy-connection-check-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --connection-check --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-connection-check-latest.json
 ```
 
 The default protocol is explicit FTPS. If the hosting handoff explicitly requires plain FTP, rerun the connection check with `--protocol ftp` before attempting upload. Connection-check reports are redacted and always use `uploadedCount: 0`.
@@ -53,10 +53,10 @@ The default protocol is explicit FTPS. If the hosting handoff explicitly require
 Run only after the local gate and dry run pass:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --handoff E:\ftp_Deploy.txt --remote-dir . --protocol ftps --json-out docs\reports\deploy-live-attempt-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-live-attempt-latest.json
 ```
 
-Current status: live upload is blocked. The latest recorded no-upload connection checks failed during login for both explicit FTPS and plain FTP with zero files uploaded. See `docs/reports/deploy-connection-check-latest.json`, `docs/reports/deploy-connection-check-ftp-latest.json`, and `docs/reports/deploy-attempt-20260709.json`.
+Current status: live upload succeeds through the FileZilla-backed explicit FTPS path. The latest recorded publish uploaded 81 files, requested Passenger restart, and `/api/version` reports the expected source SHA. Plain FTP remains rejected and should not be used while explicit FTPS works.
 
 ## Post-Deploy Gate
 

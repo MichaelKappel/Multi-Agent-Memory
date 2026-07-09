@@ -1,25 +1,25 @@
 {
   "claimBoundary": {
-    "blocker": "Connection checks for protocol(s) ftp, ftps failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository.",
+    "blocker": null,
     "dryRunMatchesPackage": true,
-    "externalConnectionBlocker": "Connection checks for protocol(s) ftp, ftps failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository.",
-    "liveDogfoodVerified": false,
+    "externalConnectionBlocker": null,
+    "liveDogfoodVerified": true,
     "localDogfoodVerified": true,
-    "newCodeLiveDeployed": false
+    "newCodeLiveDeployed": true
   },
   "connectionChecks": [
     {
-      "errorType": "error_perm",
-      "failedPhase": "login",
+      "errorType": null,
+      "failedPhase": null,
       "protocol": "ftps",
       "safeNoOp": true,
-      "status": "connection_check_failed",
+      "status": "connection_check_passed",
       "transportSecurity": "explicit_ftps",
       "uploadedCount": 0,
       "valuesRedacted": true
     },
     {
-      "errorType": "error_perm",
+      "errorType": "ConnectionResetError",
       "failedPhase": "login",
       "protocol": "ftp",
       "safeNoOp": true,
@@ -32,31 +32,31 @@
   "dryRun": {
     "packageExists": true,
     "plannedUploadCount": 81,
-    "sourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
     "status": "ready",
     "valuesRedacted": true
   },
   "freshness": {
     "dryRunPlannedUploadCount": 81,
-    "dryRunSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "dryRunSourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
     "packageFileCount": 81,
-    "packageSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "packageSourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
     "plannedUploadCountMatchesPackage": true,
     "sourceShaMatchesPackage": true,
     "valuesRedacted": true
   },
   "generatedAt": "2026-07-09",
   "liveAttempt": {
-    "errorType": "error_perm",
-    "failedPhase": "login",
-    "safeNoOp": true,
-    "status": "connection_or_upload_failed",
-    "uploadedCount": 0,
+    "errorType": null,
+    "failedPhase": null,
+    "safeNoOp": false,
+    "status": "uploaded",
+    "uploadedCount": 81,
     "valuesRedacted": true
   },
   "package": {
     "fileCount": 81,
-    "sourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
     "status": "ready",
     "valuesRedacted": true
   },
