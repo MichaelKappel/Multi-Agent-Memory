@@ -1771,6 +1771,7 @@ def _mysql_config_from_secret_file():
         "user": payload.get("user") or payload.get("username") or "",
         "password": payload.get("password") or "",
         "database": payload.get("database") or payload.get("db") or "",
+        "unix_socket": payload.get("unix_socket") or payload.get("unixSocket") or "",
     }
 
 
@@ -1790,6 +1791,8 @@ def mysql_config_diagnostics():
         "MYSQL_PASSWORD",
         "MEMORYENDPOINTS_MYSQL_DATABASE",
         "MYSQL_DATABASE",
+        "MEMORYENDPOINTS_MYSQL_UNIX_SOCKET",
+        "MYSQL_UNIX_SOCKET",
     ]
     report = {
         "schemaVersion": "memoryendpoints.mysql_config_diagnostics.v1",
@@ -1797,6 +1800,23 @@ def mysql_config_diagnostics():
         "secretConfigPathExists": path.exists(),
         "secretConfigPathConfigured": bool(os.environ.get("MEMORYENDPOINTS_MYSQL_CONFIG_PATH")),
         "environmentPresence": {key: bool(os.environ.get(key)) for key in env_keys},
+        "socketCandidates": [
+            {
+                "candidateId": "var_lib_mysql",
+                "pathFingerprint": _diagnostic_fingerprint("/var/lib/mysql/mysql.sock"),
+                "exists": Path("/var/lib/mysql/mysql.sock").exists(),
+            },
+            {
+                "candidateId": "tmp_mysql",
+                "pathFingerprint": _diagnostic_fingerprint("/tmp/mysql.sock"),
+                "exists": Path("/tmp/mysql.sock").exists(),
+            },
+            {
+                "candidateId": "run_mysqld",
+                "pathFingerprint": _diagnostic_fingerprint("/var/run/mysqld/mysqld.sock"),
+                "exists": Path("/var/run/mysqld/mysqld.sock").exists(),
+            },
+        ],
         "valuesRedacted": True,
     }
     url = os.environ.get("MEMORYENDPOINTS_MYSQL_URL") or os.environ.get("DATABASE_URL")
@@ -1822,6 +1842,9 @@ def mysql_config_diagnostics():
             "userLength": len(str(config.get("user") or "")),
             "passwordFingerprint": _diagnostic_fingerprint(config.get("password")),
             "passwordLength": len(str(config.get("password") or "")),
+            "unixSocketConfigured": bool(config.get("unix_socket")),
+            "unixSocketFingerprint": _diagnostic_fingerprint(config.get("unix_socket")),
+            "unixSocketExists": Path(config.get("unix_socket")).exists() if config.get("unix_socket") else False,
         }
     except Exception as exc:
         report["configLoadError"] = {
@@ -1853,6 +1876,7 @@ def mysql_connection_stage_diagnostics():
                 port=int(config["port"]),
                 user=config["user"],
                 password=config["password"],
+                unix_socket=config.get("unix_socket") or None,
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
@@ -1867,6 +1891,7 @@ def mysql_connection_stage_diagnostics():
                 port=int(config["port"]),
                 user=config["user"],
                 password=config["password"],
+                unix_socket=config.get("unix_socket") or None,
             )
             cursor_factory = lambda conn: conn.cursor()
         try:
@@ -1903,6 +1928,7 @@ def _mysql_config_from_env():
             "user": unquote(parsed.username or ""),
             "password": unquote(parsed.password or ""),
             "database": unquote(parsed.path.lstrip("/")),
+            "unix_socket": os.environ.get("MEMORYENDPOINTS_MYSQL_UNIX_SOCKET") or os.environ.get("MYSQL_UNIX_SOCKET") or "",
         }
     config = {
         "host": os.environ.get("MEMORYENDPOINTS_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "localhost",
@@ -1910,6 +1936,7 @@ def _mysql_config_from_env():
         "user": os.environ.get("MEMORYENDPOINTS_MYSQL_USER") or os.environ.get("MYSQL_USER") or "",
         "password": os.environ.get("MEMORYENDPOINTS_MYSQL_PASSWORD") or os.environ.get("MYSQL_PASSWORD") or "",
         "database": os.environ.get("MEMORYENDPOINTS_MYSQL_DATABASE") or os.environ.get("MYSQL_DATABASE") or "",
+        "unix_socket": os.environ.get("MEMORYENDPOINTS_MYSQL_UNIX_SOCKET") or os.environ.get("MYSQL_UNIX_SOCKET") or "",
     }
     return config
 
@@ -1929,6 +1956,7 @@ class MySQLStore(SQLiteStore):
                 user=config["user"],
                 password=config["password"],
                 database=config["database"],
+                unix_socket=config.get("unix_socket") or None,
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=False,
@@ -1944,6 +1972,7 @@ class MySQLStore(SQLiteStore):
                 user=config["user"],
                 password=config["password"],
                 database=config["database"],
+                unix_socket=config.get("unix_socket") or None,
             )
         cursor_options = {}
         if connection.__class__.__module__.startswith("mysql.connector"):

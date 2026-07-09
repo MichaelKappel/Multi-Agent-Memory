@@ -802,6 +802,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "database": "memoryendpoints_test",
                     "user": "memory_user",
                     "password": "pw",
+                    "unixSocket": "/var/lib/mysql/mysql.sock",
                 }
             ),
             encoding="utf-8",
@@ -814,6 +815,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("memoryendpoints_test", config["database"])
         self.assertEqual("memory_user", config["user"])
         self.assertEqual("pw", config["password"])
+        self.assertEqual("/var/lib/mysql/mysql.sock", config["unix_socket"])
 
     def test_mysql_secret_file_overrides_environment_settings(self):
         from memoryendpoints.storage import _mysql_config_from_env
