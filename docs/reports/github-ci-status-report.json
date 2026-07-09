@@ -1,31 +1,162 @@
 {
-  "blocker": "Could not read GitHub Actions public API: HTTPError status 403.",
+  "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
   "branch": "main",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T20:30:20Z",
-  "latestObservedHeadSha": null,
-  "latestObservedHtmlUrl": null,
-  "latestObservedJobAnnotationCount": 0,
-  "latestObservedJobAnnotations": [],
-  "latestObservedJobCount": 0,
+  "generatedAt": "2026-07-09T20:41:06Z",
+  "latestObservedHeadSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048395743",
+  "latestObservedJobAnnotationCount": 1,
+  "latestObservedJobAnnotations": [
+    {
+      "annotationLevel": "failure",
+      "endLine": 1,
+      "message": "The job was not started because your account is locked due to a billing issue.",
+      "path": ".github",
+      "startLine": 1,
+      "title": "",
+      "valuesRedacted": true
+    }
+  ],
+  "latestObservedJobCount": 1,
   "latestObservedJobStepCount": 0,
-  "observedRunCount": 0,
-  "observedRuns": [],
+  "observedRunCount": 5,
+  "observedRuns": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T20:34:48Z",
+      "displayTitle": "Reject public route path leaks",
+      "headBranch": "main",
+      "headSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048395743",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29048395743,
+      "runNumber": 34,
+      "status": "completed",
+      "updatedAt": "2026-07-09T20:34:51Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T20:23:06Z",
+      "displayTitle": "Enforce forbidden active memory filenames",
+      "headBranch": "main",
+      "headSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29047701522",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29047701522,
+      "runNumber": 33,
+      "status": "completed",
+      "updatedAt": "2026-07-09T20:23:10Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T20:12:07Z",
+      "displayTitle": "Keep readiness gap reports aligned",
+      "headBranch": "main",
+      "headSha": "963b93ba374003c709d85fb97e429de2e20e9cc5",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29047054125",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29047054125,
+      "runNumber": 32,
+      "status": "completed",
+      "updatedAt": "2026-07-09T20:12:12Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T20:05:54Z",
+      "displayTitle": "Clarify readiness evidence freshness",
+      "headBranch": "main",
+      "headSha": "7234135b80753ae29e1042727ac9955aa92b0b44",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046687986",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29046687986,
+      "runNumber": 31,
+      "status": "completed",
+      "updatedAt": "2026-07-09T20:05:57Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T19:59:48Z",
+      "displayTitle": "Prove workspace key storage boundaries",
+      "headBranch": "main",
+      "headSha": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046316188",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29046316188,
+      "runNumber": 30,
+      "status": "completed",
+      "updatedAt": "2026-07-09T19:59:52Z"
+    }
+  ],
   "ok": false,
-  "previousReport": {
-    "available": true,
-    "blocker": "Could not read GitHub Actions public API: HTTPError status 403.",
-    "conclusion": "failure",
-    "generatedAt": "2026-07-09T20:27:31Z",
-    "latestObservedHeadSha": "",
-    "latestObservedHtmlUrl": "",
-    "status": "unavailable",
-    "valuesRedacted": true
-  },
   "repository": "MichaelKappel/Multi-Agent-Memory",
   "schemaVersion": "memoryendpoints.github_ci_status.v2",
   "source": "GitHub Actions public runs and jobs API",
-  "status": "unavailable",
+  "status": "completed",
   "valuesRedacted": true,
   "workflowName": "CI"
 }

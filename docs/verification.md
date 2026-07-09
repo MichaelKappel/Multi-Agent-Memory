@@ -13,6 +13,7 @@ python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out docs\reports\local-route-verification.json
 python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json
 python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json
+python scripts\audit_repository_boundary.py --json-out docs\reports\repository-boundary-audit.json
 python scripts\package_memoryendpoints.py --check-only
 python scripts\secret_scan.py --json-out docs\reports\secret-scan-report.json
 python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json
@@ -27,6 +28,7 @@ Expected current local state:
 - Tracked route and package reports are point-in-time snapshots. When used as standalone evidence they must record the target Git SHA; after any commit or push, rerun no-write WSGI/package/live/CI checks for current-commit proof rather than treating the containing commit's tracked reports as self-proving.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, secret-safety boundary, and public leak boundary.
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard filename ban on `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, `.uai/current-state.uai`, `.uai/project-state.uai`, `.uai/working-state.uai`, and equivalents.
+- Repository boundary audit passes with `E:\MemoryEndpoints.com` as the source of truth, `sites/multiagentmemory.com/` as the only companion docs source, no duplicate MemoryEndpoints/MultiAgentMemory site folders at the drive root, and no root-level runtime artifacts such as local SQLite write checks or devserver logs.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Deploy dry-run evidence must match the package report file count and source SHA, and dry-run reports must be marked `safeNoOp=true`.
 - Secret scan reports 0 hits.

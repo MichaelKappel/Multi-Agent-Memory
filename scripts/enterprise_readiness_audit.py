@@ -139,6 +139,7 @@ def main(argv=None):
             run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi", "--expect-git-head"]),
             run_check("multiagentmemory_static_site", [sys.executable, "scripts/verify_static_site.py"]),
             run_check("uai_memory_audit", [sys.executable, "scripts/audit_uai_memory.py"]),
+            run_check("repository_boundary_audit", [sys.executable, "scripts/audit_repository_boundary.py"]),
             run_check("package_check", [sys.executable, "scripts/package_memoryendpoints.py", "--check-only"]),
             run_check("secret_scan", [sys.executable, "scripts/secret_scan.py"]),
             run_check("diff_check", ["git", "diff", "--check"]),
@@ -148,6 +149,7 @@ def main(argv=None):
     live_latest_code = load_json(Path("docs") / "reports" / "live-latest-code-verification.json")
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
     uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
+    boundary = load_json(Path("docs") / "reports" / "repository-boundary-audit.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
     deploy_dry_run = load_json(Path("docs") / "reports" / "deploy-dry-run-latest.json")
@@ -175,6 +177,9 @@ def main(argv=None):
     github_ci_report_current = report_matches_head(github_ci, head_sha, [("latestObservedHeadSha",)])
     wsgi_check_current = any(item.get("name") == "wsgi_route_verifier" and item.get("ok") for item in checks)
     package_check_current = any(item.get("name") == "package_check" and item.get("ok") for item in checks)
+    repository_boundary_check_current = any(
+        item.get("name") == "repository_boundary_audit" and item.get("ok") for item in checks
+    )
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -250,8 +255,18 @@ def main(argv=None):
     requirements = [
         evidence_item(
             "local_repository_organized",
-            "pass_local",
-            ["workspace.uai", "AGENTS.md", "docs/repository-structure.md", "sites/multiagentmemory.com/index.html"],
+            "pass_local" if ((boundary and boundary.get("ok")) or repository_boundary_check_current) else "missing",
+            [
+                "workspace.uai",
+                "AGENTS.md",
+                "docs/repository-structure.md",
+                "sites/multiagentmemory.com/index.html",
+                "docs/reports/repository-boundary-audit.json",
+                "scripts/audit_repository_boundary.py",
+            ],
+            None
+            if ((boundary and boundary.get("ok")) or repository_boundary_check_current)
+            else "Repository boundary audit is missing or reports duplicate product folders/runtime artifacts.",
         ),
         evidence_item(
             "uai_memory_complete_and_active",
@@ -394,6 +409,8 @@ def main(argv=None):
             "localRouteEvidenceCurrent": local_route_evidence_current,
             "packageReportCurrent": package_report_current,
             "packageEvidenceCurrent": package_evidence_current,
+            "repositoryBoundaryCurrent": repository_boundary_check_current,
+            "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
             "liveLatestCodeReportCurrent": live_latest_report_current,
             "githubCiReportCurrent": github_ci_report_current,
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),

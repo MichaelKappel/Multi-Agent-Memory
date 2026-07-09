@@ -16,7 +16,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.
 - Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.
 - Live public route verifier reports `0` failures and `0` public leak hits for the currently deployed MemoryEndpoints.com surface.
-- Latest-code live verifier expects `7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c`, observes `None`, and matches `false`.
+- Latest-code live verifier expects `6c38ab3c4d8b889a3691435c696bf25972bb3675`, observes `None`, and matches `false`.
 - No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
 
 ## Implemented Locally

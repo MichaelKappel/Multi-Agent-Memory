@@ -1,11 +1,22 @@
 {
   "activeProductRoot": "E:/MemoryEndpoints.com",
   "companionDocumentationRoot": "E:/MemoryEndpoints.com/sites/multiagentmemory.com",
+  "companionDocumentationRootPresent": true,
+  "duplicateProductSiteFolderNames": [
+    "DualSiteOperator-Publish",
+    "MemoryEndpoints.com-Publish",
+    "MultiAgentMemory.com",
+    "MultiAgentMemory.com-Publish",
+    "deployment-backups"
+  ],
   "duplicateProductSiteFoldersFound": [],
-  "generatedAt": "2026-07-09",
+  "generatedAt": "2026-07-09T20:39:39Z",
   "ok": true,
-  "schemaVersion": "memoryendpoints.repository_boundary_audit.v1",
+  "repositoryRootRuntimeArtifactsFound": [],
   "scannedImmediateDriveRoot": "E:/",
+  "schemaVersion": "memoryendpoints.repository_boundary_audit.v2",
+  "sourcePackageRoot": "memoryendpoints/",
+  "sourcePackageRootIsExpectedRuntimePackage": true,
   "truthBoundary": {
     "memoryEndpointsSourceOfTruth": "E:/MemoryEndpoints.com",
     "multiAgentMemoryIsCompanionDocsInsideRepo": true,

@@ -169,6 +169,7 @@ def build_local_report():
     github_ci_report_current = report_matches_head(github_ci, head_sha, [("latestObservedHeadSha",)])
     wsgi_check_current = bool((check_result(enterprise, "wsgi_route_verifier") or {}).get("ok"))
     package_check_current = bool((check_result(enterprise, "package_check") or {}).get("ok"))
+    repository_boundary_check_current = bool((check_result(enterprise, "repository_boundary_audit") or {}).get("ok"))
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -195,7 +196,7 @@ def build_local_report():
         {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
         {"id": "package_check", "status": status(package_evidence_current), "evidence": ["docs/reports/package-verification-report.json", "docs/reports/enterprise-readiness-audit.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
-        {"id": "repository_boundary", "status": status(bool(boundary and boundary.get("ok"))), "evidence": ["docs/reports/repository-boundary-audit.json", "sites/multiagentmemory.com/"]},
+        {"id": "repository_boundary", "status": status(bool((boundary and boundary.get("ok")) or repository_boundary_check_current)), "evidence": ["docs/reports/repository-boundary-audit.json", "scripts/audit_repository_boundary.py", "sites/multiagentmemory.com/"]},
         {"id": "multiagentmemory_static_site", "status": status(bool(static_site and static_site.get("ok"))), "evidence": ["docs/reports/multiagentmemory-static-site-verification.json", "sites/multiagentmemory.com/"]},
         {"id": "deploy_dry_run", "status": status(deploy_dry_run_matches_package), "evidence": ["docs/reports/deploy-dry-run-latest.json", "docs/reports/deploy-attempt-20260709.json"]},
         {"id": "diff_check", "status": status((check_result(enterprise, "diff_check") or {}).get("ok")), "evidence": ["git diff --check"]},
@@ -235,7 +236,7 @@ def build_local_report():
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
-        "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
+        "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
         "multiAgentMemoryStaticPublicLeakHitCount": leak_hit_count(static_site),
         "deployDryRunMatchesPackage": deploy_dry_run_matches_package,

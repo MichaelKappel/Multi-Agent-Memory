@@ -16,6 +16,7 @@ Current local gate:
 - `python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out docs\reports\local-route-verification.json`
 - `python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json`
 - `python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json`
+- `python scripts\audit_repository_boundary.py --json-out docs\reports\repository-boundary-audit.json`
 - `python scripts\package_memoryendpoints.py --json-out docs\reports\package-verification-report.json`
 - `python scripts\secret_scan.py --json-out docs\reports\secret-scan-report.json`
 - `python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json`
@@ -31,5 +32,6 @@ External evidence refresh:
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.
 - Public route and companion-site verifiers must report zero secret hits and zero public leak hits for local filesystem paths, file URIs, or raw traceback fragments.
+- Repository boundary audit must prove there are no duplicate MemoryEndpoints.com or MultiAgentMemory.com active site folders at the drive root and no root-level runtime artifacts such as local SQLite write checks or devserver logs.
 - Storage tests must prove one-time workspace keys are persisted only as hashes, raw keys are absent from file and SQLite storage, SQLite relational tables exist, memory revisions are represented, and the active tested path does not rely on a single JSON blob table.
 - Dogfood must create or use a workspace, register an agent, submit/search memory, create/read/ack current messages, read receipts, read audit log, generate a redacted report, and update `.uai` progress without dates.

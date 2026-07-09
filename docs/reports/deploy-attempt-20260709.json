@@ -31,16 +31,16 @@
   ],
   "dryRun": {
     "packageExists": true,
-    "plannedUploadCount": 79,
-    "sourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+    "plannedUploadCount": 81,
+    "sourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "status": "ready",
     "valuesRedacted": true
   },
   "freshness": {
-    "dryRunPlannedUploadCount": 79,
-    "dryRunSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
-    "packageFileCount": 79,
-    "packageSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+    "dryRunPlannedUploadCount": 81,
+    "dryRunSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "packageFileCount": 81,
+    "packageSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "plannedUploadCountMatchesPackage": true,
     "sourceShaMatchesPackage": true,
     "valuesRedacted": true
@@ -55,8 +55,8 @@
     "valuesRedacted": true
   },
   "package": {
-    "fileCount": 79,
-    "sourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+    "fileCount": 81,
+    "sourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "status": "ready",
     "valuesRedacted": true
   },

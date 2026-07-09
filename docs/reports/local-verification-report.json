@@ -50,6 +50,7 @@
     {
       "evidence": [
         "docs/reports/repository-boundary-audit.json",
+        "scripts/audit_repository_boundary.py",
         "sites/multiagentmemory.com/"
       ],
       "id": "repository_boundary",
@@ -85,8 +86,8 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T20:30:40Z",
-  "gitHeadAtReportGeneration": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+  "generatedAt": "2026-07-09T20:41:29Z",
+  "gitHeadAtReportGeneration": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
   "liveRoutePublicLeakHitCount": 0,
@@ -98,18 +99,18 @@
   "noForbiddenActiveMemoryFilename": true,
   "ok": true,
   "reportFreshness": {
-    "currentGitHead": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
-    "githubCiReportCurrent": false,
-    "githubCiReportSha": null,
+    "currentGitHead": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "githubCiReportCurrent": true,
+    "githubCiReportSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "localRouteCommandEvidenceCurrent": true,
     "localRouteEvidenceCurrent": true,
     "localRouteReportCurrent": true,
-    "localRouteReportSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+    "localRouteReportSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "model": "tracked_reports_are_point_in_time_snapshots; run no-write checks after commit or push for current-commit proof",
     "packageCommandEvidenceCurrent": true,
     "packageEvidenceCurrent": true,
     "packageReportCurrent": true,
-    "packageReportSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+    "packageReportSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
     "postCommitNoWriteVerificationRequired": true,
     "valuesRedacted": true
   },

@@ -1,14 +1,14 @@
 {
-  "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+  "expectedSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
   "expectedSourceShaSource": "git_head",
   "failureCount": 1,
   "failures": [
     {
-      "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+      "expectedSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [
-        "expected source sha 7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c"
+        "expected source sha 6c38ab3c4d8b889a3691435c696bf25972bb3675"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -18,7 +18,7 @@
       "status": 200
     }
   ],
-  "gitHeadAtVerification": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+  "gitHeadAtVerification": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
   "items": [
     {
       "leakHitCount": 0,
@@ -69,11 +69,11 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c",
+      "expectedSourceSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [
-        "expected source sha 7d8fe787a74b3dba5dcac11e886dab4cb3e8d84c"
+        "expected source sha 6c38ab3c4d8b889a3691435c696bf25972bb3675"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
