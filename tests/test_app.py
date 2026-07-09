@@ -648,6 +648,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("mysql", payload["configuredStoreBackend"])
         self.assertEqual("mysql_unavailable", payload["storeBackend"])
         self.assertFalse(payload["storeBackendVerified"])
+        self.assertEqual("mysql_missing_settings", payload["storeBackendHealth"]["errorCode"])
         self.assertTrue(payload["thirdPartyRuntimeDependencies"])
 
     def test_sqlite_backend_supports_core_memory_flow(self):

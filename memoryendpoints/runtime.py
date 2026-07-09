@@ -26,6 +26,26 @@ def backend_requires_third_party_runtime(backend):
     return mysql_backend_name(backend)
 
 
+def backend_error_code(backend, exc):
+    if not mysql_backend_name(backend):
+        return "backend_unavailable"
+    message = str(exc).lower()
+    error_type = exc.__class__.__name__.lower()
+    if "required database settings are missing" in message:
+        return "mysql_missing_settings"
+    if "no mysql python driver" in message or "importerror" in error_type:
+        return "mysql_driver_missing"
+    if "access denied" in message or "authentication" in message:
+        return "mysql_auth_failed"
+    if "unknown database" in message or "does not exist" in message:
+        return "mysql_database_missing"
+    if "can't connect" in message or "cannot connect" in message or "connection" in error_type or "operational" in error_type:
+        return "mysql_connection_failed"
+    if "syntax" in message or "schema" in message or "programming" in error_type:
+        return "mysql_schema_init_failed"
+    return "mysql_unavailable"
+
+
 def store_backend_health():
     configured = configured_store_backend()
     health = {
@@ -60,5 +80,6 @@ def store_backend_health():
         health["storeBackend"] = "%s_unavailable" % configured
         health["storeBackendStatus"] = "unavailable"
         health["storeBackendVerified"] = False
+        health["errorCode"] = backend_error_code(configured, exc)
         health["errorType"] = exc.__class__.__name__
     return health
