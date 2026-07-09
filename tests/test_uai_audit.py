@@ -17,6 +17,9 @@ class UaiAuditContractTests(unittest.TestCase):
         forbidden = audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_FILENAMES
         read_order_names = {Path(item).name for item in audit_uai_memory.STARTUP_READ_ORDER}
         self.assertEqual({name.lower() for name in forbidden}, forbidden)
+        self.assertIn("active-memory.uai", forbidden)
+        self.assertIn("current-state.uai", forbidden)
+        self.assertIn("short-term-memory.uai", forbidden)
         self.assertFalse(read_order_names & forbidden)
         self.assertEqual(".uai/memory-maintenance.uai", audit_uai_memory.STARTUP_READ_ORDER[0])
         self.assertIn(".uai/totem.uai", audit_uai_memory.STARTUP_READ_ORDER)

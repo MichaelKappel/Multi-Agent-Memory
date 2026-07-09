@@ -40,7 +40,15 @@
     ".uai/progress.uai"
   ],
   "fileCount": 36,
+  "forbiddenActiveMemoryFileNames": [
+    "active-memory.uai",
+    "current-state.uai",
+    "project-state.uai",
+    "short-term-memory.uai",
+    "working-state.uai"
+  ],
   "forbiddenActiveMemoryFiles": [],
+  "forbiddenActiveMemoryPolicy": "The .uai folder is the active startup memory suite; do not create a generic catch-all active memory file, including short-term-memory.uai or current-state.uai, even while public UAIX wizard guidance catches up.",
   "handoffBucketItems": [
     {
       "activePayloadCount": 0,

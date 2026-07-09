@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ DEFAULT_REPOSITORY = "MichaelKappel/Multi-Agent-Memory"
 DEFAULT_BRANCH = "main"
 DEFAULT_WORKFLOW_NAME = "CI"
 USER_AGENT = "MemoryEndpoints-GitHub-Actions-Checker"
+MAX_SAFE_TEXT = 240
 
 
 def utc_now():
@@ -36,6 +38,37 @@ def fetch_jobs(jobs_url):
     return api_json(jobs_url)
 
 
+def fetch_check_run(check_run_url):
+    return api_json(check_run_url)
+
+
+def fetch_annotations(annotations_url):
+    if not annotations_url:
+        return []
+    payload = api_json(annotations_url)
+    return payload if isinstance(payload, list) else []
+
+
+def safe_text(value):
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    text = re.sub(r"(?i)\b(password|passwd|pwd|secret|token|api[_ -]?key)\b\s*[:=]\s*\S+", r"\1=[redacted]", text)
+    if len(text) > MAX_SAFE_TEXT:
+        return text[: MAX_SAFE_TEXT - 3] + "..."
+    return text
+
+
+def safe_annotation(annotation):
+    return {
+        "annotationLevel": safe_text(annotation.get("annotation_level")),
+        "path": safe_text(annotation.get("path")),
+        "startLine": annotation.get("start_line"),
+        "endLine": annotation.get("end_line"),
+        "message": safe_text(annotation.get("message")),
+        "title": safe_text(annotation.get("title")),
+        "valuesRedacted": True,
+    }
+
+
 def _run_matches(run, workflow_name):
     if not workflow_name:
         return True
@@ -45,6 +78,10 @@ def _run_matches(run, workflow_name):
 def _safe_run(run, jobs):
     job_items = jobs.get("jobs") if isinstance(jobs, dict) else []
     step_count = sum(len(job.get("steps") or []) for job in job_items)
+    annotations = []
+    for job in job_items:
+        check_run = job.get("checkRun") or {}
+        annotations.extend(check_run.get("annotations") or [])
     return {
         "conclusion": run.get("conclusion"),
         "createdAt": run.get("created_at"),
@@ -54,6 +91,8 @@ def _safe_run(run, jobs):
         "htmlUrl": run.get("html_url"),
         "jobCount": len(job_items),
         "jobStepCount": step_count,
+        "jobAnnotationCount": len(annotations),
+        "jobAnnotations": annotations[:5],
         "runId": run.get("id"),
         "runNumber": run.get("run_number"),
         "status": run.get("status"),
@@ -68,6 +107,13 @@ def _blocker(latest):
         return "Latest GitHub Actions run is not complete yet."
     if latest.get("conclusion") == "success":
         return None
+    annotations = latest.get("jobAnnotations") or []
+    for annotation in annotations:
+        message = annotation.get("message")
+        if message:
+            if latest.get("jobStepCount", 0) == 0:
+                return "Latest GitHub Actions run failed before workflow steps executed: %s" % message
+            return "Latest GitHub Actions run reported: %s" % message
     if latest.get("jobCount", 0) > 0 and latest.get("jobStepCount", 0) == 0:
         return "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps."
     return "Latest GitHub Actions run completed without a success conclusion."
@@ -99,6 +145,8 @@ def build_report(repository, branch, workflow_name, runs_payload, jobs_by_run_id
         "latestObservedHtmlUrl": latest.get("htmlUrl") if latest else None,
         "latestObservedJobCount": latest.get("jobCount") if latest else 0,
         "latestObservedJobStepCount": latest.get("jobStepCount") if latest else 0,
+        "latestObservedJobAnnotationCount": latest.get("jobAnnotationCount") if latest else 0,
+        "latestObservedJobAnnotations": latest.get("jobAnnotations") if latest else [],
         "observedRunCount": len(observed),
         "observedRuns": observed,
         "valuesRedacted": True,
@@ -123,7 +171,24 @@ def main(argv=None):
         ]
         jobs_by_run_id = {}
         for run in matching_runs:
-            jobs_by_run_id[run.get("id")] = fetch_jobs(run.get("jobs_url"))
+            jobs_payload = fetch_jobs(run.get("jobs_url"))
+            for job in jobs_payload.get("jobs", []):
+                check_run_url = job.get("check_run_url")
+                if not check_run_url:
+                    continue
+                check_run = fetch_check_run(check_run_url)
+                output = check_run.get("output") or {}
+                annotations = []
+                if output.get("annotations_count"):
+                    annotations = [safe_annotation(item) for item in fetch_annotations(output.get("annotations_url"))]
+                job["checkRun"] = {
+                    "annotations": annotations,
+                    "annotationsCount": output.get("annotations_count", len(annotations)),
+                    "outputTitle": safe_text(output.get("title")),
+                    "outputSummary": safe_text(output.get("summary")),
+                    "valuesRedacted": True,
+                }
+            jobs_by_run_id[run.get("id")] = jobs_payload
         report = build_report(args.repository, args.branch, args.workflow_name, runs_payload, jobs_by_run_id)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         report = {
@@ -141,6 +206,8 @@ def main(argv=None):
             "latestObservedHtmlUrl": None,
             "latestObservedJobCount": 0,
             "latestObservedJobStepCount": 0,
+            "latestObservedJobAnnotationCount": 0,
+            "latestObservedJobAnnotations": [],
             "observedRunCount": 0,
             "observedRuns": [],
             "valuesRedacted": True,

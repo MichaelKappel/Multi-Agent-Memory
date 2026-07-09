@@ -17,4 +17,4 @@ Human needs to know:
 - MemoryEndpoints.com is the real MATM endpoint; MultiAgentMemory.com is the companion documentation site.
 - Live deployment and live companion publishing remain blocked by external FTPS access, not by local code evidence.
 - README.md files are human documentation only. The memory package lives in `.uai`.
-- `short-term-memory.uai` and `current-state.uai` are forbidden here under the updated UAIX direction from the human; their facts belong in typed files such as context, progress, next-actions, decisions, constraints, and test-plan.
+- `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, and equivalent catch-all files are forbidden here under the updated UAIX direction from the human, even while published wizard guidance catches up; their facts belong in typed files such as context, progress, next-actions, decisions, constraints, and test-plan.

@@ -15,6 +15,11 @@ FORBIDDEN_ACTIVE_MEMORY_FILENAMES = {
     "short-term-memory.uai",
     "working-state.uai",
 }
+FORBIDDEN_ACTIVE_MEMORY_POLICY = (
+    "The .uai folder is the active startup memory suite; do not create a "
+    "generic catch-all active memory file, including short-term-memory.uai "
+    "or current-state.uai, even while public UAIX wizard guidance catches up."
+)
 REQUIRED_FIELDS = [
     "Purpose:",
     "Verification status:",
@@ -240,6 +245,8 @@ def main(argv=None):
         "fileCount": len(items),
         "missingFiles": missing_files,
         "missingSupportFiles": missing_support_files,
+        "forbiddenActiveMemoryFileNames": sorted(FORBIDDEN_ACTIVE_MEMORY_FILENAMES),
+        "forbiddenActiveMemoryPolicy": FORBIDDEN_ACTIVE_MEMORY_POLICY,
         "unexpectedFiles": unexpected_files,
         "forbiddenActiveMemoryFiles": forbidden_active_memory_files,
         "manifestForbiddenActiveMemoryFiles": manifest_forbidden_active_memory_files,

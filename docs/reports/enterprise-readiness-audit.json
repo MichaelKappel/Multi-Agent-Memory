@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -222,7 +222,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],

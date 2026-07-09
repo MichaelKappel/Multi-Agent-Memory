@@ -4,7 +4,7 @@ Date: 2026-07-09
 
 Status: not complete. `completionClaimAllowed` is `false`.
 
-Report source snapshot: `3c7c5cf94fbe73708b4747abf3ddbf72c149834b`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
+Report source snapshot: `9b3fcd69f23d1da48b827444285b52b2509e11d4`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
 
 ## Verified
 
@@ -20,7 +20,7 @@ Report source snapshot: `3c7c5cf94fbe73708b4747abf3ddbf72c149834b`. Tracked repo
 - MultiAgentMemory.com static source: pass; live publish status `connection_or_upload_failed`, uploaded count `0`.
 - No-upload deployment connection checks: MemoryEndpoints.com `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; MultiAgentMemory.com `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`.
 - MultiAgentMemory.com live site verification: 9 failures; home page is not serving expected companion links yet.
-- GitHub Actions CI snapshot: `failure`; observed run did not prove code health because `Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.`.
+- GitHub Actions CI snapshot: `failure`; observed run did not prove code health because `Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.`.
 
 ## Blocked Or Gated
 
@@ -28,7 +28,7 @@ Report source snapshot: `3c7c5cf94fbe73708b4747abf3ddbf72c149834b`. Tracked repo
 - MultiAgentMemory.com live publish: blocked. The recorded static-site upload attempt failed at `login` with `error_perm` before upload; uploaded count was `0`; connection checks `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`.
 - MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.
 - Live dogfooding: latest contract blocked until protected audit-log readback is deployed and verified.
-- GitHub Actions CI: blocked in the tracked snapshot. Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.
+- GitHub Actions CI: blocked in the tracked snapshot. Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.
 - MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.
 
 ## Claim Boundary
@@ -44,7 +44,7 @@ The repository has strong local MATM evidence, current live core dogfood evidenc
   "liveDogfoodVerified": false,
   "multiAgentMemoryLiveDeployed": false,
   "multiAgentMemoryLiveSiteVerified": false,
-  "reportSourceSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+  "reportSourceSha": "9b3fcd69f23d1da48b827444285b52b2509e11d4",
   "valuesRedacted": true
 }
 ```

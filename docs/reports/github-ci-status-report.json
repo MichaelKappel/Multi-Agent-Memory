@@ -1,14 +1,78 @@
 {
-  "blocker": "Latest GitHub Actions run failed before any workflow steps executed; public job metadata shows zero recorded steps.",
+  "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
   "branch": "main",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T19:16:20Z",
-  "latestObservedHeadSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
-  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29043466117",
+  "generatedAt": "2026-07-09T19:34:01Z",
+  "latestObservedHeadSha": "9b3fcd69f23d1da48b827444285b52b2509e11d4",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29044418302",
+  "latestObservedJobAnnotationCount": 1,
+  "latestObservedJobAnnotations": [
+    {
+      "annotationLevel": "failure",
+      "endLine": 1,
+      "message": "The job was not started because your account is locked due to a billing issue.",
+      "path": ".github",
+      "startLine": 1,
+      "title": "",
+      "valuesRedacted": true
+    }
+  ],
   "latestObservedJobCount": 1,
   "latestObservedJobStepCount": 0,
   "observedRunCount": 5,
   "observedRuns": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T19:27:56Z",
+      "displayTitle": "Add no-upload deployment connection diagnostics",
+      "headBranch": "main",
+      "headSha": "9b3fcd69f23d1da48b827444285b52b2509e11d4",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29044418302",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29044418302,
+      "runNumber": 26,
+      "status": "completed",
+      "updatedAt": "2026-07-09T19:28:01Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T19:17:49Z",
+      "displayTitle": "Require CI build provenance verification",
+      "headBranch": "main",
+      "headSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29043812663",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29043812663,
+      "runNumber": 25,
+      "status": "completed",
+      "updatedAt": "2026-07-09T19:17:52Z"
+    },
     {
       "conclusion": "failure",
       "createdAt": "2026-07-09T19:11:59Z",
@@ -16,6 +80,18 @@
       "headBranch": "main",
       "headSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
       "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29043466117",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
       "jobCount": 1,
       "jobStepCount": 0,
       "runId": 29043466117,
@@ -30,6 +106,18 @@
       "headBranch": "main",
       "headSha": "921b07710b81efb322cfea89575b1b5f1f5884fd",
       "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29042862063",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
       "jobCount": 1,
       "jobStepCount": 0,
       "runId": 29042862063,
@@ -44,40 +132,24 @@
       "headBranch": "main",
       "headSha": "c52a6a53125a670c05e84e135d1145c28d25d8dd",
       "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29042445651",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
       "jobCount": 1,
       "jobStepCount": 0,
       "runId": 29042445651,
       "runNumber": 22,
       "status": "completed",
       "updatedAt": "2026-07-09T18:55:25Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T18:44:49Z",
-      "displayTitle": "Harden safe no-op API envelopes",
-      "headBranch": "main",
-      "headSha": "4ab21844d1b84b34bbd01cac68a83b43ab023ce7",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29041789959",
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29041789959,
-      "runNumber": 21,
-      "status": "completed",
-      "updatedAt": "2026-07-09T18:44:58Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T18:39:35Z",
-      "displayTitle": "Add SQLite memory revision table",
-      "headBranch": "main",
-      "headSha": "ef674d821f0653bfdee402b885a9cb487d7ee429",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29041464947",
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29041464947,
-      "runNumber": 20,
-      "status": "completed",
-      "updatedAt": "2026-07-09T18:39:39Z"
     }
   ],
   "ok": false,
