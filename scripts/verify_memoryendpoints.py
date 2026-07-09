@@ -105,6 +105,7 @@ def main(argv=None):
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, sort_keys=True)
+            handle.write("\n")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 

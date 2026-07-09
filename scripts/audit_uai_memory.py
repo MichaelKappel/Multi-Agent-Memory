@@ -112,7 +112,7 @@ def main(argv=None):
         "valuesRedacted": True,
     }
     if args.json_out:
-        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 

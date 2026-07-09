@@ -16,6 +16,12 @@ if str(ROOT / "scripts") not in sys.path:
 from package_memoryendpoints import iter_files
 
 
+def emit_report(report, args):
+    if getattr(args, "json_out", None):
+        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2, sort_keys=True))
+
+
 def parse_handoff(path):
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     sections = []
@@ -163,6 +169,7 @@ def main(argv=None):
     parser.add_argument("--handoff", default=r"E:\ftp_Deploy.txt")
     parser.add_argument("--package", default=str(PACKAGE))
     parser.add_argument("--remote-dir")
+    parser.add_argument("--json-out")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--discover-remote-dir", action="store_true")
     parser.add_argument("--allow-discovered-live-upload", action="store_true")
@@ -207,17 +214,17 @@ def main(argv=None):
     if discovered_dir and not args.allow_discovered_live_upload and not args.dry_run:
         report["status"] = "discovered_remote_dir_requires_explicit_live_allow"
         report["safeNoOp"] = True
-        print(json.dumps(report, indent=2, sort_keys=True))
+        emit_report(report, args)
         return 1
     if args.dry_run:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        emit_report(report, args)
         return 0 if report["packageExists"] and remote_dir else 1
     if not remote_dir:
-        print(json.dumps(report, indent=2, sort_keys=True))
+        emit_report(report, args)
         return 1
     if not (host and user and password):
         report["status"] = "missing_ftp_fields"
-        print(json.dumps(report, indent=2, sort_keys=True))
+        emit_report(report, args)
         return 1
     uploaded_count = 0
     phase = "connect"
@@ -263,12 +270,12 @@ def main(argv=None):
         report["errorType"] = exc.__class__.__name__
         report["failedPhase"] = phase
         report["safeNoOp"] = uploaded_count == 0
-        print(json.dumps(report, indent=2, sort_keys=True))
+        emit_report(report, args)
         return 1
     report["status"] = "uploaded"
     report["uploadedCount"] = uploaded_count
     report["passengerRestartRequested"] = True
-    print(json.dumps(report, indent=2, sort_keys=True))
+    emit_report(report, args)
     return 0
 
 

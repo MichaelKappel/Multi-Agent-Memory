@@ -8,7 +8,7 @@ This repository contains two coordinated surfaces:
 
 | Surface | Role | Status |
 | --- | --- | --- |
-| [MemoryEndpoints.com](https://memoryendpoints.com) | Live MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Live verified |
+| [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Current public routes live-verified; latest-code deployment gated |
 | `sites/multiagentmemory.com/` | GitHub companion documentation site for the public memory model | Repository docs |
 
 The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no third-party runtime packages.
@@ -42,18 +42,18 @@ UAIX wizard/spec update request: add [MATM setup](https://uaix.org/en-us/tools/a
 
 ```text
 .
-├── .github/                    # CI and PR hygiene
-├── .uai/                       # Agent startup memory, totem invariant, and pointer ledgers
-├── agent-file-handoff/         # Local-only intake buckets, tracked as empty inboxes
-├── docs/                       # API, storage, schema, reports, prompts, and architecture docs
-├── examples/                   # Public-safe request examples
-├── memoryendpoints/            # Pure Python stdlib WSGI application package
-├── scripts/                    # Verification, packaging, migration, and deploy helpers
-├── sites/multiagentmemory.com/ # Companion documentation site
-├── static/                     # MemoryEndpoints.com CSS, JS, and image assets
-├── tests/                      # stdlib unittest suite
-├── app.py                      # WSGI app export for local/import use
-└── passenger_wsgi.py           # Passenger/cPanel WSGI entry point
+|-- .github/                    # CI and PR hygiene
+|-- .uai/                       # Agent startup memory, totem invariant, and pointer ledgers
+|-- agent-file-handoff/         # Local-only intake buckets, tracked as empty inboxes
+|-- docs/                       # API, storage, schema, reports, prompts, and architecture docs
+|-- examples/                   # Public-safe request examples
+|-- memoryendpoints/            # Pure Python stdlib WSGI application package
+|-- scripts/                    # Verification, packaging, migration, and deploy helpers
+|-- sites/multiagentmemory.com/ # Companion documentation site
+|-- static/                     # MemoryEndpoints.com CSS, JS, and image assets
+|-- tests/                      # stdlib unittest suite
+|-- app.py                      # WSGI app export for local/import use
+`-- passenger_wsgi.py           # Passenger/cPanel WSGI entry point
 ```
 
 See [docs/repository-structure.md](docs/repository-structure.md) for ownership and publishing boundaries.
@@ -67,7 +67,7 @@ See [docs/repository-structure.md](docs/repository-structure.md) for ownership a
 - [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
 - [AI manifest](https://memoryendpoints.com/ai-manifest.json)
 
-Current verified status is recorded in [docs/reports/final-verification-report.md](docs/reports/final-verification-report.md).
+Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface verifies successfully, but the latest repository tranche is not proven live until the FTPS login blocker is resolved and a new live dogfood run succeeds.
 
 ## Quick Start
 
@@ -92,6 +92,7 @@ python -m unittest discover -s tests
 python scripts\verify_memoryendpoints.py --wsgi
 python scripts\secret_scan.py
 python scripts\package_memoryendpoints.py --check-only
+python scripts\build_readiness_reports.py --write
 ```
 
 ## Deployment
@@ -104,6 +105,8 @@ python scripts\ftp_deploy_memoryendpoints.py --dry-run --handoff E:\ftp_Deploy.t
 ```
 
 The FTP login directory is the MemoryEndpoints.com deployment root, so live deployment also uses `--remote-dir .`.
+
+The latest recorded live upload attempt failed during FTPS login before any file upload. See [docs/reports/deploy-attempt-20260709.json](docs/reports/deploy-attempt-20260709.json).
 
 ## Security And Claims
 

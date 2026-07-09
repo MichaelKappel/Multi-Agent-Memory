@@ -1,3 +1,4 @@
+import argparse
 import json
 import re
 import sys
@@ -28,7 +29,11 @@ def text_lines(path):
         return []
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json-out")
+    args = parser.parse_args(argv)
+
     hits = []
     scanned = 0
     paths = list(iter_files())
@@ -58,6 +63,8 @@ def main():
         "hits": hits,
         "valuesRedacted": True,
     }
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 

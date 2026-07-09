@@ -148,11 +148,13 @@ def readiness_result():
         "schemaVersion": "memoryendpoints.readiness_result.v1",
         "site": SITE_NAME,
         "generatedAt": utc_now(),
-        "overallStatus": "live_verified",
+        "overallStatus": "local_verified_latest_live_deploy_gated",
+        "completionClaimAllowed": False,
         "certificationClaimed": False,
         "sourceReferences": [
             "https://uaix.org/en-us/ai-ready-web/",
-            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff",
+            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM",
+            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM",
         ],
         "checks": [
             {
@@ -191,14 +193,25 @@ def readiness_result():
                 "evidence": ["agent-file-handoff/Content", "agent-file-handoff/Improvement", ".uai/intake-outcome-ledger.uai"],
             },
             {
+                "id": "local_dogfood",
+                "status": "pass_local",
+                "evidence": ["scripts/dogfood_memoryendpoints.py", "docs/reports/dogfood-memory-run.json"],
+            },
+            {
                 "id": "live_deployment",
-                "status": "pass_live",
+                "status": "blocked_latest_tranche",
                 "evidence": [
                     "scripts/ftp_deploy_memoryendpoints.py",
+                    "docs/reports/deploy-attempt-20260709.json",
                     "docs/reports/live-route-verification.json",
-                    "FTP login directory is the deployment root; deployed with --remote-dir .",
-                    "Live route verifier returned zero failures.",
+                    "Live public route verifier returned zero failures for the currently deployed public surface.",
+                    "Latest deploy attempt failed at FTPS login before upload.",
                 ],
+            },
+            {
+                "id": "live_dogfood",
+                "status": "blocked",
+                "evidence": ["docs/reports/dogfood-memory-run.json"],
             },
             {
                 "id": "production_database_adapter",
@@ -206,7 +219,20 @@ def readiness_result():
                 "evidence": ["docs/database-schema-canonical.sql", "docs/database-structure.md", "docs/long-term-memory/architecture-notes.md"],
             },
         ],
-        "blockers": [],
+        "blockers": [
+            {
+                "id": "latest_code_live_deployed",
+                "detail": "The newest repository tranche is not proven live; the recorded FTPS attempt failed at login before upload.",
+                "evidence": "docs/reports/deploy-attempt-20260709.json",
+                "safeNoOp": True,
+            },
+            {
+                "id": "live_dogfood_verified",
+                "detail": "Dogfooding is verified locally through WSGI, not against the live authenticated MemoryEndpoints.com deployment.",
+                "evidence": "docs/reports/dogfood-memory-run.json",
+                "safeNoOp": True,
+            },
+        ],
         "gatedCapabilities": [
             {
                 "id": "mysql_runtime_adapter",

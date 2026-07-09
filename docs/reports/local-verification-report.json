@@ -1,0 +1,65 @@
+{
+  "checks": [
+    {
+      "evidence": [
+        "tests/test_app.py"
+      ],
+      "id": "unit_and_integration_tests",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "docs/reports/local-route-verification.json"
+      ],
+      "id": "wsgi_public_routes",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "docs/reports/uai-memory-audit.json",
+        ".uai/totem.uai"
+      ],
+      "id": "uai_startup_memory",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "id": "local_dogfood",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "docs/reports/package-verification-report.json"
+      ],
+      "id": "package_check",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "docs/reports/secret-scan-report.json"
+      ],
+      "id": "secret_scan",
+      "status": "pass"
+    },
+    {
+      "evidence": [
+        "git diff --check"
+      ],
+      "id": "diff_check",
+      "status": "pass"
+    }
+  ],
+  "generatedAt": "2026-07-09T15:27:52Z",
+  "liveDogfoodVerified": false,
+  "localDogfoodVerified": true,
+  "localUaiStaysActiveAlways": true,
+  "ok": true,
+  "routeCount": 21,
+  "routeFailureCount": 0,
+  "schemaVersion": "memoryendpoints.local_verification_report.v1",
+  "scope": "local worktree, WSGI route handlers, package plan, .uai startup memory, and local dogfood runner",
+  "uaiFileCount": 9,
+  "valuesRedacted": true
+}

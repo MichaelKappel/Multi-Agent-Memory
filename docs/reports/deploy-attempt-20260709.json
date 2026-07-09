@@ -1,32 +1,33 @@
 {
-  "schemaVersion": "memoryendpoints.deploy_attempt.v1",
-  "generatedAt": "2026-07-09",
-  "target": "MemoryEndpoints.com FTP login root",
-  "remoteDir": ".",
-  "dryRun": {
-    "status": "ready",
-    "plannedUploadCount": 65,
-    "packageExists": true,
-    "valuesRedacted": true
-  },
-  "liveAttempt": {
-    "status": "connection_or_upload_failed",
-    "errorType": "error_perm",
-    "failedPhase": "login",
-    "uploadedCount": 0,
-    "safeNoOp": true,
-    "valuesRedacted": true
-  },
-  "secretBoundary": {
-    "hostPrinted": false,
-    "userPrinted": false,
-    "passwordPrinted": false,
-    "credentialValuesPrinted": false
-  },
   "claimBoundary": {
-    "newCodeLiveDeployed": false,
+    "blocker": "FTPS login rejected before upload; credential or server access must be refreshed outside the repository.",
     "liveDogfoodVerified": false,
     "localDogfoodVerified": true,
-    "blocker": "FTPS login rejected before upload; credential or server access must be refreshed outside the repository."
-  }
+    "newCodeLiveDeployed": false
+  },
+  "dryRun": {
+    "packageExists": true,
+    "plannedUploadCount": 78,
+    "status": "ready",
+    "valuesRedacted": true
+  },
+  "generatedAt": "2026-07-09",
+  "liveAttempt": {
+    "errorType": "error_perm",
+    "failedPhase": "login",
+    "safeNoOp": true,
+    "status": "connection_or_upload_failed",
+    "uploadedCount": 0,
+    "valuesRedacted": true
+  },
+  "remoteDir": ".",
+  "schemaVersion": "memoryendpoints.deploy_attempt.v1",
+  "secretBoundary": {
+    "credentialValuesPrinted": false,
+    "hostPrinted": false,
+    "passwordPrinted": false,
+    "userPrinted": false
+  },
+  "target": "MemoryEndpoints.com FTP login root",
+  "valuesRedacted": true
 }

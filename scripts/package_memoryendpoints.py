@@ -55,6 +55,7 @@ def iter_files():
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--json-out")
     args = parser.parse_args(argv)
 
     files = list(iter_files())
@@ -79,6 +80,8 @@ def main(argv=None):
                 archive.write(str(path), str(rel).replace(os.sep, "/"))
         report["written"] = True
         report["bytes"] = PACKAGE.stat().st_size
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 

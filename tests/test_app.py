@@ -412,6 +412,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["POST"], routes["/api/matm/notifications/ack"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/review-queue/decide"]["methods"])
 
+    def test_readiness_result_does_not_overclaim_completion(self):
+        status, _headers, text = call_app("/api/matm/readiness-result")
+        self.assertEqual("200 OK", status)
+        data = json.loads(text)["data"]
+        self.assertFalse(data["completionClaimAllowed"])
+        self.assertEqual("local_verified_latest_live_deploy_gated", data["overallStatus"])
+        blockers = {item["id"] for item in data["blockers"]}
+        self.assertIn("latest_code_live_deployed", blockers)
+        self.assertIn("live_dogfood_verified", blockers)
+
     def test_sqlite_backend_supports_core_memory_flow(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
         os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "matm.sqlite3")
