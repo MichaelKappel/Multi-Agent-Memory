@@ -18,3 +18,5 @@ Progress
 - Live deploy to the FTP login root completed with `--remote-dir .`; credential values remained redacted.
 - Final live route verification passed: 21 public routes checked, 0 failures, 0 public-route secret hits.
 - Readiness result now reports `overallStatus: live_verified`, empty blockers, and MySQL/MariaDB as a gated capability.
+- Added explicit UAIX update URL to `.uai/long-term-memory.uai` and `.uai/short-term-memory.uai`.
+- Added `docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md` as a prompt for a UAIX.org agent to add the documentation-site plus hosted-memory-endpoint boundary to the setup-llm-wiki spec and wizard.

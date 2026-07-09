@@ -7,3 +7,5 @@ Short-term memory
 - MultiAgentMemory.com is the GitHub companion documentation site.
 - MemoryEndpoints.com is the real endpoint site and live mid-to-long-term MATM memory boundary.
 - Use `.uai/` files for short-term/startup memory following the UAIX setup-llm-wiki split-memory model.
+- UAIX update URL for spec/wizard request: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
+- UAIX.org agent update prompt: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md

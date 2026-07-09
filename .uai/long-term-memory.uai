@@ -20,9 +20,20 @@ Truth boundary: documentation only; not the hosted memory endpoint.
 
 Stable id: uaix-llm-wiki-setup
 Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
+Update URL: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
 Label: UAIX AI Memory Package Wizard LLM Wiki setup
 Routing summary: Use the setup-llm-wiki guidance to keep .uai active as startup continuity memory while preserving a long-term pointer ledger.
 Authority/source: UAIX public standards page
 Review status: referenced
 Review evidence: user-requested source URL
 Truth boundary: reference model only; do not copy UAIX page content into the target site.
+
+Stable id: uaix-agent-spec-wizard-update-prompt
+Path: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md
+Update URL: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
+Label: Prompt for UAIX.org agent to update the spec and wizard
+Routing summary: Use this prompt to ask a UAIX.org agent to add a generic documentation-site plus hosted-memory-endpoint boundary to the LLM Wiki setup spec and AI Memory Package Wizard.
+Authority/source: MemoryEndpoints.com and MultiAgentMemory.com implementation evidence
+Review status: current
+Review evidence: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md
+Truth boundary: prompt request only; UAIX.org must review, adapt, and publish any standards or wizard changes through its own process.
