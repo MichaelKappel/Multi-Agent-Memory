@@ -69,6 +69,31 @@ def safe_annotation(annotation):
     }
 
 
+def safe_error(exc):
+    if isinstance(exc, HTTPError):
+        return "HTTPError status %s" % getattr(exc, "code", "unknown")
+    return exc.__class__.__name__
+
+
+def previous_report_summary(path):
+    if not path or not Path(path).exists():
+        return None
+    try:
+        previous = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {
+        "available": True,
+        "generatedAt": safe_text(previous.get("generatedAt")),
+        "status": safe_text(previous.get("status")),
+        "conclusion": safe_text(previous.get("conclusion")),
+        "blocker": safe_text(previous.get("blocker")),
+        "latestObservedHeadSha": safe_text(previous.get("latestObservedHeadSha")),
+        "latestObservedHtmlUrl": safe_text(previous.get("latestObservedHtmlUrl")),
+        "valuesRedacted": True,
+    }
+
+
 def _run_matches(run, workflow_name):
     if not workflow_name:
         return True
@@ -191,6 +216,7 @@ def main(argv=None):
             jobs_by_run_id[run.get("id")] = jobs_payload
         report = build_report(args.repository, args.branch, args.workflow_name, runs_payload, jobs_by_run_id)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        previous_summary = previous_report_summary(args.json_out) if args.json_out else None
         report = {
             "schemaVersion": "memoryendpoints.github_ci_status.v2",
             "ok": False,
@@ -201,7 +227,7 @@ def main(argv=None):
             "source": "GitHub Actions public runs and jobs API",
             "status": "unavailable",
             "conclusion": "failure",
-            "blocker": "Could not read GitHub Actions public API: %s." % exc.__class__.__name__,
+            "blocker": "Could not read GitHub Actions public API: %s." % safe_error(exc),
             "latestObservedHeadSha": None,
             "latestObservedHtmlUrl": None,
             "latestObservedJobCount": 0,
@@ -212,6 +238,8 @@ def main(argv=None):
             "observedRuns": [],
             "valuesRedacted": True,
         }
+        if previous_summary:
+            report["previousReport"] = previous_summary
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

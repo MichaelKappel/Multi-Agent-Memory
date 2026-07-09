@@ -36,6 +36,29 @@ def git_head_sha():
     return None
 
 
+def nested_get(data, path):
+    current = data or {}
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def report_sha(data, candidate_paths):
+    for path in candidate_paths:
+        value = nested_get(data, path)
+        if value:
+            return value
+    return None
+
+
+def report_matches_head(data, head_sha, candidate_paths):
+    if not data or not head_sha:
+        return False
+    return report_sha(data, candidate_paths) == head_sha
+
+
 def write_json(name, data):
     path = REPORTS / name
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -84,6 +107,14 @@ def connection_status(*reports):
     return ", ".join(parts)
 
 
+def github_blocker_text(github_ci):
+    blocker = github_ci.get("blocker") or "The observed run is not a passing CI signal."
+    previous = (github_ci.get("previousReport") or {}).get("blocker")
+    if previous:
+        return "%s Previous public-safe CI evidence: %s" % (blocker, previous)
+    return blocker
+
+
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
@@ -94,17 +125,33 @@ def build_local_report():
     boundary = load_json("repository-boundary-audit.json")
     static_site = load_json("multiagentmemory-static-site-verification.json")
     github_ci = load_json("github-ci-status-report.json")
+    head_sha = git_head_sha()
+    local_route_report_current = report_matches_head(
+        local_routes,
+        head_sha,
+        [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)],
+    )
+    package_report_current = report_matches_head(package, head_sha, [("build", "sourceSha")])
+    github_ci_report_current = report_matches_head(github_ci, head_sha, [("latestObservedHeadSha",)])
+    wsgi_check_current = bool((check_result(enterprise, "wsgi_route_verifier") or {}).get("ok"))
+    package_check_current = bool((check_result(enterprise, "package_check") or {}).get("ok"))
+    local_route_evidence_current = bool(
+        (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
+    )
+    package_evidence_current = bool(
+        (package and package.get("status") == "ready" and package_report_current) or package_check_current
+    )
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
-        {"id": "wsgi_public_routes", "status": status(bool(local_routes and local_routes.get("ok"))), "evidence": ["docs/reports/local-route-verification.json"]},
+        {"id": "wsgi_public_routes", "status": status(local_route_evidence_current), "evidence": ["docs/reports/local-route-verification.json", "docs/reports/enterprise-readiness-audit.json"]},
         {
             "id": "uai_startup_memory",
             "status": status(bool(uai and uai.get("ok"))),
             "evidence": ["docs/reports/uai-memory-audit.json", ".uai/memory-maintenance.uai", ".uai/startup-packet.uai", ".uai/totem.uai"],
         },
         {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
-        {"id": "package_check", "status": status(bool(package and package.get("status") == "ready")), "evidence": ["docs/reports/package-verification-report.json"]},
+        {"id": "package_check", "status": status(package_evidence_current), "evidence": ["docs/reports/package-verification-report.json", "docs/reports/enterprise-readiness-audit.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool(boundary and boundary.get("ok"))), "evidence": ["docs/reports/repository-boundary-audit.json", "sites/multiagentmemory.com/"]},
         {"id": "multiagentmemory_static_site", "status": status(bool(static_site and static_site.get("ok"))), "evidence": ["docs/reports/multiagentmemory-static-site-verification.json", "sites/multiagentmemory.com/"]},
@@ -113,13 +160,25 @@ def build_local_report():
     report = {
         "schemaVersion": "memoryendpoints.local_verification_report.v1",
         "generatedAt": utc_now(),
-        "gitHeadAtReportGeneration": git_head_sha(),
+        "gitHeadAtReportGeneration": head_sha,
         "reportScope": "point_in_time_snapshot",
         "scope": "local worktree, WSGI route handlers, package plan, .uai startup memory, and local dogfood runner",
         "ok": all(item["status"] == "pass" for item in checks),
         "checks": checks,
         "routeCount": (local_routes or {}).get("routeCount"),
         "routeFailureCount": (local_routes or {}).get("failureCount"),
+        "reportFreshness": {
+            "localRouteReportCurrent": local_route_report_current,
+            "localRouteReportSha": report_sha(local_routes, [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)]),
+            "localRouteEvidenceCurrent": local_route_evidence_current,
+            "packageReportCurrent": package_report_current,
+            "packageReportSha": report_sha(package, [("build", "sourceSha")]),
+            "packageEvidenceCurrent": package_evidence_current,
+            "githubCiReportCurrent": github_ci_report_current,
+            "githubCiReportSha": report_sha(github_ci, [("latestObservedHeadSha",)]),
+            "currentGitHead": head_sha,
+            "valuesRedacted": True,
+        },
         "uaiFileCount": (uai or {}).get("fileCount"),
         "localUaiStaysActiveAlways": bool(uai and uai.get("localUaiStaysActiveAlways")),
         "dateFreeHotMemory": bool(uai and uai.get("dateFreeHotMemory")),
@@ -155,7 +214,9 @@ def build_final_markdown(local_report):
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
+    github_blocker = github_blocker_text(github_ci)
     report_source_sha = git_head_sha()
+    freshness = (local_report or {}).get("reportFreshness") or {}
 
     latest_deployed = bool(
         (deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed")
@@ -176,6 +237,14 @@ def build_final_markdown(local_report):
         "## Verified",
         "",
         "- Local verification report: `%s`, see `docs/reports/local-verification-report.json`." % ("pass" if local_report.get("ok") else "not pass"),
+        "- Report freshness: local route report `%s`, local route evidence `%s`, package report `%s`, package evidence `%s`, GitHub CI report `%s` for current HEAD `%s`." % (
+            str(bool(freshness.get("localRouteReportCurrent"))).lower(),
+            str(bool(freshness.get("localRouteEvidenceCurrent"))).lower(),
+            str(bool(freshness.get("packageReportCurrent"))).lower(),
+            str(bool(freshness.get("packageEvidenceCurrent"))).lower(),
+            str(bool(freshness.get("githubCiReportCurrent"))).lower(),
+            (report_source_sha or "unknown")[:12],
+        ),
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
@@ -202,7 +271,7 @@ def build_final_markdown(local_report):
             connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
         ),
         "- MultiAgentMemory.com live site verification: %s failures; home page is not serving expected companion links yet." % (multiagentmemory_live_site.get("failureCount")),
-        "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
+        "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_blocker),
         "",
         "## Blocked Or Gated",
         "",
@@ -229,7 +298,7 @@ def build_final_markdown(local_report):
         )
     lines.extend(
         [
-            "- GitHub Actions CI: blocked in the tracked snapshot. %s" % (github_ci.get("blocker") or "The observed run is not a passing CI signal."),
+            "- GitHub Actions CI: blocked in the tracked snapshot. %s" % github_blocker,
             "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.",
             "",
             "## Claim Boundary",

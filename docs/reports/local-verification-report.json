@@ -9,7 +9,8 @@
     },
     {
       "evidence": [
-        "docs/reports/local-route-verification.json"
+        "docs/reports/local-route-verification.json",
+        "docs/reports/enterprise-readiness-audit.json"
       ],
       "id": "wsgi_public_routes",
       "status": "pass"
@@ -33,7 +34,8 @@
     },
     {
       "evidence": [
-        "docs/reports/package-verification-report.json"
+        "docs/reports/package-verification-report.json",
+        "docs/reports/enterprise-readiness-audit.json"
       ],
       "id": "package_check",
       "status": "pass"
@@ -74,8 +76,8 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T19:35:06Z",
-  "gitHeadAtReportGeneration": "9b3fcd69f23d1da48b827444285b52b2509e11d4",
+  "generatedAt": "2026-07-09T19:44:08Z",
+  "gitHeadAtReportGeneration": "fae36ec661917dda597b376447ad741f1291d077",
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
@@ -83,6 +85,18 @@
   "multiAgentMemoryStaticSiteVerified": true,
   "noCatchAllActiveMemoryFile": true,
   "ok": true,
+  "reportFreshness": {
+    "currentGitHead": "fae36ec661917dda597b376447ad741f1291d077",
+    "githubCiReportCurrent": false,
+    "githubCiReportSha": null,
+    "localRouteEvidenceCurrent": true,
+    "localRouteReportCurrent": true,
+    "localRouteReportSha": "fae36ec661917dda597b376447ad741f1291d077",
+    "packageEvidenceCurrent": true,
+    "packageReportCurrent": true,
+    "packageReportSha": "fae36ec661917dda597b376447ad741f1291d077",
+    "valuesRedacted": true
+  },
   "reportScope": "point_in_time_snapshot",
   "repositoryBoundaryOk": true,
   "routeCount": 21,

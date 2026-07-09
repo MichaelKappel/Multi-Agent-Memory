@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from scripts import check_github_actions
 
@@ -119,6 +120,20 @@ class GitHubActionsReportTests(unittest.TestCase):
 
         self.assertNotIn(sensitive_value, annotation["message"])
         self.assertIn("[redacted]", annotation["message"])
+
+    def test_previous_report_summary_is_redacted(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "github-ci-status-report.json"
+            path.write_text(
+                '{"generatedAt":"test-time","status":"completed","conclusion":"failure","blocker":"blocked","latestObservedHeadSha":"abc123","latestObservedHtmlUrl":"https://github.com/example/repo/actions/runs/1"}',
+                encoding="utf-8",
+            )
+
+            summary = check_github_actions.previous_report_summary(path)
+
+        self.assertTrue(summary["available"])
+        self.assertEqual("abc123", summary["latestObservedHeadSha"])
+        self.assertTrue(summary["valuesRedacted"])
 
     def test_successful_run_passes(self):
         runs_payload = {

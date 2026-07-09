@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -154,9 +154,19 @@
     {
       "blocker": null,
       "evidence": [
-        "docs/reports/local-route-verification.json"
+        "docs/reports/local-route-verification.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "public_wsgi_routes",
+      "status": "pass_local"
+    },
+    {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/package-verification-report.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
+      ],
+      "requirement": "package_report_current",
       "status": "pass_local"
     },
     {
@@ -222,7 +232,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -241,17 +251,24 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
+    "currentGitHead": "fae36ec661917dda597b376447ad741f1291d077",
     "dateFreeHotMemory": true,
+    "githubCiReportCurrent": false,
     "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
+    "liveLatestCodeReportCurrent": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
+    "localRouteEvidenceCurrent": true,
+    "localRouteReportCurrent": true,
     "multiAgentMemoryLiveDeployed": false,
     "multiAgentMemoryLiveSiteVerified": false,
     "multiAgentMemoryStaticSiteVerified": true,
     "noCatchAllActiveMemoryFile": true,
+    "packageEvidenceCurrent": true,
+    "packageReportCurrent": true,
     "promptDraftsTracked": false,
     "valuesRedacted": true
   },

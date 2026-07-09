@@ -1,12 +1,12 @@
 {
-  "expectedSourceSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+  "expectedSourceSha": "fae36ec661917dda597b376447ad741f1291d077",
   "expectedSourceShaSource": "git_head",
   "failureCount": 1,
   "failures": [
     {
-      "expectedSourceSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+      "expectedSourceSha": "fae36ec661917dda597b376447ad741f1291d077",
       "missing": [
-        "expected source sha 3c7c5cf94fbe73708b4747abf3ddbf72c149834b"
+        "expected source sha fae36ec661917dda597b376447ad741f1291d077"
       ],
       "route": "/api/version",
       "secretHitCount": 0,
@@ -16,7 +16,7 @@
       "status": 200
     }
   ],
-  "gitHeadAtVerification": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+  "gitHeadAtVerification": "fae36ec661917dda597b376447ad741f1291d077",
   "items": [
     {
       "missing": [],
@@ -55,9 +55,9 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
+      "expectedSourceSha": "fae36ec661917dda597b376447ad741f1291d077",
       "missing": [
-        "expected source sha 3c7c5cf94fbe73708b4747abf3ddbf72c149834b"
+        "expected source sha fae36ec661917dda597b376447ad741f1291d077"
       ],
       "route": "/api/version",
       "secretHitCount": 0,

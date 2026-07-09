@@ -23,6 +23,7 @@ Expected current local state:
 
 - Unit/integration tests pass.
 - WSGI route verifier checks 21 required public routes with 0 failures.
+- Local route and package reports must record the current Git HEAD; stale reports from an older commit are treated as missing evidence even when their own `ok` field is true.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard ban on catch-all files such as `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, and `.uai/current-state.uai`.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
@@ -82,5 +83,7 @@ python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-
 ```
 
 The checker exits nonzero when the latest matching run is not successful. A failed run with zero recorded job steps means GitHub did not execute the workflow commands, so treat it as an external GitHub runner/account gate, not as a passing CI signal and not as a local test failure. The checker also reads public check-run annotations when available; the current public-safe status is recorded in `docs/reports/github-ci-status-report.json`.
+
+The readiness audit treats the CI report as current only when `latestObservedHeadSha` equals the current local Git HEAD. After every push, rerun this checker before using the CI report as evidence for the pushed commit.
 
 The CI workflow sets `MEMORYENDPOINTS_SOURCE_SHA` from the GitHub commit SHA and runs the WSGI verifier with `--expect-source-sha`, so a successful CI run must prove `/api/version` build provenance as well as route availability.

@@ -8,6 +8,56 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def git_head_sha():
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+    )
+    if completed.returncode == 0:
+        return completed.stdout.strip()
+    return None
+
+
+def nested_get(data, path):
+    current = data or {}
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def report_sha(data, candidate_paths):
+    for path in candidate_paths:
+        value = nested_get(data, path)
+        if value:
+            return value
+    return None
+
+
+def report_matches_head(data, head_sha, candidate_paths):
+    if not data or not head_sha:
+        return False
+    return report_sha(data, candidate_paths) == head_sha
+
+
+def stale_report_blocker(label, data, head_sha, candidate_paths):
+    observed = report_sha(data, candidate_paths)
+    if not observed:
+        return "%s report does not record a source SHA for the current worktree." % label
+    if observed != head_sha:
+        return "%s report is stale for current HEAD; report SHA %s, current HEAD %s." % (
+            label,
+            observed[:12],
+            (head_sha or "unknown")[:12],
+        )
+    return None
+
+
 def run_check(name, command):
     completed = subprocess.run(
         command,
@@ -104,16 +154,54 @@ def main(argv=None):
     multiagentmemory_static = load_json(Path("docs") / "reports" / "multiagentmemory-static-site-verification.json")
     multiagentmemory_live_site = load_json(Path("docs") / "reports" / "multiagentmemory-live-site-verification.json")
     github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
-    github_ci_ok = bool(github_ci and github_ci.get("conclusion") == "success")
-    github_ci_blocker = (
-        github_ci.get("blocker")
-        if github_ci and github_ci.get("blocker")
-        else "Latest GitHub Actions run did not pass."
+    head_sha = git_head_sha()
+    local_route_report_current = report_matches_head(
+        local_routes,
+        head_sha,
+        [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)],
     )
+    package = load_json(Path("docs") / "reports" / "package-verification-report.json")
+    package_report_current = report_matches_head(package, head_sha, [("build", "sourceSha")])
+    live_latest_report_current = report_matches_head(
+        live_latest_code,
+        head_sha,
+        [("expectedSourceSha",), ("gitHeadAtVerification",)],
+    )
+    github_ci_report_current = report_matches_head(github_ci, head_sha, [("latestObservedHeadSha",)])
+    wsgi_check_current = any(item.get("name") == "wsgi_route_verifier" and item.get("ok") for item in checks)
+    package_check_current = any(item.get("name") == "package_check" and item.get("ok") for item in checks)
+    local_route_evidence_current = bool(
+        (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
+    )
+    package_evidence_current = bool(
+        (package and package.get("status") == "ready" and package_report_current) or package_check_current
+    )
+    github_ci_ok = bool(github_ci and github_ci_report_current and github_ci.get("conclusion") == "success")
+    if github_ci and github_ci.get("status") == "unavailable":
+        previous = github_ci.get("previousReport") or {}
+        prior = previous.get("blocker")
+        github_ci_blocker = "%s Previous public-safe CI evidence: %s" % (
+            github_ci.get("blocker") or "GitHub Actions public API is unavailable.",
+            prior,
+        ) if prior else (github_ci.get("blocker") or "GitHub Actions public API is unavailable.")
+    elif github_ci and not github_ci_report_current:
+        github_ci_blocker = stale_report_blocker(
+            "GitHub Actions",
+            github_ci,
+            head_sha,
+            [("latestObservedHeadSha",)],
+        )
+    else:
+        github_ci_blocker = (
+            github_ci.get("blocker")
+            if github_ci and github_ci.get("blocker")
+            else "Latest GitHub Actions run did not pass."
+        )
     latest_code_live_verified = bool(
         deploy_attempt
         and (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed")
         and live_latest_code
+        and live_latest_report_current
         and live_latest_code.get("ok")
         and live_latest_code.get("sourceShaMatchesExpected")
     )
@@ -124,6 +212,13 @@ def main(argv=None):
             latest_code_blocker = connection_blocker
         elif deploy_attempt and not (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed"):
             latest_code_blocker = "FTPS login rejected before upload; uploadedCount was 0."
+        elif live_latest_code and not live_latest_report_current:
+            latest_code_blocker = stale_report_blocker(
+                "Live latest-code",
+                live_latest_code,
+                head_sha,
+                [("expectedSourceSha",), ("gitHeadAtVerification",)],
+            )
         elif live_latest_code and not live_latest_code.get("sourceShaMatchesExpected"):
             latest_code_blocker = "Live /api/version did not report the expected source SHA for the latest deploy package."
         else:
@@ -167,8 +262,24 @@ def main(argv=None):
         ),
         evidence_item(
             "public_wsgi_routes",
-            "pass_local" if local_routes and local_routes.get("ok") else "missing",
-            ["docs/reports/local-route-verification.json"],
+            "pass_local" if local_route_evidence_current else "missing",
+            ["docs/reports/local-route-verification.json", "scripts/enterprise_readiness_audit.py --run-checks"],
+            None
+            if local_route_evidence_current
+            else stale_report_blocker(
+                "Local route verification",
+                local_routes,
+                head_sha,
+                [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)],
+            ),
+        ),
+        evidence_item(
+            "package_report_current",
+            "pass_local" if package_evidence_current else "missing",
+            ["docs/reports/package-verification-report.json", "scripts/enterprise_readiness_audit.py --run-checks"],
+            None
+            if package_evidence_current
+            else stale_report_blocker("Package verification", package, head_sha, [("build", "sourceSha")]),
         ),
         evidence_item(
             "multiagentmemory_static_site",
@@ -253,7 +364,14 @@ def main(argv=None):
         "requirements": requirements,
         "blockers": blockers,
         "summary": {
+            "currentGitHead": head_sha,
             "localHardeningVerified": all_checks_ok is True or all_checks_ok is None,
+            "localRouteReportCurrent": local_route_report_current,
+            "localRouteEvidenceCurrent": local_route_evidence_current,
+            "packageReportCurrent": package_report_current,
+            "packageEvidenceCurrent": package_evidence_current,
+            "liveLatestCodeReportCurrent": live_latest_report_current,
+            "githubCiReportCurrent": github_ci_report_current,
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
             "noCatchAllActiveMemoryFile": bool(uai_audit and uai_audit.get("noCatchAllActiveMemoryFile")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
