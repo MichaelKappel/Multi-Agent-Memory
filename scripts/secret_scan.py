@@ -31,7 +31,15 @@ def text_lines(path):
 def main():
     hits = []
     scanned = 0
-    for path, rel in iter_files():
+    paths = list(iter_files())
+    seen = {str(rel).replace("\\", "/") for _path, rel in paths}
+    for path in sorted((ROOT / ".uai").glob("*.uai")):
+        rel = path.relative_to(ROOT)
+        rel_text = str(rel).replace("\\", "/")
+        if rel_text not in seen:
+            paths.append((path, rel))
+            seen.add(rel_text)
+    for path, rel in paths:
         scanned += 1
         rel_text = str(rel).replace("\\", "/")
         if path.name in FORBIDDEN_INCLUDED_NAMES:

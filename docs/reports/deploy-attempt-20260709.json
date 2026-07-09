@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "memoryendpoints.deploy_attempt.v1",
+  "generatedAt": "2026-07-09",
+  "target": "MemoryEndpoints.com FTP login root",
+  "remoteDir": ".",
+  "dryRun": {
+    "status": "ready",
+    "plannedUploadCount": 65,
+    "packageExists": true,
+    "valuesRedacted": true
+  },
+  "liveAttempt": {
+    "status": "connection_or_upload_failed",
+    "errorType": "error_perm",
+    "failedPhase": "login",
+    "uploadedCount": 0,
+    "safeNoOp": true,
+    "valuesRedacted": true
+  },
+  "secretBoundary": {
+    "hostPrinted": false,
+    "userPrinted": false,
+    "passwordPrinted": false,
+    "credentialValuesPrinted": false
+  },
+  "claimBoundary": {
+    "newCodeLiveDeployed": false,
+    "liveDogfoodVerified": false,
+    "localDogfoodVerified": true,
+    "blocker": "FTPS login rejected before upload; credential or server access must be refreshed outside the repository."
+  }
+}

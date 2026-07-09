@@ -127,15 +127,20 @@ def discover_remote_dir(host, user, password, port, fields):
     candidates = candidate_remote_dirs(fields)
     report["candidateCount"] = len(candidates)
     report["attempted"] = True
+    phase = "connect"
     try:
         with ftplib.FTP_TLS() as ftp:
             ftp.connect(host, port, timeout=20)
+            phase = "login"
             ftp.login(user, password)
+            phase = "protect_data_channel"
             ftp.prot_p()
             home = ftp.pwd()
             for label, path in candidates:
                 try:
+                    phase = "candidate_cwd_home"
                     ftp.cwd(home)
+                    phase = "candidate_cwd_remote"
                     ftp.cwd(path)
                 except Exception:
                     continue
@@ -147,6 +152,7 @@ def discover_remote_dir(host, user, password, port, fields):
     except Exception as exc:
         report["status"] = "connection_or_login_failed"
         report["errorType"] = exc.__class__.__name__
+        report["failedPhase"] = phase
         return None, report
     report["status"] = "not_found"
     return None, report
@@ -214,11 +220,15 @@ def main(argv=None):
         print(json.dumps(report, indent=2, sort_keys=True))
         return 1
     uploaded_count = 0
+    phase = "connect"
     try:
         with ftplib.FTP_TLS() as ftp:
             ftp.connect(host, port, timeout=20)
+            phase = "login"
             ftp.login(user, password)
+            phase = "protect_data_channel"
             ftp.prot_p()
+            phase = "cwd_remote_dir"
             ftp.cwd(remote_dir)
             made_dirs = set(["."])
             for path, rel in planned_files:
@@ -229,24 +239,29 @@ def main(argv=None):
                     if current in made_dirs:
                         continue
                     try:
+                        phase = "mkdir:" + current
                         ftp.mkd(current)
                     except Exception:
                         pass
                     made_dirs.add(current)
                 remote_name = str(rel).replace("\\", "/")
+                phase = "upload:" + remote_name
                 with open(str(path), "rb") as handle:
                     ftp.storbinary("STOR " + remote_name, handle)
                 uploaded_count += 1
             try:
+                phase = "mkdir:tmp"
                 ftp.mkd("tmp")
             except Exception:
                 pass
             restart_body = ("MemoryEndpoints Passenger restart requested %s\n" % datetime.now(timezone.utc).replace(microsecond=0).isoformat()).encode("utf-8")
+            phase = "upload:tmp/restart.txt"
             ftp.storbinary("STOR tmp/restart.txt", io.BytesIO(restart_body))
     except Exception as exc:
         report["status"] = "upload_failed_partial_possible" if uploaded_count else "connection_or_upload_failed"
         report["uploadedCount"] = uploaded_count
         report["errorType"] = exc.__class__.__name__
+        report["failedPhase"] = phase
         report["safeNoOp"] = uploaded_count == 0
         print(json.dumps(report, indent=2, sort_keys=True))
         return 1
