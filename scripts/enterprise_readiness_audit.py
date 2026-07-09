@@ -2,6 +2,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -47,6 +48,10 @@ def report_matches_head(data, head_sha, candidate_paths):
     if not data or not head_sha:
         return False
     return report_sha(data, candidate_paths) == head_sha
+
+
+def check_passed(checks, name):
+    return any(item.get("name") == name and item.get("ok") for item in checks)
 
 
 def stale_report_blocker(label, data, head_sha, candidate_paths):
@@ -134,6 +139,7 @@ def main(argv=None):
 
     checks = []
     if args.run_checks:
+        dogfood_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-dogfood.json")
         checks = [
             run_check("unit_and_integration_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
             run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi", "--expect-git-head"]),
@@ -141,6 +147,9 @@ def main(argv=None):
             run_check("uai_memory_audit", [sys.executable, "scripts/audit_uai_memory.py"]),
             run_check("repository_boundary_audit", [sys.executable, "scripts/audit_repository_boundary.py"]),
             run_check("package_check", [sys.executable, "scripts/package_memoryendpoints.py", "--check-only"]),
+            run_check("live_latest_code_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--base-url", "https://memoryendpoints.com", "--expect-git-head"]),
+            run_check("live_dogfood_verifier", [sys.executable, "scripts/dogfood_memoryendpoints.py", "--mode", "both", "--base-url", "https://memoryendpoints.com", "--no-progress-update", "--json-out", dogfood_temp]),
+            run_check("multiagentmemory_live_site", [sys.executable, "scripts/verify_static_site.py", "--base-url", "https://multiagentmemory.com"]),
             run_check("secret_scan", [sys.executable, "scripts/secret_scan.py"]),
             run_check("diff_check", ["git", "diff", "--check"]),
         ]
@@ -176,11 +185,12 @@ def main(argv=None):
         [("expectedSourceSha",), ("gitHeadAtVerification",)],
     )
     github_ci_report_current = report_matches_head(github_ci, head_sha, [("latestObservedHeadSha",)])
-    wsgi_check_current = any(item.get("name") == "wsgi_route_verifier" and item.get("ok") for item in checks)
-    package_check_current = any(item.get("name") == "package_check" and item.get("ok") for item in checks)
-    repository_boundary_check_current = any(
-        item.get("name") == "repository_boundary_audit" and item.get("ok") for item in checks
-    )
+    wsgi_check_current = check_passed(checks, "wsgi_route_verifier")
+    package_check_current = check_passed(checks, "package_check")
+    repository_boundary_check_current = check_passed(checks, "repository_boundary_audit")
+    live_latest_code_check_current = check_passed(checks, "live_latest_code_verifier")
+    live_dogfood_check_current = check_passed(checks, "live_dogfood_verifier")
+    multiagentmemory_live_site_check_current = check_passed(checks, "multiagentmemory_live_site")
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -219,18 +229,23 @@ def main(argv=None):
             else "Latest GitHub Actions run did not pass."
         )
     latest_code_live_verified = bool(
-        deploy_attempt
-        and (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed")
-        and live_latest_code
-        and live_latest_report_current
-        and live_latest_code.get("ok")
-        and live_latest_code.get("sourceShaMatchesExpected")
+        live_latest_code_check_current
+        or (
+            deploy_attempt
+            and (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed")
+            and live_latest_code
+            and live_latest_report_current
+            and live_latest_code.get("ok")
+            and live_latest_code.get("sourceShaMatchesExpected")
+        )
     )
     latest_code_blocker = None
     if not latest_code_live_verified:
         connection_blocker = connection_check_blocker("MemoryEndpoints.com", [deploy_connection_ftps, deploy_connection_ftp])
         if connection_blocker:
             latest_code_blocker = connection_blocker
+        elif checks and not live_latest_code_check_current:
+            latest_code_blocker = "Live latest-code no-write verifier failed; inspect checkResults for live_latest_code_verifier."
         elif deploy_attempt and not (deploy_attempt.get("claimBoundary") or {}).get("newCodeLiveDeployed"):
             latest_code_blocker = "FTPS login rejected before upload; uploadedCount was 0."
         elif live_latest_code and not live_latest_report_current:
@@ -255,8 +270,14 @@ def main(argv=None):
     deploy_dry_run_blocker = None if deploy_dry_run_matches_package else (
         "Deploy dry-run evidence is missing, stale, not marked as a safe no-op, or does not match the package report."
     )
-    multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
-        item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
+    multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or check_passed(
+        checks, "multiagentmemory_static_site"
+    )
+    live_public_routes_verified = bool((live_routes and live_routes.get("ok")) or live_latest_code_check_current)
+    live_dogfood_verified = bool((dogfood and dogfood.get("liveDogfoodVerified")) or live_dogfood_check_current)
+    multiagentmemory_live_site_verified = bool(
+        (multiagentmemory_live_site and multiagentmemory_live_site.get("ok"))
+        or multiagentmemory_live_site_check_current
     )
     multiagentmemory_connection_blocker = connection_check_blocker(
         "MultiAgentMemory.com",
@@ -356,8 +377,8 @@ def main(argv=None):
         ),
         evidence_item(
             "live_public_routes",
-            "pass_live_current_public_surface" if live_routes and live_routes.get("ok") else "missing",
-            ["docs/reports/live-route-verification.json"],
+            "pass_live_current_public_surface" if live_public_routes_verified else "missing",
+            ["docs/reports/live-route-verification.json", "scripts/enterprise_readiness_audit.py --run-checks"],
         ),
         evidence_item(
             "live_core_dogfooding_current_surface",
@@ -373,14 +394,15 @@ def main(argv=None):
                 "docs/reports/deploy-connection-check-latest.json",
                 "docs/reports/deploy-connection-check-ftp-latest.json",
                 "docs/reports/live-latest-code-verification.json",
+                "scripts/enterprise_readiness_audit.py --run-checks",
             ],
             latest_code_blocker,
         ),
         evidence_item(
             "live_dogfooding",
-            "pass_live" if dogfood and dogfood.get("liveDogfoodVerified") else "blocked",
-            ["docs/reports/dogfood-memory-run.json"],
-            None if dogfood and dogfood.get("liveDogfoodVerified") else (
+            "pass_live" if live_dogfood_verified else "blocked",
+            ["docs/reports/dogfood-memory-run.json", "scripts/enterprise_readiness_audit.py --run-checks"],
+            None if live_dogfood_verified else (
                 "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified."
                 if dogfood and dogfood.get("liveCoreDogfoodVerified")
                 else "Only local WSGI dogfooding is verified; live deployment/access is gated."
@@ -413,15 +435,12 @@ def main(argv=None):
         (all_checks_ok is not False)
         and not blockers
         and latest_code_live_verified
-        and dogfood
-        and dogfood.get("liveDogfoodVerified")
-        and live_routes
-        and live_routes.get("ok")
-        and multiagentmemory_live_site
-        and multiagentmemory_live_site.get("ok")
+        and live_dogfood_verified
+        and live_public_routes_verified
+        and multiagentmemory_live_site_verified
         and package_evidence_current
         and local_route_evidence_current
-        and ((uai_audit and uai_audit.get("ok")) or any(item.get("name") == "uai_memory_audit" and item.get("ok") for item in checks))
+        and ((uai_audit and uai_audit.get("ok")) or check_passed(checks, "uai_memory_audit"))
     )
     report = {
         "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
@@ -444,20 +463,25 @@ def main(argv=None):
             "repositoryBoundaryCurrent": repository_boundary_check_current,
             "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
             "liveLatestCodeReportCurrent": live_latest_report_current,
+            "liveLatestCodeCommandEvidenceCurrent": live_latest_code_check_current,
+            "liveDogfoodCommandEvidenceCurrent": live_dogfood_check_current,
+            "multiAgentMemoryLiveSiteCommandEvidenceCurrent": multiagentmemory_live_site_check_current,
             "githubCiReportCurrent": github_ci_report_current,
             "githubCiRequired": not github_ci_not_required,
             "githubCiGateDecision": (github_ci_gate or {}).get("decision"),
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
             "noForbiddenActiveMemoryFilename": bool(uai_audit and uai_audit.get("noForbiddenActiveMemoryFilename")),
-            "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
+            "livePublicRoutesVerified": live_public_routes_verified,
             "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
             "latestCodeLiveDeployed": latest_code_live_verified,
-            "latestCodeSourceShaMatchesExpected": bool(live_latest_code and live_latest_code.get("sourceShaMatchesExpected")),
+            "latestCodeSourceShaMatchesExpected": bool(
+                live_latest_code_check_current or (live_latest_code and live_latest_code.get("sourceShaMatchesExpected"))
+            ),
             "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,
             "deployDryRunMatchesPackage": deploy_dry_run_matches_package,
             "multiAgentMemoryLiveDeployed": bool(multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded"),
-            "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site and multiagentmemory_live_site.get("ok")),
-            "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
+            "multiAgentMemoryLiveSiteVerified": multiagentmemory_live_site_verified,
+            "liveDogfoodVerified": live_dogfood_verified,
             "promptDraftsTracked": False,
             "valuesRedacted": True,
         },

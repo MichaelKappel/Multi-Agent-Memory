@@ -28,6 +28,15 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("old456", blocker)
         self.assertIn("new789", blocker)
 
+    def test_enterprise_check_passed_accepts_current_no_write_evidence(self):
+        checks = [
+            {"name": "live_latest_code_verifier", "ok": True},
+            {"name": "package_check", "ok": False},
+        ]
+
+        self.assertTrue(enterprise_readiness_audit.check_passed(checks, "live_latest_code_verifier"))
+        self.assertFalse(enterprise_readiness_audit.check_passed(checks, "package_check"))
+
     def test_build_report_freshness_reads_nested_sha(self):
         report = {"build": {"sourceSha": "abc123"}}
 
