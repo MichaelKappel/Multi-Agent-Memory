@@ -30,7 +30,19 @@ def call_json(base_url, path, method="GET", body=None, token=None, idempotency_k
         with urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = {
+                "ok": False,
+                "error": {
+                    "code": "non_json_http_error",
+                    "status": exc.code,
+                    "valuesRedacted": True,
+                },
+                "valuesRedacted": True,
+            }
         return exc.code, payload
 
 
@@ -85,7 +97,12 @@ def main(argv=None):
     project_id = setup["projectId"]
     steps.append({"name": "create_account", "ok": True, "status": status})
 
-    status, workspace = call_json(base_url, "/api/matm/workspace", token=token)
+    status, workspace = call_json(
+        base_url,
+        "/api/matm/workspace",
+        token=token,
+        query="workspace_id=%s" % workspace_id,
+    )
     workspace = require_ok(status, workspace, "read workspace")
     hierarchy = workspace["workspace"]
     hierarchy_ok = bool(

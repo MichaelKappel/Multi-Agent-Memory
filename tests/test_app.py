@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import io
 import json
@@ -816,6 +817,21 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("memory_user", config["user"])
         self.assertEqual("pw", config["password"])
         self.assertEqual("/var/lib/mysql/mysql.sock", config["unix_socket"])
+
+    def test_db_cursor_normalizes_mysql_datetime_rows(self):
+        from memoryendpoints.storage import _DbCursor
+
+        class FakeCursor(object):
+            def fetchone(self):
+                return {"created_at": datetime.datetime(2026, 1, 2, 3, 4, 5)}
+
+            def fetchall(self):
+                return [{"updated_at": datetime.date(2026, 1, 3)}]
+
+        cursor = _DbCursor(FakeCursor())
+
+        self.assertEqual("2026-01-02T03:04:05Z", cursor.fetchone()["created_at"])
+        self.assertEqual("2026-01-03", cursor.fetchall()[0]["updated_at"])
 
     def test_mysql_secret_file_overrides_environment_settings(self):
         from memoryendpoints.storage import _mysql_config_from_env

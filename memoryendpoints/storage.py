@@ -1,4 +1,5 @@
 import hashlib
+import datetime
 import json
 import os
 from pathlib import Path
@@ -1653,14 +1654,30 @@ class _DbCursor(object):
     def __init__(self, cursor):
         self.cursor = cursor
 
+    def _normalize_value(self, value):
+        if isinstance(value, (datetime.datetime, datetime.date)):
+            text = value.isoformat()
+            if isinstance(value, datetime.datetime) and value.tzinfo is None:
+                text += "Z"
+            return text
+        return value
+
+    def _normalize_row(self, row):
+        if isinstance(row, dict):
+            return {key: self._normalize_value(value) for key, value in row.items()}
+        return row
+
     def __iter__(self):
-        return iter(self.cursor.fetchall())
+        return iter(self.fetchall())
 
     def fetchone(self):
-        return self.cursor.fetchone()
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return self._normalize_row(row)
 
     def fetchall(self):
-        return self.cursor.fetchall()
+        return [self._normalize_row(row) for row in self.cursor.fetchall()]
 
 
 class _DbConnection(object):
