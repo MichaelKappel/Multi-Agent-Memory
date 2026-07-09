@@ -4,16 +4,18 @@ Date: 2026-07-09
 
 Status: not complete. `completionClaimAllowed` is `false`.
 
-Report source snapshot: `9659b296ab10585b428c6c7f42ea124e5131cd24`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
+Report source snapshot: `bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5`. Tracked reports are point-in-time evidence; rerun the no-write live and CI verifiers after a final push to prove the current commit.
 
 ## Verified
 
 - Local verification report: `pass`, see `docs/reports/local-verification-report.json`.
-- Report freshness: local route report `true`, local route evidence `true`, package report `true`, package evidence `true`, GitHub CI report `false` for current HEAD `9659b296ab10`.
+- Evidence model: tracked report files are point-in-time snapshots. After any commit or push, rerun no-write WSGI/package/live/CI checks to prove the current commit without pretending the containing commit could already be named inside its own tracked reports.
+- Snapshot freshness at report generation: local route report `true`, package report `true`, GitHub CI report `true` for snapshot HEAD `bcbabb2c269e`.
+- Current-command evidence at report generation: local route command `true`, local route evidence `true`, package command `true`, package evidence `true`.
 - Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.
 - Local WSGI route verification: 21 routes, 0 failures.
 - Live public route verification: 21 routes, 0 failures for the currently deployed public surface.
-- Live latest-code SHA verification snapshot: expected `3cef969686243464e7a533331044d73aada5f7d8`, observed `None`, match `false`.
+- Live latest-code SHA verification snapshot: expected `bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5`, observed `None`, match `false`.
 - `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and no catch-all active-memory file exists.
 - Local dogfooding: true through WSGI; live core dogfooding on current deployed API: true; latest live dogfood contract: false.
 - Package verification: status `ready`, 78 planned files, excludes local runtime state and secrets.
@@ -46,7 +48,7 @@ The repository has strong local MATM evidence, current live core dogfood evidenc
   "liveDogfoodVerified": false,
   "multiAgentMemoryLiveDeployed": false,
   "multiAgentMemoryLiveSiteVerified": false,
-  "reportSourceSha": "9659b296ab10585b428c6c7f42ea124e5131cd24",
+  "reportSourceSha": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
   "valuesRedacted": true
 }
 ```

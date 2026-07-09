@@ -6,6 +6,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPORT_FRESHNESS_MODEL = (
+    "tracked_reports_are_point_in_time_snapshots; "
+    "--run-checks supplies current-worktree no-write evidence"
+)
 
 
 def git_head_sha():
@@ -383,6 +387,8 @@ def main(argv=None):
         "blockers": blockers,
         "summary": {
             "currentGitHead": head_sha,
+            "reportFreshnessModel": REPORT_FRESHNESS_MODEL,
+            "postCommitNoWriteVerificationRequired": True,
             "localHardeningVerified": all_checks_ok is True or all_checks_ok is None,
             "localRouteReportCurrent": local_route_report_current,
             "localRouteEvidenceCurrent": local_route_evidence_current,

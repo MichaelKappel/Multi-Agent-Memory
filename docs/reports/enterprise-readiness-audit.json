@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 3cef96968624, current HEAD 9659b296ab10.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -241,7 +241,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "GitHub Actions report is stale for current HEAD; report SHA 3cef96968624, current HEAD 9659b296ab10.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -260,15 +260,15 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "9659b296ab10585b428c6c7f42ea124e5131cd24",
+    "currentGitHead": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
-    "githubCiReportCurrent": false,
+    "githubCiReportCurrent": true,
     "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": false,
+    "liveLatestCodeReportCurrent": true,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,
@@ -279,7 +279,9 @@
     "noCatchAllActiveMemoryFile": true,
     "packageEvidenceCurrent": true,
     "packageReportCurrent": true,
+    "postCommitNoWriteVerificationRequired": true,
     "promptDraftsTracked": false,
+    "reportFreshnessModel": "tracked_reports_are_point_in_time_snapshots; --run-checks supplies current-worktree no-write evidence",
     "valuesRedacted": true
   },
   "valuesRedacted": true

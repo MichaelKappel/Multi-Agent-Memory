@@ -7,6 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "docs" / "reports"
+REPORT_FRESHNESS_MODEL = (
+    "tracked_reports_are_point_in_time_snapshots; "
+    "run no-write checks after commit or push for current-commit proof"
+)
 
 
 def utc_now():
@@ -179,11 +183,15 @@ def build_local_report():
         "routeCount": (local_routes or {}).get("routeCount"),
         "routeFailureCount": (local_routes or {}).get("failureCount"),
         "reportFreshness": {
+            "model": REPORT_FRESHNESS_MODEL,
+            "postCommitNoWriteVerificationRequired": True,
             "localRouteReportCurrent": local_route_report_current,
             "localRouteReportSha": report_sha(local_routes, [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)]),
+            "localRouteCommandEvidenceCurrent": wsgi_check_current,
             "localRouteEvidenceCurrent": local_route_evidence_current,
             "packageReportCurrent": package_report_current,
             "packageReportSha": report_sha(package, [("build", "sourceSha")]),
+            "packageCommandEvidenceCurrent": package_check_current,
             "packageEvidenceCurrent": package_evidence_current,
             "githubCiReportCurrent": github_ci_report_current,
             "githubCiReportSha": report_sha(github_ci, [("latestObservedHeadSha",)]),
@@ -250,13 +258,18 @@ def build_final_markdown(local_report):
         "## Verified",
         "",
         "- Local verification report: `%s`, see `docs/reports/local-verification-report.json`." % ("pass" if local_report.get("ok") else "not pass"),
-        "- Report freshness: local route report `%s`, local route evidence `%s`, package report `%s`, package evidence `%s`, GitHub CI report `%s` for current HEAD `%s`." % (
+        "- Evidence model: tracked report files are point-in-time snapshots. After any commit or push, rerun no-write WSGI/package/live/CI checks to prove the current commit without pretending the containing commit could already be named inside its own tracked reports.",
+        "- Snapshot freshness at report generation: local route report `%s`, package report `%s`, GitHub CI report `%s` for snapshot HEAD `%s`." % (
             str(bool(freshness.get("localRouteReportCurrent"))).lower(),
-            str(bool(freshness.get("localRouteEvidenceCurrent"))).lower(),
             str(bool(freshness.get("packageReportCurrent"))).lower(),
-            str(bool(freshness.get("packageEvidenceCurrent"))).lower(),
             str(bool(freshness.get("githubCiReportCurrent"))).lower(),
             (report_source_sha or "unknown")[:12],
+        ),
+        "- Current-command evidence at report generation: local route command `%s`, local route evidence `%s`, package command `%s`, package evidence `%s`." % (
+            str(bool(freshness.get("localRouteCommandEvidenceCurrent"))).lower(),
+            str(bool(freshness.get("localRouteEvidenceCurrent"))).lower(),
+            str(bool(freshness.get("packageCommandEvidenceCurrent"))).lower(),
+            str(bool(freshness.get("packageEvidenceCurrent"))).lower(),
         ),
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),

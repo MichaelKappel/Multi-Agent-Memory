@@ -1,6 +1,9 @@
 {
+  "expectedSourceSha": null,
+  "expectedSourceShaSource": null,
   "failureCount": 0,
   "failures": [],
+  "gitHeadAtVerification": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
   "items": [
     {
       "missing": [],
@@ -42,6 +45,8 @@
       "missing": [],
       "route": "/api/version",
       "secretHitCount": 0,
+      "sourceSha": null,
+      "sourceShaShort": null,
       "status": 200
     },
     {
@@ -129,7 +134,11 @@
       "status": 200
     }
   ],
+  "mode": "http",
+  "observedSourceSha": null,
   "ok": true,
+  "reportScope": "point_in_time_snapshot",
   "routeCount": 21,
-  "schemaVersion": "memoryendpoints.verifier.v1"
+  "schemaVersion": "memoryendpoints.verifier.v1",
+  "sourceShaMatchesExpected": null
 }

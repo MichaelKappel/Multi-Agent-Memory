@@ -2,9 +2,9 @@
   "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
   "branch": "main",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T19:50:34Z",
-  "latestObservedHeadSha": "3cef969686243464e7a533331044d73aada5f7d8",
-  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29045460676",
+  "generatedAt": "2026-07-09T20:03:53Z",
+  "latestObservedHeadSha": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046316188",
   "latestObservedJobAnnotationCount": 1,
   "latestObservedJobAnnotations": [
     {
@@ -21,6 +21,58 @@
   "latestObservedJobStepCount": 0,
   "observedRunCount": 5,
   "observedRuns": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T19:59:48Z",
+      "displayTitle": "Prove workspace key storage boundaries",
+      "headBranch": "main",
+      "headSha": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046316188",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29046316188,
+      "runNumber": 30,
+      "status": "completed",
+      "updatedAt": "2026-07-09T19:59:52Z"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T19:52:05Z",
+      "displayTitle": "Harden deploy dry-run evidence",
+      "headBranch": "main",
+      "headSha": "9659b296ab10585b428c6c7f42ea124e5131cd24",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29045860228",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29045860228,
+      "runNumber": 29,
+      "status": "completed",
+      "updatedAt": "2026-07-09T19:52:08Z"
+    },
     {
       "conclusion": "failure",
       "createdAt": "2026-07-09T19:45:16Z",
@@ -98,58 +150,6 @@
       "runNumber": 26,
       "status": "completed",
       "updatedAt": "2026-07-09T19:28:01Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T19:17:49Z",
-      "displayTitle": "Require CI build provenance verification",
-      "headBranch": "main",
-      "headSha": "3c7c5cf94fbe73708b4747abf3ddbf72c149834b",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29043812663",
-      "jobAnnotationCount": 1,
-      "jobAnnotations": [
-        {
-          "annotationLevel": "failure",
-          "endLine": 1,
-          "message": "The job was not started because your account is locked due to a billing issue.",
-          "path": ".github",
-          "startLine": 1,
-          "title": "",
-          "valuesRedacted": true
-        }
-      ],
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29043812663,
-      "runNumber": 25,
-      "status": "completed",
-      "updatedAt": "2026-07-09T19:17:52Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T19:11:59Z",
-      "displayTitle": "Add latest-code build provenance checks",
-      "headBranch": "main",
-      "headSha": "2f5cccba3578e5be462d2bfa8b1a35382a5532e5",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29043466117",
-      "jobAnnotationCount": 1,
-      "jobAnnotations": [
-        {
-          "annotationLevel": "failure",
-          "endLine": 1,
-          "message": "The job was not started because your account is locked due to a billing issue.",
-          "path": ".github",
-          "startLine": 1,
-          "title": "",
-          "valuesRedacted": true
-        }
-      ],
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29043466117,
-      "runNumber": 24,
-      "status": "completed",
-      "updatedAt": "2026-07-09T19:12:02Z"
     }
   ],
   "ok": false,

@@ -54,6 +54,11 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("Could not read", blocker)
         self.assertIn("Previous CI did not start", blocker)
 
+    def test_report_freshness_model_requires_post_commit_no_write_evidence(self):
+        self.assertIn("point_in_time_snapshots", build_readiness_reports.REPORT_FRESHNESS_MODEL)
+        self.assertIn("no-write checks", build_readiness_reports.REPORT_FRESHNESS_MODEL)
+        self.assertIn("current-worktree", enterprise_readiness_audit.REPORT_FRESHNESS_MODEL)
+
 
 if __name__ == "__main__":
     unittest.main()
