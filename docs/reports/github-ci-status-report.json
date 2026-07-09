@@ -1,13 +1,28 @@
 {
+  "appliesUntilBillingResolved": true,
   "blocker": "GitHub reported that the job was not started because the account is locked due to a billing issue.",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T15:34:00Z",
-  "headSha": "94295df0b07ecdf61cddb4489744edaafe594728",
-  "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29029992469",
+  "generatedAt": "2026-07-09T15:37:00Z",
+  "latestObservedHeadSha": "62304580cd5e929b74dcc376aa90f83b76e0ea35",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29030191770",
   "name": "CI",
+  "observedRuns": [
+    {
+      "conclusion": "failure",
+      "headSha": "62304580cd5e929b74dcc376aa90f83b76e0ea35",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29030191770",
+      "status": "completed"
+    },
+    {
+      "conclusion": "failure",
+      "headSha": "94295df0b07ecdf61cddb4489744edaafe594728",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29029992469",
+      "status": "completed"
+    }
+  ],
   "ok": false,
   "schemaVersion": "memoryendpoints.github_ci_status.v1",
-  "source": "GitHub Actions public run page and public Actions API",
+  "source": "GitHub Actions public run pages and public Actions API",
   "status": "completed",
   "valuesRedacted": true
 }
