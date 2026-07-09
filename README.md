@@ -34,7 +34,7 @@ MultiAgentMemory.com is documentation only. It explains the architecture, memory
 | Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory, current messages, notifications, and receipts |
 | Public documentation | `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
-UAIX reference: [AI Memory Package Wizard: setup LLM Wiki](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki)
+UAIX wizard/spec update request: add [MATM setup](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM) and [File Handoff plus MATM setup](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM) modes so generated `.uai` packages can point at a configured MATM memory update URL such as MemoryEndpoints.com.
 
 ## Repository Layout
 

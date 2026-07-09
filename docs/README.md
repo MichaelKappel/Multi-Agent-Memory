@@ -24,4 +24,4 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 
 ## Prompts
 
-- [UAIX LLM Wiki update prompt](prompts/uaix-agent-add-llm-wiki-memory-boundary.md)
+- [UAIX MATM wizard guidance prompt](prompts/uaix-agent-add-matm-wizard-guidance.md)

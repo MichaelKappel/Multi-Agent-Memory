@@ -6,6 +6,7 @@ Short-term memory
 - Database credentials exist outside repo in E:\ftp_Deploy.txt; values must remain redacted.
 - MultiAgentMemory.com is the GitHub companion documentation site.
 - MemoryEndpoints.com is the real endpoint site and live mid-to-long-term MATM memory boundary.
-- Use `.uai/` files for short-term/startup memory following the UAIX setup-llm-wiki split-memory model.
-- UAIX update URL for spec/wizard request: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
-- UAIX.org agent update prompt: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md
+- Use `.uai/` files for short-term/startup memory; use MemoryEndpoints.com MATM routes for mid-to-long-term memory.
+- MATM memory update URL for this repo: https://memoryendpoints.com/api/matm/memory-events/submit
+- Requested UAIX wizard/spec anchors to add: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM and https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
+- UAIX.org agent update prompt: docs/prompts/uaix-agent-add-matm-wizard-guidance.md

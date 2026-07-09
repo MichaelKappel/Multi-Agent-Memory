@@ -2,12 +2,17 @@ Long-term memory pointer ledger
 
 Stable id: memoryendpoints-live-matm
 Path: https://memoryendpoints.com
+Update URL: https://memoryendpoints.com/api/matm/memory-events/submit
+Search URL: https://memoryendpoints.com/api/matm/search
+Current message URL: https://memoryendpoints.com/api/matm/current-message
+Acknowledgement URL: https://memoryendpoints.com/api/matm/notifications/ack
+Receipt URL: https://memoryendpoints.com/api/matm/receipts
 Label: MemoryEndpoints.com live MATM memory endpoint
 Routing summary: Use MemoryEndpoints.com protected MATM routes for mid-to-long-term workspace memory, current messages, notifications, and redacted receipts.
 Authority/source: live MemoryEndpoints.com deployment evidence
 Review status: live_verified
 Review evidence: docs/reports/final-verification-report.md and https://memoryendpoints.com/api/matm/readiness-result
-Truth boundary: workspace memory requires authentication; public docs and public evidence routes do not grant hidden authority.
+Truth boundary: workspace memory requires authentication; public docs and public evidence routes do not grant hidden authority. Never place raw API keys or credential values in .uai files.
 
 Stable id: multiagentmemory-docs
 Path: sites/multiagentmemory.com/
@@ -18,22 +23,22 @@ Review status: current
 Review evidence: sites/multiagentmemory.com/README.md and sites/multiagentmemory.com/ai-manifest.json
 Truth boundary: documentation only; not the hosted memory endpoint.
 
-Stable id: uaix-llm-wiki-setup
-Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
-Update URL: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
-Label: UAIX AI Memory Package Wizard LLM Wiki setup
-Routing summary: Use the setup-llm-wiki guidance to keep .uai active as startup continuity memory while preserving a long-term pointer ledger.
+Stable id: uaix-matm-setup-proposed
+Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
+Paired file handoff path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
+Label: Proposed UAIX AI Memory Package Wizard MATM setup
+Routing summary: Requested UAIX wizard/spec mode for .uai startup memory plus a hosted MATM durable-memory endpoint. MemoryEndpoints.com is the suggested example endpoint, not a UAIX endorsement.
 Authority/source: UAIX public standards page
-Review status: referenced
-Review evidence: user-requested source URL
-Truth boundary: reference model only; do not copy UAIX page content into the target site.
+Review status: requested
+Review evidence: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
+Truth boundary: requested UAIX guidance only; the MATM fragments are target anchors to add, and agents must not claim UAIX has published or endorsed them until UAIX does.
 
 Stable id: uaix-agent-spec-wizard-update-prompt
-Path: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md
-Update URL: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-llm-wiki
-Label: Prompt for UAIX.org agent to update the spec and wizard
-Routing summary: Use this prompt to ask a UAIX.org agent to add a generic documentation-site plus hosted-memory-endpoint boundary to the LLM Wiki setup spec and AI Memory Package Wizard.
+Path: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
+Requested setup URLs: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM and https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
+Label: Prompt for UAIX.org agent to add MATM setup guidance
+Routing summary: Use this prompt to ask a UAIX.org agent to add MATM as a wizard/spec/guidance option, including .uai update_url fields that point to the configured MATM memory update route.
 Authority/source: MemoryEndpoints.com and MultiAgentMemory.com implementation evidence
 Review status: current
-Review evidence: docs/prompts/uaix-agent-add-llm-wiki-memory-boundary.md
+Review evidence: docs/prompts/uaix-agent-add-matm-wizard-guidance.md
 Truth boundary: prompt request only; UAIX.org must review, adapt, and publish any standards or wizard changes through its own process.
