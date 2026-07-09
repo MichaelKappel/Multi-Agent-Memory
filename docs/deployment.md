@@ -20,6 +20,9 @@ The package builder excludes local runtime state and credential surfaces, includ
 - `.local-secrets`
 - `var`
 - `dist`
+- `agent-file-handoff/Content`
+- `agent-file-handoff/Improvement`
+- `agent-file-handoff/Archive`
 - `docs/prompts`
 - logs, caches, local databases, SQLite journals, temporary files, and `ftp_Deploy.txt`
 

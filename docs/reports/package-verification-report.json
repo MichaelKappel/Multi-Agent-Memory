@@ -1,5 +1,5 @@
 {
-  "bytes": 91543,
+  "bytes": 98276,
   "checkOnly": false,
   "excludedDirs": [
     ".git",
@@ -18,6 +18,9 @@
     "ftp_Deploy.txt"
   ],
   "excludedPathPrefixes": [
+    "agent-file-handoff/Archive",
+    "agent-file-handoff/Content",
+    "agent-file-handoff/Improvement",
     "docs/prompts"
   ],
   "excludedSuffixes": [
@@ -32,7 +35,7 @@
   ],
   "excludesLocalRuntimeState": true,
   "excludesSecrets": true,
-  "fileCount": 82,
+  "fileCount": 86,
   "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
   "schemaVersion": "memoryendpoints.package_plan.v1",
   "status": "ready",

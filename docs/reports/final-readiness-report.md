@@ -12,8 +12,8 @@ Status: not complete. `completionClaimAllowed` is `false`.
 - Live public route verification: 21 routes, 0 failures for the currently deployed public surface.
 - `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, and `.uai/totem.uai` is first in the required memory order.
 - Local dogfooding: true through WSGI; live dogfooding: true.
-- Package verification: status `ready`, 82 planned files, excludes local runtime state and secrets.
-- Secret scan: 91 scanned files, 0 hits.
+- Package verification: status `ready`, 86 planned files, excludes local runtime state and secrets.
+- Secret scan: 95 scanned files, 0 hits.
 - GitHub Actions CI: `failure`; latest run did not prove code health because `GitHub reported that the job was not started because the account is locked due to a billing issue.`.
 
 ## Blocked Or Gated

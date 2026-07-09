@@ -33,6 +33,10 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 
 ## Memory
 
+- [Strategy memory index](long-term-memory/strategy-index.md)
+- [Enterprise engineering best practices](long-term-memory/enterprise-engineering-best-practices.md)
+- [MATM architecture strategy](long-term-memory/matm-architecture-strategy.md)
+- [System targets](long-term-memory/system-targets.md)
 - [Release verification summary](long-term-memory/release-verification-summary.md)
 - [Architecture notes](long-term-memory/architecture-notes.md)
 - [Project charter](long-term-memory/project-charter.md)

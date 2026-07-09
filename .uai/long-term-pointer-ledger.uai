@@ -15,11 +15,25 @@ Durable docs memory root:
 - docs/long-term-memory/
 
 Initial records:
+- docs/long-term-memory/strategy-index.md
+- docs/long-term-memory/enterprise-engineering-best-practices.md
+- docs/long-term-memory/matm-architecture-strategy.md
+- docs/long-term-memory/system-targets.md
 - docs/long-term-memory/project-charter.md
 - docs/long-term-memory/architecture-notes.md
 - docs/long-term-memory/release-verification-summary.md
 - .uai/long-term-memory.uai
 - sites/multiagentmemory.com/README.md
+
+Deep-linked strategy records:
+- Best practices: docs/long-term-memory/enterprise-engineering-best-practices.md#python-engineering
+- Testing strategy: docs/long-term-memory/enterprise-engineering-best-practices.md#testing-and-verification
+- MySQL/database operations: docs/long-term-memory/enterprise-engineering-best-practices.md#mysql-and-database-operations
+- MATM timestamp-free strategy: docs/long-term-memory/matm-architecture-strategy.md#timestamp-free-memory-strategy
+- MATM memory write pipeline: docs/long-term-memory/matm-architecture-strategy.md#memory-write-pipeline
+- Python engineering targets: docs/long-term-memory/system-targets.md#python-engineering-targets
+- Database and MySQL targets: docs/long-term-memory/system-targets.md#database-and-mysql-targets
+- Inbound-link targets: docs/long-term-memory/system-targets.md#inbound-link-and-documentation-targets
 
 Release evidence:
 - docs/reports/final-verification-report.md

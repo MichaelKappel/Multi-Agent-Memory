@@ -29,3 +29,15 @@ Must not expose: raw private files, credential values, deployment handoff values
 - Durable memory impact: added docs/long-term-memory/release-verification-summary.md and docs/reports/final-verification-report.md
 - Proof of use: local tests, WSGI route verifier, package build, dry-run deploy, live deploy, live route verifier, secret scan, and package exclusion checks all passed after intake processing
 - Archive/source-site action: raw improvement reports were removed from the public repository front door during enterprise reorganization; curated evidence remains in docs/reports and docs/long-term-memory
+
+2026-07-09
+- Content bucket scanned: agent-file-handoff/Content
+- Improvement bucket scanned: agent-file-handoff/Improvement
+- Active dropped files found: 14 strategy reports, excluding .gitkeep placeholders
+- Disposition: partially_accepted
+- Processed outcome: distilled enterprise Python, testing, MySQL/database, MATM, hierarchical memory, timestamp-free retrieval, and system-target guidance into active `.uai` memory and reviewed long-term memory docs
+- Durable memory impact: added docs/long-term-memory/strategy-index.md, docs/long-term-memory/enterprise-engineering-best-practices.md, docs/long-term-memory/matm-architecture-strategy.md, and docs/long-term-memory/system-targets.md
+- Active memory impact: updated `.uai/short-term-memory.uai` and `.uai/long-term-pointer-ledger.uai` with strategy summaries and deep links
+- Deferred outcome: raw report bodies, citation blocks, generated examples not specific to MemoryEndpoints.com, and dependency/tooling recommendations that conflict with the pure stdlib runtime remain local-only source material rather than committed policy
+- Proof of use: `.uai` audit, unit tests, WSGI route verification, package verification, secret scan, enterprise readiness audit, and readiness report refresh were run after distribution
+- Archive/source-site action: raw strategy reports remain ignored local intake files pending human archive or removal; they were not added to source control

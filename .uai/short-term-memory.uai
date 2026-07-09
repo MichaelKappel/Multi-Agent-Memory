@@ -23,4 +23,6 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 - Current UAIX setup option for this repo: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
 - MemoryEndpoints.com inbound URL: https://memoryendpoints.com
 - MemoryEndpoints.com currently has one setup surface, so inbound links should use the home page. Future MemoryEndpoints setup URLs should be clean readable routes, not fragment-style option URLs.
+- Strategy intake has been distilled into `docs/long-term-memory/strategy-index.md`, `enterprise-engineering-best-practices.md`, `matm-architecture-strategy.md`, and `system-targets.md`.
+- Active system strategy: preserve pure stdlib runtime, strengthen tests and dogfood, keep `.uai` hot, keep MemoryEndpoints.com as hosted MATM, keep MySQL adapter gated until approved, and use timestamp-free semantic/provenance/utility ranking by default.
 - Prompt drafts are local-only artifacts and must not be included in source control.

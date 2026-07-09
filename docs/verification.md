@@ -23,7 +23,7 @@ Expected current local state:
 - Unit/integration tests pass.
 - WSGI route verifier checks 21 required public routes with 0 failures.
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/totem.uai` first in the required memory order, and `localUaiStaysActiveAlways=true`.
-- Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, `var`, `dist`, logs, databases, caches, and credential handoff files.
+- Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Secret scan reports 0 hits.
 - Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy and live dogfooding are proven.
 
