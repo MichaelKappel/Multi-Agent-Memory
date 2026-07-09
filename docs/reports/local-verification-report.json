@@ -59,7 +59,11 @@
       "status": "pass"
     }
   ],
-  "generatedAt": "2026-07-09T15:32:27Z",
+  "externalSignals": {
+    "githubCiConclusion": "failure",
+    "githubCiEvidence": "docs/reports/github-ci-status-report.json"
+  },
+  "generatedAt": "2026-07-09T15:35:45Z",
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,

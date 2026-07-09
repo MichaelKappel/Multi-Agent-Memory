@@ -1,5 +1,5 @@
 {
-  "bytes": 87193,
+  "bytes": 88331,
   "checkOnly": false,
   "excludedDirs": [
     ".git",
@@ -32,7 +32,7 @@
   ],
   "excludesLocalRuntimeState": true,
   "excludesSecrets": true,
-  "fileCount": 81,
+  "fileCount": 82,
   "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
   "schemaVersion": "memoryendpoints.package_plan.v1",
   "status": "ready",

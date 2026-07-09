@@ -25,6 +25,7 @@ This folder is the curated documentation and evidence library for the Multi-Agen
 - [Local dogfood memory run](reports/dogfood-memory-run.json)
 - [Deploy attempt report](reports/deploy-attempt-20260709.json)
 - [Repository boundary audit](reports/repository-boundary-audit.json)
+- [GitHub CI status report](reports/github-ci-status-report.json)
 - [Final readiness report](reports/final-readiness-report.md)
 - [Final verification report](reports/final-verification-report.md)
 - [Local route verification](reports/local-route-verification.json)

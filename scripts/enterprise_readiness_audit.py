@@ -72,6 +72,7 @@ def main(argv=None):
     local_routes = load_json(Path("docs") / "reports" / "local-route-verification.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
+    github_ci = load_json(Path("docs") / "reports" / "github-ci-status-report.json")
 
     requirements = [
         evidence_item(
@@ -115,6 +116,12 @@ def main(argv=None):
             "blocked",
             ["docs/reports/dogfood-memory-run.json"],
             "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+        ),
+        evidence_item(
+            "github_actions_ci",
+            "blocked" if github_ci and github_ci.get("conclusion") != "success" else "pass_github",
+            ["docs/reports/github-ci-status-report.json"],
+            None if github_ci and github_ci.get("conclusion") == "success" else "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
         ),
         evidence_item(
             "mysql_runtime_adapter",

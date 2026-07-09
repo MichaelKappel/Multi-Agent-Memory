@@ -15,6 +15,14 @@
       ],
       "requirement": "live_dogfooding",
       "status": "blocked"
+    },
+    {
+      "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
+      "evidence": [
+        "docs/reports/github-ci-status-report.json"
+      ],
+      "requirement": "github_actions_ci",
+      "status": "blocked"
     }
   ],
   "checkResults": [
@@ -140,6 +148,14 @@
         "docs/reports/dogfood-memory-run.json"
       ],
       "requirement": "live_dogfooding",
+      "status": "blocked"
+    },
+    {
+      "blocker": "Latest GitHub Actions run did not pass; current evidence says the job was blocked by account billing lock.",
+      "evidence": [
+        "docs/reports/github-ci-status-report.json"
+      ],
+      "requirement": "github_actions_ci",
       "status": "blocked"
     },
     {

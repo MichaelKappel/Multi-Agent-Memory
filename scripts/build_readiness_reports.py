@@ -61,6 +61,7 @@ def build_local_report():
     package = load_json("package-verification-report.json")
     secret = load_json("secret-scan-report.json")
     boundary = load_json("repository-boundary-audit.json")
+    github_ci = load_json("github-ci-status-report.json")
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
@@ -85,6 +86,10 @@ def build_local_report():
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
+        "externalSignals": {
+            "githubCiConclusion": (github_ci or {}).get("conclusion"),
+            "githubCiEvidence": "docs/reports/github-ci-status-report.json" if github_ci else None,
+        },
         "valuesRedacted": True,
     }
     write_json("local-verification-report.json", report)
@@ -98,6 +103,7 @@ def build_final_markdown(local_report):
     package = load_json("package-verification-report.json") or {}
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
+    github_ci = load_json("github-ci-status-report.json") or {}
 
     latest_deployed = bool((deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed"))
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
@@ -119,11 +125,13 @@ def build_final_markdown(local_report):
         "- Local dogfooding: %s through WSGI; live dogfooding: %s." % (str(bool(dogfood.get("localDogfoodVerified"))).lower(), str(live_dogfood).lower()),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
+        "- GitHub Actions CI: `%s`; latest run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_ci.get("blocker")),
         "",
         "## Blocked Or Gated",
         "",
         "- Latest-code live deployment: blocked. The recorded FTPS attempt failed at `%s` with `%s` before upload; uploaded count was `%s`." % ((deploy.get("liveAttempt") or {}).get("failedPhase"), (deploy.get("liveAttempt") or {}).get("errorType"), (deploy.get("liveAttempt") or {}).get("uploadedCount")),
         "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.",
+        "- GitHub Actions CI: blocked by repository/account billing state before job execution, so the latest run is not a passing CI signal.",
         "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file and stdlib SQLite storage are active locally.",
         "",
         "## Claim Boundary",
@@ -131,7 +139,7 @@ def build_final_markdown(local_report):
         "The repository has strong local MATM evidence, public route evidence, package evidence, and secret-safety evidence. It must not be described as fully done until latest-code live deployment and live dogfooding are verified.",
         "",
         "```json",
-        json.dumps({"completionClaimAllowed": completion_allowed, "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "valuesRedacted": True}, indent=2, sort_keys=True),
+        json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "valuesRedacted": True}, indent=2, sort_keys=True),
         "```",
     ]
     path = REPORTS / "final-readiness-report.md"

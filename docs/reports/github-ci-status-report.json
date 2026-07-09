@@ -1,0 +1,13 @@
+{
+  "blocker": "GitHub reported that the job was not started because the account is locked due to a billing issue.",
+  "conclusion": "failure",
+  "generatedAt": "2026-07-09T15:34:00Z",
+  "headSha": "94295df0b07ecdf61cddb4489744edaafe594728",
+  "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29029992469",
+  "name": "CI",
+  "ok": false,
+  "schemaVersion": "memoryendpoints.github_ci_status.v1",
+  "source": "GitHub Actions public run page and public Actions API",
+  "status": "completed",
+  "valuesRedacted": true
+}
