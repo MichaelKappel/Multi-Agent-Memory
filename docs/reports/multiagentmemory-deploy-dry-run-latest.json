@@ -1,5 +1,14 @@
 {
+  "credentialSource": "filezilla_site_manager",
   "dryRun": true,
+  "filezilla": {
+    "hasRemoteDir": false,
+    "siteIndex": 2,
+    "siteMatch": "multiagentmemory",
+    "siteNameFingerprint": "38b335b62203862b",
+    "status": "filezilla_site_matched",
+    "valuesRedacted": true
+  },
   "hasResolvedHost": true,
   "hasResolvedPassword": true,
   "hasResolvedPort": true,
@@ -8,7 +17,7 @@
   "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
-  "remoteDirSource": "argument_or_handoff",
+  "remoteDirSource": "filezilla_login_root",
   "safeNoOp": true,
   "schemaVersion": "static_site.ftp_deploy.v1",
   "signals": {
@@ -17,8 +26,10 @@
     "hasPassword": true,
     "hasUser": true,
     "mentionsTarget": true,
-    "sectionCount": 6,
+    "sectionCount": null,
+    "selectedSectionIndex": null,
     "selectedSectionMentionsTarget": true,
+    "selectedSectionScore": 100,
     "valuesRedacted": true
   },
   "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",

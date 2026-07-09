@@ -1,24 +1,6 @@
 {
   "blockers": [
     {
-      "blocker": "MultiAgentMemory.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
-      "evidence": [
-        "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
-        "docs/reports/multiagentmemory-deploy-connection-check-latest.json",
-        "docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json"
-      ],
-      "requirement": "multiagentmemory_live_deployed",
-      "status": "blocked"
-    },
-    {
-      "blocker": "Live MultiAgentMemory.com does not yet serve the expected companion-site routes and discovery files.",
-      "evidence": [
-        "docs/reports/multiagentmemory-live-site-verification.json"
-      ],
-      "requirement": "multiagentmemory_live_site_routes",
-      "status": "blocked"
-    },
-    {
       "blocker": "MemoryEndpoints.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
@@ -198,22 +180,22 @@
       "status": "pass_local"
     },
     {
-      "blocker": "MultiAgentMemory.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
+      "blocker": null,
       "evidence": [
         "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
         "docs/reports/multiagentmemory-deploy-connection-check-latest.json",
         "docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json"
       ],
       "requirement": "multiagentmemory_live_deployed",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
-      "blocker": "Live MultiAgentMemory.com does not yet serve the expected companion-site routes and discovery files.",
+      "blocker": null,
       "evidence": [
         "docs/reports/multiagentmemory-live-site-verification.json"
       ],
       "requirement": "multiagentmemory_live_site_routes",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
       "blocker": null,
@@ -270,7 +252,7 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
+    "currentGitHead": "2c4f9f0d9247913315fd17d5d0e0e8bc9c79c3cf",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
     "githubCiReportCurrent": true,
@@ -278,13 +260,13 @@
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
-    "liveLatestCodeReportCurrent": true,
+    "liveLatestCodeReportCurrent": false,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,
     "localRouteReportCurrent": true,
-    "multiAgentMemoryLiveDeployed": false,
-    "multiAgentMemoryLiveSiteVerified": false,
+    "multiAgentMemoryLiveDeployed": true,
+    "multiAgentMemoryLiveSiteVerified": true,
     "multiAgentMemoryStaticSiteVerified": true,
     "noForbiddenActiveMemoryFilename": true,
     "packageEvidenceCurrent": true,

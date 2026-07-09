@@ -16,6 +16,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.
 - Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.
 - Live public route verifier reports `0` failures and `0` public leak hits for the currently deployed MemoryEndpoints.com surface.
+- MultiAgentMemory.com live companion verification reports `0` failures after publish status `uploaded`.
 - Latest-code live verifier expects `6c38ab3c4d8b889a3691435c696bf25972bb3675`, observes `None`, and matches `false`.
 - No-upload deployment connection checks for explicit FTPS and plain FTP report `ftps/connection_check_failed/0 uploads, ftp/connection_check_failed/0 uploads`; no files are uploaded.
 
@@ -35,6 +36,6 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after loc
 - Latest code is not proven live because live `/api/version` does not report the expected source SHA.
 - Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.
 - Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.
-- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.
+- MultiAgentMemory.com live companion site is verified.
 - Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.
-- The full objective still needs a final completion audit after live deploy, live dogfood, companion live publish, CI, and gated-capability evidence pass.
+- The full objective still needs a final completion audit after latest-code MemoryEndpoints.com live deploy, live dogfood, CI, and gated-capability evidence pass.

@@ -2,9 +2,9 @@
   "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
   "branch": "main",
   "conclusion": "failure",
-  "generatedAt": "2026-07-09T20:41:06Z",
-  "latestObservedHeadSha": "6c38ab3c4d8b889a3691435c696bf25972bb3675",
-  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048395743",
+  "generatedAt": "2026-07-09T20:58:32Z",
+  "latestObservedHeadSha": "2c4f9f0d9247913315fd17d5d0e0e8bc9c79c3cf",
+  "latestObservedHtmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048875993",
   "latestObservedJobAnnotationCount": 1,
   "latestObservedJobAnnotations": [
     {
@@ -21,6 +21,32 @@
   "latestObservedJobStepCount": 0,
   "observedRunCount": 5,
   "observedRuns": [
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-09T20:43:09Z",
+      "displayTitle": "Add repository boundary audit",
+      "headBranch": "main",
+      "headSha": "2c4f9f0d9247913315fd17d5d0e0e8bc9c79c3cf",
+      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29048875993",
+      "jobAnnotationCount": 1,
+      "jobAnnotations": [
+        {
+          "annotationLevel": "failure",
+          "endLine": 1,
+          "message": "The job was not started because your account is locked due to a billing issue.",
+          "path": ".github",
+          "startLine": 1,
+          "title": "",
+          "valuesRedacted": true
+        }
+      ],
+      "jobCount": 1,
+      "jobStepCount": 0,
+      "runId": 29048875993,
+      "runNumber": 35,
+      "status": "completed",
+      "updatedAt": "2026-07-09T20:43:13Z"
+    },
     {
       "conclusion": "failure",
       "createdAt": "2026-07-09T20:34:48Z",
@@ -124,32 +150,6 @@
       "runNumber": 31,
       "status": "completed",
       "updatedAt": "2026-07-09T20:05:57Z"
-    },
-    {
-      "conclusion": "failure",
-      "createdAt": "2026-07-09T19:59:48Z",
-      "displayTitle": "Prove workspace key storage boundaries",
-      "headBranch": "main",
-      "headSha": "bcbabb2c269e7ce52cbc46e28e4e4e8f40d38ee5",
-      "htmlUrl": "https://github.com/MichaelKappel/Multi-Agent-Memory/actions/runs/29046316188",
-      "jobAnnotationCount": 1,
-      "jobAnnotations": [
-        {
-          "annotationLevel": "failure",
-          "endLine": 1,
-          "message": "The job was not started because your account is locked due to a billing issue.",
-          "path": ".github",
-          "startLine": 1,
-          "title": "",
-          "valuesRedacted": true
-        }
-      ],
-      "jobCount": 1,
-      "jobStepCount": 0,
-      "runId": 29046316188,
-      "runNumber": 30,
-      "status": "completed",
-      "updatedAt": "2026-07-09T19:59:52Z"
     }
   ],
   "ok": false,

@@ -20,7 +20,9 @@
     "hasUser": true,
     "mentionsTarget": true,
     "sectionCount": 6,
+    "selectedSectionIndex": 4,
     "selectedSectionMentionsTarget": true,
+    "selectedSectionScore": 121,
     "valuesRedacted": true
   },
   "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",

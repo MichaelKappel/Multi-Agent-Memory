@@ -1,4 +1,5 @@
 import argparse
+import base64
 import ftplib
 import hashlib
 import io
@@ -6,12 +7,14 @@ import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SITE_ROOT = ROOT / "sites" / "multiagentmemory.com"
+DEFAULT_FILEZILLA_SITEMANAGER = Path.home() / "AppData" / "Roaming" / "FileZilla" / "sitemanager.xml"
 EXCLUDE_NAMES = {".gitkeep"}
 EXCLUDE_SUFFIXES = {".bak", ".tmp", ".log"}
 
@@ -50,12 +53,58 @@ def fields_from_lines(lines):
     return fields
 
 
+def decode_filezilla_password(node):
+    if node is None or node.text is None:
+        return ""
+    value = node.text.strip()
+    if (node.get("encoding") or "").lower() == "base64":
+        return base64.b64decode(value).decode("utf-8")
+    return value
+
+
+def load_filezilla_site(path, site_match):
+    site_match = (site_match or "").lower()
+    if not Path(path).exists():
+        return None, {"status": "filezilla_site_manager_missing", "valuesRedacted": True}
+    root = ET.parse(path).getroot()
+    for index, server in enumerate(root.findall(".//Server"), 1):
+        def text(name):
+            node = server.find(name)
+            return (node.text or "").strip() if node is not None and node.text is not None else ""
+
+        name = text("Name")
+        host = text("Host")
+        user = text("User")
+        remote_dir = text("RemoteDir")
+        searchable = " ".join([name, host, user, remote_dir]).lower()
+        if site_match and site_match not in searchable:
+            continue
+        fields = {
+            "ftp server": host,
+            "ftp username": user,
+            "password": decode_filezilla_password(server.find("Pass")),
+        }
+        if text("Port"):
+            fields["ftp & explicit ftps port"] = text("Port")
+        if remote_dir:
+            fields["remote_dir"] = remote_dir
+        return fields, {
+            "status": "filezilla_site_matched",
+            "siteIndex": index,
+            "siteNameFingerprint": fingerprint(name),
+            "siteMatch": site_match,
+            "hasRemoteDir": bool(remote_dir),
+            "valuesRedacted": True,
+        }
+    return None, {"status": "filezilla_site_not_found", "siteMatch": site_match, "valuesRedacted": True}
+
+
 def parse_handoff(path, target_domain):
     text, sections = parse_sections(path)
     target = target_domain.lower()
     target_labels = {target, target.replace(".", ""), target.split(".", 1)[0]}
     parsed_sections = []
-    for lines in sections:
+    for index, lines in enumerate(sections, 1):
         section_text = "\n".join(lines)
         lower = section_text.lower()
         score = 0
@@ -69,7 +118,7 @@ def parse_handoff(path, target_domain):
             score += 3
         if re.search(r"host|server", section_text, re.I):
             score += 3
-        parsed_sections.append({"fields": fields_from_lines(lines), "score": score, "text": section_text})
+        parsed_sections.append({"index": index, "fields": fields_from_lines(lines), "score": score, "text": section_text})
     best = max(parsed_sections, key=lambda item: item["score"]) if parsed_sections else {"fields": {}, "score": 0, "text": ""}
     joined = " ".join(text.split())
     return {
@@ -81,9 +130,125 @@ def parse_handoff(path, target_domain):
             "hasPassword": bool(re.search(r"pass|password", text, re.I)),
             "mentionsTarget": any(label and label in joined.lower() for label in target_labels),
             "selectedSectionMentionsTarget": any(label and label in best["text"].lower() for label in target_labels),
+            "selectedSectionIndex": best.get("index"),
+            "selectedSectionScore": best.get("score", 0),
             "sectionCount": len(parsed_sections),
             "valuesRedacted": True,
         },
+    }
+
+
+def parse_handoff_section(path, target_domain, section_index):
+    text, sections = parse_sections(path)
+    if section_index < 1 or section_index > len(sections):
+        return {"raw": {}, "signals": {"sectionCount": len(sections), "selectedSectionIndex": section_index, "valuesRedacted": True}}
+    selected = sections[section_index - 1]
+    target = target_domain.lower()
+    target_labels = {target, target.replace(".", ""), target.split(".", 1)[0]}
+    section_text = "\n".join(selected)
+    lower = section_text.lower()
+    score = 0
+    if any(label and label in lower for label in target_labels):
+        score += 100
+    if re.search(r"ftp|ftps|sftp", section_text, re.I):
+        score += 10
+    if re.search(r"pass|password", section_text, re.I):
+        score += 5
+    if re.search(r"user|username", section_text, re.I):
+        score += 3
+    if re.search(r"host|server", section_text, re.I):
+        score += 3
+    joined = " ".join(text.split())
+    return {
+        "raw": fields_from_lines(selected),
+        "signals": {
+            "hasFtp": bool(re.search(r"ftp|ftps|sftp", text, re.I)),
+            "hasHost": bool(re.search(r"host|server", text, re.I)),
+            "hasUser": bool(re.search(r"user|username", text, re.I)),
+            "hasPassword": bool(re.search(r"pass|password", text, re.I)),
+            "mentionsTarget": any(label and label in joined.lower() for label in target_labels),
+            "selectedSectionMentionsTarget": any(label and label in lower for label in target_labels),
+            "selectedSectionIndex": section_index,
+            "selectedSectionScore": score,
+            "sectionCount": len(sections),
+            "valuesRedacted": True,
+        },
+    }
+
+
+def redacted_section_probe(path, target_domain):
+    _text, sections = parse_sections(path)
+    results = []
+    for index, lines in enumerate(sections, 1):
+        parsed = parse_handoff_section(path, target_domain, index)
+        fields = parsed["raw"]
+        host = pick(fields, ["ftp server", "ftp host", "server", "host"])
+        user = pick(fields, ["ftp username", "ftp user", "username", "user"])
+        password = pick(fields, ["ftp password", "ftp pass", "password", "pass"])
+        port = pick_port(fields)
+        row = {
+            "section": index,
+            "fieldKeys": sorted(fields.keys()),
+            "mentionsTarget": parsed["signals"].get("selectedSectionMentionsTarget", False),
+            "sectionScore": parsed["signals"].get("selectedSectionScore", 0),
+            "hasHost": bool(host),
+            "hasUser": bool(user),
+            "hasPassword": bool(password),
+            "hasResolvedPort": bool(port),
+            "valuesRedacted": True,
+        }
+        for protocol in ("ftps", "ftp"):
+            if not (host and user and password):
+                row[protocol] = {"status": "not_attempted", "valuesRedacted": True}
+                continue
+            phase = "login"
+            try:
+                with connect_ftp(host, user, password, port, protocol) as ftp:
+                    pwd_fingerprint = None
+                    try:
+                        pwd_fingerprint = fingerprint(ftp.pwd())
+                    except Exception:
+                        pwd_fingerprint = None
+                    row[protocol] = {
+                        "status": "login_passed",
+                        "pwdFingerprint": pwd_fingerprint,
+                        "transportSecurity": transport_security(protocol),
+                        "uploadedCount": 0,
+                        "safeNoOp": True,
+                        "valuesRedacted": True,
+                    }
+            except Exception as exc:
+                row[protocol] = {
+                    "status": "login_failed",
+                    "errorType": exc.__class__.__name__,
+                    "failedPhase": phase,
+                    "transportSecurity": transport_security(protocol),
+                    "uploadedCount": 0,
+                    "safeNoOp": True,
+                    "valuesRedacted": True,
+                }
+        results.append(row)
+    target_sections = [item for item in results if item["mentionsTarget"]]
+    target_login_passed = any(
+        item.get(protocol, {}).get("status") == "login_passed"
+        for item in target_sections
+        for protocol in ("ftps", "ftp")
+    )
+    any_login_passed = any(
+        item.get(protocol, {}).get("status") == "login_passed"
+        for item in results
+        for protocol in ("ftps", "ftp")
+    )
+    return {
+        "schemaVersion": "static_site.ftp_section_probe.v1",
+        "targetDomain": target_domain,
+        "sectionCount": len(results),
+        "targetSectionLoginPassed": target_login_passed,
+        "anySectionLoginPassed": any_login_passed,
+        "safeNoOp": True,
+        "uploadedCount": 0,
+        "sections": results,
+        "valuesRedacted": True,
     }
 
 
@@ -215,16 +380,50 @@ def main(argv=None):
     parser.add_argument("--allow-discovered-live-upload", action="store_true")
     parser.add_argument("--protocol", choices=["ftps", "ftp"], default="ftps")
     parser.add_argument("--connection-check", action="store_true")
+    parser.add_argument("--section-index", type=int)
+    parser.add_argument("--probe-sections", action="store_true")
+    parser.add_argument("--filezilla-site-match")
+    parser.add_argument("--filezilla-path", default=str(DEFAULT_FILEZILLA_SITEMANAGER))
     args = parser.parse_args(argv)
 
     site_root = Path(args.site_root)
-    parsed = parse_handoff(args.handoff, args.target_domain)
+    if args.probe_sections:
+        report = redacted_section_probe(args.handoff, args.target_domain)
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0 if report["targetSectionLoginPassed"] else 1
+
+    parsed = parse_handoff_section(args.handoff, args.target_domain, args.section_index) if args.section_index else parse_handoff(args.handoff, args.target_domain)
+    filezilla_report = None
+    credential_source = "handoff"
+    if args.filezilla_site_match:
+        filezilla_fields, filezilla_report = load_filezilla_site(args.filezilla_path, args.filezilla_site_match)
+        if filezilla_fields:
+            parsed = {
+                "raw": filezilla_fields,
+                "signals": {
+                    "hasFtp": True,
+                    "hasHost": bool(filezilla_fields.get("ftp server")),
+                    "hasUser": bool(filezilla_fields.get("ftp username")),
+                    "hasPassword": bool(filezilla_fields.get("password")),
+                    "mentionsTarget": args.filezilla_site_match.lower() in args.target_domain.lower() or args.target_domain.lower() in args.filezilla_site_match.lower(),
+                    "selectedSectionMentionsTarget": args.filezilla_site_match.lower() in args.target_domain.lower() or args.target_domain.lower() in args.filezilla_site_match.lower(),
+                    "selectedSectionIndex": None,
+                    "selectedSectionScore": 100,
+                    "sectionCount": None,
+                    "valuesRedacted": True,
+                },
+            }
+            credential_source = "filezilla_site_manager"
     fields = parsed["raw"]
     host = pick(fields, ["ftp server", "ftp host", "server", "host"])
     user = pick(fields, ["ftp username", "ftp user", "username", "user"])
     password = pick(fields, ["ftp password", "ftp pass", "password", "pass"])
     port = pick_port(fields)
     remote_dir = args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root", "document root", "public root"])
+    if args.filezilla_site_match and not remote_dir:
+        remote_dir = "."
     discovered_dir = None
     discovery_report = None
     if args.discover_remote_dir and not remote_dir:
@@ -248,9 +447,12 @@ def main(argv=None):
         "protocol": args.protocol,
         "transportSecurity": transport_security(args.protocol),
         "remoteDirResolved": bool(remote_dir),
-        "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root", "document root", "public root"])) else ("discovery" if remote_dir else None),
+        "credentialSource": credential_source,
+        "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root", "document root", "public root"])) else ("filezilla_login_root" if (args.filezilla_site_match and remote_dir == ".") else ("discovery" if remote_dir else None)),
         "valuesRedacted": True,
     }
+    if filezilla_report:
+        report["filezilla"] = filezilla_report
     if remote_dir:
         report["remoteDirFingerprint"] = fingerprint(remote_dir)
     if discovery_report:

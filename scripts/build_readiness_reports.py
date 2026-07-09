@@ -257,10 +257,15 @@ def build_enterprise_gap_matrix():
     deploy = load_json("deploy-attempt-20260709.json") or {}
     deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
     deploy_connection_ftp = load_json("deploy-connection-check-ftp-latest.json") or {}
+    multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
     multiagentmemory_connection_ftps = load_json("multiagentmemory-deploy-connection-check-latest.json") or {}
     multiagentmemory_connection_ftp = load_json("multiagentmemory-deploy-connection-check-ftp-latest.json") or {}
+    multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     head_sha = git_head_sha()
+    multiagentmemory_verified = bool(
+        multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
+    )
     lines = [
         "# Enterprise MATM Gap Matrix",
         "",
@@ -275,6 +280,7 @@ def build_enterprise_gap_matrix():
         "| Protected MATM workflows | Implemented locally | `tests/test_app.py` covers free account, one-time key hash persistence, registration, memory submit/search, firewall redaction, review queue, current message, ack, receipts, audit log, idempotency, and safe no-op errors. |",
         "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, ack, receipts, and protected audit-log readback. |",
         "| Live core dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified current deployed surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified"),
+        "| MultiAgentMemory.com live companion site | %s | `docs/reports/multiagentmemory-deploy-live-attempt-latest.json` and `docs/reports/multiagentmemory-live-site-verification.json`. |" % ("Verified" if multiagentmemory_verified else "Not verified"),
         "| Prompt drafts | Local-only | `docs/prompts/*.md` is ignored and excluded from packaging. |",
         "",
         "## Remaining Gaps Before Full Goal Completion",
@@ -285,7 +291,10 @@ def build_enterprise_gap_matrix():
             connection_status(deploy_connection_ftps, deploy_connection_ftp),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
         ),
-        "| MultiAgentMemory.com live publish | Blocked by hosting login rejection before upload; no-upload connection checks show `%s`. | Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification. |" % connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
+        "| MultiAgentMemory.com live publish | %s | %s |" % (
+            "Verified through FileZilla-backed explicit FTPS publish and live static-site verification" if multiagentmemory_verified else "Blocked by hosting login rejection before upload; no-upload connection checks show `%s`" % connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
+            "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
+        ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
         "| Relational production database | Schema-ready and stdlib SQLite relational table-backed; MySQL/MariaDB runtime remains adapter-gated. | Approved adapter path or honest continued gated status. Do not claim MySQL/MariaDB is live. |",
         "| CI status after latest push | `%s` for current observed SHA `%s`; %s | Resolve GitHub account/Actions blocker, then require a passing CI run for the pushed SHA. |" % (
@@ -293,11 +302,11 @@ def build_enterprise_gap_matrix():
             (github_ci.get("latestObservedHeadSha") or head_sha or "unknown")[:12],
             github_blocker_text(github_ci),
         ),
-        "| Full enterprise completion audit | Partial because live deployment, latest live dogfood contract, companion live publish, CI, and MySQL adapter gates remain unresolved. | Requirement-by-requirement completion audit against the goal objective after live verification succeeds. |",
+        "| Full enterprise completion audit | Partial because latest MemoryEndpoints.com live deployment, latest live dogfood contract, CI, and MySQL adapter gates remain unresolved. | Requirement-by-requirement completion audit against the goal objective after live verification succeeds. |",
         "",
         "## Claim Boundary",
         "",
-        "The repository is improved, but the full objective is not complete. Current evidence supports local MATM hardening, local dogfood, and live core dogfood for the currently deployed surface; it does not support a full completion claim until latest-code deployment, latest-contract live dogfood, companion live publish, CI, and gated capabilities are resolved or explicitly waived.",
+        "The repository is improved, but the full objective is not complete. Current evidence supports local MATM hardening, local dogfood, live core dogfood for the currently deployed surface, and live MultiAgentMemory.com companion publishing; it does not support a full completion claim until latest-code MemoryEndpoints.com deployment, latest-contract live dogfood, CI, and gated capabilities are resolved or explicitly waived.",
     ]
     path = REPORTS / "enterprise-gap-matrix.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -310,7 +319,12 @@ def build_current_implementation_audit():
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
     deploy_connection_ftp = load_json("deploy-connection-check-ftp-latest.json") or {}
+    multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
+    multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
+    multiagentmemory_verified = bool(
+        multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
+    )
     lines = [
         "# Current Implementation Audit",
         "",
@@ -330,6 +344,7 @@ def build_current_implementation_audit():
         "- Package verification is ready and excludes `.uai`, prompt drafts, runtime state, databases, logs, caches, local reports folders, and credential handoff files.",
         "- Deploy dry-run matches package file count and source SHA and remains a no-upload safe no-op.",
         "- Live public route verifier reports `%s` failures and `%s` public leak hits for the currently deployed MemoryEndpoints.com surface." % (live_routes.get("failureCount"), leak_hit_count(live_routes)),
+        "- MultiAgentMemory.com live companion verification reports `%s` failures after publish status `%s`." % (multiagentmemory_live_site.get("failureCount"), multiagentmemory_live.get("status")),
         "- Latest-code live verifier expects `%s`, observes `%s`, and matches `%s`." % (
             live_latest_code.get("expectedSourceSha"),
             live_latest_code.get("observedSourceSha"),
@@ -353,9 +368,9 @@ def build_current_implementation_audit():
         "- Latest code is not proven live because live `/api/version` does not report the expected source SHA.",
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
-        "- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.",
+        "- MultiAgentMemory.com live companion site is verified." if multiagentmemory_verified else "- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.",
         "- Full production MySQL/MariaDB adapter remains gated by the no-third-party-runtime constraint.",
-        "- The full objective still needs a final completion audit after live deploy, live dogfood, companion live publish, CI, and gated-capability evidence pass.",
+        "- The full objective still needs a final completion audit after latest-code MemoryEndpoints.com live deploy, live dogfood, CI, and gated-capability evidence pass.",
     ]
     path = REPORTS / "current-implementation-audit.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -366,6 +381,7 @@ def build_final_verification_alias():
     dogfood = load_json("dogfood-memory-run.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
+    multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     lines = [
         "# Final Verification Report",
@@ -387,7 +403,8 @@ def build_final_verification_alias():
         ),
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
-        "- Full goal completion must not be claimed until live deployment, latest-contract live dogfood, companion live publish, CI, and gated-capability blockers are cleared.",
+        "- MultiAgentMemory.com live companion verification currently reports `%s` failures." % multiagentmemory_live_site.get("failureCount"),
+        "- Full goal completion must not be claimed until latest-code MemoryEndpoints.com live deployment, latest-contract live dogfood, CI, and gated-capability blockers are cleared.",
     ]
     path = REPORTS / "final-verification-report.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -421,6 +438,9 @@ def build_final_markdown(local_report):
     )
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
+    multiagentmemory_verified = bool(
+        multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
+    )
     completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and live_dogfood and not enterprise.get("blockers"))
     lines = [
         "# Final Readiness Report",
@@ -478,7 +498,10 @@ def build_final_markdown(local_report):
             connection_status(deploy_connection_ftps, deploy_connection_ftp),
             connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
         ),
-        "- MultiAgentMemory.com live site verification: %s failures; home page is not serving expected companion links yet." % (multiagentmemory_live_site.get("failureCount")),
+        "- MultiAgentMemory.com live site verification: %s failures; expected companion pages and discovery files are %s." % (
+            multiagentmemory_live_site.get("failureCount"),
+            "serving" if multiagentmemory_live_site.get("ok") else "not fully serving",
+        ),
         "- GitHub Actions CI snapshot: `%s`; observed run did not prove code health because `%s`." % (github_ci.get("conclusion"), github_blocker),
         "",
         "## Blocked Or Gated",
@@ -490,14 +513,19 @@ def build_final_markdown(local_report):
             connection_status(deploy_connection_ftps, deploy_connection_ftp),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
         ),
-        "- MultiAgentMemory.com live publish: blocked. The recorded static-site upload attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; connection checks `%s`." % (
-            multiagentmemory_live.get("failedPhase"),
-            multiagentmemory_live.get("errorType"),
-            multiagentmemory_live.get("uploadedCount"),
-            connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
-        ),
-        "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
     ]
+    if not multiagentmemory_verified:
+        lines.extend(
+            [
+                "- MultiAgentMemory.com live publish: blocked. The recorded static-site upload attempt failed at `%s` with `%s` before upload; uploaded count was `%s`; connection checks `%s`." % (
+                    multiagentmemory_live.get("failedPhase"),
+                    multiagentmemory_live.get("errorType"),
+                    multiagentmemory_live.get("uploadedCount"),
+                    connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
+                ),
+                "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
+            ]
+        )
     if not live_dogfood:
         lines.append(
             "- Live dogfooding: latest contract blocked until protected audit-log readback is deployed and verified."
@@ -511,7 +539,7 @@ def build_final_markdown(local_report):
             "",
             "## Claim Boundary",
             "",
-            "The repository has strong local MATM evidence, current live core dogfood evidence, public route evidence, package evidence, and secret-safety evidence. Latest-contract live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code live deployment, latest-contract live dogfood, GitHub Actions CI, and remaining gated items are verified.",
+            "The repository has strong local MATM evidence, current live core dogfood evidence, public route evidence, package evidence, live MultiAgentMemory.com companion evidence, and secret-safety evidence. Latest-contract live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code MemoryEndpoints.com live deployment, latest-contract live dogfood, GitHub Actions CI, and remaining gated items are verified.",
             "",
             "```json",
             json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "valuesRedacted": True}, indent=2, sort_keys=True),

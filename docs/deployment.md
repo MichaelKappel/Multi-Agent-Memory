@@ -80,22 +80,24 @@ MultiAgentMemory.com is a static documentation companion site, not the Python WS
 Dry-run the target-specific static deploy:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --dry-run --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
+python scripts\ftp_deploy_static_site.py --dry-run --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
 ```
 
 Verify login and the target directory without uploading:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --connection-check --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-connection-check-latest.json
+python scripts\ftp_deploy_static_site.py --connection-check --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-connection-check-latest.json
 ```
 
-Publish to the target login root only after the dry run resolves the intended target:
+The stale `E:\ftp_Deploy.txt` MultiAgentMemory section is not the working credential source. The current working publish path uses the local FileZilla site profile matched by `multiagentmemory`; reports record only redacted FileZilla profile metadata and never print host, user, or password values.
+
+Publish to the target login root only after the FileZilla-backed dry run and connection check pass:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --target-domain multiagentmemory.com --remote-dir . --protocol ftps --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
+python scripts\ftp_deploy_static_site.py --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
 ```
 
-Current status: live upload is blocked. The latest recorded no-upload connection checks selected the MultiAgentMemory target section and resolved host, user, password, and port, but login was rejected for both explicit FTPS and plain FTP before upload. Uploaded file count was zero.
+Current status: live upload succeeded through the FileZilla-backed explicit FTPS path. The latest recorded publish uploaded 12 static files and wrote a deployment marker. The live site verifier reports zero failures for the expected companion pages and discovery files.
 
 After a successful static upload, verify the public domain:
 

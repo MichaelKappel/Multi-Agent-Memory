@@ -15,7 +15,7 @@ Current operations state:
 - Local WSGI verification is the current reliable code-path proof.
 - Package generation excludes `.git`, `.github`, `.uai`, root `workspace.uai`, root `reports/`, local prompts, raw handoff buckets, runtime stores, databases, logs, caches, credential handoff files, and deployment packages.
 - Latest-code MemoryEndpoints.com live deployment remains gated by hosting login failure before upload.
-- MultiAgentMemory.com static source is present locally, but live publish remains gated by hosting login failure before upload.
+- MultiAgentMemory.com static companion docs are published through the FileZilla-backed explicit FTPS path, and live static-site verification passes.
 - GitHub Actions currently does not prove code health because the job fails before execution due to account or billing lock state.
 - Live public route verification proves the currently deployed public surface only. It does not prove that the newest local code is deployed.
 - Live authenticated dogfood must be rerun after the latest route/storage tranche is deployed.

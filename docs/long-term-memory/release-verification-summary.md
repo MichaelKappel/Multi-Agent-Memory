@@ -8,7 +8,7 @@ Current verified state:
 - Public route verification: 21 checked routes, 0 failures for the currently deployed public surface.
 - `/docs` and `/docs/`: both valid documentation pages.
 - Local readiness reports keep `completionClaimAllowed=false`; blockers include latest-code live deployment, live authenticated dogfood for the latest audit-log contract, and GitHub Actions CI.
-- MultiAgentMemory.com source is populated locally under `sites/multiagentmemory.com/`, but live publishing is blocked because no-upload connection checks for both explicit FTPS and plain FTP fail at login before upload; uploaded file count was zero. Live site verification currently fails because the home page lacks the expected companion links and companion routes return 404.
+- MultiAgentMemory.com source is populated locally under `sites/multiagentmemory.com/`, published through the FileZilla-backed explicit FTPS profile, and live-verified with zero route/discovery failures. The stale handoff section for this domain still fails login and is retained only as redacted diagnostic evidence.
 - Package check: excludes local stores, journals, logs, caches, `dist`, `.uai`, local prompts, raw Agent File Handoff bucket contents, and credential handoff files.
 - Storage: file backend and stdlib SQLite relational MATM tables are active locally; MySQL/MariaDB remains adapter-gated.
 - Secrets: package-eligible plus `.uai` secret scan passes with 0 hits; deploy reports are redacted.

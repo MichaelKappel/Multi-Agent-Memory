@@ -1,0 +1,185 @@
+{
+  "anySectionLoginPassed": true,
+  "safeNoOp": true,
+  "schemaVersion": "static_site.ftp_section_probe.v1",
+  "sectionCount": 6,
+  "sections": [
+    {
+      "fieldKeys": [
+        "ftp & explicit ftps port",
+        "ftp server",
+        "ftp username",
+        "password",
+        "user"
+      ],
+      "ftp": {
+        "errorType": "ConnectionResetError",
+        "failedPhase": "login",
+        "safeNoOp": true,
+        "status": "login_failed",
+        "transportSecurity": "plain_ftp",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "pwdFingerprint": "8a5edab282632443",
+        "safeNoOp": true,
+        "status": "login_passed",
+        "transportSecurity": "explicit_ftps",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "hasHost": true,
+      "hasPassword": true,
+      "hasResolvedPort": true,
+      "hasUser": true,
+      "mentionsTarget": false,
+      "section": 1,
+      "sectionScore": 21,
+      "valuesRedacted": true
+    },
+    {
+      "fieldKeys": [
+        "ftp & explicit ftps port",
+        "ftp server",
+        "ftp username",
+        "password",
+        "user"
+      ],
+      "ftp": {
+        "pwdFingerprint": "8a5edab282632443",
+        "safeNoOp": true,
+        "status": "login_passed",
+        "transportSecurity": "plain_ftp",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "pwdFingerprint": "8a5edab282632443",
+        "safeNoOp": true,
+        "status": "login_passed",
+        "transportSecurity": "explicit_ftps",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "hasHost": true,
+      "hasPassword": true,
+      "hasResolvedPort": true,
+      "hasUser": true,
+      "mentionsTarget": false,
+      "section": 2,
+      "sectionScore": 21,
+      "valuesRedacted": true
+    },
+    {
+      "fieldKeys": [
+        "ftp & explicit ftps port",
+        "ftp server",
+        "ftp username",
+        "password"
+      ],
+      "ftp": {
+        "errorType": "error_perm",
+        "failedPhase": "login",
+        "safeNoOp": true,
+        "status": "login_failed",
+        "transportSecurity": "plain_ftp",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "errorType": "error_perm",
+        "failedPhase": "login",
+        "safeNoOp": true,
+        "status": "login_failed",
+        "transportSecurity": "explicit_ftps",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "hasHost": true,
+      "hasPassword": true,
+      "hasResolvedPort": true,
+      "hasUser": true,
+      "mentionsTarget": false,
+      "section": 3,
+      "sectionScore": 21,
+      "valuesRedacted": true
+    },
+    {
+      "fieldKeys": [
+        "ftp & explicit ftps port",
+        "ftp server",
+        "ftp username",
+        "password"
+      ],
+      "ftp": {
+        "errorType": "error_perm",
+        "failedPhase": "login",
+        "safeNoOp": true,
+        "status": "login_failed",
+        "transportSecurity": "plain_ftp",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "errorType": "error_perm",
+        "failedPhase": "login",
+        "safeNoOp": true,
+        "status": "login_failed",
+        "transportSecurity": "explicit_ftps",
+        "uploadedCount": 0,
+        "valuesRedacted": true
+      },
+      "hasHost": true,
+      "hasPassword": true,
+      "hasResolvedPort": true,
+      "hasUser": true,
+      "mentionsTarget": true,
+      "section": 4,
+      "sectionScore": 121,
+      "valuesRedacted": true
+    },
+    {
+      "fieldKeys": [],
+      "ftp": {
+        "status": "not_attempted",
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "status": "not_attempted",
+        "valuesRedacted": true
+      },
+      "hasHost": false,
+      "hasPassword": false,
+      "hasResolvedPort": true,
+      "hasUser": false,
+      "mentionsTarget": false,
+      "section": 5,
+      "sectionScore": 0,
+      "valuesRedacted": true
+    },
+    {
+      "fieldKeys": [],
+      "ftp": {
+        "status": "not_attempted",
+        "valuesRedacted": true
+      },
+      "ftps": {
+        "status": "not_attempted",
+        "valuesRedacted": true
+      },
+      "hasHost": false,
+      "hasPassword": false,
+      "hasResolvedPort": true,
+      "hasUser": false,
+      "mentionsTarget": false,
+      "section": 6,
+      "sectionScore": 0,
+      "valuesRedacted": true
+    }
+  ],
+  "targetDomain": "multiagentmemory.com",
+  "targetSectionLoginPassed": false,
+  "uploadedCount": 0,
+  "valuesRedacted": true
+}

@@ -12,7 +12,7 @@ Next action for agents: use this only for continuation or closely related work; 
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, local credential files, or private runtime state.
 
 Suggested continuation:
-Continue hardening MemoryEndpoints.com as an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site. First load the full `.uai` startup read order, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Then run the current local verification gate, fix any failures, keep prompt drafts untracked, commit source-controlled changes, push to `MichaelKappel/Multi-Agent-Memory`, and report remaining live deployment, live dogfood, companion-site, CI, and MySQL adapter gates.
+Continue hardening MemoryEndpoints.com as an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site. First load the full `.uai` startup read order, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Then run the current local verification gate, fix any failures, keep prompt drafts untracked, commit source-controlled changes, push to `MichaelKappel/Multi-Agent-Memory`, and report remaining latest-code MemoryEndpoints.com deployment, latest-contract live dogfood, CI, and MySQL adapter gates.
 
 Acceptance checks:
 - `.uai` audit passes with the expanded typed suite and no forbidden duration/state filenames.
