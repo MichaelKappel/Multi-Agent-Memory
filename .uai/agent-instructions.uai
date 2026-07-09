@@ -1,0 +1,23 @@
+Agent instructions
+
+Purpose:
+- Current agent operating instructions for MemoryEndpoints.com work.
+
+Verification status: current-state memory; verify with `AGENTS.md`, `.uai/startup-packet.uai`, and current human instructions before relying on it.
+Memory scope: agent startup, source-control hygiene, verification behavior, and handoff conduct.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when agent operating rules change; keep detailed workflow evidence in durable reports.
+Source of truth: `AGENTS.md`, `.uai/memory-maintenance.uai`, `.uai/taboo.uai`, `.uai/test-plan.uai`, and current human instructions.
+Next action for agents: follow these instructions before editing, committing, deploying, or claiming completion.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, raw local reports with secrets, or private runtime stores.
+
+Instructions:
+- Load the full `.uai` read order before broad work.
+- Inspect active file-handoff buckets before unrelated implementation when file handoff is enabled.
+- Keep prompt drafts untracked.
+- Use `rg` for repo search when available.
+- Use small, evidence-backed edits and preserve existing patterns.
+- Run targeted checks after small changes and full local checks after route, storage, package, memory, or public-doc changes.
+- Record current state in typed `.uai` files without dates.
+- Use MATM update routes only when authenticated and public-safe.
+- Never use README files as active memory-package state.

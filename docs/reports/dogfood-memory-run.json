@@ -1,6 +1,6 @@
 {
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-09T18:00:52Z",
+  "generatedAt": "2026-07-09T18:34:41Z",
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
   "mode": "local_wsgi",
@@ -18,7 +18,7 @@
       "auditLogCount": 10,
       "auditTrailReadbackVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T18:00:51Z",
+      "generatedAt": "2026-07-09T18:34:40Z",
       "liveDogfoodVerified": false,
       "localDogfoodVerified": true,
       "mode": "local_wsgi",
@@ -174,7 +174,7 @@
       ],
       "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:2dda108b32055cbcd090df38c115441c25e78c5fce52c87396971d157b899224"
+      "workspaceIdHash": "sha256:d404548b26e9a73fa3f9f6d3822d85bfbc3ebb5261994ce1b57a5989562d95aa"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -321,5 +321,5 @@
   ],
   "uaiProgressUpdated": true,
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:2dda108b32055cbcd090df38c115441c25e78c5fce52c87396971d157b899224"
+  "workspaceIdHash": "sha256:d404548b26e9a73fa3f9f6d3822d85bfbc3ebb5261994ce1b57a5989562d95aa"
 }

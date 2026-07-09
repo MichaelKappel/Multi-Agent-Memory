@@ -1,0 +1,22 @@
+Coding Standards
+
+Purpose:
+- Public-safe current coding standards memory for the MemoryEndpoints.com runtime, tests, scripts, and documentation.
+
+Verification status: current-state memory; verify with tests, secret scan, and code review before relying on it.
+Memory scope: implementation constraints, code quality rules, and safe maintenance defaults.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file when coding standards change; submit durable public-safe standards summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: objective file, `AGENTS.md`, tests, scripts, and current implementation patterns.
+Next action for agents: prefer boring, deterministic, standard-library code and expand tests when changing shared behavior.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, raw traceback dumps, or local runtime paths in public routes.
+
+Current coding standards:
+- Runtime code must stay Python standard library unless the human explicitly approves another runtime dependency.
+- Keep route responses structured and public-safe.
+- Redact secret-like material before persistence, reports, receipts, audit logs, or public output.
+- Tests must not require network access, local secrets, or live deployment state.
+- Use deterministic integration tests for real route handlers whenever workflow behavior changes.
+- Keep storage backends honest: file backend is default, SQLite relational backend is optional and live locally, MySQL/MariaDB remains adapter-gated.
+- Keep generated reports public-safe and bounded by evidence.
+- Keep prompt drafts out of source control.

@@ -10,7 +10,7 @@ Current verified state:
 - Local readiness reports keep `completionClaimAllowed=false`; blockers include latest-code live deployment, live authenticated dogfood for the latest audit-log contract, and GitHub Actions CI.
 - MultiAgentMemory.com source is populated locally under `sites/multiagentmemory.com/`, but live publishing is blocked because the target FTPS login is rejected before upload; uploaded file count was zero. Live site verification currently fails because the home page lacks the expected companion links and companion routes return 404.
 - Package check: excludes local stores, journals, logs, caches, `dist`, `.uai`, local prompts, raw Agent File Handoff bucket contents, and credential handoff files.
-- Storage: file backend and stdlib SQLite backend are active locally; MySQL/MariaDB remains adapter-gated.
+- Storage: file backend and stdlib SQLite relational MATM tables are active locally; MySQL/MariaDB remains adapter-gated.
 - Secrets: package-eligible plus `.uai` secret scan passes with 0 hits; deploy reports are redacted.
 
 Durable evidence:

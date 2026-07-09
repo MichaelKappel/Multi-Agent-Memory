@@ -16,13 +16,18 @@ Active intake buckets:
 - agent-file-handoff/Improvement
 
 Processing rule:
-Before broad work, inspect active intake. Use files as source material, record what was used in .uai/intake-outcome-ledger.uai, then move or summarize processed material only after review.
+Before broad work, inspect active intake. Use safe relevant files as source material, record disposition and proof of use in `.uai/intake-outcome-ledger.uai`, preserve durable summaries or pointers, then remove or archive processed source-site copies before claiming intake complete.
+
+Bucket hygiene:
+- Keep active buckets free of README.md files, status files, count files, intake indexes, and bucket-local guidance.
+- Handoff instructions belong in this `.uai` file and the intake outcome ledger.
+- Raw active intake remains local-only and ignored by Git unless a human explicitly promotes a redacted artifact.
 
 Outcome values:
-- accepted
-- partially_accepted
-- deferred
-- rejected
+- incorporated
+- rejected-with-reason
+- preserved-to-durable-memory
+- kept-active-with-reason
 
 Completion gate:
-No final report may claim handoff complete unless active intake was inspected and the outcome ledger records the result.
+No final report may claim handoff complete unless active intake was inspected, every non-placeholder file has a disposition and processed outcome, proof of use is recorded, and active buckets are empty or placeholder-only unless a blocker or human-hold reason is recorded.

@@ -1,0 +1,20 @@
+Identity
+
+Purpose:
+- Public-safe identity memory for the product, companion site, repository, and trust boundary.
+
+Verification status: current-state memory; verify against repository routes and public documentation before relying on it.
+Memory scope: project identity, site roles, public claims, and product separation.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when product names, site roles, repository identity, or public trust boundaries change.
+Source of truth: `workspace.uai`, `AGENTS.md`, `memoryendpoints/site_data.py`, and `sites/multiagentmemory.com/`.
+Next action for agents: preserve product separation before writing code, docs, package reports, or public claims.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, customer data, or private deployment values.
+
+Current identity:
+- MemoryEndpoints.com is the real MATM endpoint product and API surface.
+- MultiAgentMemory.com is the public GitHub companion documentation site.
+- The GitHub repository is `MichaelKappel/Multi-Agent-Memory`.
+- UAIX is the standards and wizard guidance source; it is not the MemoryEndpoints.com update destination.
+- NeuralWikis is a learning source and prior-art context only. Do not copy its public wiki content, branding, or site claims.
+- The product must be described by verified local and live evidence, not aspiration.

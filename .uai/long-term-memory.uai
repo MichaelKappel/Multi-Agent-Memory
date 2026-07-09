@@ -31,7 +31,7 @@ Label: MultiAgentMemory.com documentation companion
 Routing summary: Use this folder for public GitHub-facing MATM documentation, memory boundary explanation, and AI-readable discovery files.
 Authority/source: repository documentation site
 Review status: current
-Review evidence: sites/multiagentmemory.com/README.md and sites/multiagentmemory.com/ai-manifest.json
+Review evidence: sites/multiagentmemory.com/index.html, sites/multiagentmemory.com/docs/how-it-works.html, and sites/multiagentmemory.com/ai-manifest.json
 Truth boundary: documentation only; not the hosted memory endpoint.
 
 Stable id: uaix-matm-memoryendpoints-setup

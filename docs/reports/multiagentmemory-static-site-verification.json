@@ -2,7 +2,7 @@
   "baseUrl": null,
   "failureCount": 0,
   "failures": [],
-  "fileCount": 10,
+  "fileCount": 9,
   "items": [
     {
       "exists": true,
@@ -19,12 +19,6 @@
     {
       "exists": true,
       "file": "docs/memory-boundary.html",
-      "missingStrings": [],
-      "secretHitCount": 0
-    },
-    {
-      "exists": true,
-      "file": "README.md",
       "missingStrings": [],
       "secretHitCount": 0
     },

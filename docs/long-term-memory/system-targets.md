@@ -20,7 +20,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 ## Database And MySQL Targets
 
-- Keep file storage and stdlib SQLite active now.
+- Keep file storage and stdlib SQLite relational MATM tables active now.
 - Keep MySQL/MariaDB as schema-ready but adapter-gated until a no-third-party-compatible runtime path or human-approved dependency exists.
 - Preserve canonical schema coverage for hierarchy memory, crawl/search metadata, current messages, receipts, review queue, idempotency, outbox, quota ledger, and audit.
 - Before any MySQL production claim, require migration dry runs, restore drills, least-privilege role review, TLS/encryption review, observability, and RPO/RTO documentation.

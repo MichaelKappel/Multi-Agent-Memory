@@ -42,7 +42,7 @@ Excluded from MemoryEndpoints.com:
 
 ## MemoryEndpoints Implementation Changes
 
-- Added `.uai/totem.uai` and normalized all active `.uai` files with purpose, last verified date, scope, update route, source of truth, next actions, and secret boundaries.
+- Added `.uai/totem.uai` and normalized all active `.uai` files with purpose, verification status, scope, update route, source of truth, next actions, and secret boundaries without embedding dates.
 - Added `memoryendpoints/security.py` for deterministic redaction and memory firewall evaluation.
 - Extended memory events with typed-memory fields, confidence, promotion state, review status, revision, body hash, and firewall summary.
 - Added review queue storage and protected routes:

@@ -1,5 +1,6 @@
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -42,6 +43,17 @@ def main(argv=None):
         return 0
 
     SQLiteStore(args.sqlite_path)._save(data)
+    with sqlite3.connect(args.sqlite_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+    report["relationalTablesPresent"] = sorted(
+        name for name in tables if name.startswith("matm_") and name != "matm_json_store"
+    )
+    report["legacyJsonBlobTablePresent"] = "matm_json_store" in tables
     report["status"] = "migrated"
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0

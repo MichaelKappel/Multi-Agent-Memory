@@ -86,14 +86,17 @@ def main(argv=None):
         evidence_item(
             "local_repository_organized",
             "pass_local",
-            ["README.md", "AGENTS.md", "docs/repository-structure.md", "sites/multiagentmemory.com/"],
+            ["workspace.uai", "AGENTS.md", "docs/repository-structure.md", "sites/multiagentmemory.com/index.html"],
         ),
         evidence_item(
             "uai_memory_complete_and_active",
             "pass_local",
             [
+                ".uai/memory-maintenance.uai",
                 ".uai/startup-packet.uai",
                 ".uai/totem.uai",
+                ".uai/taboo.uai",
+                ".uai/talisman.uai",
                 "scripts/audit_uai_memory.py",
                 "local .uai stays active always",
             ],
@@ -158,7 +161,7 @@ def main(argv=None):
             "mysql_runtime_adapter",
             "gated",
             ["docs/database-schema-canonical.sql", "docs/storage-backends.md"],
-            "Python stdlib has no MySQL client; SQLite/file storage is active while MySQL remains schema-ready/gated.",
+            "Python stdlib has no MySQL client; file storage and stdlib SQLite relational MATM tables are active while MySQL remains schema-ready/gated.",
         ),
     ]
 

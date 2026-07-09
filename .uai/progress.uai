@@ -12,7 +12,7 @@ Next action for agents: keep this file date-free, concise, and current; do not u
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or unredacted deployment handoff values.
 
 Current progress state:
-- MemoryEndpoints.com has a pure stdlib WSGI MATM app with public discovery routes, protected workspace memory, current-message coordination, notification acknowledgement, redacted receipts, memory firewall, review queue, idempotency, file storage, and optional stdlib SQLite storage.
+- MemoryEndpoints.com has a pure stdlib WSGI MATM app with public discovery routes, protected workspace memory, current-message coordination, notification acknowledgement, redacted receipts, memory firewall, review queue, idempotency, file storage, and optional stdlib SQLite relational storage.
 - MultiAgentMemory.com is plain static HTML/CSS companion documentation under `sites/multiagentmemory.com/`; it links to MemoryEndpoints.com and the GitHub repository and explains how the system works.
 - Local verification passes through unit and integration tests, WSGI public-route verification, static companion-site verification, `.uai` audit, package verification, secret scan, enterprise readiness audit checks, and whitespace diff check.
 - Local `.uai` memory is required to remain active always. It is hot startup memory, not a dated changelog, and this file must stay date-free.

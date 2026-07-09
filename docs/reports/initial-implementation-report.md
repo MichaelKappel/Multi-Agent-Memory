@@ -154,7 +154,7 @@ Primary files:
 - `.uai/startup-packet.uai`
 - `.uai/constraints.uai`
 - `.uai/file-handoff.uai`
-- `.uai/short-term-memory.uai`
+- Superseded `.uai` checkpoint files were removed after the updated UAIX direction made generic active-memory files forbidden.
 - `.uai/long-term-pointer-ledger.uai`
 - `.uai/progress.uai`
 - `.uai/intake-outcome-ledger.uai`

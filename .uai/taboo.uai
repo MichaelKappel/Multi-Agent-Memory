@@ -1,0 +1,21 @@
+Taboo
+
+Purpose:
+- Hard negative boundaries for agents working in MemoryEndpoints.com.
+
+Verification status: current-state memory; verify against human instructions and repository policy before relying on it.
+Memory scope: forbidden actions, forbidden claims, and hard safety boundaries.
+Public-safe status: safe for source control; contains no credential values.
+Update route: change this file only when a human names this exact artifact and exact operation.
+Source of truth: current human instructions, `.uai/memory-maintenance.uai`, `AGENTS.md`, `SECURITY.md`, and public claim evidence.
+Next action for agents: no-op and report when a request conflicts with these boundaries.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private customer data, or hidden deployment values.
+
+Taboo rules:
+- Do not commit secrets, prompt drafts, raw local handoff payloads, runtime stores, databases, logs, package zips, or deployment credential files.
+- Do not treat README files as active `.uai` memory, handoff-bucket guidance, or intake completion proof.
+- Do not create catch-all active memory files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, or equivalent.
+- Do not put calendar dates, timestamps, dated headings, or date-bearing verification fields in active `.uai`.
+- Do not claim full completion, live deployment of latest code, live MultiAgentMemory.com readiness, live dogfood, CI pass, or MySQL runtime support without current evidence.
+- Do not copy NeuralWikis public wiki content, branding, or public claims.
+- Do not modify Totem, Taboo, or Talisman unless the human explicitly names the exact artifact and operation.

@@ -13,17 +13,44 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Bootstrap:
 - This file is the cold-start index for the local `.uai` memory folder.
-- After loading this file, read `.uai/totem.uai` first so the non-retirement invariant is active before any hosted MATM assumption.
+- After loading this file, read `.uai/memory-maintenance.uai` first, then identity, world context, and the Totem/Taboo/Talisman anchors before any hosted MATM assumption.
 - Every active `.uai` memory file must be represented in the read order or the memory setup is incomplete.
+- Do not use README files, bucket-local guidance, status files, or index files as memory-package substitutes.
 
 Read order:
-1. .uai/totem.uai
-2. .uai/constraints.uai
-3. .uai/file-handoff.uai
-4. .uai/intake-outcome-ledger.uai
-5. .uai/long-term-memory.uai
-6. .uai/long-term-pointer-ledger.uai
-7. .uai/progress.uai
+1. .uai/memory-maintenance.uai
+2. .uai/identity.uai
+3. .uai/world-context.uai
+4. .uai/totem.uai
+5. .uai/taboo.uai
+6. .uai/talisman.uai
+7. .uai/startup-packet.uai
+8. .uai/system-profile.uai
+9. .uai/receiver-brief.uai
+10. .uai/index.uai
+11. .uai/context.uai
+12. .uai/constraints.uai
+13. .uai/overview.uai
+14. .uai/stack.uai
+15. .uai/architecture.uai
+16. .uai/coding-standards.uai
+17. .uai/operations.uai
+18. .uai/test-plan.uai
+19. .uai/decisions.uai
+20. .uai/risk-register.uai
+21. .uai/owners.uai
+22. .uai/agent-instructions.uai
+23. .uai/style.uai
+24. .uai/memory.uai
+25. .uai/file-handoff.uai
+26. .uai/intake-outcome-ledger.uai
+27. .uai/handoff-brief.uai
+28. .uai/long-term-memory.uai
+29. .uai/long-term-pointer-ledger.uai
+30. .uai/next-actions.uai
+31. .uai/next-recursive-prompt.uai
+32. .uai/open-questions.uai
+33. .uai/progress.uai
 
 Target:
 Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.

@@ -543,6 +543,26 @@ class FileStore(object):
 
 
 class SQLiteStore(FileStore):
+    DELETE_ORDER = [
+        "matm_search_documents",
+        "matm_crawl_sources",
+        "matm_memory_tags",
+        "matm_review_queue",
+        "matm_receipts",
+        "matm_notifications",
+        "matm_messages",
+        "matm_outbox_events",
+        "matm_storage_ledger",
+        "matm_audit_log",
+        "matm_idempotency",
+        "matm_agents",
+        "matm_api_keys",
+        "matm_memory_records",
+        "matm_projects",
+        "matm_workspaces",
+        "matm_clients",
+    ]
+
     def __init__(self, path=None):
         self.path = path or os.environ.get("MEMORYENDPOINTS_SQLITE_PATH")
         if not self.path:
@@ -559,29 +579,759 @@ class SQLiteStore(FileStore):
         if not parent.exists():
             parent.mkdir(parents=True)
         connection = sqlite3.connect(str(self.path), timeout=20)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA journal_mode=TRUNCATE")
         connection.execute("PRAGMA busy_timeout=20000")
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS matm_json_store (store_key TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
-        )
+        self._ensure_schema(connection)
         return connection
+
+    def _ensure_schema(self, connection):
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS matm_clients (
+              client_id TEXT PRIMARY KEY,
+              label TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS matm_workspaces (
+              workspace_id TEXT PRIMARY KEY,
+              client_id TEXT,
+              label TEXT NOT NULL,
+              plan TEXT NOT NULL,
+              storage_limit_bytes INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              FOREIGN KEY (client_id) REFERENCES matm_clients (client_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_workspaces_client ON matm_workspaces (client_id);
+
+            CREATE TABLE IF NOT EXISTS matm_projects (
+              project_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              label TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_projects_workspace ON matm_projects (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_api_keys (
+              key_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              token_hash TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_api_keys_workspace ON matm_api_keys (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_agents (
+              agent_record_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              status TEXT NOT NULL,
+              registered_at TEXT NOT NULL,
+              last_seen_at TEXT,
+              UNIQUE (workspace_id, agent_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agents_workspace ON matm_agents (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_memory_records (
+              memory_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              actor_agent_id TEXT,
+              scope_type TEXT NOT NULL,
+              memory_type TEXT NOT NULL,
+              subject TEXT,
+              title TEXT NOT NULL,
+              public_safe_summary TEXT NOT NULL,
+              source_uri TEXT,
+              confidence REAL NOT NULL,
+              promotion_state TEXT NOT NULL,
+              review_status TEXT NOT NULL,
+              body_hash TEXT NOT NULL,
+              revision INTEGER NOT NULL,
+              firewall_json TEXT NOT NULL,
+              status TEXT NOT NULL,
+              raw_private_payload_stored INTEGER NOT NULL DEFAULT 0,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_memory_workspace_status ON matm_memory_records (workspace_id, status, promotion_state);
+
+            CREATE TABLE IF NOT EXISTS matm_memory_tags (
+              memory_id TEXT NOT NULL,
+              tag TEXT NOT NULL,
+              PRIMARY KEY (memory_id, tag),
+              FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_memory_tags_tag ON matm_memory_tags (tag);
+
+            CREATE TABLE IF NOT EXISTS matm_crawl_sources (
+              source_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT,
+              source_uri TEXT NOT NULL,
+              source_type TEXT NOT NULL,
+              crawl_policy TEXT NOT NULL,
+              status TEXT NOT NULL,
+              last_crawled_at TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_crawl_workspace ON matm_crawl_sources (workspace_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_search_documents (
+              search_document_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              memory_id TEXT,
+              source_id TEXT,
+              route_or_path TEXT,
+              title TEXT NOT NULL,
+              searchable_text TEXT NOT NULL,
+              visibility TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id),
+              FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_visibility ON matm_search_documents (workspace_id, visibility);
+
+            CREATE TABLE IF NOT EXISTS matm_review_queue (
+              review_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              memory_id TEXT,
+              proposed_by_agent_id TEXT,
+              review_type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              public_safe_summary TEXT NOT NULL,
+              firewall_decision TEXT,
+              risk_score INTEGER,
+              detected_threats_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              decided_at TEXT,
+              reviewer_agent_id TEXT,
+              reviewer_note_hash TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_review_workspace_status ON matm_review_queue (workspace_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_messages (
+              message_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              sender_agent_id TEXT NOT NULL,
+              target_agent_id TEXT,
+              safe_summary TEXT NOT NULL,
+              response_required INTEGER NOT NULL,
+              raw_message_body_stored INTEGER NOT NULL DEFAULT 0,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_messages_target ON matm_messages (workspace_id, target_agent_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_notifications (
+              notification_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              target_agent_id TEXT,
+              status TEXT NOT NULL,
+              response_disposition TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              read_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (message_id) REFERENCES matm_messages (message_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_notifications_target_status ON matm_notifications (workspace_id, target_agent_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_receipts (
+              receipt_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              notification_id TEXT NOT NULL,
+              consumer_agent_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (notification_id) REFERENCES matm_notifications (notification_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_receipts_consumer ON matm_receipts (workspace_id, consumer_agent_id);
+
+            CREATE TABLE IF NOT EXISTS matm_idempotency (
+              record_key TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              operation TEXT NOT NULL,
+              body_hash TEXT NOT NULL,
+              response_json TEXT NOT NULL,
+              http_status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              idempotency_key_exposed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_idempotency_workspace ON matm_idempotency (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_outbox_events (
+              outbox_event_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              event_type TEXT NOT NULL,
+              aggregate_type TEXT NOT NULL,
+              aggregate_id TEXT NOT NULL,
+              payload_hash TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_outbox_status_created ON matm_outbox_events (status, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_storage_ledger (
+              ledger_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              object_type TEXT NOT NULL,
+              object_id TEXT NOT NULL,
+              bytes_delta INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_storage_workspace_created ON matm_storage_ledger (workspace_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_audit_log (
+              audit_id TEXT PRIMARY KEY,
+              workspace_id TEXT,
+              action TEXT NOT NULL,
+              actor TEXT,
+              target TEXT,
+              details_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_audit_workspace_created ON matm_audit_log (workspace_id, created_at);
+            """
+        )
+        connection.commit()
+
+    def _json_load(self, value, fallback):
+        if value in (None, ""):
+            return fallback
+        try:
+            return json.loads(value)
+        except ValueError:
+            return fallback
+
+    def _json_dump(self, value):
+        return json.dumps(value or {}, sort_keys=True, separators=(",", ":"))
+
+    def _bool(self, value):
+        return bool(value)
+
+    def _int_bool(self, value):
+        return 1 if bool(value) else 0
+
+    def _agent_record_id(self, workspace_id, agent_id):
+        return "agent-" + _hash("%s:%s" % (workspace_id, agent_id))[:20]
+
+    def _legacy_json_state(self, connection):
+        exists = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'matm_json_store'"
+        ).fetchone()
+        if not exists:
+            return None
+        row = connection.execute("SELECT payload FROM matm_json_store WHERE store_key = ?", ("main",)).fetchone()
+        if not row:
+            return None
+        try:
+            return _normalize_store(json.loads(row["payload"]))
+        except ValueError:
+            return None
+
+    def _has_relational_state(self, connection):
+        for table in ("matm_workspaces", "matm_memory_records", "matm_messages", "matm_audit_log", "matm_idempotency"):
+            row = connection.execute("SELECT COUNT(*) AS count FROM %s" % table).fetchone()
+            if row and row["count"]:
+                return True
+        return False
 
     def _load(self):
         with _LOCK:
             with self._connect() as connection:
-                row = connection.execute(
-                    "SELECT payload FROM matm_json_store WHERE store_key = ?",
-                    ("main",),
-                ).fetchone()
-                if not row:
-                    return _blank_store()
-                return _normalize_store(json.loads(row[0]))
+                if not self._has_relational_state(connection):
+                    legacy = self._legacy_json_state(connection)
+                    if legacy is not None:
+                        return legacy
+                data = _blank_store()
+                data["schemaVersion"] = "memoryendpoints.sqlite_relational_store.v1"
+
+                for row in connection.execute("SELECT * FROM matm_workspaces ORDER BY created_at, workspace_id"):
+                    data["workspaces"][row["workspace_id"]] = {
+                        "workspaceId": row["workspace_id"],
+                        "label": row["label"],
+                        "plan": row["plan"],
+                        "storageLimitBytes": row["storage_limit_bytes"],
+                        "createdAt": row["created_at"],
+                        "status": row["status"],
+                    }
+                    if row["updated_at"]:
+                        data["workspaces"][row["workspace_id"]]["updatedAt"] = row["updated_at"]
+
+                for row in connection.execute("SELECT * FROM matm_api_keys ORDER BY created_at, key_id"):
+                    data["apiKeys"][row["key_id"]] = {
+                        "keyId": row["key_id"],
+                        "workspaceId": row["workspace_id"],
+                        "tokenHash": row["token_hash"],
+                        "createdAt": row["created_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agents ORDER BY registered_at, agent_id"):
+                    key = "%s:%s" % (row["workspace_id"], row["agent_id"])
+                    data["agents"][key] = {
+                        "workspaceId": row["workspace_id"],
+                        "agentId": row["agent_id"],
+                        "displayName": row["display_name"],
+                        "registeredAt": row["registered_at"],
+                        "status": row["status"],
+                    }
+
+                tag_rows = {}
+                for row in connection.execute("SELECT memory_id, tag FROM matm_memory_tags ORDER BY tag"):
+                    tag_rows.setdefault(row["memory_id"], []).append(row["tag"])
+                for row in connection.execute("SELECT * FROM matm_memory_records ORDER BY created_at, memory_id"):
+                    event = {
+                        "eventId": row["memory_id"],
+                        "workspaceId": row["workspace_id"],
+                        "actorAgentId": row["actor_agent_id"],
+                        "scope": row["scope_type"],
+                        "memoryType": row["memory_type"],
+                        "subject": row["subject"],
+                        "title": row["title"],
+                        "summary": row["public_safe_summary"],
+                        "tags": tag_rows.get(row["memory_id"], []),
+                        "source": row["source_uri"],
+                        "confidence": row["confidence"],
+                        "promotionState": row["promotion_state"],
+                        "reviewStatus": row["review_status"],
+                        "bodyHash": row["body_hash"],
+                        "revision": row["revision"],
+                        "firewall": self._json_load(row["firewall_json"], {}),
+                        "createdAt": row["created_at"],
+                        "status": row["status"],
+                        "rawPrivatePayloadStored": self._bool(row["raw_private_payload_stored"]),
+                        "valuesRedacted": self._bool(row["values_redacted"]),
+                    }
+                    if row["updated_at"]:
+                        event["updatedAt"] = row["updated_at"]
+                    data["memoryEvents"].append(event)
+
+                for row in connection.execute("SELECT * FROM matm_review_queue ORDER BY created_at, review_id"):
+                    data["reviewQueue"].append(
+                        {
+                            "reviewId": row["review_id"],
+                            "workspaceId": row["workspace_id"],
+                            "memoryEventId": row["memory_id"],
+                            "proposedByAgentId": row["proposed_by_agent_id"],
+                            "reviewType": row["review_type"],
+                            "status": row["status"],
+                            "publicSafeSummary": row["public_safe_summary"],
+                            "firewallDecision": row["firewall_decision"],
+                            "riskScore": row["risk_score"],
+                            "detectedThreats": self._json_load(row["detected_threats_json"], []),
+                            "createdAt": row["created_at"],
+                            "decidedAt": row["decided_at"],
+                            "reviewerAgentId": row["reviewer_agent_id"],
+                            "reviewerNoteHash": row["reviewer_note_hash"],
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_messages ORDER BY created_at, message_id"):
+                    data["messages"].append(
+                        {
+                            "messageId": row["message_id"],
+                            "workspaceId": row["workspace_id"],
+                            "senderAgentId": row["sender_agent_id"],
+                            "targetAgentId": row["target_agent_id"],
+                            "safeSummary": row["safe_summary"],
+                            "responseRequired": self._bool(row["response_required"]),
+                            "createdAt": row["created_at"],
+                            "rawMessageBodyStored": self._bool(row["raw_message_body_stored"]),
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_notifications ORDER BY created_at, notification_id"):
+                    data["notifications"].append(
+                        {
+                            "notificationId": row["notification_id"],
+                            "workspaceId": row["workspace_id"],
+                            "messageId": row["message_id"],
+                            "targetAgentId": row["target_agent_id"],
+                            "status": row["status"],
+                            "responseDisposition": row["response_disposition"],
+                            "createdAt": row["created_at"],
+                            "readAt": row["read_at"],
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_receipts ORDER BY created_at, receipt_id"):
+                    data["receipts"].append(
+                        {
+                            "receiptId": row["receipt_id"],
+                            "workspaceId": row["workspace_id"],
+                            "notificationId": row["notification_id"],
+                            "consumerAgentId": row["consumer_agent_id"],
+                            "status": row["status"],
+                            "createdAt": row["created_at"],
+                            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_outbox_events ORDER BY created_at, outbox_event_id"):
+                    data["outboxEvents"].append(
+                        {
+                            "outboxEventId": row["outbox_event_id"],
+                            "workspaceId": row["workspace_id"],
+                            "eventType": row["event_type"],
+                            "aggregateType": row["aggregate_type"],
+                            "aggregateId": row["aggregate_id"],
+                            "payloadHash": row["payload_hash"],
+                            "status": row["status"],
+                            "createdAt": row["created_at"],
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_storage_ledger ORDER BY created_at, ledger_id"):
+                    data["storageLedger"].append(
+                        {
+                            "ledgerId": row["ledger_id"],
+                            "workspaceId": row["workspace_id"],
+                            "objectType": row["object_type"],
+                            "objectId": row["object_id"],
+                            "bytesDelta": row["bytes_delta"],
+                            "createdAt": row["created_at"],
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_audit_log ORDER BY created_at, audit_id"):
+                    data["auditLog"].append(
+                        {
+                            "auditId": row["audit_id"],
+                            "workspaceId": row["workspace_id"],
+                            "action": row["action"],
+                            "actor": row["actor"],
+                            "target": row["target"],
+                            "details": self._json_load(row["details_json"], {}),
+                            "createdAt": row["created_at"],
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+                            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_idempotency ORDER BY created_at, record_key"):
+                    data["idempotency"][row["record_key"]] = {
+                        "workspaceId": row["workspace_id"],
+                        "operation": row["operation"],
+                        "bodyHash": row["body_hash"],
+                        "response": self._json_load(row["response_json"], {}),
+                        "httpStatus": row["http_status"],
+                        "createdAt": row["created_at"],
+                        "idempotencyKeyExposed": self._bool(row["idempotency_key_exposed"]),
+                    }
+                return _normalize_store(data)
 
     def _save(self, data):
         with _LOCK:
-            payload = json.dumps(data, indent=2, sort_keys=True)
             with self._connect() as connection:
-                connection.execute(
-                    "INSERT OR REPLACE INTO matm_json_store (store_key, payload, updated_at) VALUES (?, ?, ?)",
-                    ("main", payload, utc_now()),
-                )
+                with connection:
+                    for table in self.DELETE_ORDER:
+                        connection.execute("DELETE FROM %s" % table)
+
+                    for workspace in data.get("workspaces", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_workspaces (
+                              workspace_id, client_id, label, plan, storage_limit_bytes, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                workspace.get("workspaceId"),
+                                workspace.get("clientId"),
+                                workspace.get("label") or "Free Agent Workspace",
+                                workspace.get("plan") or "free_agent",
+                                int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES),
+                                workspace.get("status") or "active",
+                                workspace.get("createdAt") or utc_now(),
+                                workspace.get("updatedAt"),
+                            ),
+                        )
+
+                    for key_id, api_key in data.get("apiKeys", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_api_keys (
+                              key_id, workspace_id, token_hash, created_at, last_used_at, revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                api_key.get("keyId") or key_id,
+                                api_key.get("workspaceId"),
+                                api_key.get("tokenHash"),
+                                api_key.get("createdAt") or utc_now(),
+                                api_key.get("lastUsedAt"),
+                                api_key.get("revokedAt"),
+                            ),
+                        )
+
+                    for agent in data.get("agents", {}).values():
+                        workspace_id = agent.get("workspaceId")
+                        agent_id = agent.get("agentId")
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agents (
+                              agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                agent.get("agentRecordId") or self._agent_record_id(workspace_id, agent_id),
+                                workspace_id,
+                                agent_id,
+                                agent.get("displayName") or agent_id,
+                                agent.get("status") or "active",
+                                agent.get("registeredAt") or utc_now(),
+                                agent.get("lastSeenAt"),
+                            ),
+                        )
+
+                    for event in data.get("memoryEvents", []):
+                        memory_id = event.get("eventId")
+                        connection.execute(
+                            """
+                            INSERT INTO matm_memory_records (
+                              memory_id, workspace_id, actor_agent_id, scope_type, memory_type, subject, title,
+                              public_safe_summary, source_uri, confidence, promotion_state, review_status,
+                              body_hash, revision, firewall_json, status, raw_private_payload_stored,
+                              values_redacted, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                memory_id,
+                                event.get("workspaceId"),
+                                event.get("actorAgentId"),
+                                event.get("scope") or "workspace",
+                                event.get("memoryType") or "note",
+                                event.get("subject"),
+                                event.get("title") or "Untitled memory",
+                                event.get("summary") or "",
+                                event.get("source") or "api",
+                                float(event.get("confidence") or 0),
+                                event.get("promotionState") or "review_pending",
+                                event.get("reviewStatus") or "pending",
+                                event.get("bodyHash") or _canonical_hash(event),
+                                int(event.get("revision") or 1),
+                                self._json_dump(event.get("firewall") or {}),
+                                event.get("status") or "active",
+                                self._int_bool(event.get("rawPrivatePayloadStored")),
+                                self._int_bool(event.get("valuesRedacted", True)),
+                                event.get("createdAt") or utc_now(),
+                                event.get("updatedAt"),
+                            ),
+                        )
+                        for tag in event.get("tags") or []:
+                            connection.execute(
+                                "INSERT OR IGNORE INTO matm_memory_tags (memory_id, tag) VALUES (?, ?)",
+                                (memory_id, redact_text(tag)),
+                            )
+
+                    for review in data.get("reviewQueue", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_review_queue (
+                              review_id, workspace_id, memory_id, proposed_by_agent_id, review_type, status,
+                              public_safe_summary, firewall_decision, risk_score, detected_threats_json,
+                              created_at, decided_at, reviewer_agent_id, reviewer_note_hash, values_redacted
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                review.get("reviewId"),
+                                review.get("workspaceId"),
+                                review.get("memoryEventId"),
+                                review.get("proposedByAgentId"),
+                                review.get("reviewType") or "memory_promotion",
+                                review.get("status") or "pending",
+                                review.get("publicSafeSummary") or "",
+                                review.get("firewallDecision"),
+                                review.get("riskScore"),
+                                json.dumps(review.get("detectedThreats") or [], sort_keys=True, separators=(",", ":")),
+                                review.get("createdAt") or utc_now(),
+                                review.get("decidedAt"),
+                                review.get("reviewerAgentId"),
+                                review.get("reviewerNoteHash"),
+                                self._int_bool(review.get("valuesRedacted", True)),
+                            ),
+                        )
+
+                    for message in data.get("messages", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_messages (
+                              message_id, workspace_id, sender_agent_id, target_agent_id, safe_summary,
+                              response_required, raw_message_body_stored, values_redacted, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                message.get("messageId"),
+                                message.get("workspaceId"),
+                                message.get("senderAgentId"),
+                                message.get("targetAgentId"),
+                                message.get("safeSummary") or "",
+                                self._int_bool(message.get("responseRequired")),
+                                self._int_bool(message.get("rawMessageBodyStored")),
+                                self._int_bool(message.get("valuesRedacted", True)),
+                                message.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for note in data.get("notifications", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_notifications (
+                              notification_id, workspace_id, message_id, target_agent_id, status,
+                              response_disposition, created_at, read_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                note.get("notificationId"),
+                                note.get("workspaceId"),
+                                note.get("messageId"),
+                                note.get("targetAgentId"),
+                                note.get("status") or "unread",
+                                note.get("responseDisposition") or "viewed_acknowledgement",
+                                note.get("createdAt") or utc_now(),
+                                note.get("readAt"),
+                            ),
+                        )
+
+                    for receipt in data.get("receipts", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_receipts (
+                              receipt_id, workspace_id, notification_id, consumer_agent_id, status,
+                              raw_payload_exposed, values_redacted, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                receipt.get("receiptId"),
+                                receipt.get("workspaceId"),
+                                receipt.get("notificationId"),
+                                receipt.get("consumerAgentId"),
+                                receipt.get("status") or "read",
+                                self._int_bool(receipt.get("rawPayloadExposed")),
+                                self._int_bool(receipt.get("valuesRedacted", True)),
+                                receipt.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for item in data.get("outboxEvents", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_outbox_events (
+                              outbox_event_id, workspace_id, event_type, aggregate_type, aggregate_id,
+                              payload_hash, status, created_at, values_redacted
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                item.get("outboxEventId"),
+                                item.get("workspaceId"),
+                                item.get("eventType"),
+                                item.get("aggregateType"),
+                                item.get("aggregateId"),
+                                item.get("payloadHash") or _canonical_hash(item),
+                                item.get("status") or "pending",
+                                item.get("createdAt") or utc_now(),
+                                self._int_bool(item.get("valuesRedacted", True)),
+                            ),
+                        )
+
+                    for item in data.get("storageLedger", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_storage_ledger (
+                              ledger_id, workspace_id, object_type, object_id, bytes_delta, created_at, values_redacted
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                item.get("ledgerId"),
+                                item.get("workspaceId"),
+                                item.get("objectType"),
+                                item.get("objectId"),
+                                int(item.get("bytesDelta") or 0),
+                                item.get("createdAt") or utc_now(),
+                                self._int_bool(item.get("valuesRedacted", True)),
+                            ),
+                        )
+
+                    for item in data.get("auditLog", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_audit_log (
+                              audit_id, workspace_id, action, actor, target, details_json, created_at,
+                              values_redacted, raw_credential_exposed, raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                item.get("auditId"),
+                                item.get("workspaceId"),
+                                item.get("action"),
+                                item.get("actor"),
+                                item.get("target"),
+                                self._json_dump(item.get("details") or {}),
+                                item.get("createdAt") or utc_now(),
+                                self._int_bool(item.get("valuesRedacted", True)),
+                                self._int_bool(item.get("rawCredentialExposed")),
+                                self._int_bool(item.get("rawPayloadExposed")),
+                            ),
+                        )
+
+                    for record_key, item in data.get("idempotency", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_idempotency (
+                              record_key, workspace_id, operation, body_hash, response_json, http_status,
+                              created_at, idempotency_key_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record_key,
+                                item.get("workspaceId"),
+                                item.get("operation"),
+                                item.get("bodyHash"),
+                                self._json_dump(item.get("response") or {}),
+                                item.get("httpStatus") or "200 OK",
+                                item.get("createdAt") or utc_now(),
+                                self._int_bool(item.get("idempotencyKeyExposed")),
+                            ),
+                        )
+                    connection.execute("DROP TABLE IF EXISTS matm_json_store")

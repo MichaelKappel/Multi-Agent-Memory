@@ -1,0 +1,22 @@
+Receiver brief
+
+Purpose:
+- Startup brief for the next human, Codex session, or AI agent entering this repository.
+
+Verification status: current-state memory; verify with `workspace.uai`, `AGENTS.md`, and `.uai/startup-packet.uai` before relying on it.
+Memory scope: first-load behavior, target resolution, active memory rules, and immediate caution points.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this brief when startup behavior, setup mode, or receiver expectations change.
+Source of truth: `.uai/startup-packet.uai`, `.uai/memory-maintenance.uai`, `.uai/totem.uai`, `.uai/file-handoff.uai`, and `.uai/progress.uai`.
+Next action for agents: read the startup read order, inspect active intake buckets, then choose the smallest safe next step.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or private deploy files.
+
+Receiver instructions:
+- Start at `AGENTS.md`, then `workspace.uai`, then `.uai/startup-packet.uai`.
+- Load every `.uai/*.uai` file in the startup-packet read order.
+- Verify active handoff buckets before broad work.
+- Do not use README files as memory-package state.
+- Keep active `.uai` date-free and concise.
+- Use MemoryEndpoints.com MATM only through configured authenticated routes.
+- Keep prompt drafts untracked.
+- Do not claim completion while deploy, live dogfood, companion live publish, or CI gates remain blocked.

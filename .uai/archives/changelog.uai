@@ -1,0 +1,18 @@
+Changelog archive
+
+Purpose:
+- UAIX archive placeholder for durable change history pointers without adding dated active-memory history.
+
+Verification status: archive memory; verify with Git history and generated reports before relying on it.
+Memory scope: durable change evidence pointers and archive policy.
+Public-safe status: safe for source control; contains no credential values.
+Update route: add pointers to durable reports or release notes when a reviewed change needs archive reference.
+Source of truth: Git commits, `CHANGELOG.md`, generated reports under `docs/reports/`, and release evidence.
+Next action for agents: use this archive only as a pointer surface; keep current state in active typed `.uai` files.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or unredacted logs.
+
+Archive policy:
+- Do not store dated active-memory history here.
+- Put chronological public release notes in `CHANGELOG.md` or durable reports.
+- Keep this file as a stable pointer that the UAIX package can discover.
+- Active startup recovery should use `.uai/context.uai`, `.uai/progress.uai`, `.uai/next-actions.uai`, `.uai/decisions.uai`, `.uai/constraints.uai`, and `.uai/test-plan.uai`.

@@ -9,7 +9,7 @@ Memory scope: startup continuity, offline continuity, and non-retirement invaria
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file for invariant changes; submit only public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
 Source of truth: this file and `.uai/startup-packet.uai`.
-Next action for agents: treat this file as the first required memory file after the startup packet bootstrap.
+Next action for agents: obey this invariant after the memory-maintenance load step and before trusting hosted MATM as the only continuity source.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
 
 Totem rule:
@@ -21,7 +21,7 @@ Totem rule:
 
 Required agent behavior:
 - Load `.uai/startup-packet.uai` as the bootstrap index when entering cold.
-- Read `.uai/totem.uai`, `.uai/constraints.uai`, `.uai/file-handoff.uai`, `.uai/intake-outcome-ledger.uai`, `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and `.uai/progress.uai` at startup when local filesystem access is available.
+- Read every file in the startup-packet read order when local filesystem access is available.
 - Use `https://memoryendpoints.com/api/matm/memory-events/submit` for safe authenticated MATM memory updates when configured credentials and connectivity exist.
 - If hosted MATM is unavailable, record public-safe progress in `.uai/progress.uai` and continue from local memory.
 - Do not place raw API keys, bearer tokens, FTP credentials, database passwords, private keys, or private handoff payloads in `.uai`.

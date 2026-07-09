@@ -1,0 +1,20 @@
+Handoff brief
+
+Purpose:
+- Project Handoff receiver brief for the current MemoryEndpoints.com code-bearing work package.
+
+Verification status: current-state memory; verify with `AGENTS.md`, `.uai/receiver-brief.uai`, and current reports before relying on it.
+Memory scope: package pickup, expected first response, active intake, checks, and blocked live gates.
+Public-safe status: safe for source control; contains no credential values.
+Update route: refresh this brief after accepted work, verification, or blocker changes.
+Source of truth: `.uai/receiver-brief.uai`, `.uai/progress.uai`, `.uai/next-actions.uai`, `.uai/test-plan.uai`, and readiness reports.
+Next action for agents: summarize current truth, constraints, intended touchpoints, and targeted checks before broad editing.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or private deployment values.
+
+Receiver checklist:
+- Read `AGENTS.md`, `workspace.uai`, `.uai/readme.human`, and `.uai/startup-packet.uai`.
+- Load every active `.uai` file in startup read order.
+- Inspect `agent-file-handoff/Content` and `agent-file-handoff/Improvement`; active buckets should be placeholder-only unless a blocker is recorded.
+- Use `.uai/next-recursive-prompt.uai` only for continuation or directly related work.
+- Run focused tests for small changes and the full local gate for memory, storage, route, package, deployment, or public-doc changes.
+- Keep prompt drafts, raw handoff intake, runtime stores, databases, logs, and credentials out of source control.

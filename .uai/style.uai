@@ -1,0 +1,20 @@
+Style
+
+Purpose:
+- Current editorial and interface style memory for MemoryEndpoints.com and MultiAgentMemory.com public surfaces.
+
+Verification status: current-state memory; verify with current site source and public-route screenshots or route checks before relying on it.
+Memory scope: public copy tone, documentation density, companion-site style, and claim wording.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when product positioning, UI style, documentation tone, or public claim rules change.
+Source of truth: `memoryendpoints/site_data.py`, `docs/`, `sites/multiagentmemory.com/`, and verified public claims.
+Next action for agents: keep public copy precise, professional, evidence-bounded, and directly useful to implementers.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private customer data, raw one-time keys, or unsupported public claims.
+
+Style rules:
+- Enterprise documentation should be clear, direct, and implementation-oriented.
+- Avoid marketing filler and claims that outrun evidence.
+- MemoryEndpoints.com should present the product and MATM API surface plainly.
+- MultiAgentMemory.com should explain repository structure, memory boundaries, and how the companion site relates to the GitHub repo.
+- Use clean public URLs for inbound links to MemoryEndpoints.com.
+- Preserve distinction between UAIX setup guidance, MemoryEndpoints.com implementation, and GitHub companion documentation.

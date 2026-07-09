@@ -1,0 +1,19 @@
+Context
+
+Purpose:
+- Compact current context for MemoryEndpoints.com work without becoming a changelog or durable memory body.
+
+Verification status: current-state memory; verify with source, reports, and the `.uai` audit before relying on it.
+Memory scope: compact project context, current objective shape, and active constraints.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when the compact current context changes; preserve detail in durable docs, reports, or MATM.
+Source of truth: `.uai/identity.uai`, `.uai/overview.uai`, `.uai/progress.uai`, and current repository state.
+Next action for agents: use this as a compact orientation, then load the specialized typed file before acting on a topic.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private customer data, or private deployment values.
+
+Current context:
+- The active goal is to mature MemoryEndpoints.com into an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site.
+- The repository has working local route, storage, package, secret-scan, `.uai`, static-site, and dogfood evidence.
+- The latest-code public deployment and live companion-site publish remain blocked by external FTPS access.
+- The active memory correction is to align with UAIX file-handoff setup while preserving the human rule that the `.uai` suite is active memory and no catch-all active-memory file is allowed.
+- Active handoff buckets must be empty or placeholder-only after processed intake is archived or otherwise dispositioned.

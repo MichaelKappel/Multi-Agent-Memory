@@ -1,0 +1,21 @@
+Stack
+
+Purpose:
+- Current stack memory for runtime, storage, tests, deployment, and static companion assets.
+
+Verification status: current-state memory; verify against source manifests, imports, scripts, and tests before relying on it.
+Memory scope: language/runtime stack, dependency policy, storage backend status, and deploy packaging.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when runtime, storage, dependency, test, or deployment stack changes.
+Source of truth: Python imports, `app.py`, `memoryendpoints/`, `tests/`, `scripts/`, and package reports.
+Next action for agents: verify stack assumptions from files before adding dependencies, adapters, or deployment claims.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, local credential paths, or private runtime stores.
+
+Current stack:
+- Python standard library WSGI runtime.
+- No third-party runtime dependency is approved for production code.
+- HTML, CSS, and browser JavaScript for public pages and static companion site assets.
+- File storage is the default local backend.
+- Stdlib SQLite relational storage is optional and live for implemented MATM workflows.
+- MySQL/MariaDB schema and design are documented, but runtime adapter support remains gated.
+- Packaging excludes `.uai`, raw handoff buckets, prompt drafts, local runtime state, databases, logs, and credential material.

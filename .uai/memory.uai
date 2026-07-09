@@ -1,0 +1,25 @@
+Memory map
+
+Purpose:
+- Configuration-specific memory map for active `.uai`, local durable docs, MATM routes, and companion documentation.
+
+Verification status: current-state memory; verify with `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and route evidence before relying on it.
+Memory scope: memory layers, routing, durable targets, and truth boundaries.
+Public-safe status: safe for source control; contains route names and paths only, no credentials.
+Update route: update this map when memory layers, durable targets, setup modes, or route boundaries change.
+Source of truth: `.uai/totem.uai`, `.uai/long-term-memory.uai`, `.uai/long-term-pointer-ledger.uai`, and MemoryEndpoints.com route contracts.
+Next action for agents: choose the correct memory layer before writing or retrieving project facts.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, raw private memory bodies, or private workspace identifiers.
+
+Memory layers:
+- Active startup memory: `.uai/` files in the startup-packet read order.
+- Human/agent front door: `AGENTS.md`, `workspace.uai`, and `.uai/readme.human`.
+- Active dropped-file intake: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
+- Reviewed local durable memory: `docs/long-term-memory/` and `docs/reports/`.
+- Hosted durable MATM: MemoryEndpoints.com protected routes when authenticated.
+- Public companion docs: MultiAgentMemory.com source under `sites/multiagentmemory.com/`.
+
+Rules:
+- Durable memory augments active `.uai`; it never retires local `.uai`.
+- `.uai` contains pointers and current operating state, not raw secrets or long report bodies.
+- README.md files are human documentation, not memory-package state.

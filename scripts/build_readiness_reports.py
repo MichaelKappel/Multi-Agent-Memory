@@ -70,7 +70,7 @@ def build_local_report():
         {
             "id": "uai_startup_memory",
             "status": status(bool(uai and uai.get("ok"))),
-            "evidence": ["docs/reports/uai-memory-audit.json", ".uai/startup-packet.uai", ".uai/totem.uai"],
+            "evidence": ["docs/reports/uai-memory-audit.json", ".uai/memory-maintenance.uai", ".uai/startup-packet.uai", ".uai/totem.uai"],
         },
         {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
         {"id": "package_check", "status": status(bool(package and package.get("status") == "ready")), "evidence": ["docs/reports/package-verification-report.json"]},
@@ -133,7 +133,7 @@ def build_final_markdown(local_report):
         "- Unit and integration tests: pass through `scripts/enterprise_readiness_audit.py --run-checks`.",
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
-        "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, local `.uai` stays active always, `.uai/totem.uai` is first, active `.uai` is date-free, and no catch-all active-memory file exists.",
+        "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and no catch-all active-memory file exists.",
         "- Local dogfooding: %s through WSGI; live dogfooding: %s." % (str(bool(dogfood.get("localDogfoodVerified"))).lower(), str(live_dogfood).lower()),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
@@ -156,7 +156,7 @@ def build_final_markdown(local_report):
     lines.extend(
         [
             "- GitHub Actions CI: blocked by repository/account billing state before job execution, so the latest run is not a passing CI signal.",
-            "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file and stdlib SQLite storage are active locally.",
+            "- MySQL/MariaDB runtime adapter: gated by the no-third-party-runtime constraint; file storage and stdlib SQLite relational MATM tables are active locally.",
             "",
             "## Claim Boundary",
             "",

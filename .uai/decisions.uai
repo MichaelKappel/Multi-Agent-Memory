@@ -1,0 +1,23 @@
+Decisions
+
+Purpose:
+- Public-safe current decision memory for active product, architecture, documentation, and claim-boundary choices.
+
+Verification status: current-state memory; verify against code, docs, and reports before relying on it.
+Memory scope: governing decisions that should steer future agents until explicitly changed.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file when governing decisions change; submit durable public-safe decision summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: current repository state, `.uai/totem.uai`, `AGENTS.md`, `docs/reports/final-readiness-report.md`, and user instructions.
+Next action for agents: preserve these decisions unless current code, reports, or direct human instruction supersedes them.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
+
+Current governing decisions:
+- Keep `E:\MemoryEndpoints.com` as the single source of truth for MemoryEndpoints.com and MultiAgentMemory.com content.
+- Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
+- Keep active `.uai` date-free and current-state only.
+- Do not add generic catch-all `.uai` files such as `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, or `project-state.uai`.
+- Store deep detail in docs, reports, MATM records, or other durable targets, then point to those from typed `.uai` files.
+- Do not copy public NeuralWikis wiki content, branding, or generated public site material.
+- Do not claim certification, endorsement, hidden credential validation, automatic repository writes, or live production database support that is not actually verified.
+- Use MemoryEndpoints.com home page for inbound MemoryEndpoints links; UAIX wizard fragments are setup-option references for UAIX.
+- Keep README files as human repository or site documentation only. Do not use README files as active `.uai` memory, handoff-bucket guidance, or intake completion evidence.

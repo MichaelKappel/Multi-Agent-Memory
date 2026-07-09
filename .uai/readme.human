@@ -1,0 +1,20 @@
+Human briefing
+
+Purpose:
+- Human-facing clarification brief for the MemoryEndpoints.com UAIX handoff package.
+
+Verification status: current-state briefing; verify with `AGENTS.md`, `workspace.uai`, and `.uai/startup-packet.uai` before relying on it.
+Memory scope: human clarification needs, approval boundaries, and what agents will defend.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this briefing when human-facing assumptions, approvals, or escalation boundaries change.
+Source of truth: current human instructions, `AGENTS.md`, `workspace.uai`, and the active `.uai` suite.
+Next action for agents: read this after `AGENTS.md` and before broad local memory loading when a human briefing is useful.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private deployment values, or hidden customer data.
+
+Human needs to know:
+- This repository uses the published UAIX file set for code-bearing Project Handoff plus Agent File Handoff plus MATM durable-memory routing.
+- Active `.uai` files are date-free and public-safe.
+- MemoryEndpoints.com is the real MATM endpoint; MultiAgentMemory.com is the companion documentation site.
+- Live deployment and live companion publishing remain blocked by external FTPS access, not by local code evidence.
+- README.md files are human documentation only. The memory package lives in `.uai`.
+- `short-term-memory.uai` and `current-state.uai` are forbidden here under the updated UAIX direction from the human; their facts belong in typed files such as context, progress, next-actions, decisions, constraints, and test-plan.

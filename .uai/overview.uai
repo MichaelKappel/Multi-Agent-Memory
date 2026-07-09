@@ -1,0 +1,22 @@
+Overview
+
+Purpose:
+- Compact project overview for the MemoryEndpoints.com product, companion site, modules, and public surfaces.
+
+Verification status: current-state memory; verify with source, route inventory, and site verification before relying on it.
+Memory scope: project purpose, module map, public surfaces, and documentation boundaries.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when product scope, modules, public surfaces, or documentation boundaries change.
+Source of truth: `memoryendpoints/`, `sites/multiagentmemory.com/`, `docs/api-contract.md`, and route verification reports.
+Next action for agents: use this overview to route work to the correct code, docs, test, or memory file.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private runtime state.
+
+Project map:
+- `memoryendpoints/`: WSGI application, route handlers, storage, security, config, and public site data.
+- `tests/`: unit and integration coverage for public routes, protected MATM workflows, storage behavior, and `.uai` audit contracts.
+- `scripts/`: verification, packaging, deployment, dogfood, static-site, readiness, and memory audit tooling.
+- `docs/`: public documentation and durable evidence reports.
+- `docs/long-term-memory/`: reviewed durable strategy, architecture notes, system targets, and release memory.
+- `sites/multiagentmemory.com/`: static companion documentation site source.
+- `.uai/`: active startup memory suite.
+- `agent-file-handoff/`: local intake buckets only, not source-controlled memory bodies.

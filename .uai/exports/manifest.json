@@ -1,0 +1,52 @@
+{
+  "activeReadOrder": [
+    ".uai/memory-maintenance.uai",
+    ".uai/identity.uai",
+    ".uai/world-context.uai",
+    ".uai/totem.uai",
+    ".uai/taboo.uai",
+    ".uai/talisman.uai",
+    ".uai/startup-packet.uai",
+    ".uai/system-profile.uai",
+    ".uai/receiver-brief.uai",
+    ".uai/index.uai",
+    ".uai/context.uai",
+    ".uai/constraints.uai",
+    ".uai/overview.uai",
+    ".uai/stack.uai",
+    ".uai/architecture.uai",
+    ".uai/coding-standards.uai",
+    ".uai/operations.uai",
+    ".uai/test-plan.uai",
+    ".uai/decisions.uai",
+    ".uai/risk-register.uai",
+    ".uai/owners.uai",
+    ".uai/agent-instructions.uai",
+    ".uai/style.uai",
+    ".uai/memory.uai",
+    ".uai/file-handoff.uai",
+    ".uai/intake-outcome-ledger.uai",
+    ".uai/handoff-brief.uai",
+    ".uai/long-term-memory.uai",
+    ".uai/long-term-pointer-ledger.uai",
+    ".uai/next-actions.uai",
+    ".uai/next-recursive-prompt.uai",
+    ".uai/open-questions.uai",
+    ".uai/progress.uai"
+  ],
+  "durableEvidence": [
+    "docs/long-term-memory/",
+    "docs/reports/",
+    "reports/deployment-memory-and-test-report.uai",
+    ".uai/archives/changelog.uai"
+  ],
+  "generatedBy": "MemoryEndpoints.com local UAIX package audit",
+  "packageProfile": [
+    "project-handoff",
+    "agent-file-handoff",
+    "code-bearing",
+    "matm-durable-memory"
+  ],
+  "schemaVersion": "memoryendpoints.uai_exports_manifest.v1",
+  "valuesRedacted": true
+}

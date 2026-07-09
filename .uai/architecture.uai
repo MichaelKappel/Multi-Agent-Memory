@@ -1,0 +1,22 @@
+Architecture
+
+Purpose:
+- Public-safe current architecture memory for the MemoryEndpoints.com MATM runtime, companion site, storage boundary, and route surface.
+
+Verification status: current-state memory; verify with the `.uai` audit and route/storage tests before relying on it.
+Memory scope: current architecture boundaries, runtime shape, and source-of-truth pointers.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file when architecture boundaries change; submit durable public-safe architecture summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: `memoryendpoints/`, `docs/api-contract.md`, `docs/storage-backends.md`, `docs/database-structure.md`, and `sites/multiagentmemory.com/`.
+Next action for agents: preserve the product boundary and verify route/storage behavior before expanding claims.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
+
+Current architecture state:
+- MemoryEndpoints.com is the real MATM product/API surface.
+- MultiAgentMemory.com is the static companion documentation site inside `sites/multiagentmemory.com/`.
+- Runtime code stays pure Python standard library WSGI, with browser-native HTML/CSS/JavaScript assets.
+- Public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`.
+- Protected MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, redacted receipts, and redacted audit-log readback.
+- File storage remains the default local backend.
+- Stdlib SQLite is a live optional relational backend for implemented MATM workflows. It uses separate MATM tables instead of a single JSON blob table in the active tested path.
+- MySQL/MariaDB remains adapter-gated because the runtime cannot claim a live MySQL client without approved non-stdlib support.

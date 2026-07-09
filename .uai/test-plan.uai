@@ -1,0 +1,28 @@
+Test Plan
+
+Purpose:
+- Public-safe current test and verification memory for the MemoryEndpoints.com enterprise MATM gate.
+
+Verification status: current-state memory; verify by running the commands named here before relying on it.
+Memory scope: local test gates, integration proof, report refresh order, and completion-blocking verification.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this local file when required verification changes; submit durable public-safe test summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
+Source of truth: `tests/`, `scripts/verify_memoryendpoints.py`, `scripts/dogfood_memoryendpoints.py`, `scripts/enterprise_readiness_audit.py`, and `docs/verification.md`.
+Next action for agents: run the full local gate after material code or memory changes and refresh reports before committing.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, raw one-time keys, private handoff payloads, raw logs, or local runtime database contents.
+
+Current local gate:
+- `python -m unittest discover -s tests`
+- `python scripts\verify_memoryendpoints.py --wsgi --json-out docs\reports\local-route-verification.json`
+- `python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json`
+- `python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json`
+- `python scripts\package_memoryendpoints.py --json-out docs\reports\package-verification-report.json`
+- `python scripts\secret_scan.py --json-out docs\reports\secret-scan-report.json`
+- `python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json`
+- `python scripts\build_readiness_reports.py --write`
+- `git diff --check`
+
+Coverage expectations:
+- Route handler integration tests must exercise public discovery and protected MATM workflows.
+- Storage tests must prove SQLite relational tables exist and the active tested path does not rely on a single JSON blob table.
+- Dogfood must create or use a workspace, register an agent, submit/search memory, create/read/ack current messages, read receipts, read audit log, generate a redacted report, and update `.uai` progress without dates.

@@ -21,7 +21,7 @@ Audit against the active MemoryEndpoints.com enterprise MATM objective after add
 ## Implemented In This Pass
 
 - `.uai/totem.uai` marks local `.uai` as always active.
-- All active `.uai` files now include purpose, last verified date, memory scope, public-safe status, update route, source of truth, next actions, and must-not-expose fields.
+- All active `.uai` files now include purpose, verification status, memory scope, public-safe status, update route, source of truth, next actions, and must-not-expose fields without embedding dates.
 - Memory events are firewall-reviewed and typed before persistence.
 - Review queue and review decision routes are protected and idempotent.
 - Quarantined/rejected memory is excluded from normal search.

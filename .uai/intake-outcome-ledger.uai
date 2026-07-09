@@ -13,11 +13,13 @@ Must not expose: raw private files, credential values, deployment handoff values
 
 Current intake state:
 - Active buckets: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
-- Content bucket currently has no committed source payloads beyond placeholders.
-- Improvement intake was partially accepted where it matched MemoryEndpoints.com goals.
+- Active bucket guidance lives in `.uai/file-handoff.uai`, not README files inside the handoff folders.
+- Content bucket has no committed source payloads beyond placeholders.
+- Improvement strategy reports were reviewed and incorporated where they matched MemoryEndpoints.com goals.
 - Accepted outcomes: AI-ready discovery, `.uai` startup handoff, docs-backed durable memory, safe no-op behavior, idempotency, package exclusions, deployment-root handling, live route verification, enterprise Python/testing strategy, MySQL/database planning, MATM strategy, hierarchical memory, timestamp-free retrieval, and system-target guidance.
 - Durable memory impact: reviewed docs under `docs/long-term-memory/` and verification reports under `docs/reports/`.
 - Active memory impact: typed `.uai` records carry current routing facts, intake outcomes, constraints, progress state, and deep links without calendar dates.
 - Deferred outcomes: raw report bodies, citation blocks, generated examples not specific to MemoryEndpoints.com, stale file-tree proposals, incompatible routes, unsupported runtime claims, third-party dependency suggestions, and NeuralWikis branding or public content copy.
-- Raw strategy reports remain ignored local intake material unless a human explicitly archives or removes them.
-- Completion gate: agents must rescan active buckets and record current public-safe disposition before claiming intake complete.
+- Processed outcome: incorporated for accepted summaries and preserved-to-durable-memory for the durable strategy pointers; rejected-with-reason for unsupported claims, copied public wiki material, secrets, or incompatible runtime assumptions.
+- Archive result: processed source-site copies belong in `agent-file-handoff/Archive/` or outside the active buckets; active buckets should be empty or placeholder-only after processing.
+- Completion gate: agents must rescan active buckets, verify no README/status/index guidance files are present, and record any kept-active blocker before claiming intake complete.

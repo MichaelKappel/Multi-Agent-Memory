@@ -16,7 +16,7 @@ The schema is organized around MATM responsibilities:
 Runtime state today:
 
 - File backend: live default.
-- SQLite backend: live stdlib database-backed option.
+- SQLite backend: live stdlib relational database-backed option for the implemented MATM workflows. The runtime creates separate SQLite tables for workspaces, API keys, agents, memory records, tags, review queue, messages, notifications, receipts, idempotency records, outbox events, storage ledger entries, and audit logs.
 - MySQL/MariaDB: schema prepared, adapter gated by the no-third-party runtime requirement.
 
 Design rules:

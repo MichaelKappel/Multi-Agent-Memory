@@ -53,7 +53,7 @@ def capability_matrix():
         "version": __version__,
         "generatedAt": utc_now(),
         "truthBoundary": {
-            "databasePersistence": "stdlib_sqlite_backend_live_optional_mysql_adapter_gated",
+            "databasePersistence": "stdlib_sqlite_relational_backend_live_optional_mysql_adapter_gated",
             "fileBackedMemory": "live_local_and_first_deploy",
             "longTermMemorySource": "docs_folder_until_hosted_memory_promotion",
             "rawSecretsInPublicSurfaces": False,
@@ -70,7 +70,7 @@ def capability_matrix():
             {"level": "active_startup_suite", "status": "live", "storage": ".uai/*.uai listed by .uai/startup-packet.uai"},
             {"level": "project", "status": "live", "storage": "docs/long-term-memory"},
             {"level": "workspace", "status": "live", "storage": "file store with memory firewall and review queue"},
-            {"level": "workspace_database", "status": "live_optional", "storage": "stdlib sqlite"},
+            {"level": "workspace_database", "status": "live_optional", "storage": "stdlib SQLite relational MATM tables"},
             {"level": "client", "status": "planned", "storage": "review-gated durable memory"},
         ],
         "memoryFirewall": {
@@ -87,7 +87,7 @@ def capability_matrix():
         },
         "storageBackends": [
             {"backend": "file", "status": "live", "dependency": "python_stdlib"},
-            {"backend": "sqlite", "status": "live_optional", "dependency": "python_stdlib_sqlite3"},
+            {"backend": "sqlite", "status": "live_optional_relational", "dependency": "python_stdlib_sqlite3"},
             {"backend": "mysql", "status": "adapter_gated", "dependency": "requires_explicit_no_third_party_compatible_adapter"},
         ],
         "currentMessageLane": {
@@ -245,7 +245,7 @@ def readiness_result():
             },
             {
                 "id": "production_database_adapter",
-                "status": "partial_pass_sqlite_live_mysql_adapter_gated",
+                "status": "partial_pass_sqlite_relational_live_mysql_adapter_gated",
                 "evidence": ["docs/database-schema-canonical.sql", "docs/database-structure.md", "docs/long-term-memory/architecture-notes.md"],
             },
         ],
@@ -260,7 +260,7 @@ def readiness_result():
         "gatedCapabilities": [
             {
                 "id": "mysql_runtime_adapter",
-                "detail": "Stdlib SQLite is available for durable database-backed storage; MySQL activation still requires an explicit no-third-party-compatible adapter path.",
+                "detail": "Stdlib SQLite relational MATM tables are available for durable database-backed storage; MySQL activation still requires an explicit no-third-party-compatible adapter path.",
                 "safeNoOp": True,
             },
         ],

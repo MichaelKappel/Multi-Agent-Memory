@@ -1,0 +1,20 @@
+System profile
+
+Purpose:
+- Operating profile for MemoryEndpoints.com as a code-bearing MATM project with local active memory and durable memory pointers.
+
+Verification status: current-state memory; verify against source, tests, reports, and deployment evidence before relying on it.
+Memory scope: collaboration model, source authority, quality gates, release gates, and memory architecture.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when operating model, authority, quality gates, or memory architecture changes.
+Source of truth: `workspace.uai`, `AGENTS.md`, `.uai/memory-maintenance.uai`, tests, scripts, and readiness reports.
+Next action for agents: align work to this profile before changing source, docs, deployment scripts, or public claims.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private customer data, or deployment credential values.
+
+Operating profile:
+- Collaboration model: single maintainer with AI coding agents.
+- Target environment: repository handoff plus Python WSGI site and static companion docs.
+- Memory architecture: active `.uai` startup suite plus MemoryEndpoints.com MATM durable routes when authenticated.
+- Source authority: repository files, current tests, generated reports, live route proof, and explicit human instructions.
+- Review posture: public claims require evidence; deployment requires explicit authority and credential access outside memory.
+- Tests: run targeted tests for small changes and full local verification before handoff when memory, routes, storage, packaging, or public docs change.

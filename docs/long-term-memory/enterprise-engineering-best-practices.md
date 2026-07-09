@@ -21,7 +21,7 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 ## MySQL And Database Operations
 
 - Keep the canonical MySQL/MariaDB schema as a production target while the runtime adapter remains gated by the no-third-party-runtime constraint.
-- Continue supporting file and stdlib SQLite storage as active local backends; use the canonical schema to keep future MySQL activation disciplined.
+- Continue supporting file storage and stdlib SQLite relational MATM tables as active local backends; use the canonical schema to keep future MySQL activation disciplined.
 - Require stable primary keys, explicit indexes, migration-driven schema changes, idempotency tables, quota ledgers, audit trails, and review queues in durable storage designs.
 - For future enterprise MySQL deployment planning, prefer an LTS track, InnoDB, explicit backup and point-in-time recovery drills, TLS, least-privilege roles, audit logging, and observability before claiming production readiness.
 - Do not treat read replicas as automatic HA unless the chosen managed service explicitly supports that failover mode. Record RPO/RTO assumptions before selecting topology.

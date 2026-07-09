@@ -1,0 +1,20 @@
+World context
+
+Purpose:
+- Public-safe ecosystem context for MemoryEndpoints.com, MultiAgentMemory.com, UAIX guidance, and durable memory systems.
+
+Verification status: current-state memory; verify against live public pages and local repository evidence before relying on it.
+Memory scope: external context, interoperability boundaries, inbound link policy, and durable-memory landscape.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when external setup guidance, public site roles, or durable-memory positioning changes.
+Source of truth: UAIX AI Memory Package Wizard, MemoryEndpoints.com public routes, MultiAgentMemory.com source, and reviewed long-term docs.
+Next action for agents: use this context to avoid mixing standards guidance, implementation authority, and hosted memory authority.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private customer context, or raw one-time keys.
+
+Current ecosystem:
+- UAIX describes file-based active memory, Agent File Handoff, MATM setup options, and durable-memory pointer boundaries.
+- MemoryEndpoints.com is the suggested MATM endpoint implementation for this repository, but UAIX fragments are setup references, not inbound MemoryEndpoints URLs.
+- MemoryEndpoints.com inbound links should use `https://memoryendpoints.com`.
+- MemoryEndpoints.com MATM protected routes are the durable update/search/current-message/ack/receipt plane when authenticated.
+- `.uai` remains local active memory when any durable memory plane is unavailable.
+- Local docs and reports are durable evidence pointers, not substitutes for the active `.uai` startup suite.

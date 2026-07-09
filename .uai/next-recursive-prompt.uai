@@ -1,0 +1,22 @@
+Next recursive prompt
+
+Purpose:
+- Derived continuation prompt for directly related code, memory, deployment, and verification work.
+
+Verification status: current-state memory; verify against authoritative typed `.uai` files and current user instructions before relying on it.
+Memory scope: continuation prompt, acceptance checks, and direct next-loop guidance.
+Public-safe status: safe for source control; contains no credential values.
+Update route: regenerate this file after meaningful source, memory, deployment, or readiness changes.
+Source of truth: `.uai/next-actions.uai`, `.uai/progress.uai`, `.uai/test-plan.uai`, `.uai/file-handoff.uai`, and current repository state.
+Next action for agents: use this only for continuation or closely related work; current user instructions override it.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, local credential files, or private runtime state.
+
+Suggested continuation:
+Continue hardening MemoryEndpoints.com as an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site. First load the full `.uai` startup read order, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Then run the current local verification gate, fix any failures, keep prompt drafts untracked, commit source-controlled changes, push to `MichaelKappel/Multi-Agent-Memory`, and report remaining live deployment, live dogfood, companion-site, CI, and MySQL adapter gates.
+
+Acceptance checks:
+- `.uai` audit passes with the expanded typed suite and no catch-all active-memory files.
+- Active `.uai` files remain date-free.
+- File handoff active buckets are empty or have recorded kept-active blocker reasons.
+- Local tests, route verifiers, static-site verifier, package check, secret scan, dogfood, readiness audit, and diff check pass.
+- Source-control status excludes prompt drafts and raw handoff intake.

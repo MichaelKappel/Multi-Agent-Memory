@@ -6,7 +6,7 @@ Generated: 2026-07-09
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| `.uai` startup memory | Improved locally | All active `.uai/*.uai` files include purpose, last verified date, scope, public-safe status, update route, source of truth, next actions, and secret boundaries. |
+| `.uai` startup memory | Improved locally | All active `.uai/*.uai` files include purpose, verification status, scope, public-safe status, update route, source of truth, next actions, and secret boundaries without embedding dates. |
 | `.uai` totem invariant | Implemented locally | `.uai/totem.uai` says local `.uai` stays active always and hosted MATM never replaces startup continuity. |
 | Memory firewall | Implemented locally | `memoryendpoints/security.py` and tests prove secret-like values are redacted before persistence. |
 | Review queue | Implemented locally | `/api/matm/review-queue` and `/api/matm/review-queue/decide` are wired and covered by integration tests. |
@@ -19,7 +19,7 @@ Generated: 2026-07-09
 | --- | --- | --- |
 | Live deployment of new firewall/review/dogfood changes | Blocked by FTPS login rejection before upload | Refresh FTP credential/server access outside the repo, then rerun package, dry-run deploy, live deploy, Passenger restart, and live route verification. See `docs/reports/deploy-attempt-20260709.json`. |
 | Live dogfooding | Not yet proven | Authenticated live MemoryEndpoints dogfood run or explicit evidence that live credentials and workspace are configured without exposing secrets. |
-| Relational production database | Schema-ready and SQLite-backed, MySQL gated | Approved adapter path or honest continued gated status. Do not claim MySQL is live. |
+| Relational production database | Schema-ready and stdlib SQLite relational table-backed, MySQL gated | Approved adapter path or honest continued gated status. Do not claim MySQL is live. |
 | Full enterprise audit | Partial | Requirement-by-requirement completion audit against the goal objective after live verification. |
 | CI status after latest push | Pending for the latest packaging/diagnostic follow-up until commit/push | GitHub main SHA and CI status or local fallback checks. |
 

@@ -1,0 +1,24 @@
+Active memory index
+
+Purpose:
+- Index of the active `.uai` suite and the responsibility of each typed file.
+
+Verification status: current-state memory; verify with `.uai/startup-packet.uai` and the `.uai` audit before relying on it.
+Memory scope: active file map and typed responsibility routing.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this index whenever active `.uai` files are added, removed, or reclassified.
+Source of truth: `.uai/startup-packet.uai` and `scripts/audit_uai_memory.py`.
+Next action for agents: use this index to decide which typed file owns a fact before writing memory.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private runtime state.
+
+File routing:
+- Maintenance and anchors: memory-maintenance, identity, world-context, totem, taboo, talisman.
+- Startup and receiver: startup-packet, system-profile, receiver-brief, index, context.
+- Project state: constraints, overview, stack, architecture, coding-standards, operations, test-plan, decisions, progress.
+- Governance: risk-register, owners, agent-instructions, style.
+- Handoff and durable memory: file-handoff, intake-outcome-ledger, long-term-memory, long-term-pointer-ledger.
+- Continuation: next-actions, next-recursive-prompt, open-questions.
+
+Non-files:
+- README files are human docs, not active memory state.
+- Reports and docs carry durable evidence bodies; active `.uai` carries concise current pointers.

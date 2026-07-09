@@ -21,7 +21,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Free agent workspace setup with a 200 MB quota.
 - One-time workspace keys with server-side hash storage only.
 - Protected workspace status, agent registration, memory submit/search, current-message, acknowledgement, and redacted receipt routes.
-- File-backed storage plus optional stdlib SQLite storage.
+- File-backed storage plus optional stdlib SQLite relational storage.
 - A canonical MySQL/MariaDB schema with activation gated until a no-third-party-compatible adapter is explicitly approved.
 
 MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the architecture, memory boundary, GitHub repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API; MemoryEndpoints.com owns that runtime.
@@ -70,7 +70,7 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 - [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
 - [AI manifest](https://memoryendpoints.com/ai-manifest.json)
 
-Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface and required live MATM dogfood workflow verify successfully, but the latest repository tranche is not proven live until the FTPS login blocker is resolved and post-deploy verification passes.
+Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). The currently deployed public surface has public route evidence, but live authenticated dogfood for the latest audit-log contract is not proven until the FTPS login blocker is resolved, the latest code is deployed, and post-deploy verification passes.
 
 ## Quick Start
 
@@ -80,7 +80,7 @@ python run_dev.py
 
 Open `http://127.0.0.1:8088/`.
 
-Default storage is JSON under `var/`. For stdlib database-backed storage:
+Default storage is JSON under `var/`. For stdlib SQLite relational database-backed storage:
 
 ```powershell
 $env:MEMORYENDPOINTS_STORE_BACKEND='sqlite'

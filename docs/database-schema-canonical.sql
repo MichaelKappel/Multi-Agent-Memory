@@ -1,7 +1,7 @@
 -- MemoryEndpoints.com canonical MATM database schema.
 -- Safe to publish: contains no credentials, hosts, passwords, tokens, or keys.
 -- Dialect target: MySQL/MariaDB with InnoDB and utf8mb4.
--- Runtime note: stdlib SQLite is live as the no-third-party database backend.
+-- Runtime note: stdlib SQLite relational MATM tables are live as the no-third-party database backend.
 -- MySQL/MariaDB activation still requires an approved no-third-party adapter path.
 
 CREATE TABLE matm_clients (

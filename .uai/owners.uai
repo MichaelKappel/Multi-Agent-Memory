@@ -1,0 +1,20 @@
+Owners
+
+Purpose:
+- Current ownership, review, authority, and escalation memory for MemoryEndpoints.com.
+
+Verification status: current-state memory; verify with repository owner, human instructions, and public repository metadata before relying on it.
+Memory scope: owner roles, review authority, deployment authority, and escalation boundaries.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when ownership, reviewer roles, approval authority, or escalation rules change.
+Source of truth: GitHub repository identity, human instructions, `AGENTS.md`, and `workspace.uai`.
+Next action for agents: distinguish repository write authority, deployment authority, memory authority, and credential authority before acting.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private contact details, raw one-time keys, or hidden account data.
+
+Current authority:
+- Repository owner/steward: the maintainer of `MichaelKappel/Multi-Agent-Memory`.
+- User instructions in the active Codex thread are the current human direction.
+- Codex may edit local source and memory files within the requested goal, run local verification, and prepare commits.
+- Deployment requires explicit request plus working external credentials.
+- Credential values are never memory and must not be echoed.
+- UAIX guidance informs setup shape but does not grant deployment, certification, or endorsement authority.

@@ -1,0 +1,21 @@
+Next actions
+
+Purpose:
+- Ordered current next actions for MemoryEndpoints.com without becoming a dated task log.
+
+Verification status: current-state memory; verify with `.uai/progress.uai`, readiness reports, and current human instructions before relying on it.
+Memory scope: next work, acceptance conditions, blockers, and verification targets.
+Public-safe status: safe for source control; contains no credential values.
+Update route: replace this file's current list when priority or blocker state changes; keep detailed history in durable reports.
+Source of truth: `.uai/progress.uai`, `.uai/open-questions.uai`, `.uai/test-plan.uai`, and final readiness reports.
+Next action for agents: perform the highest unblocked action that matches the current user request.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
+
+Current ordered actions:
+- Finish the `.uai` setup correction: full typed suite, no README memory substitutes, clear active handoff buckets, refreshed audit, and tests.
+- Keep relational SQLite storage covered by integration and migration tests.
+- Refresh local verification reports after memory and storage changes.
+- Commit and push source-controlled improvements once checks pass and prompt drafts remain untracked.
+- Resolve FTPS access outside the repo before attempting live deployment or live companion-site publish.
+- Rerun live route verification and authenticated live dogfood only after latest code is deployed.
+- Do not claim full completion until live deployment, live dogfood, companion live publish, CI, and gated capabilities are resolved or explicitly waived.

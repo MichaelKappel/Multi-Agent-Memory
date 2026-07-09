@@ -17,14 +17,25 @@ class UaiAuditContractTests(unittest.TestCase):
         forbidden = audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_FILENAMES
         read_order_names = {Path(item).name for item in audit_uai_memory.STARTUP_READ_ORDER}
         self.assertFalse(read_order_names & forbidden)
+        self.assertEqual(".uai/memory-maintenance.uai", audit_uai_memory.STARTUP_READ_ORDER[0])
         self.assertIn(".uai/totem.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertIn(".uai/taboo.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertIn(".uai/talisman.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertNotIn(".uai/short-term-memory.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertNotIn(".uai/current-state.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertNotIn(".uai/short-term-memory.uai", audit_uai_memory.manifest_read_order())
+        self.assertNotIn(".uai/current-state.uai", audit_uai_memory.manifest_read_order())
 
     def test_active_uai_files_are_date_free_and_typed(self):
-        items = [audit_uai_memory.audit_file(path) for path in sorted((ROOT / ".uai").glob("*.uai"))]
+        items = [audit_uai_memory.audit_file(path) for path in sorted((ROOT / ".uai").rglob("*.uai"))]
         self.assertTrue(items)
         self.assertTrue(all(item["dateFree"] for item in items))
         self.assertFalse({Path(item["path"]).name for item in items} & audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_FILENAMES)
+
+    def test_active_handoff_buckets_have_no_guidance_or_payload_files(self):
+        items = audit_uai_memory.audit_handoff_buckets()
+        self.assertTrue(items)
+        self.assertTrue(all(item["ok"] for item in items), items)
 
 
 if __name__ == "__main__":

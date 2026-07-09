@@ -1,6 +1,6 @@
 -- MemoryEndpoints.com MATM database schema proposal.
 -- This file is safe to publish: it contains no credentials.
--- The stdlib SQLite backend is live separately. MySQL/MariaDB production
+-- The stdlib SQLite relational backend is live separately. MySQL/MariaDB production
 -- activation is gated because the runtime currently has no approved
 -- no-third-party MySQL adapter.
 

@@ -17,6 +17,7 @@
     {
       "evidence": [
         "docs/reports/uai-memory-audit.json",
+        ".uai/memory-maintenance.uai",
         ".uai/startup-packet.uai",
         ".uai/totem.uai"
       ],
@@ -73,7 +74,7 @@
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T18:07:52Z",
+  "generatedAt": "2026-07-09T18:34:50Z",
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
   "localUaiStaysActiveAlways": true,
@@ -85,6 +86,6 @@
   "routeFailureCount": 0,
   "schemaVersion": "memoryendpoints.local_verification_report.v1",
   "scope": "local worktree, WSGI route handlers, package plan, .uai startup memory, and local dogfood runner",
-  "uaiFileCount": 8,
+  "uaiFileCount": 36,
   "valuesRedacted": true
 }

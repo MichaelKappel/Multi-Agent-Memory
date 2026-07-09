@@ -1,0 +1,30 @@
+Deployment memory and test report
+
+Purpose:
+- UAIX release-bound report surface for deployment, memory, and test evidence pointers.
+
+Verification status: current-state report; verify with generated reports under `docs/reports` before relying on it.
+Memory scope: deployment posture, memory setup, test evidence, and completion blockers.
+Public-safe status: safe for source control; contains no credential values.
+Update route: refresh this report surface after deployment attempts, test-gate changes, or memory-package changes.
+Source of truth: `docs/reports/final-readiness-report.md`, local verifier reports, deploy attempt reports, and `.uai/progress.uai`.
+Next action for agents: follow the evidence pointers and do not claim live completion from local-only proof.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, raw deployment logs, or private runtime stores.
+
+Current report summary:
+- Local tests and verifiers are the current code health evidence.
+- Active `.uai` memory uses the UAIX required-file-set model and stays date-free.
+- Local dogfood is verified through WSGI with redacted outputs.
+- Latest-code live deployment remains blocked by external FTPS access.
+- MultiAgentMemory.com live publish remains blocked by external FTPS access.
+- GitHub Actions is not a passing signal while account or billing state blocks job execution.
+- MySQL/MariaDB runtime support remains gated.
+
+Evidence pointers:
+- `docs/reports/local-route-verification.json`
+- `docs/reports/uai-memory-audit.json`
+- `docs/reports/dogfood-memory-run.json`
+- `docs/reports/package-verification-report.json`
+- `docs/reports/secret-scan-report.json`
+- `docs/reports/enterprise-readiness-audit.json`
+- `docs/reports/final-readiness-report.md`

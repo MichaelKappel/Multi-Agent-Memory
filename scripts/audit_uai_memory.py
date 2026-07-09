@@ -26,12 +26,38 @@ REQUIRED_FIELDS = [
     "Must not expose:",
 ]
 STARTUP_READ_ORDER = [
+    ".uai/memory-maintenance.uai",
+    ".uai/identity.uai",
+    ".uai/world-context.uai",
     ".uai/totem.uai",
+    ".uai/taboo.uai",
+    ".uai/talisman.uai",
+    ".uai/startup-packet.uai",
+    ".uai/system-profile.uai",
+    ".uai/receiver-brief.uai",
+    ".uai/index.uai",
+    ".uai/context.uai",
     ".uai/constraints.uai",
+    ".uai/overview.uai",
+    ".uai/stack.uai",
+    ".uai/architecture.uai",
+    ".uai/coding-standards.uai",
+    ".uai/operations.uai",
+    ".uai/test-plan.uai",
+    ".uai/decisions.uai",
+    ".uai/risk-register.uai",
+    ".uai/owners.uai",
+    ".uai/agent-instructions.uai",
+    ".uai/style.uai",
+    ".uai/memory.uai",
     ".uai/file-handoff.uai",
     ".uai/intake-outcome-ledger.uai",
+    ".uai/handoff-brief.uai",
     ".uai/long-term-memory.uai",
     ".uai/long-term-pointer-ledger.uai",
+    ".uai/next-actions.uai",
+    ".uai/next-recursive-prompt.uai",
+    ".uai/open-questions.uai",
     ".uai/progress.uai",
 ]
 FORBIDDEN_REFERENCES = [
@@ -52,6 +78,20 @@ DATE_PATTERNS = [
     ("iso_timestamp", re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", re.I)),
     ("compact_calendar_date", re.compile(r"\b20\d{6}\b")),
 ]
+HANDOFF_ACTIVE_BUCKETS = [
+    ROOT / "agent-file-handoff" / "Content",
+    ROOT / "agent-file-handoff" / "Improvement",
+]
+FORBIDDEN_HANDOFF_GUIDANCE_NAMES = {
+    "README",
+    "README.md",
+    "STATUS",
+    "STATUS.md",
+    "COUNT",
+    "COUNT.md",
+    "INDEX",
+    "INDEX.md",
+}
 
 
 def read(path):
@@ -93,31 +133,91 @@ def startup_read_order():
     return [line.strip() for line in lines]
 
 
+def manifest_read_order():
+    path = UAI_DIR / "exports" / "manifest.json"
+    if not path.exists():
+        return []
+    try:
+        return json.loads(read(path)).get("activeReadOrder") or []
+    except ValueError:
+        return []
+
+
+def audit_handoff_buckets():
+    items = []
+    for bucket in HANDOFF_ACTIVE_BUCKETS:
+        relative_bucket = str(bucket.relative_to(ROOT)).replace("\\", "/")
+        if not bucket.exists():
+            items.append(
+                {
+                    "bucket": relative_bucket,
+                    "exists": False,
+                    "activePayloadCount": 0,
+                    "forbiddenGuidanceFiles": [],
+                    "ok": False,
+                }
+            )
+            continue
+        active_payloads = []
+        forbidden_guidance = []
+        for path in sorted(bucket.iterdir()):
+            if path.name == ".gitkeep":
+                continue
+            active_payloads.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+            if path.name in FORBIDDEN_HANDOFF_GUIDANCE_NAMES:
+                forbidden_guidance.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+        items.append(
+            {
+                "bucket": relative_bucket,
+                "exists": True,
+                "activePayloadCount": len(active_payloads),
+                "activePayloads": active_payloads,
+                "forbiddenGuidanceFiles": forbidden_guidance,
+                "ok": not active_payloads and not forbidden_guidance,
+            }
+        )
+    return items
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--json-out")
     args = parser.parse_args(argv)
 
-    items = [audit_file(path) for path in sorted(UAI_DIR.glob("*.uai"))]
-    required_names = {
-        "constraints.uai",
-        "file-handoff.uai",
-        "intake-outcome-ledger.uai",
-        "long-term-memory.uai",
-        "long-term-pointer-ledger.uai",
-        "progress.uai",
-        "startup-packet.uai",
-        "totem.uai",
+    items = [audit_file(path) for path in sorted(UAI_DIR.rglob("*.uai"))]
+    required_paths = set(STARTUP_READ_ORDER) | {
+        ".uai/archives/changelog.uai",
+        ".uai/exports/llms.uai",
+        ".uai/exports/llms-full.uai",
     }
-    present_names = {Path(item["path"]).name for item in items}
-    missing_files = sorted(required_names - present_names)
-    unexpected_files = sorted(present_names - required_names)
-    forbidden_active_memory_files = sorted(present_names & FORBIDDEN_ACTIVE_MEMORY_FILENAMES)
+    required_support_paths = {
+        "AGENTS.md",
+        "workspace.uai",
+        ".uai/readme.human",
+        ".uai/exports/manifest.json",
+        "reports/deployment-memory-and-test-report.uai",
+    }
+    present_paths = {item["path"] for item in items}
+    missing_files = sorted(required_paths - present_paths)
+    unexpected_files = sorted(present_paths - required_paths)
+    forbidden_active_memory_files = sorted(
+        path for path in present_paths if Path(path).name in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+    )
+    missing_support_files = sorted(
+        path for path in required_support_paths if not (ROOT / path).exists()
+    )
     read_order = startup_read_order()
+    manifest_order = manifest_read_order()
     read_order_matches = read_order == STARTUP_READ_ORDER
+    manifest_read_order_matches = manifest_order == STARTUP_READ_ORDER
+    manifest_forbidden_active_memory_files = sorted(
+        path for path in manifest_order if Path(path).name in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+    )
     bootstrap_path = UAI_DIR / "startup-packet.uai"
     bootstrap_text = read(bootstrap_path) if bootstrap_path.exists() else ""
     bootstrap_points_to_totem = ".uai/totem.uai" in bootstrap_text and "bootstrap" in bootstrap_text.lower()
+    handoff_items = audit_handoff_buckets()
+    handoff_buckets_ready = all(item["ok"] for item in handoff_items)
     local_uai_stays_active = (UAI_DIR / "totem.uai").exists() and "Local `.uai` stays active always." in read(
         UAI_DIR / "totem.uai"
     )
@@ -125,25 +225,38 @@ def main(argv=None):
         "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
         "ok": all(item["ok"] for item in items)
         and not missing_files
+        and not missing_support_files
         and not unexpected_files
         and not forbidden_active_memory_files
         and read_order_matches
+        and manifest_read_order_matches
+        and not manifest_forbidden_active_memory_files
         and bootstrap_points_to_totem
-        and local_uai_stays_active,
+        and local_uai_stays_active
+        and handoff_buckets_ready,
         "bootstrapFile": BOOTSTRAP_FILE,
         "bootstrapFilePresent": bootstrap_path.exists(),
         "bootstrapPointsToTotem": bootstrap_points_to_totem,
         "fileCount": len(items),
         "missingFiles": missing_files,
+        "missingSupportFiles": missing_support_files,
         "unexpectedFiles": unexpected_files,
         "forbiddenActiveMemoryFiles": forbidden_active_memory_files,
+        "manifestForbiddenActiveMemoryFiles": manifest_forbidden_active_memory_files,
         "startupReadOrder": read_order,
         "expectedStartupReadOrder": STARTUP_READ_ORDER,
         "startupReadOrderMatchesExpected": read_order_matches,
-        "startupReadOrderTotemFirst": bool(read_order and read_order[0] == ".uai/totem.uai"),
+        "manifestReadOrder": manifest_order,
+        "manifestReadOrderMatchesExpected": manifest_read_order_matches,
+        "startupReadOrderMemoryMaintenanceFirst": bool(
+            read_order and read_order[0] == ".uai/memory-maintenance.uai"
+        ),
+        "anchorFilesPresent": all((UAI_DIR / name).exists() for name in ("totem.uai", "taboo.uai", "talisman.uai")),
         "localUaiStaysActiveAlways": local_uai_stays_active,
         "dateFreeHotMemory": all(item["dateFree"] for item in items),
         "noCatchAllActiveMemoryFile": not forbidden_active_memory_files,
+        "handoffBucketsReady": handoff_buckets_ready,
+        "handoffBucketItems": handoff_items,
         "items": items,
         "valuesRedacted": True,
     }

@@ -9,14 +9,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 PACKAGE = DIST / "MemoryEndpoints.com-Production.zip"
-EXCLUDE_DIRS = {".git", ".github", ".uai", "__pycache__", ".pytest_cache", "var", "dist", ".local-secrets"}
+EXCLUDE_DIRS = {
+    ".git",
+    ".github",
+    ".uai",
+    "__pycache__",
+    ".pytest_cache",
+    "var",
+    "dist",
+    ".local-secrets",
+    "reports",
+}
 EXCLUDE_PATH_PREFIXES = {
     "agent-file-handoff/Archive",
     "agent-file-handoff/Content",
     "agent-file-handoff/Improvement",
     "docs/prompts",
 }
-EXCLUDE_NAMES = {"ftp_Deploy.txt", ".gitattributes", ".gitignore", ".gitkeep"}
+EXCLUDE_NAMES = {"ftp_Deploy.txt", ".gitattributes", ".gitignore", ".gitkeep", "workspace.uai"}
 EXCLUDE_SUFFIXES = {
     ".db",
     ".sqlite",

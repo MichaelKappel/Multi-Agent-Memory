@@ -2,6 +2,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -480,7 +481,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "workspaceId": workspace_id,
                 "actorAgentId": "sqlite-agent",
                 "title": "SQLite durable backend",
-                "summary": "The stdlib SQLite backend supports the same MATM API surface.",
+                "summary": "The stdlib SQLite relational backend supports the same MATM API surface.",
             },
         )
         self.assertEqual("201 Created", status)
@@ -493,6 +494,93 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         self.assertEqual(1, json.loads(text)["count"])
         self.assertTrue(os.path.exists(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]))
+
+        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            self.assertNotIn("matm_json_store", tables)
+            self.assertTrue(
+                {
+                    "matm_workspaces",
+                    "matm_api_keys",
+                    "matm_agents",
+                    "matm_memory_records",
+                    "matm_memory_tags",
+                    "matm_review_queue",
+                    "matm_messages",
+                    "matm_notifications",
+                    "matm_receipts",
+                    "matm_idempotency",
+                    "matm_outbox_events",
+                    "matm_storage_ledger",
+                    "matm_audit_log",
+                }.issubset(tables)
+            )
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_workspaces").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_records").fetchone()[0])
+
+    def test_sqlite_backend_migrates_legacy_json_blob_on_write(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "legacy.sqlite3")
+        legacy_store = {
+            "schemaVersion": "memoryendpoints.sqlite_store.v1",
+            "createdAt": "legacy-seed",
+            "workspaces": {
+                "legacy-workspace": {
+                    "workspaceId": "legacy-workspace",
+                    "label": "Legacy Workspace",
+                    "plan": "free_agent",
+                    "storageLimitBytes": 209715200,
+                    "createdAt": "legacy-seed",
+                    "status": "active",
+                }
+            },
+            "apiKeys": {},
+            "agents": {},
+            "memoryEvents": [],
+            "reviewQueue": [],
+            "messages": [],
+            "notifications": [],
+            "receipts": [],
+            "outboxEvents": [],
+            "storageLedger": [],
+            "auditLog": [],
+            "idempotency": {},
+        }
+        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
+            connection.execute("CREATE TABLE matm_json_store (store_key TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+            connection.execute(
+                "INSERT INTO matm_json_store (store_key, payload) VALUES (?, ?)",
+                ("main", json.dumps(legacy_store)),
+            )
+            connection.commit()
+
+        status, _headers, _text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Relational Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+
+        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            self.assertNotIn("matm_json_store", tables)
+            labels = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT label FROM matm_workspaces ORDER BY label"
+                ).fetchall()
+            }
+            self.assertEqual({"Legacy Workspace", "Relational Workspace"}, labels)
 
 
 if __name__ == "__main__":

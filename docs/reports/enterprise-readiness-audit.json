@@ -108,10 +108,10 @@
     {
       "blocker": null,
       "evidence": [
-        "README.md",
+        "workspace.uai",
         "AGENTS.md",
         "docs/repository-structure.md",
-        "sites/multiagentmemory.com/"
+        "sites/multiagentmemory.com/index.html"
       ],
       "requirement": "local_repository_organized",
       "status": "pass_local"
@@ -119,8 +119,11 @@
     {
       "blocker": null,
       "evidence": [
+        ".uai/memory-maintenance.uai",
         ".uai/startup-packet.uai",
         ".uai/totem.uai",
+        ".uai/taboo.uai",
+        ".uai/talisman.uai",
         "scripts/audit_uai_memory.py",
         "local .uai stays active always"
       ],
@@ -209,7 +212,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Python stdlib has no MySQL client; SQLite/file storage is active while MySQL remains schema-ready/gated.",
+      "blocker": "Python stdlib has no MySQL client; file storage and stdlib SQLite relational MATM tables are active while MySQL remains schema-ready/gated.",
       "evidence": [
         "docs/database-schema-canonical.sql",
         "docs/storage-backends.md"

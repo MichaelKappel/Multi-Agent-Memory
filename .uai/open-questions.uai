@@ -1,0 +1,24 @@
+Open questions
+
+Purpose:
+- Current unresolved questions, blockers, and safe assumptions for MemoryEndpoints.com.
+
+Verification status: current-state memory; verify with current human instructions, reports, and external system state before relying on it.
+Memory scope: unresolved questions, current assumptions, escalation routes, and blocker impact.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this file when questions are answered, deferred, converted into decisions, or replaced by evidence.
+Source of truth: `.uai/progress.uai`, `.uai/risk-register.uai`, readiness reports, deploy reports, and current human instructions.
+Next action for agents: do not silently assume answers to unresolved authority, credential, deployment, or claim-boundary questions.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private contact data, raw one-time keys, or credential inventory values.
+
+Current open questions:
+- Which FTPS credential or hosting account change is needed to deploy latest MemoryEndpoints.com and MultiAgentMemory.com source?
+- When GitHub account or billing state is repaired, will Actions pass on the latest pushed commit?
+- What approved runtime adapter path should be used before claiming live MySQL/MariaDB support?
+- When live deployment succeeds, which authenticated workspace and credential inventory should be used for live dogfood without exposing secrets?
+- Which published UAIX pages still need deployment so future agents stop treating `short-term-memory.uai` or `current-state.uai` as required files?
+
+Safe assumptions:
+- Keep local `.uai` active always.
+- Keep MySQL runtime support gated.
+- Treat live deployment and CI as blocked until fresh evidence says otherwise.

@@ -1,0 +1,24 @@
+MemoryEndpoints.com workspace coordinator
+
+Purpose:
+- Public-safe workspace coordinator for the MemoryEndpoints.com repository and companion documentation site.
+
+Verification status: current-state workspace memory; verify against `AGENTS.md`, `.uai/startup-packet.uai`, and repository layout before relying on it.
+Memory scope: workspace routing, site roles, package boundaries, and authority separation.
+Public-safe status: safe for source control; contains no credential values.
+Update route: update this coordinator when workspace roots, site roles, package authority, or deployment boundaries change.
+Source of truth: repository root, `AGENTS.md`, `.uai/startup-packet.uai`, and `docs/repository-structure.md`.
+Next action for agents: resolve the named target site and then load the local `.uai` suite before edits.
+Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw deployment values.
+
+Workspace registry:
+- MemoryEndpoints.com: primary MATM product, API, documentation, and deploy package source.
+- MultiAgentMemory.com: static GitHub companion documentation site under `sites/multiagentmemory.com/`.
+- GitHub repository: `MichaelKappel/Multi-Agent-Memory`.
+
+Authority boundary:
+- `AGENTS.md` is the human/agent front door.
+- `.uai/startup-packet.uai` is the active memory read-order index.
+- `.uai/` remains active local startup memory even when hosted MATM is reachable.
+- README files are human-facing documentation, not active memory-package state.
+- Deployment credentials are external authority material, never memory.

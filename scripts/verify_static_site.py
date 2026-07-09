@@ -14,7 +14,6 @@ REQUIRED_FILES = [
     "index.html",
     "docs/how-it-works.html",
     "docs/memory-boundary.html",
-    "README.md",
     "llms.txt",
     "ai.txt",
     "ai-manifest.json",
@@ -23,7 +22,7 @@ REQUIRED_FILES = [
     "sitemap.xml",
 ]
 
-LIVE_FILES = [rel for rel in REQUIRED_FILES if rel != "README.md"]
+LIVE_FILES = list(REQUIRED_FILES)
 
 REQUIRED_STRINGS = {
     "index.html": [
