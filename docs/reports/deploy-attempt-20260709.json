@@ -1,6 +1,8 @@
 {
   "claimBoundary": {
     "blocker": "Connection checks for protocol(s) ftp, ftps failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository.",
+    "dryRunMatchesPackage": true,
+    "externalConnectionBlocker": "Connection checks for protocol(s) ftp, ftps failed at login with zero uploads; credential or hosting account access must be refreshed outside the repository.",
     "liveDogfoodVerified": false,
     "localDogfoodVerified": true,
     "newCodeLiveDeployed": false
@@ -29,8 +31,18 @@
   ],
   "dryRun": {
     "packageExists": true,
-    "plannedUploadCount": 77,
+    "plannedUploadCount": 78,
+    "sourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
     "status": "ready",
+    "valuesRedacted": true
+  },
+  "freshness": {
+    "dryRunPlannedUploadCount": 78,
+    "dryRunSourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
+    "packageFileCount": 78,
+    "packageSourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
+    "plannedUploadCountMatchesPackage": true,
+    "sourceShaMatchesPackage": true,
     "valuesRedacted": true
   },
   "generatedAt": "2026-07-09",
@@ -40,6 +52,12 @@
     "safeNoOp": true,
     "status": "connection_or_upload_failed",
     "uploadedCount": 0,
+    "valuesRedacted": true
+  },
+  "package": {
+    "fileCount": 78,
+    "sourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
+    "status": "ready",
     "valuesRedacted": true
   },
   "remoteDir": ".",

@@ -125,6 +125,8 @@ def build_local_report():
     boundary = load_json("repository-boundary-audit.json")
     static_site = load_json("multiagentmemory-static-site-verification.json")
     github_ci = load_json("github-ci-status-report.json")
+    deploy_attempt = load_json("deploy-attempt-20260709.json")
+    deploy_dry_run = load_json("deploy-dry-run-latest.json")
     head_sha = git_head_sha()
     local_route_report_current = report_matches_head(
         local_routes,
@@ -141,6 +143,14 @@ def build_local_report():
     package_evidence_current = bool(
         (package and package.get("status") == "ready" and package_report_current) or package_check_current
     )
+    deploy_dry_run_matches_package = bool(
+        deploy_attempt
+        and (deploy_attempt.get("claimBoundary") or {}).get("dryRunMatchesPackage")
+        and (deploy_attempt.get("dryRun") or {}).get("status") == "ready"
+        and deploy_dry_run
+        and deploy_dry_run.get("status") == "ready"
+        and deploy_dry_run.get("safeNoOp") is True
+    )
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
@@ -155,6 +165,7 @@ def build_local_report():
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool(boundary and boundary.get("ok"))), "evidence": ["docs/reports/repository-boundary-audit.json", "sites/multiagentmemory.com/"]},
         {"id": "multiagentmemory_static_site", "status": status(bool(static_site and static_site.get("ok"))), "evidence": ["docs/reports/multiagentmemory-static-site-verification.json", "sites/multiagentmemory.com/"]},
+        {"id": "deploy_dry_run", "status": status(deploy_dry_run_matches_package), "evidence": ["docs/reports/deploy-dry-run-latest.json", "docs/reports/deploy-attempt-20260709.json"]},
         {"id": "diff_check", "status": status((check_result(enterprise, "diff_check") or {}).get("ok")), "evidence": ["git diff --check"]},
     ]
     report = {
@@ -188,6 +199,7 @@ def build_local_report():
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
         "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
+        "deployDryRunMatchesPackage": deploy_dry_run_matches_package,
         "externalSignals": {
             "githubCiConclusion": (github_ci or {}).get("conclusion"),
             "githubCiEvidence": "docs/reports/github-ci-status-report.json" if github_ci else None,
@@ -204,6 +216,7 @@ def build_final_markdown(local_report):
     live_routes = load_json("live-route-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}
+    deploy_dry_run = load_json("deploy-dry-run-latest.json") or {}
     deploy_connection_ftps = load_json("deploy-connection-check-latest.json") or {}
     deploy_connection_ftp = load_json("deploy-connection-check-ftp-latest.json") or {}
     multiagentmemory_live = load_json("multiagentmemory-deploy-live-attempt-latest.json") or {}
@@ -260,6 +273,12 @@ def build_final_markdown(local_report):
             str(live_dogfood).lower(),
         ),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
+        "- Deploy dry-run: status `%s`, planned files `%s`, safe no-op `%s`, matches package `%s`." % (
+            deploy_dry_run.get("status"),
+            deploy_dry_run.get("plannedUploadCount"),
+            str(bool(deploy_dry_run.get("safeNoOp"))).lower(),
+            str(bool((deploy.get("claimBoundary") or {}).get("dryRunMatchesPackage"))).lower(),
+        ),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
         "- MultiAgentMemory.com static source: %s; live publish status `%s`, uploaded count `%s`." % (
             "pass" if (load_json("multiagentmemory-static-site-verification.json") or {}).get("ok") else "not pass",

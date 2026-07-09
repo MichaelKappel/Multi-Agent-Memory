@@ -65,6 +65,14 @@
     },
     {
       "evidence": [
+        "docs/reports/deploy-dry-run-latest.json",
+        "docs/reports/deploy-attempt-20260709.json"
+      ],
+      "id": "deploy_dry_run",
+      "status": "pass"
+    },
+    {
+      "evidence": [
         "git diff --check"
       ],
       "id": "diff_check",
@@ -72,12 +80,13 @@
     }
   ],
   "dateFreeHotMemory": true,
+  "deployDryRunMatchesPackage": true,
   "externalSignals": {
     "githubCiConclusion": "failure",
     "githubCiEvidence": "docs/reports/github-ci-status-report.json"
   },
-  "generatedAt": "2026-07-09T19:44:08Z",
-  "gitHeadAtReportGeneration": "fae36ec661917dda597b376447ad741f1291d077",
+  "generatedAt": "2026-07-09T19:50:55Z",
+  "gitHeadAtReportGeneration": "3cef969686243464e7a533331044d73aada5f7d8",
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
   "localDogfoodVerified": true,
@@ -86,15 +95,15 @@
   "noCatchAllActiveMemoryFile": true,
   "ok": true,
   "reportFreshness": {
-    "currentGitHead": "fae36ec661917dda597b376447ad741f1291d077",
-    "githubCiReportCurrent": false,
-    "githubCiReportSha": null,
+    "currentGitHead": "3cef969686243464e7a533331044d73aada5f7d8",
+    "githubCiReportCurrent": true,
+    "githubCiReportSha": "3cef969686243464e7a533331044d73aada5f7d8",
     "localRouteEvidenceCurrent": true,
     "localRouteReportCurrent": true,
-    "localRouteReportSha": "fae36ec661917dda597b376447ad741f1291d077",
+    "localRouteReportSha": "3cef969686243464e7a533331044d73aada5f7d8",
     "packageEvidenceCurrent": true,
     "packageReportCurrent": true,
-    "packageReportSha": "fae36ec661917dda597b376447ad741f1291d077",
+    "packageReportSha": "3cef969686243464e7a533331044d73aada5f7d8",
     "valuesRedacted": true
   },
   "reportScope": "point_in_time_snapshot",

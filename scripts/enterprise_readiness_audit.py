@@ -146,6 +146,7 @@ def main(argv=None):
     uai_audit = load_json(Path("docs") / "reports" / "uai-memory-audit.json")
     dogfood = load_json(Path("docs") / "reports" / "dogfood-memory-run.json")
     deploy_attempt = load_json(Path("docs") / "reports" / "deploy-attempt-20260709.json")
+    deploy_dry_run = load_json(Path("docs") / "reports" / "deploy-dry-run-latest.json")
     deploy_connection_ftps = load_json(Path("docs") / "reports" / "deploy-connection-check-latest.json")
     deploy_connection_ftp = load_json(Path("docs") / "reports" / "deploy-connection-check-ftp-latest.json")
     multiagentmemory_live = load_json(Path("docs") / "reports" / "multiagentmemory-deploy-live-attempt-latest.json")
@@ -223,6 +224,17 @@ def main(argv=None):
             latest_code_blocker = "Live /api/version did not report the expected source SHA for the latest deploy package."
         else:
             latest_code_blocker = "Run live latest-code SHA verification after deployment."
+    deploy_dry_run_matches_package = bool(
+        deploy_attempt
+        and (deploy_attempt.get("claimBoundary") or {}).get("dryRunMatchesPackage")
+        and (deploy_attempt.get("dryRun") or {}).get("status") == "ready"
+        and deploy_dry_run
+        and deploy_dry_run.get("status") == "ready"
+        and deploy_dry_run.get("safeNoOp") is True
+    )
+    deploy_dry_run_blocker = None if deploy_dry_run_matches_package else (
+        "Deploy dry-run evidence is missing, stale, not marked as a safe no-op, or does not match the package report."
+    )
     multiagentmemory_static_ok = bool(multiagentmemory_static and multiagentmemory_static.get("ok")) or any(
         item.get("name") == "multiagentmemory_static_site" and item.get("ok") for item in checks
     )
@@ -286,6 +298,12 @@ def main(argv=None):
             "pass_local" if multiagentmemory_static_ok else "missing",
             ["sites/multiagentmemory.com/", "docs/reports/multiagentmemory-static-site-verification.json"],
             None if multiagentmemory_static_ok else "Run scripts/verify_static_site.py before claiming companion-site source readiness.",
+        ),
+        evidence_item(
+            "deploy_dry_run_current",
+            "pass_local" if deploy_dry_run_matches_package else "missing",
+            ["docs/reports/deploy-dry-run-latest.json", "docs/reports/deploy-attempt-20260709.json"],
+            deploy_dry_run_blocker,
         ),
         evidence_item(
             "multiagentmemory_live_deployed",
@@ -379,6 +397,7 @@ def main(argv=None):
             "latestCodeLiveDeployed": latest_code_live_verified,
             "latestCodeSourceShaMatchesExpected": bool(live_latest_code and live_latest_code.get("sourceShaMatchesExpected")),
             "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,
+            "deployDryRunMatchesPackage": deploy_dry_run_matches_package,
             "multiAgentMemoryLiveDeployed": bool(multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded"),
             "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site and multiagentmemory_live_site.get("ok")),
             "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),

@@ -9,7 +9,7 @@
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
   "remoteDirSource": "argument_or_handoff",
-  "safeNoOp": false,
+  "safeNoOp": true,
   "schemaVersion": "static_site.ftp_deploy.v1",
   "signals": {
     "hasFtp": true,

@@ -38,7 +38,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -179,6 +179,15 @@
       "status": "pass_local"
     },
     {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/deploy-dry-run-latest.json",
+        "docs/reports/deploy-attempt-20260709.json"
+      ],
+      "requirement": "deploy_dry_run_current",
+      "status": "pass_local"
+    },
+    {
       "blocker": "MultiAgentMemory.com no-upload connection checks failed at login for protocol(s): ftp, ftps; uploadedCount was 0.",
       "evidence": [
         "docs/reports/multiagentmemory-deploy-live-attempt-latest.json",
@@ -232,7 +241,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Could not read GitHub Actions public API: HTTPError status 403. Previous public-safe CI evidence: Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
+      "blocker": "Latest GitHub Actions run failed before workflow steps executed: The job was not started because your account is locked due to a billing issue.",
       "evidence": [
         "docs/reports/github-ci-status-report.json"
       ],
@@ -251,9 +260,10 @@
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "fae36ec661917dda597b376447ad741f1291d077",
+    "currentGitHead": "3cef969686243464e7a533331044d73aada5f7d8",
     "dateFreeHotMemory": true,
-    "githubCiReportCurrent": false,
+    "deployDryRunMatchesPackage": true,
+    "githubCiReportCurrent": true,
     "latestCodeLiveDeployed": false,
     "latestCodeSourceShaMatchesExpected": false,
     "liveCoreDogfoodVerified": true,

@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from scripts import ftp_deploy_memoryendpoints, ftp_deploy_static_site
+from scripts import build_deploy_attempt_report, ftp_deploy_memoryendpoints, ftp_deploy_static_site
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,29 @@ class DeployProtocolTests(unittest.TestCase):
             self.assertIn("--connection-check", script)
             self.assertIn("connection_check_passed", script)
             self.assertIn("uploadedCount", script)
+            self.assertIn("args.dry_run or args.connection_check", script)
+
+    def test_deploy_attempt_freshness_matches_package(self):
+        freshness = build_deploy_attempt_report.build_freshness(
+            {"plannedUploadCount": 78, "build": {"sourceSha": "abc123"}},
+            {"fileCount": 78, "build": {"sourceSha": "abc123"}},
+        )
+
+        self.assertTrue(freshness["plannedUploadCountMatchesPackage"])
+        self.assertTrue(freshness["sourceShaMatchesPackage"])
+        self.assertIsNone(build_deploy_attempt_report.freshness_blocker(freshness))
+
+    def test_deploy_attempt_freshness_reports_stale_dry_run(self):
+        freshness = build_deploy_attempt_report.build_freshness(
+            {"plannedUploadCount": 77, "build": {"sourceSha": "old456"}},
+            {"fileCount": 78, "build": {"sourceSha": "new789"}},
+        )
+        blocker = build_deploy_attempt_report.freshness_blocker(freshness)
+
+        self.assertFalse(freshness["plannedUploadCountMatchesPackage"])
+        self.assertFalse(freshness["sourceShaMatchesPackage"])
+        self.assertIn("planned upload count", blocker)
+        self.assertIn("source SHA", blocker)
 
 
 if __name__ == "__main__":

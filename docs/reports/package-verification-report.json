@@ -1,11 +1,11 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "fae36ec661917dda597b376447ad741f1291d077",
-    "sourceShaShort": "fae36ec66191",
+    "sourceSha": "3cef969686243464e7a533331044d73aada5f7d8",
+    "sourceShaShort": "3cef96968624",
     "valuesRedacted": true
   },
-  "bytes": 119893,
+  "bytes": 121026,
   "checkOnly": false,
   "excludedDirs": [
     ".git",

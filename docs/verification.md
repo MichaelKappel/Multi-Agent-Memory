@@ -27,6 +27,7 @@ Expected current local state:
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, and secret-safety boundary.
 - `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard ban on catch-all files such as `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, and `.uai/current-state.uai`.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
+- Deploy dry-run evidence must match the package report file count and source SHA, and dry-run reports must be marked `safeNoOp=true`.
 - Secret scan reports 0 hits.
 - Enterprise readiness audit reports local hardening as verified while keeping `completionClaimAllowed=false` until live deploy, live dogfooding, and external CI are proven.
 

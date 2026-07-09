@@ -21,6 +21,7 @@ Current local gate:
 - `python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json`
 - `python scripts\build_readiness_reports.py --write`
 - `git diff --check`
+- Deploy dry-run evidence must match the package report and remain a no-upload safe no-op before any live deploy claim.
 
 External evidence refresh:
 - `python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json` updates GitHub Actions evidence. It exits nonzero while CI is not successful, so use its report as a gate signal rather than as a local code-test failure.

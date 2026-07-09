@@ -234,7 +234,7 @@ def main(argv=None):
     if discovery_report:
         report["discovery"] = discovery_report
     report["status"] = "ready" if remote_dir else "missing_remote_dir"
-    report["safeNoOp"] = not bool(remote_dir)
+    report["safeNoOp"] = bool(args.dry_run or args.connection_check or not remote_dir)
     if discovered_dir and not args.allow_discovered_live_upload and not args.dry_run:
         report["status"] = "discovered_remote_dir_requires_explicit_live_allow"
         report["safeNoOp"] = True

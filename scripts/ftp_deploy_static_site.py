@@ -256,7 +256,7 @@ def main(argv=None):
     if discovery_report:
         report["discovery"] = discovery_report
     report["status"] = "ready" if (remote_dir and site_root.exists() and planned_files) else "missing_prerequisite"
-    report["safeNoOp"] = report["status"] != "ready"
+    report["safeNoOp"] = bool(args.dry_run or args.connection_check or report["status"] != "ready")
     if discovered_dir and not args.allow_discovered_live_upload and not args.dry_run:
         report["status"] = "discovered_remote_dir_requires_explicit_live_allow"
         report["safeNoOp"] = True
