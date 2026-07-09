@@ -17,7 +17,8 @@ Primary live endpoint evidence:
 
 Setup reference:
 
+- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints
+- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
 - https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
-- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
 
 Authority boundary: no certification, endorsement, automatic repository writes, hidden credential validation, or private secret handling is granted by this documentation site.

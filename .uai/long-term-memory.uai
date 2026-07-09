@@ -4,7 +4,7 @@ Purpose:
 - Pointer ledger for durable memory locations and external setup references.
 
 Last verified: 2026-07-09
-Memory scope: mid-to-long-term memory routing, documentation pointers, and proposed UAIX MATM setup anchors.
+Memory scope: mid-to-long-term memory routing, documentation pointers, and UAIX MATM setup anchors.
 Public-safe status: safe for source control; contains route URLs only, no credentials.
 Update route: use https://memoryendpoints.com/api/matm/memory-events/submit for authenticated MATM memory updates; update this local pointer ledger when durable routes change.
 Source of truth: live MemoryEndpoints.com public evidence routes, repository docs, and `.uai/totem.uai`.
@@ -34,12 +34,14 @@ Review status: current
 Review evidence: sites/multiagentmemory.com/README.md and sites/multiagentmemory.com/ai-manifest.json
 Truth boundary: documentation only; not the hosted memory endpoint.
 
-Stable id: uaix-matm-setup-proposed
-Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
-Paired file handoff path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
-Label: Proposed UAIX AI Memory Package Wizard MATM setup
-Routing summary: Requested UAIX wizard/spec mode for .uai startup memory plus a hosted MATM durable-memory endpoint. MemoryEndpoints.com is the suggested example endpoint, not a UAIX endorsement.
+Stable id: uaix-file-handoff-matm-memoryendpoints-setup
+Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints
+MemoryEndpoints MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
+Generic MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
+Generic file handoff MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
+Label: UAIX File Handoff plus MemoryEndpoints.com MATM setup
+Routing summary: Use this UAIX wizard route to configure hot .uai startup memory, Agent File Handoff intake, and MemoryEndpoints.com example MATM endpoint routes.
 Authority/source: UAIX public standards page
-Review status: requested
-Review evidence: owner request recorded in .uai progress; local prompt drafts are intentionally excluded from source control.
-Truth boundary: requested UAIX guidance only; the MATM fragments are target anchors to add, and agents must not claim UAIX has published or endorsed them until UAIX does.
+Review status: published_reference_verified
+Review evidence: UAIX AI Memory Package Wizard public page verified 2026-07-09.
+Truth boundary: UAIX publishes setup guidance and MemoryEndpoints.com example route prefill only. This is not certification, endorsement, automatic sync, repository write authority, hidden credential validation, or the MATM memory update destination.

@@ -8,7 +8,7 @@ Memory boundary:
 - Mid-to-long-term hosted memory: MemoryEndpoints.com protected MATM routes.
 - Public documentation and GitHub-facing explanation: MultiAgentMemory.com.
 
-The documentation model follows the requested UAIX AI Memory Package Wizard MATM setup boundary:
+The documentation model follows the UAIX AI Memory Package Wizard File Handoff plus MemoryEndpoints.com MATM setup boundary:
 
 - Keep `.uai` active as compact startup continuity memory.
 - Use `.uai/long-term-memory.uai` as a semantic pointer ledger.
@@ -16,7 +16,8 @@ The documentation model follows the requested UAIX AI Memory Package Wizard MATM
 - Use MemoryEndpoints.com as a suggested MATM endpoint example.
 - Do not claim certification, endorsement, automatic sync, or hidden runtime authority.
 
-Requested references:
+Setup references:
 
+- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints
+- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
 - https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
-- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
