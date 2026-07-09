@@ -59,7 +59,7 @@ To exercise the current live HTTP API as well:
 python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com
 ```
 
-Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. The current dogfood contract includes protected audit-log readback, so live dogfood must be rerun after the latest route tranche is deployed.
+Live dogfood proves the currently deployed MemoryEndpoints.com API workflow, not that the newest local commit has been deployed. The report distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`: the current deployed API can prove the core MATM workflow even while the latest protected audit-log readback contract remains blocked until the latest route tranche is deployed.
 
 ## Report Refresh
 

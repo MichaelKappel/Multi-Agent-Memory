@@ -1,26 +1,33 @@
 {
-  "auditLogCount": 10,
-  "auditTrailReadbackVerified": true,
+  "auditLogCount": 0,
+  "auditTrailReadbackVerified": false,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-09T18:51:49Z",
+  "generatedAt": "2026-07-09T18:59:50Z",
+  "latestDogfoodContractVerified": false,
+  "liveAuditTrailReadbackVerified": false,
+  "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": false,
+  "localAuditTrailReadbackVerified": true,
   "localDogfoodVerified": true,
-  "mode": "local_wsgi",
-  "ok": true,
+  "mode": "combined",
+  "ok": false,
   "oneTimeKeyReturned": true,
-  "optionalStepFailureCount": 0,
+  "optionalStepFailureCount": 1,
   "postAckUnreadCount": 0,
   "rawCredentialValuesStored": false,
   "rawPrivatePayloadsStored": false,
   "rawWorkspaceIdStoredInReport": false,
   "receiptCount": 1,
-  "requiredStepFailureCount": 0,
+  "requiredStepFailureCount": 1,
   "runs": [
     {
       "auditLogCount": 10,
       "auditTrailReadbackVerified": true,
+      "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T18:51:48Z",
+      "generatedAt": "2026-07-09T18:59:47Z",
+      "latestDogfoodContractVerified": true,
+      "liveCoreDogfoodVerified": false,
       "liveDogfoodVerified": false,
       "localDogfoodVerified": true,
       "mode": "local_wsgi",
@@ -176,7 +183,164 @@
       ],
       "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:9148911bed8bc6ec4869f88392e111e391e0f8096ac65dc7d28fd4dd2a80d91c"
+      "workspaceIdHash": "sha256:ec1b970e4f1173582b18a850c48386aa7e33de20bb8c7823ca5a6a51e9c00b0a"
+    },
+    {
+      "auditLogCount": 0,
+      "auditTrailReadbackVerified": false,
+      "coreDogfoodWorkflowVerified": true,
+      "currentMessageUnreadCount": 1,
+      "generatedAt": "2026-07-09T18:59:47Z",
+      "latestDogfoodContractVerified": false,
+      "liveCoreDogfoodVerified": true,
+      "liveDogfoodVerified": false,
+      "localDogfoodVerified": false,
+      "mode": "live_http",
+      "ok": false,
+      "oneTimeKeyReturned": true,
+      "optionalStepFailureCount": 1,
+      "postAckUnreadCount": 0,
+      "rawCredentialValuesStored": false,
+      "rawPrivatePayloadsStored": false,
+      "rawWorkspaceIdStoredInReport": false,
+      "receiptCount": 1,
+      "requiredStepFailureCount": 1,
+      "searchReadbackCount": 1,
+      "steps": [
+        {
+          "httpStatus": "201 Created",
+          "name": "create_free_workspace",
+          "ok": true,
+          "payloadShape": [
+            "apiKeySecret",
+            "checkoutRequired",
+            "idempotencySupported",
+            "keyId",
+            "ok",
+            "rawKeyStoredByServer",
+            "showKeyOnce",
+            "storageLimitBytes",
+            "storeKeySafely",
+            "workspaceId"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "register_agent",
+          "ok": true,
+          "payloadShape": [
+            "agent",
+            "ok"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "submit_memory",
+          "ok": true,
+          "payloadShape": [
+            "event",
+            "ok"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "search_memory",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "docsMemory",
+            "docsMemoryCount",
+            "items",
+            "ok"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "404 Not Found",
+          "name": "read_review_queue",
+          "ok": false,
+          "payloadShape": [
+            "error",
+            "ok"
+          ],
+          "required": false
+        },
+        {
+          "httpStatus": "202 Accepted",
+          "name": "create_current_message",
+          "ok": true,
+          "payloadShape": [
+            "message",
+            "notification",
+            "ok"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_current_message",
+          "ok": true,
+          "payloadShape": [
+            "currentMessageLane",
+            "items",
+            "ok",
+            "responseStates",
+            "unreadCount"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "acknowledge_notification",
+          "ok": true,
+          "payloadShape": [
+            "ok",
+            "receipt"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_redacted_receipts",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "items",
+            "ok",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "404 Not Found",
+          "name": "read_audit_log",
+          "ok": false,
+          "payloadShape": [
+            "error",
+            "ok"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_current_message_after_ack",
+          "ok": true,
+          "payloadShape": [
+            "currentMessageLane",
+            "items",
+            "ok",
+            "responseStates",
+            "unreadCount"
+          ],
+          "required": true
+        }
+      ],
+      "target": "https://memoryendpoints.com",
+      "valuesRedacted": true,
+      "workspaceIdHash": "sha256:cd9bc75a20aa46ad8dbbc13b7ecae3cb639fdbc5408f180bacab8fc8d4b215bc"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -234,15 +398,12 @@
       "required": true
     },
     {
-      "httpStatus": "200 OK",
+      "httpStatus": "404 Not Found",
       "name": "read_review_queue",
-      "ok": true,
+      "ok": false,
       "payloadShape": [
-        "count",
-        "items",
-        "ok",
-        "promotionRoute",
-        "valuesRedacted"
+        "error",
+        "ok"
       ],
       "required": false
     },
@@ -293,17 +454,12 @@
       "required": true
     },
     {
-      "httpStatus": "200 OK",
+      "httpStatus": "404 Not Found",
       "name": "read_audit_log",
-      "ok": true,
+      "ok": false,
       "payloadShape": [
-        "count",
-        "items",
-        "ok",
-        "rawCredentialExposed",
-        "rawPayloadExposed",
-        "schemaVersion",
-        "valuesRedacted"
+        "error",
+        "ok"
       ],
       "required": true
     },
@@ -323,5 +479,5 @@
   ],
   "uaiProgressUpdated": true,
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:9148911bed8bc6ec4869f88392e111e391e0f8096ac65dc7d28fd4dd2a80d91c"
+  "workspaceIdHash": "sha256:cd9bc75a20aa46ad8dbbc13b7ecae3cb639fdbc5408f180bacab8fc8d4b215bc"
 }

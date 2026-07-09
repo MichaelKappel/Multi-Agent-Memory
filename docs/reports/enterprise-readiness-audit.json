@@ -25,7 +25,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "blocker": "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified.",
       "evidence": [
         "docs/reports/dogfood-memory-run.json"
       ],
@@ -188,6 +188,14 @@
       "status": "pass_live_current_public_surface"
     },
     {
+      "blocker": null,
+      "evidence": [
+        "docs/reports/dogfood-memory-run.json"
+      ],
+      "requirement": "live_core_dogfooding_current_surface",
+      "status": "pass_live_current_public_surface"
+    },
+    {
       "blocker": "FTPS login rejected before upload; uploadedCount was 0.",
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json"
@@ -196,7 +204,7 @@
       "status": "blocked"
     },
     {
-      "blocker": "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+      "blocker": "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified.",
       "evidence": [
         "docs/reports/dogfood-memory-run.json"
       ],
@@ -225,6 +233,7 @@
   "summary": {
     "dateFreeHotMemory": true,
     "latestCodeLiveDeployed": false,
+    "liveCoreDogfoodVerified": true,
     "liveDogfoodVerified": false,
     "livePublicRoutesVerified": true,
     "localHardeningVerified": true,

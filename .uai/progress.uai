@@ -21,8 +21,8 @@ Current progress state:
 - MemoryEndpoints.com inbound links should use `https://memoryendpoints.com`; it currently has one setup surface.
 - Strategy intake has been distilled into reviewed long-term docs for enterprise engineering, MATM architecture, timestamp-free memory, and system targets.
 - Raw strategy reports and prompt drafts remain local-only and must not be committed.
-- Live MemoryEndpoints.com public routes and live MATM dogfood are verified for the currently deployed surface, but latest-code deployment remains blocked by FTPS login failure before upload.
+- Live MemoryEndpoints.com public routes and live core MATM dogfood are verified for the currently deployed surface, but latest-code deployment and latest audit-log dogfood contract remain blocked by FTPS login failure before upload.
 - Live MultiAgentMemory.com does not yet serve the expected companion documentation. Static source is ready locally, but static publish is blocked by FTPS login failure before upload.
 - GitHub Actions CI for the pushed commit failed before any job steps executed; `scripts/check_github_actions.py` refreshes this public-safe evidence without requiring `gh`.
-- Local dogfood status: Local MATM dogfood run verified through WSGI; report `docs/reports/dogfood-memory-run.json`; audit-log readback verified: true; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
+- Dogfood status: Live core MATM dogfood run verified against `https://memoryendpoints.com`; latest audit-log readback contract is not live yet; report `docs/reports/dogfood-memory-run.json`; local audit-log readback verified: true; live audit-log readback verified: false; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; raw credential values stored in report: false.
 - Completion must not be claimed until latest-code live deployment, MultiAgentMemory.com live static publish, live companion route verification, CI, and gated capabilities are resolved or explicitly waived.

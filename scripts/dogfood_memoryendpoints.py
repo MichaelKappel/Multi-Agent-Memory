@@ -111,15 +111,22 @@ def step(report, name, status, payload=None, required=True):
 def append_progress(report):
     if report.get("liveDogfoodVerified"):
         detail = "Live MATM dogfood run verified against `https://memoryendpoints.com`"
+    elif report.get("liveCoreDogfoodVerified"):
+        detail = "Live core MATM dogfood run verified against `https://memoryendpoints.com`; latest audit-log readback contract is not live yet"
     elif report.get("localDogfoodVerified"):
         detail = "Local MATM dogfood run verified through WSGI"
     else:
         detail = "MATM dogfood run attempted but not fully verified"
     line = (
-        "- Local dogfood status: %s; report `docs/reports/dogfood-memory-run.json`; "
-        "audit-log readback verified: %s; MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; "
+        "- Dogfood status: %s; report `docs/reports/dogfood-memory-run.json`; "
+        "local audit-log readback verified: %s; live audit-log readback verified: %s; "
+        "MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; "
         "raw credential values stored in report: false."
-        % (detail, str(bool(report.get("auditTrailReadbackVerified"))).lower())
+        % (
+            detail,
+            str(bool(report.get("localAuditTrailReadbackVerified") or (report.get("localDogfoodVerified") and report.get("auditTrailReadbackVerified")))).lower(),
+            str(bool(report.get("liveAuditTrailReadbackVerified") or (report.get("liveDogfoodVerified") and report.get("auditTrailReadbackVerified")))).lower(),
+        )
     )
     existing = PROGRESS_PATH.read_text(encoding="utf-8").splitlines()
     cleaned = [
@@ -129,7 +136,7 @@ def append_progress(report):
     ]
     replaced = False
     for index, item in enumerate(cleaned):
-        if item.startswith("- Local dogfood status:"):
+        if item.startswith("- Local dogfood status:") or item.startswith("- Dogfood status:"):
             cleaned[index] = line
             replaced = True
             break
@@ -151,6 +158,8 @@ def run_sequence(transport, label, base_url=None):
         "generatedAt": utc_now(),
         "ok": False,
         "liveDogfoodVerified": False,
+        "liveCoreDogfoodVerified": False,
+        "latestDogfoodContractVerified": False,
         "localDogfoodVerified": False,
         "rawCredentialValuesStored": False,
         "rawPrivatePayloadsStored": False,
@@ -269,8 +278,16 @@ def run_sequence(transport, label, base_url=None):
         step(report, "read_current_message_after_ack", status, post_ack_current)
 
         required_ok = all(item["ok"] for item in report["steps"] if item["required"])
+        core_required_ok = all(
+            item["ok"]
+            for item in report["steps"]
+            if item["required"] and item["name"] != "read_audit_log"
+        )
         report["ok"] = required_ok
+        report["coreDogfoodWorkflowVerified"] = core_required_ok
+        report["latestDogfoodContractVerified"] = required_ok
         report["localDogfoodVerified"] = transport.mode == "local_wsgi" and required_ok
+        report["liveCoreDogfoodVerified"] = transport.mode == "live_http" and core_required_ok
         report["liveDogfoodVerified"] = transport.mode == "live_http" and required_ok
         report["workspaceIdHash"] = "sha256:" + hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()
         report["oneTimeKeyReturned"] = bool(token)
@@ -292,6 +309,16 @@ def run_sequence(transport, label, base_url=None):
 def combine_reports(runs):
     local_verified = any(item.get("localDogfoodVerified") for item in runs)
     live_verified = any(item.get("liveDogfoodVerified") for item in runs)
+    live_core_verified = any(item.get("liveCoreDogfoodVerified") for item in runs)
+    latest_contract_verified = all(item.get("latestDogfoodContractVerified") for item in runs)
+    local_audit_verified = any(
+        item.get("mode") == "local_wsgi" and item.get("auditTrailReadbackVerified")
+        for item in runs
+    )
+    live_audit_verified = any(
+        item.get("mode") == "live_http" and item.get("auditTrailReadbackVerified")
+        for item in runs
+    )
     report = {
         "schemaVersion": "memoryendpoints.dogfood_run.v3",
         "generatedAt": utc_now(),
@@ -300,6 +327,10 @@ def combine_reports(runs):
         "ok": all(item.get("ok") for item in runs),
         "localDogfoodVerified": local_verified,
         "liveDogfoodVerified": live_verified,
+        "liveCoreDogfoodVerified": live_core_verified,
+        "latestDogfoodContractVerified": latest_contract_verified,
+        "localAuditTrailReadbackVerified": local_audit_verified,
+        "liveAuditTrailReadbackVerified": live_audit_verified,
         "rawCredentialValuesStored": any(item.get("rawCredentialValuesStored") for item in runs),
         "rawPrivatePayloadsStored": any(item.get("rawPrivatePayloadsStored") for item in runs),
         "rawWorkspaceIdStoredInReport": False,
@@ -307,7 +338,14 @@ def combine_reports(runs):
         "optionalStepFailureCount": sum(item.get("optionalStepFailureCount", 0) for item in runs),
         "valuesRedacted": True,
     }
-    primary = next((item for item in runs if item.get("liveDogfoodVerified")), runs[-1])
+    primary = next(
+        (
+            item
+            for item in runs
+            if item.get("liveDogfoodVerified") or item.get("liveCoreDogfoodVerified")
+        ),
+        runs[-1],
+    )
     for key in (
         "steps",
         "searchReadbackCount",

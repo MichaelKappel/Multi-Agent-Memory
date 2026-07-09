@@ -93,6 +93,7 @@ def build_local_report():
         "noCatchAllActiveMemoryFile": bool(uai and uai.get("noCatchAllActiveMemoryFile")),
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
+        "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
         "repositoryBoundaryOk": bool(boundary and boundary.get("ok")),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
         "externalSignals": {
@@ -119,6 +120,7 @@ def build_final_markdown(local_report):
 
     latest_deployed = bool((deploy.get("claimBoundary") or {}).get("newCodeLiveDeployed"))
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
+    live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
     completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and live_dogfood and not enterprise.get("blockers"))
     lines = [
         "# Final Readiness Report",
@@ -134,7 +136,11 @@ def build_final_markdown(local_report):
         "- Local WSGI route verification: %s routes, %s failures." % (local_routes.get("routeCount"), local_routes.get("failureCount")),
         "- Live public route verification: %s routes, %s failures for the currently deployed public surface." % (live_routes.get("routeCount"), live_routes.get("failureCount")),
         "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and no catch-all active-memory file exists.",
-        "- Local dogfooding: %s through WSGI; live dogfooding: %s." % (str(bool(dogfood.get("localDogfoodVerified"))).lower(), str(live_dogfood).lower()),
+        "- Local dogfooding: %s through WSGI; live core dogfooding on current deployed API: %s; latest live dogfood contract: %s." % (
+            str(bool(dogfood.get("localDogfoodVerified"))).lower(),
+            str(live_core_dogfood).lower(),
+            str(live_dogfood).lower(),
+        ),
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Secret scan: %s scanned files, %s hits." % (secret.get("scannedFileCount"), secret.get("hitCount")),
         "- MultiAgentMemory.com static source: %s; live publish status `%s`, uploaded count `%s`." % (
@@ -152,7 +158,11 @@ def build_final_markdown(local_report):
         "- MultiAgentMemory.com live routes: blocked until `docs/reports/multiagentmemory-live-site-verification.json` passes.",
     ]
     if not live_dogfood:
-        lines.append("- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials.")
+        lines.append(
+            "- Live dogfooding: latest contract blocked until protected audit-log readback is deployed and verified."
+            if live_core_dogfood
+            else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
+        )
     lines.extend(
         [
             "- GitHub Actions CI: blocked. %s" % (github_ci.get("blocker") or "The latest run is not a passing CI signal."),
@@ -160,10 +170,10 @@ def build_final_markdown(local_report):
             "",
             "## Claim Boundary",
             "",
-            "The repository has strong local MATM evidence, public route evidence, package evidence, and secret-safety evidence. Live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code live deployment, live dogfood, GitHub Actions CI, and remaining gated items are verified.",
+            "The repository has strong local MATM evidence, current live core dogfood evidence, public route evidence, package evidence, and secret-safety evidence. Latest-contract live dogfood must be rerun after latest-code deployment succeeds because the current local dogfood contract includes protected audit-log readback. The project must not be described as fully done until latest-code live deployment, latest-contract live dogfood, GitHub Actions CI, and remaining gated items are verified.",
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "valuesRedacted": True}, indent=2, sort_keys=True),
             "```",
         ]
     )

@@ -146,6 +146,12 @@ def main(argv=None):
             ["docs/reports/live-route-verification.json"],
         ),
         evidence_item(
+            "live_core_dogfooding_current_surface",
+            "pass_live_current_public_surface" if dogfood and dogfood.get("liveCoreDogfoodVerified") else "missing",
+            ["docs/reports/dogfood-memory-run.json"],
+            None if dogfood and dogfood.get("liveCoreDogfoodVerified") else "Run live dogfood against the currently deployed MemoryEndpoints.com API before claiming live core workflow evidence.",
+        ),
+        evidence_item(
             "latest_code_live_deployed",
             "blocked",
             ["docs/reports/deploy-attempt-20260709.json"],
@@ -155,7 +161,11 @@ def main(argv=None):
             "live_dogfooding",
             "pass_live" if dogfood and dogfood.get("liveDogfoodVerified") else "blocked",
             ["docs/reports/dogfood-memory-run.json"],
-            None if dogfood and dogfood.get("liveDogfoodVerified") else "Only local WSGI dogfooding is verified; live deployment/access is gated.",
+            None if dogfood and dogfood.get("liveDogfoodVerified") else (
+                "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified."
+                if dogfood and dogfood.get("liveCoreDogfoodVerified")
+                else "Only local WSGI dogfooding is verified; live deployment/access is gated."
+            ),
         ),
         evidence_item(
             "github_actions_ci",
@@ -187,6 +197,7 @@ def main(argv=None):
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
             "noCatchAllActiveMemoryFile": bool(uai_audit and uai_audit.get("noCatchAllActiveMemoryFile")),
             "livePublicRoutesVerified": bool(live_routes and live_routes.get("ok")),
+            "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
             "latestCodeLiveDeployed": False,
             "multiAgentMemoryStaticSiteVerified": multiagentmemory_static_ok,
             "multiAgentMemoryLiveDeployed": bool(multiagentmemory_live and multiagentmemory_live.get("status") == "uploaded"),
