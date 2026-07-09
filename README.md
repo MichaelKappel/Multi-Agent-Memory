@@ -36,7 +36,7 @@ MultiAgentMemory.com is documentation only. It explains the architecture, memory
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
 
-UAIX setup reference: use [File Handoff plus MemoryEndpoints.com MATM](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints) for this repository’s `.uai` package pattern. The generic [MATM setup](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM) remains useful for non-MemoryEndpoints endpoint configurations.
+UAIX setup reference: use the [MemoryEndpoints.com MATM setup option](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints) for this repository's `.uai` package pattern. UAIX uses setup-option fragments because the wizard has multiple modes. MemoryEndpoints.com inbound links should use the [home page](https://memoryendpoints.com); it currently has one setup surface, and any future setup-specific MemoryEndpoints URLs should be clean readable routes.
 
 ## Repository Layout
 

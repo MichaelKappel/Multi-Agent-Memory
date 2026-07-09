@@ -34,13 +34,14 @@ Review status: current
 Review evidence: sites/multiagentmemory.com/README.md and sites/multiagentmemory.com/ai-manifest.json
 Truth boundary: documentation only; not the hosted memory endpoint.
 
-Stable id: uaix-file-handoff-matm-memoryendpoints-setup
-Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints
-MemoryEndpoints MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
-Generic MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
-Generic file handoff MATM path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM
-Label: UAIX File Handoff plus MemoryEndpoints.com MATM setup
-Routing summary: Use this UAIX wizard route to configure hot .uai startup memory, Agent File Handoff intake, and MemoryEndpoints.com example MATM endpoint routes.
+Stable id: uaix-matm-memoryendpoints-setup
+Path: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
+Wizard base page: https://uaix.org/en-us/tools/ai-memory-package-wizard/
+Setup mode: MemoryEndpoints.com MATM
+Setup mode id: setup-MATM-MemoryEndpoints
+Label: UAIX MemoryEndpoints.com MATM setup
+Inbound link policy: UAIX may use setup-option fragment URLs because the wizard has multiple modes. MemoryEndpoints.com inbound links should use https://memoryendpoints.com because it currently has one setup surface; future MemoryEndpoints-specific setup URLs should be clean readable routes.
+Routing summary: Use the UAIX MemoryEndpoints.com MATM setup option to configure hot .uai startup memory and MemoryEndpoints.com example MATM endpoint routes.
 Authority/source: UAIX public standards page
 Review status: published_reference_verified
 Review evidence: UAIX AI Memory Package Wizard public page verified 2026-07-09.

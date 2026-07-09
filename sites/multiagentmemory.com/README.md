@@ -8,7 +8,7 @@ Memory boundary:
 - Mid-to-long-term hosted memory: MemoryEndpoints.com protected MATM routes.
 - Public documentation and GitHub-facing explanation: MultiAgentMemory.com.
 
-The documentation model follows the UAIX AI Memory Package Wizard File Handoff plus MemoryEndpoints.com MATM setup boundary:
+The documentation model follows the UAIX AI Memory Package Wizard MemoryEndpoints.com MATM setup boundary:
 
 - Keep `.uai` active as compact startup continuity memory.
 - Use `.uai/long-term-memory.uai` as a semantic pointer ledger.
@@ -18,6 +18,12 @@ The documentation model follows the UAIX AI Memory Package Wizard File Handoff p
 
 Setup references:
 
-- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-file-handoff-MATM-MemoryEndpoints
-- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
-- https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM
+- UAIX setup option: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
+- MemoryEndpoints.com inbound/home: https://memoryendpoints.com
+
+Setup mode:
+
+- MemoryEndpoints.com MATM
+- Mode id: setup-MATM-MemoryEndpoints
+
+Inbound link rule: UAIX may use setup-option fragments because it has multiple wizard modes. MemoryEndpoints.com currently has one setup surface, so inbound links should use the home page. Future MemoryEndpoints setup URLs should be clean readable routes.
