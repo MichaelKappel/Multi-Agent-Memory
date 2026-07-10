@@ -1318,9 +1318,6 @@ def route_console(start_response):
     <button class="button primary" type="submit">Load workspace</button>
   </form>
   <div class="console-status" data-console-status>Waiting for a key.</div>
-  <div class="operator-metrics" data-console-operator-metrics>
-    <p class="empty-state">Operator status will appear after the workspace loads.</p>
-  </div>
   <div class="console-command-bar" data-console-command-bar aria-label="Loaded workspace commands">
     <div class="command-bar-summary">
       <span class="summary-label">Command Bar</span>
@@ -1335,6 +1332,9 @@ def route_console(start_response):
       <button class="button compact" type="button" data-console-command="receipts">Receipts</button>
       <button class="button compact" type="button" data-console-command="audit">Audit</button>
     </div>
+  </div>
+  <div class="operator-metrics" data-console-operator-metrics>
+    <p class="empty-state">Operator status will appear after the workspace loads.</p>
   </div>
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>

@@ -227,6 +227,16 @@
     });
   }
 
+  function formControl(form, name) {
+    if (!form || !form.elements) {
+      return null;
+    }
+    if (form.elements.namedItem) {
+      return form.elements.namedItem(name);
+    }
+    return form.elements[name] || null;
+  }
+
   function renderMemoryOperatorSummary(parent, payload, items) {
     var summary = (payload && payload.operatorSummary) || {};
     var count = summary.count !== undefined ? summary.count : (items || []).length;
@@ -1935,8 +1945,11 @@
       return Promise.resolve(null);
     }
     var form = pick("[data-console-search]");
+    var queryControl = formControl(form, "query");
     if (form) {
-      form.elements.query.value = longTermMemoryTag;
+      if (queryControl) {
+        queryControl.value = longTermMemoryTag;
+      }
       ["scope", "memoryType", "reviewStatus", "promotionState", "actorAgentId"].forEach(function (field) {
         if (form.elements[field]) {
           form.elements[field].value = "";
@@ -2276,10 +2289,11 @@
     setWorkflowView(workflow, true);
     var task;
     if (action === "memory") {
-      if (searchForm && searchForm.elements.query && !searchForm.elements.query.value.trim()) {
-        searchForm.elements.query.value = "verification";
+      var commandSearchQuery = formControl(searchForm, "query");
+      if (commandSearchQuery && !commandSearchQuery.value.trim()) {
+        commandSearchQuery.value = "verification";
       }
-      task = refreshMemory(searchForm && searchForm.elements.query ? searchForm.elements.query.value : "verification")
+      task = refreshMemory(commandSearchQuery ? commandSearchQuery.value : "verification")
         .then(function (payload) {
           setStatus("Verification memory refreshed from the command bar.", false);
           return payload;
@@ -2408,7 +2422,8 @@
   if (searchForm) {
     searchForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      refreshMemory(searchForm.elements.query.value).catch(function (error) {
+      var queryControl = formControl(searchForm, "query");
+      refreshMemory(queryControl ? queryControl.value : "").catch(function (error) {
         setStatus(error.message, true);
       });
     });
@@ -2422,7 +2437,8 @@
           searchForm.elements[field].value = "";
         }
       });
-      refreshMemory(searchForm.elements.query.value)
+      var queryControl = formControl(searchForm, "query");
+      refreshMemory(queryControl ? queryControl.value : "")
         .then(function () { setStatus("Memory search filters cleared.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
@@ -2765,7 +2781,10 @@
           renderReviewDecisionSummary(payload);
           return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending");
         })
-        .then(function () { return refreshMemory(searchForm ? searchForm.elements.query.value : ""); })
+        .then(function () {
+          var queryControl = formControl(searchForm, "query");
+          return refreshMemory(queryControl ? queryControl.value : "");
+        })
         .then(function () { setStatus("Review decision recorded and queue refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
