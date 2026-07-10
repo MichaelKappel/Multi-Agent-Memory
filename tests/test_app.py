@@ -2506,6 +2506,104 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("promoted", item["reviewStatus"])
         self.assertEqual("promoted", item["promotionState"])
 
+    def test_sqlite_review_queue_decisions_persist_multiple_promotions(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "review-decisions.sqlite3")
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "SQLite Review Decisions Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+        token = setup["apiKeySecret"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+
+        expected_sources = []
+        for index in range(6):
+            source = "docs/long-term-memory/sqlite-review-%s.md" % index
+            expected_sources.append(source)
+            status, _headers, _text = call_app(
+                "/api/matm/memory-events/submit",
+                method="POST",
+                headers=auth,
+                body={
+                    "workspaceId": workspace_id,
+                    "actorAgentId": "sqlite-review-agent",
+                    "scope": "project",
+                    "scopeId": project_id,
+                    "memoryType": "handoff",
+                    "title": "SQLite review handoff %s" % index,
+                    "summary": "SQLite review handoff %s must remain promoted after decision readback." % index,
+                    "tags": ["long-term-memory-migration", "sqlite-review"],
+                    "source": source,
+                },
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query=(
+                "workspace_id=%s&status=pending&source_prefix=docs/long-term-memory/"
+                "&tag=long-term-memory-migration&memory_type=handoff&actor_agent_id=sqlite-review-agent"
+            )
+            % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        queue = json.loads(text)
+        self.assertEqual(6, queue["count"])
+        review_ids = [item["reviewId"] for item in queue["items"]]
+
+        for index, review_id in enumerate(review_ids):
+            status, _headers, text = call_app(
+                "/api/matm/review-queue/decide",
+                method="POST",
+                headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sqlite-review-promote-%s" % index),
+                body={
+                    "workspaceId": workspace_id,
+                    "reviewId": review_id,
+                    "reviewerAgentId": "MemoryEndpoints-Backend-Agent",
+                    "decision": "promote",
+                    "reviewNote": "Promote public-safe hosted handoff.",
+                },
+            )
+            self.assertEqual("200 OK", status)
+            payload = json.loads(text)
+            self.assertTrue(payload["ok"])
+            self.assertEqual("promoted", payload["review"]["status"])
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query=(
+                "workspace_id=%s&source_prefix=docs/long-term-memory/"
+                "&tag=long-term-memory-migration&memory_type=handoff&actor_agent_id=sqlite-review-agent"
+            )
+            % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        review_readback = json.loads(text)
+        self.assertEqual(6, review_readback["count"])
+        self.assertEqual(6, review_readback["statusCounts"]["promoted"])
+        self.assertTrue(all(item["status"] == "promoted" for item in review_readback["items"]))
+        self.assertTrue(all(item["reviewerAgentId"] == "MemoryEndpoints-Backend-Agent" for item in review_readback["items"]))
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=sqlite-review&tag=long-term-memory-migration&promotion_state=promoted" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        search = json.loads(text)
+        self.assertEqual(6, search["count"])
+        self.assertEqual(set(expected_sources), {item["source"] for item in search["items"]})
+        self.assertEqual(6, search["operatorSummary"]["longTermMemoryMigration"]["promotionStateCounts"]["promoted"])
+        self.assertNotIn(token, json.dumps(review_readback))
+        self.assertNotIn(token, json.dumps(search))
+
     def test_memory_search_supports_operator_filters(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",

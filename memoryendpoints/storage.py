@@ -1823,6 +1823,27 @@ class SQLiteStore(FileStore):
             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
         }
 
+    def _review_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "reviewId": row["review_id"],
+            "workspaceId": row["workspace_id"],
+            "memoryEventId": row["memory_id"],
+            "proposedByAgentId": row["proposed_by_agent_id"],
+            "reviewType": row["review_type"],
+            "status": row["status"],
+            "publicSafeSummary": row["public_safe_summary"],
+            "firewallDecision": row["firewall_decision"],
+            "riskScore": row["risk_score"],
+            "detectedThreats": self._json_load(row["detected_threats_json"], []),
+            "createdAt": row["created_at"],
+            "decidedAt": row["decided_at"],
+            "reviewerAgentId": row["reviewer_agent_id"],
+            "reviewerNoteHash": row["reviewer_note_hash"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+        }
+
     def _meeting_read_from_row(self, row):
         if not row:
             return {}
@@ -2577,6 +2598,88 @@ class SQLiteStore(FileStore):
             if not q or q in haystack:
                 items.append(_public_memory_event(event))
         return items
+
+    def review_queue(self, workspace_id, status=None):
+        wanted = (status or "").strip().lower()
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if wanted:
+            clauses.append("LOWER(status) = ?")
+            params.append(wanted)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_review_queue
+                        WHERE %s
+                        ORDER BY created_at, review_id
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+                return [self._review_from_row(row) for row in rows]
+
+    def decide_review(self, workspace_id, review_id, reviewer_agent_id, decision, review_note=None):
+        normalized = (decision or "").strip().lower()
+        target_status = {
+            "promote": "promoted",
+            "approve": "promoted",
+            "reject": "rejected",
+            "quarantine": "quarantined",
+        }.get(normalized)
+        if not target_status:
+            return None, "invalid_decision"
+        now = utc_now()
+        review_note_hash = _canonical_hash({"reviewNote": review_note or ""}) if review_note else None
+        event_status = "active" if target_status == "promoted" else target_status
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    existing = connection.execute(
+                        """
+                        SELECT * FROM matm_review_queue
+                        WHERE workspace_id = ? AND review_id = ?
+                        """,
+                        (workspace_id, review_id),
+                    ).fetchone()
+                    if not existing:
+                        return None, "not_found"
+                    connection.execute(
+                        """
+                        UPDATE matm_review_queue
+                        SET status = ?, decided_at = ?, reviewer_agent_id = ?, reviewer_note_hash = ?
+                        WHERE workspace_id = ? AND review_id = ?
+                        """,
+                        (target_status, now, reviewer_agent_id, review_note_hash, workspace_id, review_id),
+                    )
+                    memory_id = existing["memory_id"]
+                    connection.execute(
+                        """
+                        UPDATE matm_memory_records
+                        SET review_status = ?, promotion_state = ?, status = ?, updated_at = ?
+                        WHERE workspace_id = ? AND memory_id = ?
+                        """,
+                        (target_status, target_status, event_status, now, workspace_id, memory_id),
+                    )
+                    updated = connection.execute(
+                        """
+                        SELECT * FROM matm_review_queue
+                        WHERE workspace_id = ? AND review_id = ?
+                        """,
+                        (workspace_id, review_id),
+                    ).fetchone()
+                    review = self._review_from_row(updated)
+                    self._insert_outbox_sql(connection, workspace_id, "matm.review.decision", "review_queue", review_id, review)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "review.decide",
+                        reviewer_agent_id,
+                        review_id,
+                        {"decision": target_status},
+                    )
+                    return review, None
 
     def meeting_rooms(self, workspace_id, agent_id=None):
         with _LOCK:
