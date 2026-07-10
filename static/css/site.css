@@ -375,6 +375,18 @@ pre {
   border-left: 4px solid var(--accent);
 }
 
+.lane-actions {
+  margin-top: 4px;
+}
+
+.lane-overview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lane-overview .result-count {
+  grid-column: 1 / -1;
+}
+
 .result-count,
 .result-group-title {
   font-weight: 700;
@@ -515,5 +527,13 @@ footer {
 
   .result-row-top {
     display: grid;
+  }
+
+  .lane-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .lane-overview .result-count {
+    grid-column: auto;
   }
 }

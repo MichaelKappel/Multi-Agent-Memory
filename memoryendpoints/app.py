@@ -392,6 +392,12 @@ def route_console(start_response):
     <div class="console-results message-delivery" data-console-message-delivery>
       <p class="empty-state">Delivery details will appear after a message is sent.</p>
     </div>
+    <div class="actions lane-actions">
+      <button class="button" type="button" data-console-refresh-lanes>Refresh all lanes</button>
+    </div>
+    <div class="console-results lane-overview" data-console-lane-overview>
+      <p class="empty-state">All-lane unread counts will appear after the workspace loads.</p>
+    </div>
     <form class="console-grid" data-console-inbox>
       <label>Inbox agent
         <input name="agentId" value="human-verifier-agent" required>

@@ -22,6 +22,11 @@
     visibleNotificationIds: [],
     firstReviewId: "",
   };
+  var agentLanes = [
+    { agentId: "human-verifier-agent", label: "Human" },
+    { agentId: "codex-agent", label: "Codex" },
+    { agentId: "swarm-observer-agent", label: "Observer" },
+  ];
 
   function pick(selector) {
     return consoleRoot.querySelector(selector);
@@ -329,6 +334,51 @@
     node.appendChild(row);
   }
 
+  function renderLaneOverview(results) {
+    var node = pick("[data-console-lane-overview]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    if (!results || !results.length) {
+      node.appendChild(el("p", "empty-state", "All-lane unread counts will appear after the workspace loads."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", results.length + " agent lane(s) checked."));
+    results.forEach(function (result) {
+      var payload = result.payload || {};
+      var items = payload.items || [];
+      var unreadCount = payload.unreadCount !== undefined ? payload.unreadCount : items.length;
+      var first = items.length ? items[0].message || {} : {};
+      var row = resultRow(
+        result.label + " inbox",
+        result.ok
+          ? (items.length ? first.safeSummary : "No unread current messages.")
+          : (result.error || "Lane refresh failed."),
+        [
+          { text: result.ok ? "reachable" : "error", kind: result.ok ? "good" : "warn" },
+          { text: unreadCount + " unread", kind: unreadCount ? "warn" : "good" },
+        ],
+        [
+          "agent " + result.agentId,
+          items.length ? "latest " + shortId(first.messageId) : "latest none",
+        ]
+      );
+      var actions = el("div", "row-actions");
+      var openButton = el("button", "button compact", "Open lane");
+      openButton.type = "button";
+      openButton.setAttribute("data-console-open-lane", result.agentId);
+      openButton.addEventListener("click", function () {
+        openInboxLane(result.agentId, result.label + " inbox").catch(function (error) {
+          setStatus(error.message, true);
+        });
+      });
+      actions.appendChild(openButton);
+      row.appendChild(actions);
+      node.appendChild(row);
+    });
+  }
+
   function renderReceiptSummary(payload) {
     var node = pick("[data-console-receipts-list]");
     if (!node) {
@@ -559,6 +609,36 @@
     });
   }
 
+  function refreshLaneOverview() {
+    if (!state.workspaceId) {
+      renderLaneOverview([]);
+      return Promise.resolve([]);
+    }
+    var checks = agentLanes.map(function (lane) {
+      var qs = query({workspace_id: state.workspaceId, agent_id: lane.agentId});
+      return api("/api/matm/current-message?" + qs).then(function (payload) {
+        return {
+          ok: true,
+          label: lane.label,
+          agentId: lane.agentId,
+          payload: payload,
+        };
+      }).catch(function (error) {
+        return {
+          ok: false,
+          label: lane.label,
+          agentId: lane.agentId,
+          error: error.message,
+          payload: {items: [], unreadCount: 0},
+        };
+      });
+    });
+    return Promise.all(checks).then(function (results) {
+      renderLaneOverview(results);
+      return results;
+    });
+  }
+
   function setInboxAgent(agentId) {
     if (!agentId) {
       return;
@@ -568,6 +648,16 @@
     if (form && form.elements.agentId) {
       form.elements.agentId.value = agentId;
     }
+  }
+
+  function openInboxLane(agentId, label) {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before refreshing inbox lanes."));
+    }
+    setInboxAgent(agentId);
+    return refreshInbox(agentId).then(function () {
+      setStatus((label || agentId) + " refreshed.", false);
+    });
   }
 
   function refreshReceipts() {
@@ -618,6 +708,7 @@
         .then(function () { return refreshMemory("verification"); })
         .then(function () { return refreshReviewQueue("pending"); })
         .then(function () { return refreshInbox(state.agentId); })
+        .then(function () { return refreshLaneOverview(); })
         .then(refreshReceipts)
         .then(refreshAudit)
         .catch(function (error) { setStatus(error.message, true); });
@@ -686,10 +777,10 @@
           if (target) {
             setInboxAgent(target);
             renderMessageDelivery(payload, target);
-            return refreshInbox(target).then(function () { return payload; });
+            return refreshInbox(target).then(refreshLaneOverview).then(function () { return payload; });
           }
           renderMessageDelivery(payload, state.agentId);
-          return refreshInbox(state.agentId).then(function () { return payload; });
+          return refreshInbox(state.agentId).then(refreshLaneOverview).then(function () { return payload; });
         })
         .then(function () { setStatus(target ? "Targeted message sent; " + target + " inbox refreshed." : "Broadcast message sent; current inbox refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
@@ -762,15 +853,22 @@
     Array.prototype.forEach.call(inboxLaneButtons, function (button) {
       button.addEventListener("click", function () {
         var agentId = button.getAttribute("data-console-inbox-agent") || "";
-        if (!state.key || !state.workspaceId) {
-          setStatus("Load workspace before refreshing inbox lanes.", true);
-          return;
-        }
-        setInboxAgent(agentId);
-        refreshInbox(agentId)
-          .then(function () { setStatus(button.textContent + " refreshed.", false); })
+        openInboxLane(agentId, button.textContent)
           .catch(function (error) { setStatus(error.message, true); });
       });
+    });
+  }
+
+  var refreshLanesButton = pick("[data-console-refresh-lanes]");
+  if (refreshLanesButton) {
+    refreshLanesButton.addEventListener("click", function () {
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before refreshing all lanes.", true);
+        return;
+      }
+      refreshLaneOverview()
+        .then(function () { setStatus("All inbox lanes refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 

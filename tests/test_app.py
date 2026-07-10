@@ -130,6 +130,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-inbox-list", text)
         self.assertIn("data-console-message-targets", text)
         self.assertIn("data-console-message-delivery", text)
+        self.assertIn("data-console-refresh-lanes", text)
+        self.assertIn("data-console-lane-overview", text)
         self.assertIn('data-console-target-agent="codex-agent"', text)
         self.assertIn("data-console-inbox-lanes", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
@@ -152,6 +154,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
+        self.assertIn(".lane-overview", css)
         self.assertIn(".console-nav", css)
         self.assertIn("position: sticky", css)
 
@@ -184,6 +187,18 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Copy notification id", js)
         self.assertIn("Copy receipt id", js)
         self.assertIn("Copy audit id", js)
+
+    def test_console_js_renders_all_agent_lane_overview(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("agentLanes", js)
+        self.assertIn("human-verifier-agent", js)
+        self.assertIn("codex-agent", js)
+        self.assertIn("swarm-observer-agent", js)
+        self.assertIn("renderLaneOverview", js)
+        self.assertIn("refreshLaneOverview", js)
+        self.assertIn("data-console-open-lane", js)
+        self.assertIn("All inbox lanes refreshed.", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
