@@ -16,6 +16,7 @@ from .security import evaluate_memory_firewall, redact_text
 
 
 _LOCK = threading.RLock()
+SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
 
 
 def _id(prefix):
@@ -2050,16 +2051,19 @@ class SQLiteStore(FileStore):
                 return self._workspace_usage_bytes_sql(connection, workspace_id)
 
     def has_quota_for(self, workspace_id, candidate):
-        with _LOCK:
-            with self._open_connection() as connection:
-                workspace = connection.execute(
-                    "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
-                    (workspace_id,),
-                ).fetchone()
-                if not workspace:
-                    return False
-                limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
-                return self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(candidate) <= limit
+        for attempt in range(len(SQL_READ_AFTER_WRITE_RETRY_DELAYS) + 1):
+            with _LOCK:
+                with self._open_connection() as connection:
+                    workspace = connection.execute(
+                        "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if workspace:
+                        limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
+                        return self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(candidate) <= limit
+            if attempt < len(SQL_READ_AFTER_WRITE_RETRY_DELAYS):
+                time.sleep(SQL_READ_AFTER_WRITE_RETRY_DELAYS[attempt])
+        return False
 
     def create_free_account(self, label, company_label=None, project_label=None):
         created_at = utc_now()
@@ -2235,25 +2239,28 @@ class SQLiteStore(FileStore):
         if not token:
             return None
         token_hash = _hash(token)
-        with _LOCK:
-            with self._open_connection() as connection:
-                with connection:
-                    row = connection.execute(
-                        """
-                        SELECT * FROM matm_api_keys
-                        WHERE token_hash = ? AND revoked_at IS NULL
-                        """,
-                        (token_hash,),
-                    ).fetchone()
-                    if not row:
-                        return None
-                    if workspace_id and row["workspace_id"] != workspace_id:
-                        return None
-                    connection.execute(
-                        "UPDATE matm_api_keys SET last_used_at = ? WHERE key_id = ?",
-                        (utc_now(), row["key_id"]),
-                    )
-                    return {"workspaceId": row["workspace_id"], "keyId": row["key_id"]}
+        for attempt in range(len(SQL_READ_AFTER_WRITE_RETRY_DELAYS) + 1):
+            with _LOCK:
+                with self._open_connection() as connection:
+                    with connection:
+                        row = connection.execute(
+                            """
+                            SELECT * FROM matm_api_keys
+                            WHERE token_hash = ? AND revoked_at IS NULL
+                            """,
+                            (token_hash,),
+                        ).fetchone()
+                        if row:
+                            if workspace_id and row["workspace_id"] != workspace_id:
+                                return None
+                            connection.execute(
+                                "UPDATE matm_api_keys SET last_used_at = ? WHERE key_id = ?",
+                                (utc_now(), row["key_id"]),
+                            )
+                            return {"workspaceId": row["workspace_id"], "keyId": row["key_id"]}
+            if attempt < len(SQL_READ_AFTER_WRITE_RETRY_DELAYS):
+                time.sleep(SQL_READ_AFTER_WRITE_RETRY_DELAYS[attempt])
+        return None
 
     def check_idempotency(self, workspace_id, key, operation, body):
         if not key:

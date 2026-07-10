@@ -1361,12 +1361,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertFalse(inbox_summary["rawPayloadExposed"])
         self.assertEqual("targeted", inbox["items"][0]["delivery"]["messageType"])
 
-        status, _headers, text = call_app(
+        status, current_headers, text = call_app(
             "/api/matm/current-message",
             headers=auth,
             query="workspace_id=%s&agent_id=agent-b" % workspace_id,
         )
         self.assertEqual("200 OK", status)
+        self.assertEqual("no-store", current_headers["Cache-Control"])
         current = json.loads(text)
         self.assertTrue(current["currentMessageLane"])
         self.assertEqual(["required_response", "viewed_acknowledgement"], current["responseStates"])

@@ -37,6 +37,28 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertFalse(report["steps"][0]["ok"])
         self.assertFalse(report["steps"][0]["contractVerified"])
 
+    def test_call_with_retries_retries_live_transient_status(self):
+        transport = FakeTransport(
+            [
+                ("413 Request Entity Too Large", {"ok": False, "valuesRedacted": True}),
+                ("201 Created", {"ok": True, "agent": {"agentId": "agent-b"}, "valuesRedacted": True}),
+            ]
+        )
+
+        status, payload = dogfood_memoryendpoints.call_with_retries(
+            transport,
+            "/api/matm/agents/register",
+            method="POST",
+            body={"workspaceId": "ws-1", "agentId": "agent-b"},
+            retry_statuses=("413",),
+            attempts=2,
+            delay_seconds=0,
+        )
+
+        self.assertEqual("201 Created", status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(2, len(transport.calls))
+
     def test_readback_helpers_match_returned_ids(self):
         self.assertTrue(
             dogfood_memoryendpoints.contains_memory_event(
@@ -127,6 +149,36 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertEqual(2, len(transport.calls))
         self.assertEqual("/api/matm/search", transport.calls[0]["path"])
         self.assertEqual(["Meeting"], parse_qs(transport.calls[0]["query"])["q"])
+
+    def test_read_meeting_message_until_polls_until_message_visible(self):
+        transport = FakeTransport(
+            [
+                ("200 OK", {"ok": True, "items": [], "valuesRedacted": True}),
+                (
+                    "200 OK",
+                    {
+                        "ok": True,
+                        "items": [{"meetingMessageId": "meetmsg-1"}],
+                        "valuesRedacted": True,
+                    },
+                ),
+            ]
+        )
+
+        status, payload = dogfood_memoryendpoints.read_meeting_message_until(
+            transport,
+            {"HTTP_AUTHORIZATION": "Bearer hidden"},
+            "meetmsg-1",
+            url="https://memoryendpoints.com/api/matm/meeting-messages?room_id=room-1",
+            attempts=3,
+            delay_seconds=0,
+        )
+
+        self.assertEqual("200 OK", status)
+        self.assertTrue(dogfood_memoryendpoints.contains_meeting_message(payload, "meetmsg-1"))
+        self.assertEqual(2, len(transport.calls))
+        self.assertEqual("/api/matm/meeting-messages", transport.calls[0]["path"])
+        self.assertEqual(["room-1"], parse_qs(transport.calls[0]["query"])["room_id"])
 
     def test_combined_report_preserves_audit_readback_evidence(self):
         report = dogfood_memoryendpoints.combine_reports(

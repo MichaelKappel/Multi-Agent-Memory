@@ -24,7 +24,8 @@ REPORT_PATH = ROOT / "docs" / "reports" / "dogfood-memory-run.json"
 PROGRESS_PATH = ROOT / ".uai" / "progress.uai"
 DOGFOOD_STORE_DIR = ROOT / "var" / "dogfood-memory"
 DOGFOOD_STORE = DOGFOOD_STORE_DIR / "store.json"
-LIVE_READBACK_ATTEMPTS = 12
+LIVE_READBACK_ATTEMPTS = 16
+LIVE_WRITE_ATTEMPTS = 6
 
 
 class WsgiTransport(object):
@@ -98,6 +99,24 @@ def ok_status(status):
     return str(status).startswith(("200", "201", "202"))
 
 
+def retryable_status(status, prefixes):
+    text = str(status or "")
+    return any(text.startswith(prefix) for prefix in prefixes)
+
+
+def call_with_retries(transport, path, method="GET", body=None, headers=None, query="", retry_statuses=(), attempts=1, delay_seconds=0.75):
+    attempts = max(1, int(attempts or 1))
+    last_status = "500 Missing Call"
+    last_payload = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_status, last_payload = transport.call(path, method=method, body=body, headers=headers, query=query)
+        if ok_status(last_status) or transport.mode != "live_http" or not retryable_status(last_status, retry_statuses):
+            return last_status, last_payload
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload
+
+
 def step(report, name, status, payload=None, required=True, verified=None):
     http_ok = ok_status(status)
     ok = http_ok if verified is None else http_ok and bool(verified)
@@ -163,6 +182,23 @@ def contains_meeting_message(payload, message_id):
     if not message_id:
         return False
     return any(item.get("meetingMessageId") == message_id for item in payload.get("items") or [])
+
+
+def read_meeting_message_until(transport, headers, message_id, url=None, path=None, query="", attempts=1, delay_seconds=1.0):
+    attempts = max(1, int(attempts or 1))
+    if url:
+        path, query = canonical_path_query(url)
+    if not path:
+        return "500 Missing Canonical URL", {"ok": False, "error": "missing_canonical_url", "valuesRedacted": True}
+    last_status = "500 Missing Meeting Message Read"
+    last_payload = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_status, last_payload = transport.call(path, headers=headers, query=query)
+        if contains_meeting_message(last_payload, message_id):
+            return last_status, last_payload
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload
 
 
 def contains_current_message(payload, message_id, notification_id):
@@ -267,10 +303,13 @@ def run_sequence(transport, label, base_url=None):
     token = ""
     workspace_id = ""
     try:
-        status, setup = transport.call(
+        status, setup = call_with_retries(
+            transport,
             "/api/matm/agent-setup/free-account",
             method="POST",
             body={"label": "MemoryEndpoints %s dogfood workspace" % label},
+            retry_statuses=("500",),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         step(report, "create_free_workspace", status, setup)
         token = setup.get("apiKeySecret", "")
@@ -278,11 +317,14 @@ def run_sequence(transport, label, base_url=None):
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
         run_tag = hashlib.sha256((workspace_id + label + utc_now()).encode("utf-8")).hexdigest()[:12]
 
-        status, agent = transport.call(
+        status, agent = call_with_retries(
+            transport,
             "/api/matm/agents/register",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-register-" + run_tag),
             body={"workspaceId": workspace_id, "agentId": "memoryendpoints-dogfood-agent", "displayName": "MemoryEndpoints Dogfood Agent"},
+            retry_statuses=("401", "413", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         step(report, "register_agent", status, agent)
 
@@ -349,11 +391,19 @@ def run_sequence(transport, label, base_url=None):
         meeting_message_id = meeting_post.get("messageId") or (meeting_post.get("message") or {}).get("meetingMessageId", "")
         canonical_room_id = meeting_post.get("canonicalRoomId") or meeting_room_id
 
-        status, meeting_messages = call_canonical_url(transport, meeting_post.get("transcriptQueryUrl"), auth)
+        status, meeting_messages = read_meeting_message_until(
+            transport,
+            auth,
+            meeting_message_id,
+            url=meeting_post.get("transcriptQueryUrl"),
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
+        )
         meeting_readback_verified = contains_meeting_message(meeting_messages, meeting_message_id)
         step(report, "read_meeting_messages", status, meeting_messages, verified=meeting_readback_verified)
 
-        status, meeting_promotion = transport.call(
+        status, meeting_promotion = call_with_retries(
+            transport,
             "/api/matm/meeting-messages/promote",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-memory-promote-" + run_tag),
@@ -365,6 +415,8 @@ def run_sequence(transport, label, base_url=None):
                 "title": "%s meeting transcript evidence" % label.title(),
                 "tags": ["dogfood", label, "meeting-message"],
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         meeting_memory_event_id = (meeting_promotion.get("event") or {}).get("eventId", "")
         meeting_promotion_verified = bool(
@@ -404,7 +456,8 @@ def run_sequence(transport, label, base_url=None):
         meeting_memory_source_readback_verified = contains_memory_event(meeting_memory_source_search, meeting_memory_event_id)
         step(report, "read_promoted_meeting_memory_by_source", status, meeting_memory_source_search, verified=meeting_memory_source_readback_verified)
 
-        status, meeting_read = transport.call(
+        status, meeting_read = call_with_retries(
+            transport,
             "/api/matm/meeting-rooms/read",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-read-" + run_tag),
@@ -414,6 +467,8 @@ def run_sequence(transport, label, base_url=None):
                 "agentId": "memoryendpoints-dogfood-agent",
                 "lastMeetingMessageId": meeting_message_id,
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         meeting_read_verified = bool(
             meeting_read.get("ok")
