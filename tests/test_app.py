@@ -132,6 +132,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("per_active_agent_notification", current_message["broadcastFanout"])
         self.assertEqual("per_recipient_notification", current_message["ackIsolation"])
         self.assertIn("distinct unread notification id", current_message["broadcastInvariant"])
+        self.assertIn("message_id", current_message["queryFilters"])
+        self.assertIn("notification_id", current_message["queryFilters"])
         self.assertIn("visibleToAgents", current_message["postConfirmationFields"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
@@ -224,6 +226,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("per_active_agent_notification", data["coordinationFlow"]["broadcastFanout"])
         self.assertEqual("per_recipient_notification", data["coordinationFlow"]["ackIsolation"])
         self.assertIn("distinct notification per recipient", data["coordinationFlow"]["broadcastInvariant"])
+        self.assertIn("message_id", data["coordinationFlow"]["currentMessageQueryFilters"])
+        self.assertIn("notification_id", data["coordinationFlow"]["currentMessageQueryFilters"])
         self.assertEqual(["company", "workspace", "project", "goal", "task"], data["coordinationFlow"]["supportedMeetingRoomScopes"])
         self.assertIn("workspaceId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
         self.assertIn("creatorAgentId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
@@ -2073,6 +2077,28 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/current-message",
             headers=auth,
+            query=(
+                "workspace_id=%s&agent_id=codex-agent&message_id=%s&notification_id=%s"
+                % (workspace_id, targeted_payload["messageId"], targeted_payload["notificationId"])
+            ),
+        )
+        self.assertEqual("200 OK", status)
+        exact_targeted = json.loads(text)
+        self.assertEqual(1, exact_targeted["unreadCount"])
+        self.assertEqual(
+            {
+                "agentId": "codex-agent",
+                "messageId": targeted_payload["messageId"],
+                "notificationId": targeted_payload["notificationId"],
+            },
+            exact_targeted["filters"],
+        )
+        self.assertEqual(targeted_payload["messageId"], exact_targeted["items"][0]["message"]["messageId"])
+        self.assertEqual(targeted_payload["notificationId"], exact_targeted["items"][0]["notification"]["notificationId"])
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
             query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
         )
         self.assertEqual("200 OK", status)
@@ -3086,6 +3112,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         sqlite_sender_inbox = json.loads(text)
         self.assertEqual({"broadcast": 1, "targeted": 0}, sqlite_sender_inbox["deliveryCounts"])
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query=(
+                "workspace_id=%s&agent_id=sqlite-agent&message_id=%s&notification_id=%s"
+                % (
+                    workspace_id,
+                    sqlite_broadcast["messageId"],
+                    sqlite_sender_inbox["items"][0]["notification"]["notificationId"],
+                )
+            ),
+        )
+        self.assertEqual("200 OK", status)
+        sqlite_exact_sender_inbox = json.loads(text)
+        self.assertEqual(1, sqlite_exact_sender_inbox["unreadCount"])
+        self.assertEqual(sqlite_broadcast["messageId"], sqlite_exact_sender_inbox["items"][0]["message"]["messageId"])
 
         status, _headers, text = call_app(
             "/api/matm/current-message",

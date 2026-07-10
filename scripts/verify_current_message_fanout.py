@@ -365,15 +365,18 @@ def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, r
     )
 
 
-def read_current_messages(base_url, token, workspace_id, agent_ids):
+def read_current_messages(base_url, token, workspace_id, agent_ids, message_id=""):
     payloads = {}
     all_payloads = []
     for agent_id in agent_ids:
+        query = {"workspace_id": workspace_id, "agent_id": agent_id}
+        if message_id:
+            query["message_id"] = message_id
         status, payload, _headers = request_json(
             base_url,
             "/api/matm/current-message",
             token=token,
-            query=urlencode({"workspace_id": workspace_id, "agent_id": agent_id}),
+            query=urlencode(query),
         )
         if status != 200:
             payload = {
@@ -449,7 +452,8 @@ def main(argv=None):
         run_id,
     )
     all_payloads.append(broadcast_payload)
-    broadcast_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids)
+    broadcast_message_id = broadcast_payload.get("messageId") or ((broadcast_payload.get("message") or {}).get("messageId") or "")
+    broadcast_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
     all_payloads.extend(inbox_payloads)
     broadcast_check = broadcast_fanout_check(broadcast_inboxes, broadcast_summary, agent_ids)
     broadcast_check["submitStatus"] = status
@@ -467,7 +471,8 @@ def main(argv=None):
         response_required=True,
     )
     all_payloads.append(codex_payload)
-    codex_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids)
+    codex_message_id = codex_payload.get("messageId") or ((codex_payload.get("message") or {}).get("messageId") or "")
+    codex_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, codex_message_id)
     all_payloads.extend(inbox_payloads)
     targeted_to_codex_check = targeted_delivery_check(codex_inboxes, targeted_to_codex_summary, args.codex_agent_id, agent_ids)
     targeted_to_codex_check["submitStatus"] = status
@@ -485,7 +490,8 @@ def main(argv=None):
         response_required=False,
     )
     all_payloads.append(human_payload)
-    latest_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids)
+    human_message_id = human_payload.get("messageId") or ((human_payload.get("message") or {}).get("messageId") or "")
+    latest_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, human_message_id)
     all_payloads.extend(inbox_payloads)
     targeted_to_human_check = targeted_delivery_check(latest_inboxes, targeted_to_human_summary, human_agent_id, agent_ids)
     targeted_to_human_check["submitStatus"] = status
@@ -494,7 +500,9 @@ def main(argv=None):
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
     if args.ack_isolation:
         ack_agent_id = args.codex_agent_id
-        before_payload = latest_inboxes.get(ack_agent_id) or {}
+        before_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
+        all_payloads.extend(inbox_payloads)
+        before_payload = before_inboxes.get(ack_agent_id) or {}
         before_matches = [
             item
             for item in items_for_summary(before_payload, broadcast_summary)
@@ -503,7 +511,7 @@ def main(argv=None):
         ack_id = notification_id(before_matches[0]) if before_matches else ""
         _status, ack_payload, _headers = ack_notification(base_url, token, workspace_id, ack_id, ack_agent_id, run_id)
         all_payloads.append(ack_payload)
-        after_ack_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids)
+        after_ack_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
         all_payloads.extend(inbox_payloads)
         ack_check = acknowledgement_isolation_check(before_payload, after_ack_inboxes, broadcast_summary, ack_agent_id, agent_ids)
         ack_check["submitAccepted"] = bool(ack_payload.get("ok"))

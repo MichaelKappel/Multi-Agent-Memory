@@ -1260,13 +1260,19 @@ class FileStore(object):
         self._save(data)
         return message, notes
 
-    def inbox(self, workspace_id, agent_id):
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None):
         data = self._load()
+        message_id = str(message_id or "").strip()
+        notification_id = str(notification_id or "").strip()
         messages = []
         for note in data["notifications"]:
             if note.get("workspaceId") != workspace_id or note.get("status") != "unread":
                 continue
             if note.get("targetAgentId") and note.get("targetAgentId") != agent_id:
+                continue
+            if notification_id and note.get("notificationId") != notification_id:
+                continue
+            if message_id and note.get("messageId") != message_id:
                 continue
             message = None
             for item in data["messages"]:
@@ -1983,6 +1989,302 @@ class SQLiteStore(FileStore):
                         ),
                     )
 
+    def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None, scope_id=None):
+        memory_type = (memory_type or "decision").strip().lower()
+        if memory_type not in ("fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"):
+            memory_type = "note"
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.75
+        confidence_value = max(0.0, min(1.0, confidence_value))
+        firewall = evaluate_memory_firewall(
+            {
+                "title": title,
+                "summary": summary,
+                "tags": tags or [],
+                "source": source or "api",
+                "memoryType": memory_type,
+                "subject": subject or title,
+            }
+        )
+        sanitized = firewall["sanitizedPayload"]
+        redacted_tags = sanitized.get("tags") if isinstance(sanitized.get("tags"), list) else []
+        event_status = "quarantined" if firewall["decision"] == "quarantine_for_review" else "active"
+        review_status = "quarantined" if firewall["decision"] == "quarantine_for_review" else "pending"
+        promotion_state = "quarantined" if event_status == "quarantined" else "review_pending"
+        now = utc_now()
+        memory_id = _id("mem")
+        review_id = _id("review")
+        event = {
+            "eventId": memory_id,
+            "workspaceId": workspace_id,
+            "actorAgentId": actor_agent_id,
+            "scope": scope or "workspace",
+            "scopeId": scope_id or workspace_id,
+            "memoryType": memory_type,
+            "subject": sanitized.get("subject") or redact_text(subject or title),
+            "title": sanitized.get("title") or redact_text(title),
+            "summary": sanitized.get("summary") or redact_text(summary),
+            "tags": [redact_text(tag) for tag in redacted_tags],
+            "source": sanitized.get("source") or "api",
+            "confidence": confidence_value,
+            "promotionState": promotion_state,
+            "reviewStatus": review_status,
+            "bodyHash": _canonical_hash(sanitized),
+            "revision": 1,
+            "firewall": {
+                "schemaVersion": firewall["schemaVersion"],
+                "decision": firewall["decision"],
+                "riskScore": firewall["riskScore"],
+                "detectedThreats": firewall["detectedThreats"],
+                "redactionApplied": firewall["valuesRedacted"],
+                "valuesRedacted": True,
+            },
+            "createdAt": now,
+            "status": event_status,
+            "rawPrivatePayloadStored": False,
+            "valuesRedacted": True,
+            "reviewId": review_id,
+        }
+        review = {
+            "reviewId": review_id,
+            "workspaceId": workspace_id,
+            "memoryEventId": memory_id,
+            "proposedByAgentId": actor_agent_id,
+            "reviewType": "memory_promotion",
+            "status": review_status,
+            "publicSafeSummary": event["summary"][:1000],
+            "firewallDecision": firewall["decision"],
+            "riskScore": firewall["riskScore"],
+            "detectedThreats": firewall["detectedThreats"],
+            "createdAt": now,
+            "decidedAt": None,
+            "reviewerAgentId": None,
+            "reviewerNoteHash": None,
+            "valuesRedacted": True,
+        }
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO matm_memory_records (
+                          memory_id, workspace_id, actor_agent_id, scope_type, scope_id, memory_type, subject, title,
+                          public_safe_summary, source_uri, confidence, promotion_state, review_status,
+                          body_hash, revision, firewall_json, status, raw_private_payload_stored,
+                          values_redacted, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            memory_id,
+                            workspace_id,
+                            actor_agent_id,
+                            event["scope"],
+                            event["scopeId"],
+                            memory_type,
+                            event["subject"],
+                            event["title"],
+                            event["summary"],
+                            event["source"],
+                            confidence_value,
+                            promotion_state,
+                            review_status,
+                            event["bodyHash"],
+                            1,
+                            self._json_dump(event["firewall"]),
+                            event_status,
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            now,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_memory_revisions (
+                          revision_id, memory_id, revision_number, public_safe_summary,
+                          change_summary, body_hash, created_by_agent_id, created_at, values_redacted
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self._memory_revision_id(memory_id, 1),
+                            memory_id,
+                            1,
+                            event["summary"],
+                            "initial memory submission",
+                            event["bodyHash"],
+                            actor_agent_id,
+                            now,
+                            self._int_bool(True),
+                        ),
+                    )
+                    for tag in event["tags"]:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO matm_memory_tags (memory_id, tag) VALUES (?, ?)",
+                            (memory_id, tag),
+                        )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_review_queue (
+                          review_id, workspace_id, memory_id, proposed_by_agent_id, review_type, status,
+                          public_safe_summary, firewall_decision, risk_score, detected_threats_json,
+                          created_at, decided_at, reviewer_agent_id, reviewer_note_hash, values_redacted
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            review_id,
+                            workspace_id,
+                            memory_id,
+                            actor_agent_id,
+                            "memory_promotion",
+                            review_status,
+                            event["summary"][:1000],
+                            firewall["decision"],
+                            firewall["riskScore"],
+                            self._json_dump(firewall["detectedThreats"]),
+                            now,
+                            None,
+                            None,
+                            None,
+                            self._int_bool(True),
+                        ),
+                    )
+                    self._insert_outbox_sql(connection, workspace_id, "matm.memory_event.submitted", "memory_event", memory_id, event)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "memory_event", memory_id, event)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "memory.submit",
+                        actor_agent_id,
+                        memory_id,
+                        {"reviewId": review_id, "firewallDecision": firewall["decision"]},
+                    )
+        return event
+
+    def search_memory(self, workspace_id, query, filters=None):
+        q = (query or "").lower().strip()
+        filters = filters or {}
+        scope_filter = (filters.get("scope") or "").strip().lower()
+        scope_id_filter = (filters.get("scopeId") or filters.get("scope_id") or "").strip()
+        memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
+        review_status_filter = (filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
+        promotion_state_filter = (filters.get("promotionState") or filters.get("promotion_state") or "").strip().lower()
+        tag_filter = (filters.get("tag") or "").strip().lower()
+        actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
+        clauses = ["workspace_id = ?", "status NOT IN ('rejected', 'quarantined')"]
+        params = [workspace_id]
+        if scope_filter:
+            clauses.append("LOWER(scope_type) = ?")
+            params.append(scope_filter)
+        if scope_id_filter:
+            clauses.append("scope_id = ?")
+            params.append(scope_id_filter)
+        if memory_type_filter:
+            clauses.append("LOWER(memory_type) = ?")
+            params.append(memory_type_filter)
+        if review_status_filter:
+            clauses.append("LOWER(review_status) = ?")
+            params.append(review_status_filter)
+        if promotion_state_filter:
+            clauses.append("LOWER(promotion_state) = ?")
+            params.append(promotion_state_filter)
+        if actor_agent_filter:
+            clauses.append("LOWER(actor_agent_id) = ?")
+            params.append(actor_agent_filter)
+        if tag_filter:
+            clauses.append(
+                """
+                EXISTS (
+                  SELECT 1 FROM matm_memory_tags t
+                  WHERE t.memory_id = matm_memory_records.memory_id AND LOWER(t.tag) = ?
+                )
+                """
+            )
+            params.append(tag_filter)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_memory_records
+                        WHERE %s
+                        ORDER BY created_at, memory_id
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+                memory_ids = [row["memory_id"] for row in rows]
+                tag_rows = {}
+                review_rows = {}
+                if memory_ids:
+                    for memory_id in memory_ids:
+                        tag_rows[memory_id] = [
+                            row["tag"]
+                            for row in connection.execute(
+                                "SELECT tag FROM matm_memory_tags WHERE memory_id = ? ORDER BY tag",
+                                (memory_id,),
+                            )
+                        ]
+                        review = connection.execute(
+                            """
+                            SELECT review_id FROM matm_review_queue
+                            WHERE workspace_id = ? AND memory_id = ?
+                            ORDER BY created_at DESC, review_id DESC
+                            LIMIT 1
+                            """,
+                            (workspace_id, memory_id),
+                        ).fetchone()
+                        if review:
+                            review_rows[memory_id] = review["review_id"]
+        items = []
+        for row in rows:
+            event = {
+                "eventId": row["memory_id"],
+                "workspaceId": row["workspace_id"],
+                "actorAgentId": row["actor_agent_id"],
+                "scope": row["scope_type"],
+                "scopeId": row["scope_id"],
+                "memoryType": row["memory_type"],
+                "subject": row["subject"],
+                "title": row["title"],
+                "summary": row["public_safe_summary"],
+                "tags": tag_rows.get(row["memory_id"], []),
+                "source": row["source_uri"],
+                "confidence": row["confidence"],
+                "promotionState": row["promotion_state"],
+                "reviewStatus": row["review_status"],
+                "bodyHash": row["body_hash"],
+                "revision": row["revision"],
+                "firewall": self._json_load(row["firewall_json"], {}),
+                "createdAt": row["created_at"],
+                "status": row["status"],
+                "rawPrivatePayloadStored": self._bool(row["raw_private_payload_stored"]),
+                "valuesRedacted": self._bool(row["values_redacted"]),
+            }
+            if row["updated_at"]:
+                event["updatedAt"] = row["updated_at"]
+            if review_rows.get(row["memory_id"]):
+                event["reviewId"] = review_rows[row["memory_id"]]
+            haystack = " ".join(
+                [
+                    event.get("eventId", ""),
+                    event.get("reviewId", ""),
+                    event.get("actorAgentId", ""),
+                    event.get("subject", ""),
+                    event.get("title", ""),
+                    event.get("summary", ""),
+                    " ".join(event.get("tags", [])),
+                    event.get("source", ""),
+                    event.get("memoryType", ""),
+                    event.get("scope", ""),
+                    event.get("scopeId", ""),
+                ]
+            ).lower()
+            if not q or q in haystack:
+                items.append(_public_memory_event(event))
+        return items
+
     def meeting_rooms(self, workspace_id, agent_id=None):
         with _LOCK:
             with self._open_connection() as connection:
@@ -2652,7 +2954,7 @@ class SQLiteStore(FileStore):
                     )
                     return message, notes
 
-    def inbox(self, workspace_id, agent_id):
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None):
         agent_id = (agent_id or "").strip()
         clauses = ["n.workspace_id = ?", "n.status = 'unread'"]
         params = [workspace_id]
@@ -2661,6 +2963,14 @@ class SQLiteStore(FileStore):
             params.append(agent_id)
         else:
             clauses.append("(n.target_agent_id IS NULL OR n.target_agent_id = '')")
+        message_id = str(message_id or "").strip()
+        notification_id = str(notification_id or "").strip()
+        if message_id:
+            clauses.append("n.message_id = ?")
+            params.append(message_id)
+        if notification_id:
+            clauses.append("n.notification_id = ?")
+            params.append(notification_id)
         with _LOCK:
             with self._open_connection() as connection:
                 rows = list(

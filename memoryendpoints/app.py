@@ -187,7 +187,7 @@ def _current_message_confirmation(store, workspace_id, message, notes):
         recipient_agent_ids = [message_target or message.get("senderAgentId") or ""]
     visible_agents = []
     for recipient_agent_id in recipient_agent_ids:
-        inbox_items = store.inbox(workspace_id, recipient_agent_id)
+        inbox_items = store.inbox(workspace_id, recipient_agent_id, message.get("messageId"))
         visible = any(
             ((item.get("notification") or {}).get("notificationId") in notification_ids)
             or ((item.get("message") or {}).get("messageId") == message.get("messageId"))
@@ -209,7 +209,11 @@ def _current_message_confirmation(store, workspace_id, message, notes):
         "notificationIds": notification_ids,
         "inboxQueryUrl": _protected_query_url(
             "/api/matm/current-message",
-            {"agent_id": message_target or first_recipient},
+            {
+                "agent_id": message_target or first_recipient,
+                "message_id": message.get("messageId"),
+                "notification_id": notification_ids[0] if len(notification_ids) == 1 else "",
+            },
         ),
         "valuesRedacted": True,
     }
@@ -2813,7 +2817,9 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "202 Accepted")
     if path in ("/api/matm/agent-inbox", "/api/matm/current-message") and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
-        raw_items = store.inbox(workspace_id, agent_filter)
+        message_filter = query.get("message_id") or query.get("messageId") or ""
+        notification_filter = query.get("notification_id") or query.get("notificationId") or ""
+        raw_items = store.inbox(workspace_id, agent_filter, message_filter, notification_filter)
         items = []
         delivery_counts = {"broadcast": 0, "targeted": 0}
         for item in raw_items:
@@ -2825,6 +2831,10 @@ def route_protected(environ, start_response, path):
             enriched["delivery"] = delivery
             items.append(enriched)
         filters = {"agentId": agent_filter} if agent_filter else {}
+        if message_filter:
+            filters["messageId"] = message_filter
+        if notification_filter:
+            filters["notificationId"] = notification_filter
         operator_summary = _inbox_operator_summary(items, filters, delivery_counts, path == "/api/matm/current-message")
         _audit_read(
             store,

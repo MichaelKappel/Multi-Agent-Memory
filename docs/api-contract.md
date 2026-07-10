@@ -304,6 +304,7 @@ Successful responses also include readback confirmation fields:
 - `canonicalTargetAgentId`
 - `messageId`
 - `notificationId`
+- `notificationIds`
 - `inboxQueryUrl`
 - `confirmation`
 
@@ -315,6 +316,8 @@ Query:
 
 - `workspace_id`
 - `agent_id`
+- `message_id` optional exact readback filter for a specific current-message write.
+- `notification_id` optional exact readback filter for a specific recipient notification.
 
 ### GET `/api/matm/agent-inbox`
 
@@ -324,6 +327,8 @@ Query:
 
 - `workspace_id`
 - `agent_id`
+- `message_id` optional exact readback filter.
+- `notification_id` optional exact recipient notification filter.
 
 ### POST `/api/matm/notifications/ack`
 
