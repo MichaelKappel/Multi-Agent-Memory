@@ -192,26 +192,66 @@ def dogfood_gap_state(dogfood):
     )
 
 
-def dogfood_memory_loop_summary(dogfood, local_dogfood=None):
+MEMORY_LOOP_CHECKS = (
+    ("meetingMemoryPromotionVerified", "meeting-message promotion"),
+    ("meetingMemoryReadbackVerified", "promoted-memory readback"),
+    ("meetingMemorySourceReadbackVerified", "source-id readback"),
+)
+
+
+def dogfood_memory_loop_evidence(dogfood, local_dogfood=None):
     dogfood = dogfood or {}
     local_dogfood = local_dogfood or {}
-    promotion = bool(dogfood.get("meetingMemoryPromotionVerified"))
-    readback = bool(dogfood.get("meetingMemoryReadbackVerified"))
-    source_readback = bool(dogfood.get("meetingMemorySourceReadbackVerified"))
+
+    def scoped_flag(report, scope, key, default_scope=None):
+        if not report:
+            return False
+        for run in report.get("runs") or []:
+            if run.get("mode") == scope and run.get(key):
+                return True
+        return (report.get("mode") or default_scope) == scope and bool(report.get(key))
+
+    evidence = {}
+    for key, _label in MEMORY_LOOP_CHECKS:
+        suffix = key.removeprefix("meetingMemory")
+        local_value = scoped_flag(dogfood, "local_wsgi", key) or scoped_flag(local_dogfood, "local_wsgi", key, "local_wsgi")
+        live_value = scoped_flag(dogfood, "live_http", key, "live_http")
+        evidence["localMeetingMemory" + suffix] = local_value
+        evidence["liveMeetingMemory" + suffix] = live_value
+        evidence[key] = bool(local_value or live_value)
+
+    local_complete = all(evidence["localMeetingMemory" + key.removeprefix("meetingMemory")] for key, _label in MEMORY_LOOP_CHECKS)
+    live_complete = all(evidence["liveMeetingMemory" + key.removeprefix("meetingMemory")] for key, _label in MEMORY_LOOP_CHECKS)
+    if local_complete and live_complete:
+        scope = "local_and_live_verified"
+    elif live_complete:
+        scope = "live_verified"
+    elif local_complete:
+        scope = "local_verified_live_pending"
+    elif any(evidence[key] for key, _label in MEMORY_LOOP_CHECKS):
+        scope = "partial"
+    else:
+        scope = "missing"
+    evidence["meetingMemoryEvidenceScope"] = scope
+    return evidence
+
+
+def dogfood_memory_loop_summary(dogfood, local_dogfood=None):
+    evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
+    promotion = evidence["liveMeetingMemoryPromotionVerified"]
+    readback = evidence["liveMeetingMemoryReadbackVerified"]
+    source_readback = evidence["liveMeetingMemorySourceReadbackVerified"]
     if promotion and readback and source_readback:
         return "Meeting-room coordination is dogfooded into hosted memory and verified by memory id plus source meeting-message id readback."
-    local_promotion = bool(local_dogfood.get("meetingMemoryPromotionVerified"))
-    local_readback = bool(local_dogfood.get("meetingMemoryReadbackVerified"))
-    local_source_readback = bool(local_dogfood.get("meetingMemorySourceReadbackVerified"))
+    local_promotion = evidence["localMeetingMemoryPromotionVerified"]
+    local_readback = evidence["localMeetingMemoryReadbackVerified"]
+    local_source_readback = evidence["localMeetingMemorySourceReadbackVerified"]
     if local_promotion and local_readback and local_source_readback:
         return "Meeting-room coordination is verified in local WSGI dogfood as hosted memory with memory id plus source meeting-message id readback; live dogfood must be rerun after deployment to prove the same loop in production."
     missing = []
-    if not promotion:
-        missing.append("meeting-message promotion")
-    if not readback:
-        missing.append("promoted-memory readback")
-    if not source_readback:
-        missing.append("source-id readback")
+    for key, label in MEMORY_LOOP_CHECKS:
+        if not evidence[key]:
+            missing.append(label)
     return "Meeting-room coordination memory loop is incomplete: %s." % ", ".join(missing)
 
 
@@ -243,6 +283,7 @@ def build_local_report():
     wsgi_check_current = bool((check_result(enterprise, "wsgi_route_verifier") or {}).get("ok"))
     package_check_current = bool((check_result(enterprise, "package_check") or {}).get("ok"))
     repository_boundary_check_current = bool((check_result(enterprise, "repository_boundary_audit") or {}).get("ok"))
+    memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -314,9 +355,16 @@ def build_local_report():
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
-        "meetingMemoryPromotionVerified": bool((dogfood and dogfood.get("meetingMemoryPromotionVerified")) or (local_dogfood and local_dogfood.get("meetingMemoryPromotionVerified"))),
-        "meetingMemoryReadbackVerified": bool((dogfood and dogfood.get("meetingMemoryReadbackVerified")) or (local_dogfood and local_dogfood.get("meetingMemoryReadbackVerified"))),
-        "meetingMemorySourceReadbackVerified": bool((dogfood and dogfood.get("meetingMemorySourceReadbackVerified")) or (local_dogfood and local_dogfood.get("meetingMemorySourceReadbackVerified"))),
+        "meetingMemoryPromotionVerified": memory_loop_evidence["meetingMemoryPromotionVerified"],
+        "meetingMemoryReadbackVerified": memory_loop_evidence["meetingMemoryReadbackVerified"],
+        "meetingMemorySourceReadbackVerified": memory_loop_evidence["meetingMemorySourceReadbackVerified"],
+        "localMeetingMemoryPromotionVerified": memory_loop_evidence["localMeetingMemoryPromotionVerified"],
+        "localMeetingMemoryReadbackVerified": memory_loop_evidence["localMeetingMemoryReadbackVerified"],
+        "localMeetingMemorySourceReadbackVerified": memory_loop_evidence["localMeetingMemorySourceReadbackVerified"],
+        "liveMeetingMemoryPromotionVerified": memory_loop_evidence["liveMeetingMemoryPromotionVerified"],
+        "liveMeetingMemoryReadbackVerified": memory_loop_evidence["liveMeetingMemoryReadbackVerified"],
+        "liveMeetingMemorySourceReadbackVerified": memory_loop_evidence["liveMeetingMemorySourceReadbackVerified"],
+        "meetingMemoryEvidenceScope": memory_loop_evidence["meetingMemoryEvidenceScope"],
         "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
         "multiAgentMemoryStaticPublicLeakHitCount": leak_hit_count(static_site),
@@ -579,6 +627,7 @@ def build_final_markdown(local_report):
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
+    memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     mysql_verified = bool(
         live_mysql_backend.get("ok")
         or (enterprise_current and enterprise_summary.get("liveMysqlBackendVerified"))
@@ -724,6 +773,23 @@ def build_final_markdown(local_report):
         if completion_allowed
         else "The repository has strong local MATM evidence and public route evidence, but completion is blocked until the listed tracked gates pass for the current source snapshot."
     )
+    claim_boundary_json = {
+        "completionClaimAllowed": completion_allowed,
+        "githubCiConclusion": github_ci.get("conclusion"),
+        "githubCiGateDecision": (github_ci_gate or {}).get("decision"),
+        "githubCiRequired": not ci_not_required,
+        "latestCodeLiveDeployed": latest_deployed,
+        "liveCoreDogfoodVerified": live_core_dogfood,
+        "liveDogfoodVerified": live_dogfood,
+        "liveMysqlBackendVerified": mysql_verified,
+        "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded",
+        "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")),
+        "reportSourceSha": report_source_sha,
+        "sourceDirtyPathCount": len(dirty_source_paths),
+        "sourceWorktreeDirty": bool(dirty_source_paths),
+        "valuesRedacted": True,
+    }
+    claim_boundary_json.update(memory_loop_evidence)
     lines.extend(
         [
             "",
@@ -732,7 +798,7 @@ def build_final_markdown(local_report):
             claim_boundary,
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "githubCiGateDecision": (github_ci_gate or {}).get("decision"), "githubCiRequired": not ci_not_required, "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "liveMysqlBackendVerified": mysql_verified, "meetingMemoryPromotionVerified": bool(dogfood.get("meetingMemoryPromotionVerified")), "meetingMemoryReadbackVerified": bool(dogfood.get("meetingMemoryReadbackVerified")), "meetingMemorySourceReadbackVerified": bool(dogfood.get("meetingMemorySourceReadbackVerified")), "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "sourceDirtyPathCount": len(dirty_source_paths), "sourceWorktreeDirty": bool(dirty_source_paths), "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps(claim_boundary_json, indent=2, sort_keys=True),
             "```",
         ]
     )

@@ -146,6 +146,34 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("local WSGI dogfood", summary)
         self.assertIn("live dogfood must be rerun", summary)
 
+    def test_dogfood_memory_loop_evidence_separates_local_and_live_scope(self):
+        evidence = build_readiness_reports.dogfood_memory_loop_evidence(
+            {
+                "mode": "combined",
+                "runs": [
+                    {
+                        "mode": "local_wsgi",
+                        "meetingMemoryPromotionVerified": True,
+                        "meetingMemoryReadbackVerified": True,
+                        "meetingMemorySourceReadbackVerified": True,
+                    },
+                    {
+                        "mode": "live_http",
+                        "meetingMemoryPromotionVerified": False,
+                        "meetingMemoryReadbackVerified": False,
+                        "meetingMemorySourceReadbackVerified": False,
+                    },
+                ],
+            }
+        )
+
+        self.assertTrue(evidence["meetingMemoryPromotionVerified"])
+        self.assertTrue(evidence["meetingMemoryReadbackVerified"])
+        self.assertTrue(evidence["meetingMemorySourceReadbackVerified"])
+        self.assertTrue(evidence["localMeetingMemorySourceReadbackVerified"])
+        self.assertFalse(evidence["liveMeetingMemorySourceReadbackVerified"])
+        self.assertEqual("local_verified_live_pending", evidence["meetingMemoryEvidenceScope"])
+
 
 if __name__ == "__main__":
     unittest.main()
