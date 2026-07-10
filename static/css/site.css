@@ -69,10 +69,10 @@ nav a,
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-  gap: 22px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 18px;
   align-items: start;
-  padding: 20px clamp(18px, 4vw, 56px);
+  padding: 16px clamp(18px, 4vw, 56px);
   border-bottom: 1px solid var(--line);
 }
 
@@ -90,29 +90,30 @@ h1 {
 }
 
 .hero h1 {
-  font-size: 1.85rem;
+  font-size: 1.68rem;
 }
 
 .lead {
   max-width: 760px;
   color: var(--muted);
-  font-size: 1.04rem;
+  font-size: 0.98rem;
+  margin: 0;
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .home-status {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 8px;
-  padding: 14px;
+  padding: 12px;
 }
 
 .home-status h2 {
@@ -125,7 +126,7 @@ h1 {
   gap: 2px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 10px;
+  padding: 8px;
   color: var(--ink);
   background: #fff;
   text-decoration: none;
@@ -139,8 +140,8 @@ h1 {
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  padding: 28px clamp(18px, 4vw, 56px);
+  gap: 14px;
+  padding: 22px clamp(18px, 4vw, 56px);
 }
 
 .grid article,
@@ -177,7 +178,7 @@ pre {
 
 .console-shell {
   max-width: 1180px;
-  margin: 18px auto 24px;
+  margin: 12px auto 22px;
   padding: 0 20px;
 }
 
@@ -192,19 +193,22 @@ pre {
 
 .console-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, max-content);
+  gap: 12px;
   align-items: start;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 
 .console-hero h1 {
+  font-size: 1.58rem;
+  line-height: 1.16;
   margin-bottom: 8px;
 }
 
 .console-hero p:not(.eyebrow) {
   max-width: 760px;
   color: var(--muted);
+  font-size: 0.96rem;
   margin: 0;
 }
 
@@ -224,8 +228,8 @@ pre {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  margin: 16px 0 18px;
-  padding: 10px 0;
+  margin: 10px 0 14px;
+  padding: 8px 0;
   background: rgba(255, 255, 255, 0.96);
   border-bottom: 1px solid var(--line);
 }
@@ -1006,8 +1010,7 @@ footer {
 
   .console-nav {
     display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
     margin-top: 0;
     width: 100%;
   }
@@ -1033,26 +1036,27 @@ footer {
   }
 
   .console-nav a {
+    flex: 1 1 calc(33.333% - 8px);
     justify-content: center;
     min-width: 0;
     text-align: center;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   nav {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 8px;
-    overflow-x: auto;
     width: 100%;
   }
 
   nav a {
-    flex: 0 0 auto;
+    flex: 1 1 calc(50% - 8px);
+    min-width: min(100%, 9rem);
     text-align: center;
     overflow-wrap: anywhere;
     padding: 7px 8px;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   nav a[href*="multiagentmemory"] {
