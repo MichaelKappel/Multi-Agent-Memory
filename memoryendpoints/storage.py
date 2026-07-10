@@ -4634,6 +4634,9 @@ def _mysql_config_from_env():
 
 
 class MySQLStore(SQLiteStore):
+    def _open_connection(self):
+        return self._connect()
+
     def _schema_cache_key(self, config):
         return (
             config.get("host") or "",
