@@ -467,9 +467,11 @@
     var items = (payload && payload.items) || [];
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No audit events returned."));
+      appendFilterSummary(node, payload && payload.filters);
       return;
     }
     node.appendChild(el("div", "result-count", items.length + " audit event(s), newest first."));
+    appendFilterSummary(node, payload && payload.filters);
     items.slice().reverse().slice(0, 24).forEach(function (item) {
       var row = resultRow(
         item.action,
@@ -715,7 +717,13 @@
   }
 
   function refreshAudit() {
-    var qs = query({workspace_id: state.workspaceId, limit: "50"});
+    var params = {workspace_id: state.workspaceId, limit: "50"};
+    var form = pick("[data-console-audit-filter]");
+    if (form) {
+      params.action = form.elements.action ? form.elements.action.value : "";
+      params.limit = form.elements.limit ? form.elements.limit.value : "50";
+    }
+    var qs = query(params);
     return api("/api/matm/audit-log?" + qs).then(function (payload) {
       render("[data-console-audit-output]", payload);
       renderAuditSummary(payload);
@@ -994,6 +1002,27 @@
   if (auditButton) {
     auditButton.addEventListener("click", function () {
       refreshAudit().catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var auditFilterForm = pick("[data-console-audit-filter]");
+  if (auditFilterForm) {
+    auditFilterForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      refreshAudit()
+        .then(function () { setStatus("Audit log refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var clearAuditFilterButton = pick("[data-console-clear-audit-filter]");
+  if (clearAuditFilterButton && auditFilterForm) {
+    clearAuditFilterButton.addEventListener("click", function () {
+      auditFilterForm.elements.action.value = "";
+      auditFilterForm.elements.limit.value = "50";
+      refreshAudit()
+        .then(function () { setStatus("Audit filter cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 })();

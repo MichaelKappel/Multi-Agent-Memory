@@ -140,6 +140,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
         self.assertIn("data-console-ack-visible", text)
         self.assertIn("data-console-receipts-list", text)
+        self.assertIn("data-console-audit-filter", text)
+        self.assertIn("data-console-clear-audit-filter", text)
+        self.assertIn('value="memory.search"', text)
         self.assertIn("data-console-audit-list", text)
         self.assertIn("Debug JSON", text)
         self.assertIn("/static/css/site.css?v=", text)
@@ -218,6 +221,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("form.elements.actorAgentId", js)
         self.assertIn("data-console-clear-search-filters", js)
         self.assertIn("Memory search filters cleared.", js)
+
+    def test_console_js_wires_audit_log_filters(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("data-console-audit-filter", js)
+        self.assertIn("params.action", js)
+        self.assertIn("params.limit", js)
+        self.assertIn("data-console-clear-audit-filter", js)
+        self.assertIn("Audit filter cleared.", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
@@ -471,6 +483,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(item["valuesRedacted"])
             self.assertFalse(item["rawCredentialExposed"])
             self.assertFalse(item["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/audit-log",
+            headers=auth,
+            query="workspace_id=%s&action=memory.search&limit=5" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        filtered_audit = json.loads(text)
+        self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_audit["filters"])
+        self.assertTrue(filtered_audit["items"])
+        self.assertTrue(all(item["action"] == "memory.search" for item in filtered_audit["items"]))
 
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(

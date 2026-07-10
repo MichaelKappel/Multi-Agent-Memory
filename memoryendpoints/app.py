@@ -434,8 +434,30 @@ def route_console(start_response):
     <h2>Receipts And Audit</h2>
     <div class="actions">
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
-      <button class="button" type="button" data-console-audit>Refresh audit</button>
     </div>
+    <form class="console-grid" data-console-audit-filter>
+      <label>Audit action
+        <select name="action">
+          <option value="">all actions</option>
+          <option value="memory.search">memory.search</option>
+          <option value="memory.submit">memory.submit</option>
+          <option value="message.submit">message.submit</option>
+          <option value="current_message.read">current_message.read</option>
+          <option value="notification.ack">notification.ack</option>
+          <option value="receipts.read">receipts.read</option>
+          <option value="audit_log.read">audit_log.read</option>
+        </select>
+      </label>
+      <label>Limit
+        <select name="limit">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <button class="button" type="submit">Refresh audit</button>
+      <button class="button" type="button" data-console-clear-audit-filter>Clear audit filter</button>
+    </form>
     <div class="console-results" data-console-receipts-list>
       <p class="empty-state">Read receipts will appear after acknowledgements.</p>
     </div>
@@ -760,8 +782,13 @@ def route_protected(environ, start_response, path):
         _audit_read(store, workspace_id, auth, "workspace.read", path, {"found": bool(status)})
         return json_response(start_response, {"ok": True, "workspace": status})
     if path == "/api/matm/audit-log" and method == "GET":
-        _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": query.get("action") or "", "limit": query.get("limit") or ""})
-        items = store.audit_log(workspace_id, query.get("limit") or 50, query.get("action"))
+        audit_filters = {
+            "action": query.get("action") or "",
+            "limit": query.get("limit") or "50",
+        }
+        active_filters = {key: value for key, value in audit_filters.items() if value}
+        _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": audit_filters["action"], "limit": audit_filters["limit"]})
+        items = store.audit_log(workspace_id, audit_filters["limit"], audit_filters["action"])
         return json_response(
             start_response,
             {
@@ -769,6 +796,7 @@ def route_protected(environ, start_response, path):
                 "schemaVersion": "memoryendpoints.audit_log.v1",
                 "items": items,
                 "count": len(items),
+                "filters": active_filters,
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
