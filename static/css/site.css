@@ -754,7 +754,7 @@ footer {
   }
 
   .console-hero p:not(.eyebrow) {
-    display: none !important;
+    display: none;
   }
 
   .console-utility-bar {
