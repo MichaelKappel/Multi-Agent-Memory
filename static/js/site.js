@@ -580,6 +580,9 @@
       var payload = result.payload || {};
       var items = payload.items || [];
       var unreadCount = payload.unreadCount !== undefined ? payload.unreadCount : items.length;
+      var deliveryCounts = payload.deliveryCounts || {};
+      var broadcastCount = deliveryCounts.broadcast || 0;
+      var targetedCount = deliveryCounts.targeted || 0;
       var first = items.length ? items[0].message || {} : {};
       var row = resultRow(
         result.label + " inbox",
@@ -589,9 +592,12 @@
         [
           { text: result.ok ? "reachable" : "error", kind: result.ok ? "good" : "warn" },
           { text: unreadCount + " unread", kind: unreadCount ? "warn" : "good" },
+          { text: broadcastCount + " broadcast", kind: broadcastCount ? "good" : "neutral" },
+          { text: targetedCount + " targeted", kind: targetedCount ? "neutral" : "good" },
         ],
         [
           "agent " + result.agentId,
+          "delivery " + broadcastCount + " broadcast / " + targetedCount + " targeted",
           items.length ? "latest " + shortId(first.messageId) : "latest none",
         ]
       );
@@ -735,12 +741,27 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    appendFilterSummary(node, payload && payload.filters);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No review queue items matched this status."));
       return;
     }
-    node.appendChild(el("div", "result-count", items.length + " review item(s)."));
+    var statusCounts = (payload && payload.statusCounts) || {};
+    var countText = items.length + " review item(s).";
+    if (statusCounts.pending !== undefined || statusCounts.quarantined !== undefined || statusCounts.promoted !== undefined || statusCounts.rejected !== undefined) {
+      countText += " " + (statusCounts.pending || 0) + " pending, " + (statusCounts.quarantined || 0) + " quarantined, " + (statusCounts.promoted || 0) + " promoted, " + (statusCounts.rejected || 0) + " rejected.";
+    }
+    node.appendChild(el("div", "result-count", countText));
     items.forEach(function (item) {
+      var threats = item.detectedThreats || [];
+      var metaItems = [
+        "proposed by " + (item.proposedByAgentId || "unknown"),
+        "review " + shortId(item.reviewId),
+        "memory " + shortId(item.memoryEventId),
+        "risk " + String(item.riskScore || 0),
+        threats.length ? "threats " + threats.slice(0, 3).join(", ") : "",
+        item.createdAt || "",
+      ];
       var row = resultRow(
         "Review " + shortId(item.reviewId),
         item.publicSafeSummary || "No public-safe summary returned.",
@@ -749,13 +770,7 @@
           { text: item.firewallDecision || "review", kind: item.firewallDecision === "quarantine_for_review" ? "warn" : "good" },
           { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
         ],
-        [
-          "proposed by " + (item.proposedByAgentId || "unknown"),
-          "review " + shortId(item.reviewId),
-          "memory " + shortId(item.memoryEventId),
-          "risk " + String(item.riskScore || 0),
-          item.createdAt || "",
-        ]
+        metaItems
       );
       var actions = el("div", "row-actions");
       var useButton = el("button", "button compact", "Use review");

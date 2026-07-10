@@ -190,6 +190,14 @@ def _memory_submission_metadata(event):
     }
 
 
+def _review_status_counts(items):
+    counts = {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}
+    for item in items or []:
+        status = item.get("status") or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def route_home(start_response):
     body = """
 <section class="hero">
@@ -907,14 +915,27 @@ def route_protected(environ, start_response, path):
         store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":
-        items = store.review_queue(workspace_id, query.get("status"))
-        _audit_read(store, workspace_id, auth, "review_queue.read", path, {"statusFilter": query.get("status") or "", "count": len(items)})
+        status_filter = query.get("status") or ""
+        items = store.review_queue(workspace_id, status_filter)
+        all_review_items = store.review_queue(workspace_id, "")
+        status_counts = _review_status_counts(all_review_items)
+        filters = {"status": status_filter} if status_filter else {}
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "review_queue.read",
+            path,
+            {"statusFilter": status_filter, "count": len(items), "filters": filters, "statusCounts": status_counts},
+        )
         return json_response(
             start_response,
             {
                 "ok": True,
                 "items": items,
                 "count": len(items),
+                "filters": filters,
+                "statusCounts": status_counts,
                 "valuesRedacted": True,
                 "promotionRoute": "/api/matm/review-queue/decide",
             },

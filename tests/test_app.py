@@ -254,6 +254,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
     def test_console_js_renders_review_decision_feedback(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
+        self.assertIn("statusCounts", js)
+        self.assertIn("appendFilterSummary(node, payload && payload.filters)", js)
+        self.assertIn("detectedThreats", js)
+        self.assertIn("threats ", js)
         self.assertIn("renderReviewDecisionSummary", js)
         self.assertIn("data-console-review-decision-summary", js)
         self.assertIn("Review decision ", js)
@@ -269,6 +273,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("swarm-observer-agent", js)
         self.assertIn("renderLaneOverview", js)
         self.assertIn("refreshLaneOverview", js)
+        self.assertIn("payload.deliveryCounts", js)
+        self.assertIn("broadcastCount", js)
+        self.assertIn("targetedCount", js)
+        self.assertIn('" broadcast / "', js)
         self.assertIn("data-console-open-lane", js)
         self.assertIn("All inbox lanes refreshed.", js)
 
@@ -760,8 +768,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         queue = json.loads(text)
         self.assertEqual(1, queue["count"])
+        self.assertEqual({"status": "quarantined"}, queue["filters"])
+        self.assertEqual(1, queue["statusCounts"]["quarantined"])
+        self.assertEqual(0, queue["statusCounts"]["pending"])
         review_id = queue["items"][0]["reviewId"]
         self.assertEqual(event["eventId"], queue["items"][0]["memoryEventId"])
+        self.assertTrue(queue["items"][0]["detectedThreats"])
 
         decide_headers = dict(auth)
         decide_headers["HTTP_IDEMPOTENCY_KEY"] = "review-decision-1"
@@ -838,6 +850,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         queue = json.loads(text)
         self.assertEqual(1, queue["count"])
+        self.assertEqual({"status": "pending"}, queue["filters"])
+        self.assertEqual(1, queue["statusCounts"]["pending"])
+        self.assertEqual(0, queue["statusCounts"]["quarantined"])
         self.assertTrue(queue["valuesRedacted"])
         review_id = queue["items"][0]["reviewId"]
 
