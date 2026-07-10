@@ -135,6 +135,39 @@
     parent.appendChild(summary);
   }
 
+  function appendCountBadges(parent, label, counts, preferredKeys) {
+    counts = counts || {};
+    var keys = (preferredKeys || []).slice();
+    Object.keys(counts).forEach(function (key) {
+      if (keys.indexOf(key) === -1) {
+        keys.push(key);
+      }
+    });
+    var active = keys.filter(function (key) {
+      return counts[key];
+    });
+    if (!active.length) {
+      return;
+    }
+    parent.appendChild(el("span", "filter-summary-label", label));
+    active.forEach(function (key) {
+      appendBadge(parent, key + ": " + counts[key], "neutral");
+    });
+  }
+
+  function renderMemoryOperatorSummary(parent, payload, items) {
+    var summary = (payload && payload.operatorSummary) || {};
+    var count = summary.count !== undefined ? summary.count : (items || []).length;
+    var line = el("div", "filter-summary memory-search-summary");
+    line.appendChild(el("span", "filter-summary-label", "Summary"));
+    appendBadge(line, count + " hosted", count ? "good" : "neutral");
+    appendBadge(line, summary.filesystemDocsIncluded ? "filesystem included" : "filesystem excluded", summary.filesystemDocsIncluded ? "warn" : "good");
+    appendCountBadges(line, "Scopes", summary.scopeCounts, ["account", "company", "workspace", "project"]);
+    appendCountBadges(line, "Reviews", summary.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(line, "Promotion", summary.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
+    parent.appendChild(line);
+  }
+
   function operatorLevel(operatorSummary, level) {
     var hierarchy = (operatorSummary && operatorSummary.hierarchy) || [];
     for (var i = 0; i < hierarchy.length; i += 1) {
@@ -439,10 +472,12 @@
     var items = (payload && payload.items) || [];
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
+      renderMemoryOperatorSummary(node, payload, items);
       appendFilterSummary(node, payload && payload.filters);
       return;
     }
     node.appendChild(el("div", "result-count", items.length + " hosted memory item(s). Filesystem docs are excluded from protected search."));
+    renderMemoryOperatorSummary(node, payload, items);
     appendFilterSummary(node, payload && payload.filters);
     memoryScopeGroups(items).forEach(function (group) {
       node.appendChild(el("div", "result-group-title", group.scope + " memory (" + group.items.length + ")"));
@@ -519,13 +554,21 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    var operatorSummary = (payload && payload.operatorSummary) || {};
     var lane = agentId || state.agentId || "selected agent";
     appendFilterSummary(node, payload && payload.filters);
+    var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
+    var responseCounts = operatorSummary.responseDispositionCounts || {};
+    var summaryLine = el("div", "filter-summary inbox-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Inbox"));
+    appendBadge(summaryLine, (operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length) + " unread", items.length ? "warn" : "good");
+    appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"]);
+    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
+    node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No unread messages for " + lane + "."));
       return;
     }
-    var deliveryCounts = (payload && payload.deliveryCounts) || {};
     var countText = (payload.unreadCount || items.length) + " unread message(s) for " + lane + ".";
     if (deliveryCounts.broadcast !== undefined || deliveryCounts.targeted !== undefined) {
       countText += " " + (deliveryCounts.broadcast || 0) + " broadcast, " + (deliveryCounts.targeted || 0) + " targeted.";
@@ -664,6 +707,14 @@
     clear(node);
     var items = (payload && payload.items) || [];
     appendFilterSummary(node, payload && payload.filters);
+    var summary = (payload && payload.operatorSummary) || {};
+    var summaryLine = el("div", "filter-summary receipt-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Receipts"));
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " total", items.length ? "good" : "neutral");
+    appendCountBadges(summaryLine, "Status", summary.statusCounts, ["read", "unread", "acknowledged"]);
+    appendCountBadges(summaryLine, "Consumers", summary.consumerAgentCounts, []);
+    appendBadge(summaryLine, summary.allPayloadsHidden === false ? "payload exposure review" : "payloads hidden", summary.allPayloadsHidden === false ? "warn" : "good");
+    node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No receipts for the current agent yet."));
       return;

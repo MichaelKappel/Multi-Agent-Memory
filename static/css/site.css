@@ -549,6 +549,12 @@ pre {
   font-weight: 700;
 }
 
+.memory-search-summary,
+.inbox-summary,
+.receipt-summary {
+  margin-top: 4px;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;

@@ -198,6 +198,71 @@ def _review_status_counts(items):
     return counts
 
 
+def _count_by(items, key, defaults=None):
+    counts = dict(defaults or {})
+    for item in items or []:
+        value = item.get(key) or "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _memory_search_operator_summary(items, query_text, filters):
+    items = items or []
+    return {
+        "schemaVersion": "memoryendpoints.memory_search_operator_summary.v1",
+        "query": redact_text(query_text or ""),
+        "count": len(items),
+        "filters": dict(filters or {}),
+        "memorySource": "hosted_workspace_store",
+        "filesystemDocsIncluded": False,
+        "scopeCounts": _count_by(items, "scope", {"account": 0, "company": 0, "workspace": 0, "project": 0}),
+        "memoryTypeCounts": _count_by(items, "memoryType"),
+        "reviewStatusCounts": _count_by(items, "reviewStatus", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "promotionStateCounts": _count_by(items, "promotionState", {"review_pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _inbox_operator_summary(items, filters, delivery_counts, current_message_lane):
+    response_counts = {"required_response": 0, "viewed_acknowledgement": 0}
+    for item in items or []:
+        delivery = item.get("delivery") or {}
+        disposition = delivery.get("responseDisposition") or "viewed_acknowledgement"
+        response_counts[disposition] = response_counts.get(disposition, 0) + 1
+    return {
+        "schemaVersion": "memoryendpoints.inbox_operator_summary.v1",
+        "agentId": (filters or {}).get("agentId") or "",
+        "unreadCount": len(items or []),
+        "currentMessageLane": bool(current_message_lane),
+        "deliveryCounts": dict(delivery_counts or {}),
+        "responseDispositionCounts": response_counts,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _receipts_operator_summary(items, filters):
+    items = items or []
+    status_counts = _count_by(items, "status", {"read": 0})
+    consumer_counts = _count_by(items, "consumerAgentId")
+    raw_payload_exposed_count = sum(1 for item in items if item.get("rawPayloadExposed"))
+    return {
+        "schemaVersion": "memoryendpoints.receipts_operator_summary.v1",
+        "count": len(items),
+        "filters": dict(filters or {}),
+        "statusCounts": status_counts,
+        "consumerAgentCounts": consumer_counts,
+        "rawPayloadExposedCount": raw_payload_exposed_count,
+        "allPayloadsHidden": raw_payload_exposed_count == 0,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _workspace_operator_summary(workspace):
     workspace = workspace or {}
     accounts = workspace.get("accounts") or []
@@ -1051,8 +1116,23 @@ def route_protected(environ, start_response, path):
             "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
         }
         active_filters = {key: value for key, value in filters.items() if value}
-        items = store.search_memory(workspace_id, query.get("q") or query.get("query"), filters)
-        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "memorySource": "hosted_workspace_store", "filterKeys": sorted(active_filters.keys())})
+        query_text = query.get("q") or query.get("query") or ""
+        items = store.search_memory(workspace_id, query_text, filters)
+        operator_summary = _memory_search_operator_summary(items, query_text, active_filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "memory.search",
+            path,
+            {
+                "memoryCount": len(items),
+                "memorySource": "hosted_workspace_store",
+                "filterKeys": sorted(active_filters.keys()),
+                "scopeCounts": operator_summary["scopeCounts"],
+                "reviewStatusCounts": operator_summary["reviewStatusCounts"],
+            },
+        )
         return json_response(
             start_response,
             {
@@ -1062,6 +1142,10 @@ def route_protected(environ, start_response, path):
                 "memorySource": "hosted_workspace_store",
                 "filesystemDocsIncluded": False,
                 "filters": active_filters,
+                "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
             },
         )
     if path == "/api/matm/agent-messages" and method == "POST":
@@ -1108,13 +1192,19 @@ def route_protected(environ, start_response, path):
             enriched["delivery"] = delivery
             items.append(enriched)
         filters = {"agentId": agent_filter} if agent_filter else {}
+        operator_summary = _inbox_operator_summary(items, filters, delivery_counts, path == "/api/matm/current-message")
         _audit_read(
             store,
             workspace_id,
             auth,
             "current_message.read" if path == "/api/matm/current-message" else "agent_inbox.read",
             path,
-            {"unreadCount": len(items), "filters": filters, "deliveryCounts": delivery_counts},
+            {
+                "unreadCount": len(items),
+                "filters": filters,
+                "deliveryCounts": delivery_counts,
+                "responseDispositionCounts": operator_summary["responseDispositionCounts"],
+            },
         )
         return json_response(
             start_response,
@@ -1126,7 +1216,10 @@ def route_protected(environ, start_response, path):
                 "responseStates": ["required_response", "viewed_acknowledgement"],
                 "filters": filters,
                 "deliveryCounts": delivery_counts,
+                "operatorSummary": operator_summary,
                 "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
             },
         )
     if path == "/api/matm/notifications/ack" and method == "POST":
@@ -1143,8 +1236,33 @@ def route_protected(environ, start_response, path):
         consumer_filter = query.get("consumer_agent_id") or query.get("consumerAgentId") or ""
         items = store.receipts(workspace_id, consumer_filter)
         filters = {"consumerAgentId": consumer_filter} if consumer_filter else {}
-        _audit_read(store, workspace_id, auth, "receipts.read", path, {"count": len(items), "filters": filters})
-        return json_response(start_response, {"ok": True, "items": items, "count": len(items), "valuesRedacted": True, "filters": filters})
+        operator_summary = _receipts_operator_summary(items, filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "receipts.read",
+            path,
+            {
+                "count": len(items),
+                "filters": filters,
+                "receiptStatusCounts": operator_summary["statusCounts"],
+                "rawPayloadExposedCount": operator_summary["rawPayloadExposedCount"],
+            },
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "items": items,
+                "count": len(items),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+                "filters": filters,
+                "operatorSummary": operator_summary,
+            },
+        )
     return problem(start_response, "404 Not Found", "Route not found", "No protected route matched this request.", "not_found")
 
 

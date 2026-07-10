@@ -83,6 +83,32 @@ def _audit_detail_summary(details):
             "delivery %s broadcast / %s targeted"
             % (delivery_counts.get("broadcast") or 0, delivery_counts.get("targeted") or 0)
         )
+    response_disposition_counts = safe.get("responseDispositionCounts")
+    if isinstance(response_disposition_counts, dict):
+        items.append(
+            "responses %s required / %s ack"
+            % (
+                response_disposition_counts.get("required_response") or 0,
+                response_disposition_counts.get("viewed_acknowledgement") or 0,
+            )
+        )
+    scope_counts = safe.get("scopeCounts")
+    if isinstance(scope_counts, dict):
+        active = ["%s %s" % (key, scope_counts.get(key)) for key in ("account", "company", "workspace", "project") if scope_counts.get(key)]
+        if active:
+            items.append("scopes %s" % ", ".join(active))
+    review_status_counts = safe.get("reviewStatusCounts")
+    if isinstance(review_status_counts, dict):
+        active = ["%s %s" % (key, review_status_counts.get(key)) for key in ("pending", "quarantined", "promoted", "rejected") if review_status_counts.get(key)]
+        if active:
+            items.append("reviews %s" % ", ".join(active))
+    receipt_status_counts = safe.get("receiptStatusCounts")
+    if isinstance(receipt_status_counts, dict):
+        active = ["%s %s" % (key, receipt_status_counts.get(key)) for key in ("read", "unread", "acknowledged") if receipt_status_counts.get(key)]
+        if active:
+            items.append("receipts %s" % ", ".join(active))
+    if safe.get("rawPayloadExposedCount") not in (None, ""):
+        items.append("payloads %s exposed" % (safe.get("rawPayloadExposedCount") or 0))
     return items[:8]
 
 

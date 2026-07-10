@@ -174,6 +174,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".acknowledgement-summary", css)
         self.assertIn(".lane-overview", css)
         self.assertIn(".filter-summary", css)
+        self.assertIn(".memory-search-summary", css)
+        self.assertIn(".inbox-summary", css)
+        self.assertIn(".receipt-summary", css)
         self.assertIn(".console-nav", css)
         self.assertIn(".console-debug-toggle", css)
         self.assertIn(".debug-json-hidden .debug-json", css)
@@ -236,6 +239,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('target + " inbox refreshed."', js)
         self.assertIn("payload.delivery", js)
         self.assertIn("deliveryCounts", js)
+        self.assertIn("operatorSummary", js)
+        self.assertIn("responseDispositionCounts", js)
+        self.assertIn("inbox-summary", js)
+        self.assertIn("appendCountBadges(summaryLine, \"Responses\"", js)
         self.assertIn("delivery.responseDisposition", js)
         self.assertIn("delivery.messageType", js)
         self.assertIn("appendCopyActions(row", js)
@@ -307,6 +314,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
         self.assertIn("appendFilterSummary", js)
+        self.assertIn("appendCountBadges", js)
+        self.assertIn("renderMemoryOperatorSummary", js)
+        self.assertIn("payload.operatorSummary", js)
+        self.assertIn("summary.scopeCounts", js)
+        self.assertIn("summary.reviewStatusCounts", js)
+        self.assertIn("summary.promotionStateCounts", js)
+        self.assertIn("filesystem excluded", js)
         self.assertIn("memoryScopeGroups", js)
         self.assertIn('"account", "company", "workspace", "project"', js)
         self.assertIn('group.scope + " memory ("', js)
@@ -335,6 +349,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-receipts-filter", js)
         self.assertIn("consumerAgentId", js)
         self.assertIn("payload.filters.consumerAgentId", js)
+        self.assertIn("payload.operatorSummary", js)
+        self.assertIn("summary.statusCounts", js)
+        self.assertIn("summary.consumerAgentCounts", js)
+        self.assertIn("summary.allPayloadsHidden", js)
+        self.assertIn("receipt-summary", js)
         self.assertIn("data-console-clear-receipts-filter", js)
         self.assertIn("Receipt filter cleared.", js)
         self.assertIn('addEventListener("change"', js)
@@ -521,6 +540,24 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(1, search_payload["count"])
         self.assertEqual("hosted_workspace_store", search_payload["memorySource"])
         self.assertFalse(search_payload["filesystemDocsIncluded"])
+        memory_summary = search_payload["operatorSummary"]
+        self.assertEqual("memoryendpoints.memory_search_operator_summary.v1", memory_summary["schemaVersion"])
+        self.assertEqual("hosted", memory_summary["query"])
+        self.assertEqual(1, memory_summary["count"])
+        self.assertEqual({}, memory_summary["filters"])
+        self.assertEqual("hosted_workspace_store", memory_summary["memorySource"])
+        self.assertFalse(memory_summary["filesystemDocsIncluded"])
+        self.assertEqual(1, memory_summary["scopeCounts"]["project"])
+        self.assertEqual(1, memory_summary["memoryTypeCounts"]["decision"])
+        self.assertEqual(1, memory_summary["reviewStatusCounts"]["pending"])
+        self.assertEqual(1, memory_summary["promotionStateCounts"]["review_pending"])
+        self.assertTrue(memory_summary["valuesRedacted"])
+        self.assertFalse(memory_summary["rawCredentialExposed"])
+        self.assertFalse(memory_summary["rawPayloadExposed"])
+        self.assertTrue(search_payload["valuesRedacted"])
+        self.assertFalse(search_payload["rawCredentialExposed"])
+        self.assertFalse(search_payload["rawPayloadExposed"])
+        self.assertNotIn(token, json.dumps(memory_summary))
         self.assertNotIn("docsMemory", search_payload)
         self.assertTrue(search_payload["items"][0]["firewall"]["valuesRedacted"])
         self.assertFalse(search_payload["items"][0]["firewall"]["redactionApplied"])
@@ -554,6 +591,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(1, inbox["unreadCount"])
         self.assertEqual({"agentId": "agent-b"}, inbox["filters"])
         self.assertEqual({"broadcast": 0, "targeted": 1}, inbox["deliveryCounts"])
+        inbox_summary = inbox["operatorSummary"]
+        self.assertEqual("memoryendpoints.inbox_operator_summary.v1", inbox_summary["schemaVersion"])
+        self.assertEqual("agent-b", inbox_summary["agentId"])
+        self.assertEqual(1, inbox_summary["unreadCount"])
+        self.assertFalse(inbox_summary["currentMessageLane"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, inbox_summary["deliveryCounts"])
+        self.assertEqual(0, inbox_summary["responseDispositionCounts"]["required_response"])
+        self.assertEqual(1, inbox_summary["responseDispositionCounts"]["viewed_acknowledgement"])
+        self.assertTrue(inbox_summary["valuesRedacted"])
+        self.assertFalse(inbox_summary["rawCredentialExposed"])
+        self.assertFalse(inbox_summary["rawPayloadExposed"])
         self.assertEqual("targeted", inbox["items"][0]["delivery"]["messageType"])
 
         status, _headers, text = call_app(
@@ -567,7 +615,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["required_response", "viewed_acknowledgement"], current["responseStates"])
         self.assertEqual({"agentId": "agent-b"}, current["filters"])
         self.assertEqual({"broadcast": 0, "targeted": 1}, current["deliveryCounts"])
+        current_summary = current["operatorSummary"]
+        self.assertTrue(current_summary["currentMessageLane"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, current_summary["deliveryCounts"])
+        self.assertEqual(0, current_summary["responseDispositionCounts"]["required_response"])
+        self.assertEqual(1, current_summary["responseDispositionCounts"]["viewed_acknowledgement"])
         self.assertTrue(current["valuesRedacted"])
+        self.assertFalse(current["rawCredentialExposed"])
+        self.assertFalse(current["rawPayloadExposed"])
 
         status, _headers, text = call_app(
             "/api/matm/notifications/ack",
@@ -600,7 +655,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         receipts = json.loads(text)
         self.assertEqual(1, receipts["count"])
         self.assertTrue(receipts["valuesRedacted"])
+        self.assertFalse(receipts["rawCredentialExposed"])
+        self.assertFalse(receipts["rawPayloadExposed"])
         self.assertEqual({"consumerAgentId": "agent-b"}, receipts["filters"])
+        receipt_summary = receipts["operatorSummary"]
+        self.assertEqual("memoryendpoints.receipts_operator_summary.v1", receipt_summary["schemaVersion"])
+        self.assertEqual(1, receipt_summary["count"])
+        self.assertEqual({"consumerAgentId": "agent-b"}, receipt_summary["filters"])
+        self.assertEqual(1, receipt_summary["statusCounts"]["read"])
+        self.assertEqual(1, receipt_summary["consumerAgentCounts"]["agent-b"])
+        self.assertEqual(0, receipt_summary["rawPayloadExposedCount"])
+        self.assertTrue(receipt_summary["allPayloadsHidden"])
+        self.assertTrue(receipt_summary["valuesRedacted"])
+        self.assertFalse(receipt_summary["rawCredentialExposed"])
+        self.assertFalse(receipt_summary["rawPayloadExposed"])
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",
@@ -643,6 +711,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             for summary in item["detailsSummary"]
         ]
         self.assertIn("delivery 0 broadcast / 1 targeted", current_message_summaries)
+        self.assertIn("responses 0 required / 1 ack", current_message_summaries)
         workspace_read_summaries = [
             summary
             for item in audit["items"]
@@ -650,6 +719,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             for summary in item["detailsSummary"]
         ]
         self.assertIn("hierarchy ready", workspace_read_summaries)
+        receipt_read_summaries = [
+            summary
+            for item in audit["items"]
+            if item["action"] == "receipts.read"
+            for summary in item["detailsSummary"]
+        ]
+        self.assertIn("receipts read 1", receipt_read_summaries)
+        self.assertIn("payloads 0 exposed", receipt_read_summaries)
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",
@@ -663,6 +740,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(all(item["action"] == "memory.search" for item in filtered_audit["items"]))
         filtered_summaries = [summary for item in filtered_audit["items"] for summary in item["detailsSummary"]]
         self.assertIn("source hosted_workspace_store", filtered_summaries)
+        self.assertIn("scopes project 1", filtered_summaries)
+        self.assertIn("reviews pending 1", filtered_summaries)
 
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(
@@ -732,6 +811,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(2, codex["unreadCount"])
         self.assertEqual({"agentId": "codex-agent"}, codex["filters"])
         self.assertEqual({"broadcast": 1, "targeted": 1}, codex["deliveryCounts"])
+        codex_summary = codex["operatorSummary"]
+        self.assertEqual("memoryendpoints.inbox_operator_summary.v1", codex_summary["schemaVersion"])
+        self.assertEqual("codex-agent", codex_summary["agentId"])
+        self.assertEqual(2, codex_summary["unreadCount"])
+        self.assertTrue(codex_summary["currentMessageLane"])
+        self.assertEqual({"broadcast": 1, "targeted": 1}, codex_summary["deliveryCounts"])
+        self.assertEqual(1, codex_summary["responseDispositionCounts"]["required_response"])
+        self.assertEqual(1, codex_summary["responseDispositionCounts"]["viewed_acknowledgement"])
+        self.assertTrue(codex_summary["valuesRedacted"])
+        self.assertFalse(codex_summary["rawCredentialExposed"])
+        self.assertFalse(codex_summary["rawPayloadExposed"])
         codex_summaries = {item["message"]["safeSummary"] for item in codex["items"]}
         self.assertIn("Broadcast to every active agent in the swarm.", codex_summaries)
         self.assertIn("Targeted message for Codex only.", codex_summaries)
@@ -746,6 +836,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         observer = json.loads(text)
         self.assertEqual(1, observer["unreadCount"])
         self.assertEqual({"broadcast": 1, "targeted": 0}, observer["deliveryCounts"])
+        self.assertEqual(0, observer["operatorSummary"]["responseDispositionCounts"]["required_response"])
+        self.assertEqual(1, observer["operatorSummary"]["responseDispositionCounts"]["viewed_acknowledgement"])
         self.assertEqual("Broadcast to every active agent in the swarm.", observer["items"][0]["message"]["safeSummary"])
         self.assertEqual("broadcast", observer["items"][0]["delivery"]["messageType"])
 
