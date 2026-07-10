@@ -100,6 +100,18 @@
     parent.appendChild(meta);
   }
 
+  function copySafeText(value, label) {
+    if (!value || !navigator.clipboard) {
+      setStatus("Clipboard is unavailable for " + label + ".", true);
+      return;
+    }
+    navigator.clipboard.writeText(value).then(function () {
+      setStatus(label + " copied.", false);
+    }).catch(function () {
+      setStatus("Could not copy " + label + ".", true);
+    });
+  }
+
   function renderEmpty(selector, text) {
     var node = pick(selector);
     if (!node) {
@@ -322,7 +334,7 @@
     }
     node.appendChild(el("div", "result-count", items.length + " review item(s)."));
     items.forEach(function (item) {
-      node.appendChild(resultRow(
+      var row = resultRow(
         "Review " + shortId(item.reviewId),
         item.publicSafeSummary || "No public-safe summary returned.",
         [
@@ -337,7 +349,26 @@
           "risk " + String(item.riskScore || 0),
           item.createdAt || "",
         ]
-      ));
+      );
+      var actions = el("div", "row-actions");
+      var useButton = el("button", "button compact", "Use review");
+      var copyButton = el("button", "button compact", "Copy review id");
+      useButton.type = "button";
+      copyButton.type = "button";
+      useButton.addEventListener("click", function () {
+        var decisionForm = pick("[data-console-review-decision]");
+        if (decisionForm) {
+          decisionForm.elements.reviewId.value = item.reviewId || "";
+          setStatus("Review selected. Choose a decision and submit.", false);
+        }
+      });
+      copyButton.addEventListener("click", function () {
+        copySafeText(item.reviewId, "Review id");
+      });
+      actions.appendChild(useButton);
+      actions.appendChild(copyButton);
+      row.appendChild(actions);
+      node.appendChild(row);
     });
   }
 
@@ -512,7 +543,8 @@
         },
       })
         .then(function () { return refreshMemory("verification"); })
-        .then(function () { setStatus("Memory saved and search refreshed.", false); })
+        .then(function () { return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending"); })
+        .then(function () { setStatus("Memory saved; search and review queue refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }

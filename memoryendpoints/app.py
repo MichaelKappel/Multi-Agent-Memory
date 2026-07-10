@@ -152,8 +152,8 @@ def route_home(start_response):
 <section class="hero">
   <div>
     <p class="eyebrow">Pure MATM endpoint reference</p>
-    <h1>Multi-agent memory that agents can read, humans can inspect, and operators can bound.</h1>
-    <p class="lead">MemoryEndpoints.com exposes a practical MATM surface for workspace memory, current messages, redacted receipts, and AI-ready discovery without third-party runtime dependencies.</p>
+    <h1>MemoryEndpoints.com</h1>
+    <p class="lead">A practical MATM operator console for bounded workspace memory, current messages, redacted receipts, and AI-ready discovery without third-party runtime dependencies.</p>
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/console">Open human console</a>
