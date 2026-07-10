@@ -495,6 +495,7 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    appendFilterSummary(node, payload && payload.filters);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No receipts for the current agent yet."));
       return;
@@ -852,8 +853,17 @@
   }
 
   function refreshReceipts() {
-    var qs = query({workspace_id: state.workspaceId, consumer_agent_id: state.agentId});
+    var consumerAgentId = state.agentId;
+    var form = pick("[data-console-receipts-filter]");
+    if (form && form.elements.consumerAgentId && form.elements.consumerAgentId.value) {
+      consumerAgentId = form.elements.consumerAgentId.value;
+    }
+    var qs = query({workspace_id: state.workspaceId, consumer_agent_id: consumerAgentId});
     return api("/api/matm/receipts?" + qs).then(function (payload) {
+      payload.filters = payload.filters || {};
+      if (!payload.filters.consumerAgentId) {
+        payload.filters.consumerAgentId = consumerAgentId;
+      }
       render("[data-console-receipts-output]", payload);
       renderReceiptSummary(payload);
       return payload;
@@ -1156,6 +1166,28 @@
   if (receiptsButton) {
     receiptsButton.addEventListener("click", function () {
       refreshReceipts().catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var clearReceiptsFilterButton = pick("[data-console-clear-receipts-filter]");
+  if (clearReceiptsFilterButton) {
+    clearReceiptsFilterButton.addEventListener("click", function () {
+      var form = pick("[data-console-receipts-filter]");
+      if (form && form.elements.consumerAgentId) {
+        form.elements.consumerAgentId.value = "";
+      }
+      refreshReceipts()
+        .then(function () { setStatus("Receipt filter cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var receiptsFilterForm = pick("[data-console-receipts-filter]");
+  if (receiptsFilterForm && receiptsFilterForm.elements.consumerAgentId) {
+    receiptsFilterForm.elements.consumerAgentId.addEventListener("change", function () {
+      refreshReceipts()
+        .then(function () { setStatus("Receipts refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 

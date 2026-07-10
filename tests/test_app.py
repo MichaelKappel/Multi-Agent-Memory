@@ -142,6 +142,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-ack-visible", text)
         self.assertIn("data-console-ack-summary", text)
         self.assertIn("data-console-receipts-list", text)
+        self.assertIn("data-console-receipts-filter", text)
+        self.assertIn("data-console-clear-receipts-filter", text)
         self.assertIn("data-console-audit-filter", text)
         self.assertIn("data-console-clear-audit-filter", text)
         self.assertIn('value="memory.search"', text)
@@ -261,6 +263,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('selectedLimit === "50" ? "" : selectedLimit', js)
         self.assertIn("data-console-clear-audit-filter", js)
         self.assertIn("Audit filter cleared.", js)
+
+    def test_console_js_wires_receipt_consumer_filters(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("data-console-receipts-filter", js)
+        self.assertIn("consumerAgentId", js)
+        self.assertIn("payload.filters.consumerAgentId", js)
+        self.assertIn("data-console-clear-receipts-filter", js)
+        self.assertIn("Receipt filter cleared.", js)
+        self.assertIn('addEventListener("change"', js)
+        self.assertIn("Receipts refreshed.", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
@@ -482,6 +495,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         receipts = json.loads(text)
         self.assertEqual(1, receipts["count"])
         self.assertTrue(receipts["valuesRedacted"])
+        self.assertEqual({"consumerAgentId": "agent-b"}, receipts["filters"])
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",

@@ -967,9 +967,11 @@ def route_protected(environ, start_response, path):
         store.record_idempotency(workspace_id, idem, "notification-ack", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/receipts" and method == "GET":
-        items = store.receipts(workspace_id, query.get("consumer_agent_id") or query.get("consumerAgentId"))
-        _audit_read(store, workspace_id, auth, "receipts.read", path, {"count": len(items)})
-        return json_response(start_response, {"ok": True, "items": items, "count": len(items), "valuesRedacted": True})
+        consumer_filter = query.get("consumer_agent_id") or query.get("consumerAgentId") or ""
+        items = store.receipts(workspace_id, consumer_filter)
+        filters = {"consumerAgentId": consumer_filter} if consumer_filter else {}
+        _audit_read(store, workspace_id, auth, "receipts.read", path, {"count": len(items), "filters": filters})
+        return json_response(start_response, {"ok": True, "items": items, "count": len(items), "valuesRedacted": True, "filters": filters})
     return problem(start_response, "404 Not Found", "Route not found", "No protected route matched this request.", "not_found")
 
 
