@@ -585,6 +585,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("summary.promotionStateCounts", js)
         self.assertIn("filesystem excluded", js)
         self.assertIn("private payload hidden", js)
+        self.assertIn("hosted sources", js)
+        self.assertIn("duplicate records", js)
         self.assertIn("long-term-memory-summary", js)
         self.assertIn("memoryScopeGroups", js)
         self.assertIn('"account", "company", "workspace", "project"', js)
@@ -2196,6 +2198,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "actorAgentId": "codex-agent",
                 "scope": "project",
                 "scopeId": project_id,
+                "memoryType": "procedure",
+                "title": "System Targets Duplicate",
+                "summary": "Duplicate hosted record for the same long-term source path.",
+                "tags": ["long-term-memory-migration"],
+                "source": "docs/long-term-memory/system-targets.md",
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
                 "memoryType": "note",
                 "title": "Unrelated Memory",
                 "summary": "This hosted memory should not count in the migration summary.",
@@ -2232,19 +2245,21 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         migration = payload["operatorSummary"]["longTermMemoryMigration"]
 
         self.assertEqual("memoryendpoints.long_term_memory_operator_summary.v1", migration["schemaVersion"])
-        self.assertEqual(3, payload["count"])
+        self.assertEqual(4, payload["count"])
         self.assertEqual("hosted_pending_review", migration["status"])
         self.assertEqual(2, migration["count"])
+        self.assertEqual(3, migration["recordCount"])
+        self.assertEqual(1, migration["duplicateRecordCount"])
         self.assertEqual(2, migration["sourcePathCount"])
         self.assertEqual("hosted_workspace_store", migration["memorySource"])
         self.assertFalse(migration["filesystemDocsIncluded"])
         self.assertFalse(migration["allPromoted"])
         self.assertTrue(migration["allValuesRedacted"])
         self.assertEqual(0, migration["rawPrivatePayloadStoredCount"])
-        self.assertEqual(1, migration["scopeCounts"]["project"])
+        self.assertEqual(2, migration["scopeCounts"]["project"])
         self.assertEqual(1, migration["scopeCounts"]["workspace"])
-        self.assertEqual(2, migration["reviewStatusCounts"]["pending"])
-        self.assertEqual(2, migration["promotionStateCounts"]["review_pending"])
+        self.assertEqual(3, migration["reviewStatusCounts"]["pending"])
+        self.assertEqual(3, migration["promotionStateCounts"]["review_pending"])
         self.assertIn("docs/long-term-memory/system-targets.md", migration["sourcePathSamples"])
         self.assertNotIn(token, json.dumps(migration))
 

@@ -248,8 +248,12 @@
     var line = el("div", "filter-summary long-term-memory-summary");
     line.appendChild(el("span", "filter-summary-label", "Long-term memory"));
     appendBadge(line, formatStatusText(migration.status), migration.status === "promoted" ? "good" : "warn");
-    appendBadge(line, (migration.count || 0) + " hosted", migration.count ? "good" : "neutral");
+    appendBadge(line, (migration.count || 0) + " hosted sources", migration.count ? "good" : "neutral");
     appendBadge(line, (migration.sourcePathCount || 0) + " source paths", migration.sourcePathCount ? "good" : "neutral");
+    appendBadge(line, (migration.recordCount || migration.count || 0) + " records", migration.recordCount ? "neutral" : "good");
+    if (migration.duplicateRecordCount) {
+      appendBadge(line, migration.duplicateRecordCount + " duplicate records", "warn");
+    }
     appendBadge(line, migration.filesystemDocsIncluded ? "filesystem included" : "filesystem excluded", migration.filesystemDocsIncluded ? "warn" : "good");
     appendBadge(line, migration.allValuesRedacted ? "redacted" : "redaction review", migration.allValuesRedacted ? "good" : "warn");
     appendBadge(line, migration.rawPrivatePayloadStoredCount ? "payload storage review" : "private payload hidden", migration.rawPrivatePayloadStoredCount ? "warn" : "good");

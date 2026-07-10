@@ -376,11 +376,14 @@ def _long_term_memory_operator_summary(items, query_text, filters):
     raw_private_payload_count = sum(1 for item in relevant_items if item.get("rawPrivatePayloadStored"))
     all_values_redacted = all(item.get("valuesRedacted") is not False for item in relevant_items)
     status = "promoted" if relevant_items and promoted_count == len(relevant_items) else ("hosted_pending_review" if relevant_items else "not_found")
+    duplicate_record_count = max(0, len(relevant_items) - len(source_paths))
     return {
         "schemaVersion": "memoryendpoints.long_term_memory_operator_summary.v1",
         "migrationTag": LONG_TERM_MEMORY_TAG,
         "status": status,
-        "count": len(relevant_items),
+        "count": len(source_paths),
+        "recordCount": len(relevant_items),
+        "duplicateRecordCount": duplicate_record_count,
         "sourcePathCount": len(source_paths),
         "sourcePathSamples": source_paths[:8],
         "memorySource": "hosted_workspace_store",
