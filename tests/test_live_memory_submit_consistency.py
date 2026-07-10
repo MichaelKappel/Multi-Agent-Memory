@@ -22,6 +22,16 @@ def submit_payload(event_id="mem-1", review_id="review-1"):
 
 
 class LiveMemorySubmitConsistencyTests(unittest.TestCase):
+    def test_configure_request_timeout_has_one_second_floor(self):
+        original = verifier.REQUEST_TIMEOUT_SECONDS
+        try:
+            self.assertEqual(1, verifier.configure_request_timeout(0))
+            self.assertEqual(1, verifier.REQUEST_TIMEOUT_SECONDS)
+            self.assertEqual(7, verifier.configure_request_timeout(7))
+            self.assertEqual(7, verifier.REQUEST_TIMEOUT_SECONDS)
+        finally:
+            verifier.REQUEST_TIMEOUT_SECONDS = original
+
     def test_evaluate_probe_passes_when_response_matches_durable_readback(self):
         check = verifier.evaluate_probe(
             201,

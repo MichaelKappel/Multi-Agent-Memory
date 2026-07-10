@@ -18,6 +18,13 @@ REQUEST_TIMEOUT_SECONDS = 12
 READBACK_ATTEMPTS = 10
 
 
+def configure_request_timeout(seconds):
+    global REQUEST_TIMEOUT_SECONDS
+
+    REQUEST_TIMEOUT_SECONDS = max(1, int(seconds))
+    return REQUEST_TIMEOUT_SECONDS
+
+
 def sha256_text(value):
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
@@ -274,8 +281,10 @@ def main(argv=None):
     parser.add_argument("--probes", type=int, default=1)
     parser.add_argument("--delay", type=float, default=2.0)
     parser.add_argument("--readback-attempts", type=int, default=READBACK_ATTEMPTS)
+    parser.add_argument("--request-timeout", type=int, default=REQUEST_TIMEOUT_SECONDS)
     parser.add_argument("--agent-id", default="")
     args = parser.parse_args(argv)
+    configure_request_timeout(args.request_timeout)
 
     secret = read_json(args.secret)
     token = secret.get("apiKeySecret") or ""
