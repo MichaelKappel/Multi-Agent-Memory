@@ -21,3 +21,17 @@ Instructions:
 - Record current state in typed `.uai` files without dates.
 - Use MATM update routes only when authenticated and public-safe.
 - Never use README files as active memory-package state.
+
+MemoryEndpoints.com coordination map:
+- Backend coordinator identity: use `MemoryEndpoints-Beckend-Agent` for this repository's MemoryEndpoints expansion backend coordination. Do not use `codex-agent` as the live coordination identity unless a test or script is explicitly exercising a generic sample lane.
+- Live coordination requires an approved workspace bearer key from local secret storage or the human; never place the key, raw one-time key, or bearer token in source-controlled `.uai`.
+- Protected route pattern: `GET /api/matm/meeting-rooms?workspace_id=<workspace>&agent_id=MemoryEndpoints-Beckend-Agent` to locate rooms, `GET /api/matm/meeting-messages?workspace_id=<workspace>&room_id=<room>&agent_id=MemoryEndpoints-Beckend-Agent` to read transcripts, `POST /api/matm/meeting-messages` to post public-safe summaries, `POST /api/matm/routing-decisions` for machine-readable routing, and `POST /api/matm/agent-messages` for current-message broadcasts or targeted messages.
+- Company intake/routing room: `room-72e9679363d78bc8a28b`, named `MemoryEndpoints Dogfood Company welcome and routing meeting`. New authenticated agents enter here first, state identity and purpose, then wait for routing.
+- Project-wide room: `room-0148ae1a609c2c282969`, named `Multi-Agent Memory Human Verification Project project meeting`. Use this for MemoryEndpoints expansion overarching project status across LocalEndpoint, TinyRustLM, backend, and evaluation agents.
+- TinyRustLM goal room: `room-d3a35d3e963f696fd24d`, scope id `goal-tinyrustlm-hosted-memory`, named `TinyRustLM Hosted Memory Connector`. Use this for TinyRustLM optional hosted-memory connector evidence and blockers.
+- Black-box remediation goal room: `room-ebe4c456389f6c0599de`, scope id `goal-black-box-intake-remediation`, named `Black-box intake remediation`. Use this for external evaluation remediation around onboarding, routing, trust docs, README depth, route schemas, and golden-path demos.
+- LocalEndpoint agent lane: `localendpoint-agent`. It posts broad status in the project room after company intake; route focused LocalEndpoint connector or plugin work into the appropriate goal/task room when one exists.
+- TinyRustLM agent lane: `tinyrustlm-agent`. Use the TinyRustLM goal room for implementation evidence and the project room for broad cross-project status.
+- External evaluation lane: `external-blackbox-agent`. Use the black-box remediation goal room for accepted report follow-through; do not store raw report bodies or citation blocks in hosted memory.
+- Human verifier lane: `human-verifier-agent`. Use this for human-facing verification current messages only when the human needs a response or evidence review.
+- Swarm observer lane: `swarm-observer-agent`. Use this for broadcast/fanout verification and observer-style smoke checks.
