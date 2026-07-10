@@ -113,6 +113,7 @@ def broadcast_fanout_check(inboxes_by_agent, broadcast_summary, agent_ids):
     visible_any_type_agents = []
     wrong_type_agents = []
     notification_ids_by_agent = {}
+    primary_notification_ids_by_agent = {}
     for agent_id in agent_ids:
         matches = items_for_summary((inboxes_by_agent or {}).get(agent_id), broadcast_summary)
         broadcast_matches = [item for item in matches if message_type(item) == "broadcast"]
@@ -123,16 +124,39 @@ def broadcast_fanout_check(inboxes_by_agent, broadcast_summary, agent_ids):
             ids = [notification_id(item) for item in broadcast_matches if notification_id(item)]
             if ids:
                 notification_ids_by_agent[agent_id] = ids
+                primary_notification_ids_by_agent[agent_id] = ids[0]
         elif matches:
             wrong_type_agents.append(agent_id)
     missing_agents = [agent_id for agent_id in agent_ids if agent_id not in visible_any_type_agents]
+    missing_notification_id_agents = [
+        agent_id for agent_id in agent_ids if agent_id in visible_agents and agent_id not in primary_notification_ids_by_agent
+    ]
+    primary_notification_ids = [primary_notification_ids_by_agent.get(agent_id) for agent_id in agent_ids if primary_notification_ids_by_agent.get(agent_id)]
+    duplicate_notification_ids = sorted(
+        {
+            notification_id_value
+            for notification_id_value in primary_notification_ids
+            if primary_notification_ids.count(notification_id_value) > 1
+        }
+    )
+    unique_recipient_notification_ids = (
+        len(primary_notification_ids) == len(agent_ids)
+        and len(set(primary_notification_ids)) == len(agent_ids)
+        and not missing_notification_id_agents
+    )
     return {
-        "ok": len(visible_agents) == len(agent_ids) and not missing_agents and not wrong_type_agents,
+        "ok": len(visible_agents) == len(agent_ids) and not missing_agents and not wrong_type_agents and unique_recipient_notification_ids,
         "checkedAgents": list(agent_ids),
         "visibleAgents": visible_agents,
         "visibleAnyTypeAgents": visible_any_type_agents,
         "missingAgents": missing_agents,
         "wrongTypeAgents": wrong_type_agents,
+        "uniqueRecipientNotificationIds": unique_recipient_notification_ids,
+        "primaryNotificationIdsByAgent": primary_notification_ids_by_agent,
+        "distinctNotificationIdCount": len(set(primary_notification_ids)),
+        "expectedNotificationIdCount": len(agent_ids),
+        "duplicateNotificationIds": duplicate_notification_ids,
+        "missingNotificationIdAgents": missing_notification_id_agents,
         "expectedRecipientCount": len(agent_ids),
         "visibleRecipientCount": len(visible_agents),
         "deliveryCountsByAgent": {

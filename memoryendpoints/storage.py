@@ -2543,6 +2543,268 @@ class SQLiteStore(FileStore):
                     )
                     return read_state, None
 
+    def _active_agent_ids_sql(self, connection, workspace_id, fallback_agent_id=None):
+        rows = list(
+            connection.execute(
+                """
+                SELECT agent_id FROM matm_agents
+                WHERE workspace_id = ? AND status = 'active'
+                ORDER BY agent_id
+                """,
+                (workspace_id,),
+            )
+        )
+        ids = []
+        for row in rows:
+            agent_id = row["agent_id"]
+            if agent_id and agent_id not in ids:
+                ids.append(agent_id)
+        if fallback_agent_id and fallback_agent_id not in ids:
+            ids.append(fallback_agent_id)
+        ids.sort()
+        return ids
+
+    def submit_message(self, workspace_id, sender_agent_id, target_agent_id, safe_summary, response_required):
+        safe_summary = redact_text(safe_summary)
+        target_agent_id = (target_agent_id or "").strip()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    recipient_agent_ids = (
+                        [target_agent_id]
+                        if target_agent_id
+                        else self._active_agent_ids_sql(connection, workspace_id, sender_agent_id)
+                    )
+                    now = utc_now()
+                    message = {
+                        "messageId": _id("msg"),
+                        "workspaceId": workspace_id,
+                        "senderAgentId": sender_agent_id,
+                        "targetAgentId": target_agent_id,
+                        "safeSummary": safe_summary,
+                        "responseRequired": bool(response_required),
+                        "createdAt": now,
+                        "rawMessageBodyStored": False,
+                        "valuesRedacted": True,
+                    }
+                    connection.execute(
+                        """
+                        INSERT INTO matm_messages (
+                          message_id, workspace_id, sender_agent_id, target_agent_id, safe_summary,
+                          response_required, raw_message_body_stored, values_redacted, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message["messageId"],
+                            workspace_id,
+                            sender_agent_id,
+                            target_agent_id,
+                            safe_summary,
+                            self._int_bool(response_required),
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            now,
+                        ),
+                    )
+                    notes = []
+                    for recipient_agent_id in recipient_agent_ids:
+                        note = {
+                            "notificationId": _id("note"),
+                            "workspaceId": workspace_id,
+                            "messageId": message["messageId"],
+                            "targetAgentId": recipient_agent_id,
+                            "status": "unread",
+                            "responseDisposition": "required_response" if response_required else "viewed_acknowledgement",
+                            "createdAt": now,
+                            "readAt": None,
+                        }
+                        notes.append(note)
+                        connection.execute(
+                            """
+                            INSERT INTO matm_notifications (
+                              notification_id, workspace_id, message_id, target_agent_id, status,
+                              response_disposition, created_at, read_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                note["notificationId"],
+                                workspace_id,
+                                message["messageId"],
+                                recipient_agent_id,
+                                note["status"],
+                                note["responseDisposition"],
+                                note["createdAt"],
+                                note["readAt"],
+                            ),
+                        )
+                    self._insert_outbox_sql(connection, workspace_id, "matm.agent_message.submitted", "message", message["messageId"], message)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "message", message["messageId"], message)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "message.submit",
+                        sender_agent_id,
+                        message["messageId"],
+                        {
+                            "deliveryCounts": {"broadcast": 1 if not target_agent_id else 0, "targeted": 1 if target_agent_id else 0},
+                            "recipientCount": len(notes),
+                        },
+                    )
+                    return message, notes
+
+    def inbox(self, workspace_id, agent_id):
+        agent_id = (agent_id or "").strip()
+        clauses = ["n.workspace_id = ?", "n.status = 'unread'"]
+        params = [workspace_id]
+        if agent_id:
+            clauses.append("(n.target_agent_id = ? OR n.target_agent_id IS NULL OR n.target_agent_id = '')")
+            params.append(agent_id)
+        else:
+            clauses.append("(n.target_agent_id IS NULL OR n.target_agent_id = '')")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT
+                          n.notification_id, n.workspace_id AS notification_workspace_id, n.message_id,
+                          n.target_agent_id AS notification_target_agent_id, n.status AS notification_status,
+                          n.response_disposition, n.created_at AS notification_created_at, n.read_at,
+                          m.sender_agent_id, m.target_agent_id AS message_target_agent_id, m.safe_summary,
+                          m.response_required, m.created_at AS message_created_at,
+                          m.raw_message_body_stored, m.values_redacted AS message_values_redacted
+                        FROM matm_notifications n
+                        JOIN matm_messages m ON m.message_id = n.message_id
+                        WHERE %s
+                        ORDER BY n.created_at, n.notification_id
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        items = []
+        for row in rows:
+            items.append(
+                {
+                    "notification": {
+                        "notificationId": row["notification_id"],
+                        "workspaceId": row["notification_workspace_id"],
+                        "messageId": row["message_id"],
+                        "targetAgentId": row["notification_target_agent_id"],
+                        "status": row["notification_status"],
+                        "responseDisposition": row["response_disposition"],
+                        "createdAt": row["notification_created_at"],
+                        "readAt": row["read_at"],
+                    },
+                    "message": {
+                        "messageId": row["message_id"],
+                        "workspaceId": workspace_id,
+                        "senderAgentId": row["sender_agent_id"],
+                        "targetAgentId": row["message_target_agent_id"],
+                        "safeSummary": row["safe_summary"],
+                        "responseRequired": self._bool(row["response_required"]),
+                        "createdAt": row["message_created_at"],
+                        "rawMessageBodyStored": self._bool(row["raw_message_body_stored"]),
+                        "valuesRedacted": self._bool(row["message_values_redacted"]),
+                    },
+                }
+            )
+        return items
+
+    def receipts(self, workspace_id, consumer_agent_id=None):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if consumer_agent_id:
+            clauses.append("consumer_agent_id = ?")
+            params.append(consumer_agent_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_receipts
+                        WHERE %s
+                        ORDER BY created_at, receipt_id
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        return [
+            {
+                "receiptId": row["receipt_id"],
+                "workspaceId": row["workspace_id"],
+                "notificationId": row["notification_id"],
+                "consumerAgentId": row["consumer_agent_id"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                "valuesRedacted": self._bool(row["values_redacted"]),
+            }
+            for row in rows
+        ]
+
+    def ack(self, workspace_id, notification_id, consumer_agent_id, status):
+        notification_id = str(notification_id or "").strip()
+        if not notification_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    note = connection.execute(
+                        """
+                        SELECT * FROM matm_notifications
+                        WHERE workspace_id = ? AND notification_id = ?
+                        """,
+                        (workspace_id, notification_id),
+                    ).fetchone()
+                    if not note:
+                        return None
+                    now = utc_now()
+                    receipt = {
+                        "receiptId": _id("receipt"),
+                        "workspaceId": workspace_id,
+                        "notificationId": notification_id,
+                        "consumerAgentId": consumer_agent_id,
+                        "status": status or "read",
+                        "createdAt": now,
+                        "rawPayloadExposed": False,
+                        "valuesRedacted": True,
+                    }
+                    connection.execute(
+                        """
+                        UPDATE matm_notifications
+                        SET status = ?, read_at = ?
+                        WHERE workspace_id = ? AND notification_id = ?
+                        """,
+                        (receipt["status"], now, workspace_id, notification_id),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_receipts (
+                          receipt_id, workspace_id, notification_id, consumer_agent_id, status,
+                          raw_payload_exposed, values_redacted, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            receipt["receiptId"],
+                            workspace_id,
+                            notification_id,
+                            consumer_agent_id,
+                            receipt["status"],
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            now,
+                        ),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "notification.ack",
+                        consumer_agent_id,
+                        notification_id,
+                        {"status": receipt["status"]},
+                    )
+                    return receipt
+
     def _load(self):
         with _LOCK:
             with self._open_connection() as connection:

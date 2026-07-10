@@ -119,6 +119,8 @@ def capability_matrix():
             "ackRoute": "/api/matm/notifications/ack",
             "responseStates": ["required_response", "viewed_acknowledgement"],
             "broadcastFanout": "per_active_agent_notification",
+            "ackIsolation": "per_recipient_notification",
+            "broadcastInvariant": "Each broadcast recipient receives a distinct unread notification id so one agent acknowledgement does not clear the broadcast for other agents.",
             "postConfirmationFields": ["expectedRecipientCount", "visibleRecipientCount", "visibleToAgents", "notificationIds"],
         },
         "meetingRooms": {
@@ -334,6 +336,9 @@ def connector_contract():
             "currentMessageRoute": "/api/matm/current-message",
             "sendCurrentMessageRoute": "/api/matm/agent-messages",
             "ackRoute": "/api/matm/notifications/ack",
+            "broadcastFanout": "per_active_agent_notification",
+            "ackIsolation": "per_recipient_notification",
+            "broadcastInvariant": "Blank targetAgentId means broadcast to active registered agents with a distinct notification per recipient; acknowledgements are scoped to the recipient notification.",
             "supportedMeetingRoomScopes": ["company", "workspace", "project", "goal", "task"],
             "meetingRoomQueryFilters": ["agent_id", "scope", "scope_id"],
             "routingDecisionQueryFilters": ["room_id", "destination_room_id", "routed_agent_id", "coordinator_agent_id", "lane", "destination_scope", "destination_scope_id", "status"],
@@ -365,7 +370,7 @@ def connector_contract():
         ],
         "responseContract": {
             "successEnvelope": ["ok", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
-            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToRoutedAgent", "visibleToAgent", "visibleInSearch", "visibleInReviewQueue", "expectedRecipientCount", "visibleRecipientCount", "canonicalRoomId", "canonicalTargetAgentId", "canonicalRoutingDecisionId", "canonicalMemoryEventId", "messageId", "notificationId", "notificationIds", "roomQueryUrl", "routingDecisionQueryUrl", "transcriptQueryUrl", "destinationTranscriptQueryUrl", "memoryQueryUrl", "reviewQueueUrl", "inboxQueryUrl"],
+            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToRoutedAgent", "visibleToAgent", "visibleToAgents", "visibleInSearch", "visibleInReviewQueue", "expectedRecipientCount", "visibleRecipientCount", "canonicalRoomId", "canonicalTargetAgentId", "canonicalRoutingDecisionId", "canonicalMemoryEventId", "messageId", "notificationId", "notificationIds", "roomQueryUrl", "routingDecisionQueryUrl", "transcriptQueryUrl", "destinationTranscriptQueryUrl", "memoryQueryUrl", "reviewQueueUrl", "inboxQueryUrl"],
             "safeFailureEnvelope": ["ok=false", "safeNoOp=true", "valuesRedacted=true", "rawCredentialExposed=false", "rawPayloadExposed=false"],
             "operatorSummaries": "Protected API responses include compact operatorSummary objects where useful so connector UIs do not need to parse raw debug JSON.",
             "idempotency": "Protected mutation routes support Idempotency-Key except one-time setup.",

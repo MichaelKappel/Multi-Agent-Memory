@@ -255,10 +255,79 @@ def dogfood_memory_loop_summary(dogfood, local_dogfood=None):
     return "Meeting-room coordination memory loop is incomplete: %s." % ", ".join(missing)
 
 
+def current_message_contract_evidence(fanout, connector_contract):
+    fanout = fanout or {}
+    connector_contract = connector_contract or {}
+    broadcast = fanout.get("broadcast") or {}
+    ack = fanout.get("acknowledgementIsolation") or {}
+    message_types = fanout.get("messageTypesVerified") or {}
+    contract = connector_contract.get("connectorContract") or {}
+    capability = connector_contract.get("capabilityMatrix") or {}
+    behavior_verified = bool(
+        fanout.get("ok")
+        and broadcast.get("ok")
+        and broadcast.get("uniqueRecipientNotificationIds")
+        and ack.get("ok")
+        and message_types.get("broadcast")
+        and message_types.get("targetedToCodex")
+        and message_types.get("targetedToHuman")
+        and not fanout.get("rawCredentialValuesStored")
+        and not fanout.get("rawWorkspaceIdStored")
+    )
+    discovery_verified = bool(
+        connector_contract.get("ok")
+        and contract.get("broadcastFanoutAdvertised")
+        and contract.get("ackIsolationAdvertised")
+        and contract.get("visibleAgentsConfirmationAdvertised")
+        and contract.get("recipientCountConfirmationAdvertised")
+        and capability.get("broadcastFanoutAdvertised")
+        and capability.get("ackIsolationAdvertised")
+        and capability.get("visibleAgentsConfirmationAdvertised")
+    )
+    missing = []
+    if not behavior_verified:
+        missing.append("live fanout/ack-isolation behavior")
+    if not discovery_verified:
+        missing.append("live public discovery ack-isolation contract")
+    if behavior_verified and discovery_verified:
+        state = "Full live current-message fanout and discovery contract verified."
+        needed = "Rerun fanout and connector-contract verifiers after each deployment."
+    elif behavior_verified:
+        state = "Live current-message fanout and ack isolation are verified; live discovery still lacks the full ack-isolation connector contract."
+        needed = "Deploy the discovery contract fields, then rerun `scripts/verify_live_connector_contract.py`."
+    elif discovery_verified:
+        state = "Live discovery advertises the current-message contract, but live fanout/ack-isolation behavior is not proven."
+        needed = "Run `scripts/verify_current_message_fanout.py --ack-isolation` with protected verifier credentials."
+    else:
+        state = "Live current-message fanout contract is not fully proven."
+        needed = "Run fanout and connector-contract verifiers, then fix or deploy any missing behavior/discovery evidence."
+    return {
+        "behaviorVerified": behavior_verified,
+        "discoveryVerified": discovery_verified,
+        "contractVerified": bool(behavior_verified and discovery_verified),
+        "sourceSha": fanout.get("sourceSha") or connector_contract.get("sourceSha"),
+        "fanoutSourceSha": fanout.get("sourceSha"),
+        "connectorContractSourceSha": connector_contract.get("sourceSha"),
+        "uniqueRecipientNotificationIds": bool(broadcast.get("uniqueRecipientNotificationIds")),
+        "distinctNotificationIdCount": broadcast.get("distinctNotificationIdCount"),
+        "expectedNotificationIdCount": broadcast.get("expectedNotificationIdCount"),
+        "ackIsolationVerified": bool(ack.get("ok")),
+        "visibleAfterAckAgents": ack.get("visibleAfterAckAgents") or [],
+        "discoveryAckIsolationAdvertised": bool(contract.get("ackIsolationAdvertised") and capability.get("ackIsolationAdvertised")),
+        "discoveryBroadcastFanoutAdvertised": bool(contract.get("broadcastFanoutAdvertised") and capability.get("broadcastFanoutAdvertised")),
+        "missing": missing,
+        "state": state,
+        "needed": needed,
+        "valuesRedacted": True,
+    }
+
+
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
     live_routes = load_json("live-route-verification.json")
+    fanout = load_json("current-message-fanout-verification.json")
+    connector_contract = load_json("live-connector-contract-verification.json")
     uai = load_json("uai-memory-audit.json")
     dogfood = load_json("dogfood-memory-run.json")
     local_dogfood = load_json("dogfood-memory-run-local.json")
@@ -284,6 +353,7 @@ def build_local_report():
     package_check_current = bool((check_result(enterprise, "package_check") or {}).get("ok"))
     repository_boundary_check_current = bool((check_result(enterprise, "repository_boundary_audit") or {}).get("ok"))
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
+    current_message_contract = current_message_contract_evidence(fanout, connector_contract)
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -359,6 +429,10 @@ def build_local_report():
         "localDogfoodVerified": local_dogfood_verified,
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
+        "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
+        "liveCurrentMessageDiscoveryContractVerified": current_message_contract["discoveryVerified"],
+        "liveCurrentMessageContractVerified": current_message_contract["contractVerified"],
+        "liveCurrentMessageContract": current_message_contract,
         "meetingMemoryPromotionVerified": memory_loop_evidence["meetingMemoryPromotionVerified"],
         "meetingMemoryReadbackVerified": memory_loop_evidence["meetingMemoryReadbackVerified"],
         "meetingMemorySourceReadbackVerified": memory_loop_evidence["meetingMemorySourceReadbackVerified"],
@@ -388,6 +462,8 @@ def build_local_report():
 def build_enterprise_gap_matrix():
     dogfood = load_json("dogfood-memory-run.json") or {}
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
+    fanout = load_json("current-message-fanout-verification.json") or {}
+    connector_contract = load_json("live-connector-contract-verification.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
@@ -401,6 +477,7 @@ def build_enterprise_gap_matrix():
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
+    current_message_contract = current_message_contract_evidence(fanout, connector_contract)
     head_sha = git_head_sha()
     dirty_source_paths = source_dirty_paths()
     ci_not_required = github_ci_not_required()
@@ -431,6 +508,7 @@ def build_enterprise_gap_matrix():
         "| Hosted coordination memory loop | %s | `%s` |" % ("Verified locally" if (dogfood.get("meetingMemorySourceReadbackVerified") or local_dogfood.get("meetingMemorySourceReadbackVerified")) else "Not fully verified", memory_loop_summary),
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
         "| Live dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified full live contract" if dogfood.get("liveDogfoodVerified") else ("Verified current deployed core surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified")),
+        "| Current-message fanout and acknowledgement isolation | %s | `docs/reports/current-message-fanout-verification.json` verifies runtime behavior; `docs/reports/live-connector-contract-verification.json` verifies public discovery contract fields. |" % ("Verified runtime and discovery" if current_message_contract["contractVerified"] else ("Runtime verified, discovery pending" if current_message_contract["behaviorVerified"] else "Not fully verified")),
         "| MultiAgentMemory.com live companion site | %s | `docs/reports/multiagentmemory-deploy-live-attempt-latest.json` and `docs/reports/multiagentmemory-live-site-verification.json`. |" % ("Verified" if multiagentmemory_verified else "Not verified"),
         "| Live MySQL/MariaDB database backend | %s | `docs/reports/live-mysql-backend-verification.json` and `/api/version` `storeBackendVerified`. |" % ("Verified" if mysql_verified else "Not verified"),
         "| Prompt drafts | Local-only | `docs/prompts/*.md` is ignored and excluded from packaging. |",
@@ -451,6 +529,7 @@ def build_enterprise_gap_matrix():
             "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
         ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
+        "| Current-message fanout discovery contract | %s | %s |" % (current_message_contract["state"], current_message_contract["needed"]),
         "| Source worktree cleanliness | %s | %s |" % (
             "Clean for source paths" if not dirty_source_paths else "Dirty source paths remain",
             "Commit or otherwise resolve source changes, then rerun no-write verification." if dirty_source_paths else "No source path changes outside generated reports are pending.",
@@ -481,6 +560,8 @@ def build_enterprise_gap_matrix():
 def build_current_implementation_audit():
     dogfood = load_json("dogfood-memory-run.json") or {}
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
+    fanout = load_json("current-message-fanout-verification.json") or {}
+    connector_contract = load_json("live-connector-contract-verification.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
@@ -491,6 +572,7 @@ def build_current_implementation_audit():
     ci_not_required = github_ci_not_required()
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
+    current_message_contract = current_message_contract_evidence(fanout, connector_contract)
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
@@ -522,6 +604,12 @@ def build_current_implementation_audit():
             live_latest_code.get("observedSourceSha"),
             str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
         ),
+        "- Current-message fanout verifier reports behavior `%s`, unique per-recipient notification ids `%s`, ack isolation `%s`, and live discovery contract `%s`." % (
+            str(current_message_contract["behaviorVerified"]).lower(),
+            str(current_message_contract["uniqueRecipientNotificationIds"]).lower(),
+            str(current_message_contract["ackIsolationVerified"]).lower(),
+            str(current_message_contract["discoveryVerified"]).lower(),
+        ),
         "- No-upload deployment connection checks for explicit FTPS and plain FTP report `%s`; no files are uploaded." % connection_status(deploy_connection_ftps, deploy_connection_ftp),
         "",
         "## Implemented Locally",
@@ -542,6 +630,8 @@ def build_current_implementation_audit():
         "- Latest code is proven live by `/api/version` source SHA verification." if latest_deployed else "- Latest code is not proven live because live `/api/version` does not report the expected source SHA.",
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
+        "- %s" % current_message_contract["state"],
+        "- %s" % current_message_contract["needed"],
         "- MultiAgentMemory.com live companion site is verified." if multiagentmemory_verified else "- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.",
         "- Live MySQL/MariaDB backend verification is proven." if mysql_verified else "- Live MySQL/MariaDB backend verification is blocked; `/api/version` must report `storeBackendVerified: true`.",
         "- The full objective still needs a final current-commit audit after commit, push, deploy, live verification, and remote SHA verification.",
@@ -554,12 +644,15 @@ def build_current_implementation_audit():
 def build_final_verification_alias():
     dogfood = load_json("dogfood-memory-run.json") or {}
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
+    fanout = load_json("current-message-fanout-verification.json") or {}
+    connector_contract = load_json("live-connector-contract-verification.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
+    current_message_contract = current_message_contract_evidence(fanout, connector_contract)
     dirty_source_paths = source_dirty_paths()
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
     mysql_verified = bool(live_mysql_backend.get("ok"))
@@ -585,6 +678,8 @@ def build_final_verification_alias():
         ),
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
+        "- %s" % current_message_contract["state"],
+        "- %s" % current_message_contract["needed"],
         "- Hosted coordination memory loop: %s" % memory_loop_summary,
         "- Source worktree cleanliness: `%s`." % ("clean" if not dirty_source_paths else "dirty"),
         "- Live MySQL/MariaDB backend verification: `%s`." % str(mysql_verified).lower(),
@@ -615,6 +710,8 @@ def build_final_markdown(local_report):
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
+    fanout = load_json("current-message-fanout-verification.json") or {}
+    connector_contract = load_json("live-connector-contract-verification.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     github_blocker = github_blocker_text(github_ci)
@@ -632,6 +729,7 @@ def build_final_markdown(local_report):
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
+    current_message_contract = current_message_contract_evidence(fanout, connector_contract)
     mysql_verified = bool(
         live_mysql_backend.get("ok")
         or (enterprise_current and enterprise_summary.get("liveMysqlBackendVerified"))
@@ -646,7 +744,7 @@ def build_final_markdown(local_report):
         for item in (local_report.get("checks") or [])
         if item.get("status") != "pass"
     ]
-    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and not enterprise_blockers and not dirty_source_paths)
+    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and current_message_contract["contractVerified"] and not enterprise_blockers and not dirty_source_paths)
     status_line = "Status: complete for this evidence snapshot. `completionClaimAllowed` is `true`." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
     lines = [
         "# Final Readiness Report",
@@ -696,6 +794,12 @@ def build_final_markdown(local_report):
             str(bool(dogfood.get("localDogfoodVerified"))).lower(),
             str(live_core_dogfood).lower(),
             str(live_dogfood).lower(),
+        ),
+        "- Current-message fanout contract: runtime behavior `%s`, discovery contract `%s`, unique recipient notifications `%s`, ack isolation `%s`." % (
+            str(current_message_contract["behaviorVerified"]).lower(),
+            str(current_message_contract["discoveryVerified"]).lower(),
+            str(current_message_contract["uniqueRecipientNotificationIds"]).lower(),
+            str(current_message_contract["ackIsolationVerified"]).lower(),
         ),
         "- Hosted coordination memory loop: %s" % memory_loop_summary,
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
@@ -760,6 +864,8 @@ def build_final_markdown(local_report):
             if live_core_dogfood
             else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
         )
+    if not current_message_contract["contractVerified"]:
+        blocked_lines.append("- Current-message fanout contract: %s %s" % (current_message_contract["state"], current_message_contract["needed"]))
     if not local_report.get("ok"):
         blocked_lines.append(
             "- Local verification report: blocked until local checks pass; failing checks: `%s`."
@@ -795,6 +901,9 @@ def build_final_markdown(local_report):
         "latestCodeLiveDeployed": latest_deployed,
         "liveCoreDogfoodVerified": live_core_dogfood,
         "liveDogfoodVerified": live_dogfood,
+        "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
+        "liveCurrentMessageDiscoveryContractVerified": current_message_contract["discoveryVerified"],
+        "liveCurrentMessageContractVerified": current_message_contract["contractVerified"],
         "liveMysqlBackendVerified": mysql_verified,
         "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded",
         "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")),

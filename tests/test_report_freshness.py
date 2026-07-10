@@ -174,6 +174,87 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertFalse(evidence["liveMeetingMemorySourceReadbackVerified"])
         self.assertEqual("local_verified_live_pending", evidence["meetingMemoryEvidenceScope"])
 
+    def test_current_message_contract_evidence_separates_behavior_from_discovery(self):
+        evidence = build_readiness_reports.current_message_contract_evidence(
+            {
+                "ok": True,
+                "sourceSha": "abc123",
+                "broadcast": {
+                    "ok": True,
+                    "uniqueRecipientNotificationIds": True,
+                    "distinctNotificationIdCount": 3,
+                    "expectedNotificationIdCount": 3,
+                },
+                "acknowledgementIsolation": {
+                    "ok": True,
+                    "visibleAfterAckAgents": ["human-verifier-agent", "swarm-observer-agent"],
+                },
+                "messageTypesVerified": {
+                    "broadcast": True,
+                    "targetedToCodex": True,
+                    "targetedToHuman": True,
+                },
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+            },
+            {
+                "ok": False,
+                "sourceSha": "abc123",
+                "connectorContract": {
+                    "broadcastFanoutAdvertised": False,
+                    "ackIsolationAdvertised": False,
+                    "visibleAgentsConfirmationAdvertised": False,
+                    "recipientCountConfirmationAdvertised": True,
+                },
+                "capabilityMatrix": {
+                    "broadcastFanoutAdvertised": True,
+                    "ackIsolationAdvertised": False,
+                    "visibleAgentsConfirmationAdvertised": True,
+                },
+            },
+        )
+
+        self.assertTrue(evidence["behaviorVerified"])
+        self.assertFalse(evidence["discoveryVerified"])
+        self.assertFalse(evidence["contractVerified"])
+        self.assertTrue(evidence["uniqueRecipientNotificationIds"])
+        self.assertTrue(evidence["ackIsolationVerified"])
+        self.assertIn("discovery still lacks", evidence["state"])
+        self.assertIn("verify_live_connector_contract", evidence["needed"])
+
+    def test_current_message_contract_evidence_accepts_full_contract(self):
+        evidence = build_readiness_reports.current_message_contract_evidence(
+            {
+                "ok": True,
+                "broadcast": {"ok": True, "uniqueRecipientNotificationIds": True},
+                "acknowledgementIsolation": {"ok": True},
+                "messageTypesVerified": {
+                    "broadcast": True,
+                    "targetedToCodex": True,
+                    "targetedToHuman": True,
+                },
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+            },
+            {
+                "ok": True,
+                "connectorContract": {
+                    "broadcastFanoutAdvertised": True,
+                    "ackIsolationAdvertised": True,
+                    "visibleAgentsConfirmationAdvertised": True,
+                    "recipientCountConfirmationAdvertised": True,
+                },
+                "capabilityMatrix": {
+                    "broadcastFanoutAdvertised": True,
+                    "ackIsolationAdvertised": True,
+                    "visibleAgentsConfirmationAdvertised": True,
+                },
+            },
+        )
+
+        self.assertTrue(evidence["contractVerified"])
+        self.assertIn("Full live current-message", evidence["state"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,9 +40,53 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertEqual(["human-verifier-agent", "codex-agent"], check["visibleAgents"])
         self.assertEqual(3, check["expectedRecipientCount"])
         self.assertEqual(2, check["visibleRecipientCount"])
+        self.assertFalse(check["uniqueRecipientNotificationIds"])
+        self.assertEqual(2, check["distinctNotificationIdCount"])
         self.assertEqual({"broadcast": 0, "targeted": 0}, check["deliveryCountsByAgent"]["swarm-observer-agent"])
         self.assertFalse(check["rawCredentialExposed"])
         self.assertFalse(check["rawPayloadExposed"])
+
+    def test_broadcast_fanout_check_requires_per_recipient_notification_ids(self):
+        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        summary = "broadcast shared notification"
+        payloads = {
+            "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
+            "codex-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
+            "swarm-observer-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
+        }
+
+        check = fanout.broadcast_fanout_check(payloads, summary, agents)
+
+        self.assertFalse(check["ok"])
+        self.assertFalse(check["uniqueRecipientNotificationIds"])
+        self.assertEqual(1, check["distinctNotificationIdCount"])
+        self.assertEqual(3, check["expectedNotificationIdCount"])
+        self.assertEqual(["note-shared"], check["duplicateNotificationIds"])
+        self.assertEqual([], check["missingAgents"])
+        self.assertEqual(3, check["visibleRecipientCount"])
+
+    def test_broadcast_fanout_check_accepts_per_recipient_notification_ids(self):
+        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        summary = "broadcast unique notifications"
+        payloads = {
+            "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-human"), broadcast=1),
+            "codex-agent": inbox(message_item(summary, "broadcast", "note-codex"), broadcast=1),
+            "swarm-observer-agent": inbox(message_item(summary, "broadcast", "note-observer"), broadcast=1),
+        }
+
+        check = fanout.broadcast_fanout_check(payloads, summary, agents)
+
+        self.assertTrue(check["ok"])
+        self.assertTrue(check["uniqueRecipientNotificationIds"])
+        self.assertEqual(3, check["distinctNotificationIdCount"])
+        self.assertEqual(
+            {
+                "human-verifier-agent": "note-human",
+                "codex-agent": "note-codex",
+                "swarm-observer-agent": "note-observer",
+            },
+            check["primaryNotificationIdsByAgent"],
+        )
 
     def test_broadcast_fanout_check_rejects_wrong_message_type(self):
         agents = ["human-verifier-agent", "codex-agent"]

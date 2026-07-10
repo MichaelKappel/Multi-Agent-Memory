@@ -80,14 +80,21 @@ def missing_values(actual, required):
 def connector_contract_check(payload):
     data = (payload or {}).get("data") or {}
     memory_flow = data.get("memoryFlow") or {}
+    coordination_flow = data.get("coordinationFlow") or {}
+    response_contract = data.get("responseContract") or {}
     browser_cors = data.get("browserCors") or {}
     missing_filters = missing_values(memory_flow.get("reviewQueueFilters"), REVIEW_QUEUE_FILTERS)
     missing_headers = missing_values(browser_cors.get("allowedHeaders"), CORS_HEADERS)
+    post_confirmation_fields = response_contract.get("postConfirmationFields") or []
     return {
         "schemaVersion": data.get("schemaVersion"),
         "reviewQueueFiltersVerified": not missing_filters,
         "missingReviewQueueFilters": missing_filters,
         "reviewQueueOperatorSummaryVerified": "longTermMemoryReviews" in (memory_flow.get("reviewQueueOperatorSummary") or ""),
+        "broadcastFanoutAdvertised": coordination_flow.get("broadcastFanout") == "per_active_agent_notification",
+        "ackIsolationAdvertised": coordination_flow.get("ackIsolation") == "per_recipient_notification",
+        "visibleAgentsConfirmationAdvertised": "visibleToAgents" in post_confirmation_fields,
+        "recipientCountConfirmationAdvertised": "expectedRecipientCount" in post_confirmation_fields and "visibleRecipientCount" in post_confirmation_fields,
         "browserCorsStatus": browser_cors.get("status"),
         "browserCorsPreflightWithoutWorkspaceKey": browser_cors.get("preflightRequiresWorkspaceKey") is False,
         "missingBrowserCorsHeaders": missing_headers,
@@ -99,6 +106,7 @@ def connector_contract_check(payload):
 def capability_matrix_check(payload):
     data = (payload or {}).get("data") or {}
     review_queue = data.get("reviewPromotionQueue") or {}
+    current_message = data.get("currentMessageLane") or {}
     browser_cors = ((data.get("connectorContract") or {}).get("browserCors") or {})
     missing_filters = missing_values(review_queue.get("queryFilters"), REVIEW_QUEUE_FILTERS)
     return {
@@ -106,6 +114,9 @@ def capability_matrix_check(payload):
         "missingReviewQueueFilters": missing_filters,
         "longTermReviewHealthAdvertised": "docs/long-term-memory" in (review_queue.get("longTermMemoryReviewHealth") or ""),
         "operatorSummaryFieldsIncludeLongTerm": "longTermMemoryReviews" in (review_queue.get("operatorSummaryFields") or []),
+        "broadcastFanoutAdvertised": current_message.get("broadcastFanout") == "per_active_agent_notification",
+        "ackIsolationAdvertised": current_message.get("ackIsolation") == "per_recipient_notification",
+        "visibleAgentsConfirmationAdvertised": "visibleToAgents" in (current_message.get("postConfirmationFields") or []),
         "browserCorsAdvertised": browser_cors.get("status") == "live" and browser_cors.get("preflightWithoutWorkspaceKey") is True,
         "valuesRedacted": True,
     }
@@ -176,10 +187,17 @@ def build_report(base_url, source_sha, contract_check, capability_check, preflig
     report["ok"] = bool(
         contract_check.get("reviewQueueFiltersVerified")
         and contract_check.get("reviewQueueOperatorSummaryVerified")
+        and contract_check.get("broadcastFanoutAdvertised")
+        and contract_check.get("ackIsolationAdvertised")
+        and contract_check.get("visibleAgentsConfirmationAdvertised")
+        and contract_check.get("recipientCountConfirmationAdvertised")
         and contract_check.get("browserCorsHeadersVerified")
         and capability_check.get("reviewQueueFiltersVerified")
         and capability_check.get("longTermReviewHealthAdvertised")
         and capability_check.get("operatorSummaryFieldsIncludeLongTerm")
+        and capability_check.get("broadcastFanoutAdvertised")
+        and capability_check.get("ackIsolationAdvertised")
+        and capability_check.get("visibleAgentsConfirmationAdvertised")
         and preflight_check.get("verified")
         and (protected_check.get("verified") if protected_check else True)
         and not report["rawCredentialValuesStored"]
