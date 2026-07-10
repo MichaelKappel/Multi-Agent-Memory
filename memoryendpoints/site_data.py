@@ -100,6 +100,9 @@ def capability_matrix():
             "status": "live",
             "readRoute": "/api/matm/review-queue",
             "decisionRoute": "/api/matm/review-queue/decide",
+            "queryFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
+            "operatorSummaryFields": ["statusCounts", "visibleStatusCounts", "firewallDecisionCounts", "longTermMemoryReviews"],
+            "longTermMemoryReviewHealth": "Review queue responses summarize canonical docs/long-term-memory source review health, duplicate records, and actionable counts.",
             "idempotencyRequiredForDecision": True,
         },
         "storageBackends": [
@@ -283,6 +286,8 @@ def connector_contract():
             "publicSafeRule": "submit summaries only; do not send raw logs, source secrets, full files, or private prompt payloads",
             "updateRule": "Submit a new reviewed public-safe memory event with the same subject/source and an explicit update tag; do not overwrite history until a dedicated revision route is advertised.",
             "retrieveByScope": "Use /api/matm/search with scope, tag, actor_agent_id, memory_type, review_status, and promotion_state filters. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
+            "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
+            "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews to monitor hosted long-term memory promotion health without parsing raw review JSON.",
             "meetingPromotionRule": "Use POST /api/matm/meeting-messages/promote to turn a public-safe meeting transcript note into a durable memory event while preserving the source meeting message id.",
         },
         "memoryClassificationRules": [

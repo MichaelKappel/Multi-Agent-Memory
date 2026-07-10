@@ -119,6 +119,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("live", browser_cors["status"])
         self.assertTrue(browser_cors["preflightWithoutWorkspaceKey"])
         self.assertIn("Authorization", browser_cors["allowedHeaders"])
+        review_queue = payload["data"]["reviewPromotionQueue"]
+        self.assertIn("source_prefix", review_queue["queryFilters"])
+        self.assertIn("longTermMemoryReviews", review_queue["operatorSummaryFields"])
+        self.assertIn("docs/long-term-memory", review_queue["longTermMemoryReviewHealth"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
         status, _headers, text = call_app("/")
@@ -214,6 +218,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("goal", data["memoryFlow"]["supportedScopes"])
         self.assertIn("task", data["memoryFlow"]["supportedScopes"])
         self.assertIn("update tag", data["memoryFlow"]["updateRule"])
+        self.assertIn("source_prefix", data["memoryFlow"]["reviewQueueFilters"])
+        self.assertIn("actor_agent_id", data["memoryFlow"]["reviewQueueFilters"])
+        self.assertIn("longTermMemoryReviews", data["memoryFlow"]["reviewQueueOperatorSummary"])
         self.assertTrue(any("Short-term" in item for item in data["memoryClassificationRules"]))
         self.assertIn("model weights", data["publicSafeExclusions"])
         self.assertIn("transcriptQueryUrl", data["responseContract"]["postConfirmationFields"])
