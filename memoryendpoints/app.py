@@ -11,7 +11,7 @@ from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, R
 from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
-from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, readiness_result, route_inventory
+from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 
 
@@ -1101,6 +1101,7 @@ def route_docs(start_response):
     <li><a href="/llms.txt"><code>/llms.txt</code></a> and <a href="/llms-full.txt"><code>/llms-full.txt</code></a> summarize public agent guidance.</li>
     <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a> exposes route inventory and support boundaries.</li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a> gives optional connectors one stable setup, API, UI, and routing contract.</li>
+    <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a> gives agents and connectors a bounded OpenAPI-style golden path.</li>
     <li><a href="/agent-coordination"><code>/agent-coordination</code></a> gives authenticated agents one copy-safe coordination quickstart.</li>
     <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a> exposes current local readiness and deployment blockers.</li>
     <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a> and <a href="/mcp/resources"><code>/mcp/resources</code></a> expose resource discovery.</li>
@@ -1243,6 +1244,7 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
     <li><a href="/agent-setup"><code>/agent-setup</code></a></li>
     <li><a href="/console"><code>/console</code></a></li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a></li>
+    <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a></li>
     <li><a href="/api/matm/live-capability-matrix"><code>/api/matm/live-capability-matrix</code></a></li>
     <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a></li>
     <li><a href="/llms.txt"><code>/llms.txt</code></a></li>
@@ -1831,6 +1833,8 @@ def route_public_json(path, start_response):
         return json_response(start_response, {"ok": True, "data": capability_matrix()})
     if path == "/api/matm/connector-contract":
         return json_response(start_response, {"ok": True, "data": connector_contract()})
+    if path == "/api/matm/openapi.json":
+        return json_response(start_response, openapi_spec())
     if path == "/api/matm/route-inventory":
         return json_response(start_response, {"ok": True, "data": route_inventory()})
     if path == "/api/matm/readiness-result":
@@ -1899,6 +1903,12 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints Connector Contract",
                 "mimeType": "application/json",
                 "route": "/api/matm/connector-contract",
+            },
+            {
+                "uri": "memoryendpoints://matm/openapi",
+                "name": "MemoryEndpoints OpenAPI Golden Path",
+                "mimeType": "application/json",
+                "route": "/api/matm/openapi.json",
             },
             {
                 "uri": "memoryendpoints://matm/redacted-example-receipts",

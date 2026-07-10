@@ -15,6 +15,7 @@ ROUTE_TABLE = [
     {"route": "/api/version", "access": "public", "methods": ["GET"], "purpose": "Runtime version and dependency facts."},
     {"route": "/api/matm/live-capability-matrix", "access": "public", "methods": ["GET"], "purpose": "Current MATM capability state."},
     {"route": "/api/matm/connector-contract", "access": "public", "methods": ["GET"], "purpose": "Public-safe optional connector integration contract for external agents and apps."},
+    {"route": "/api/matm/openapi.json", "access": "public", "methods": ["GET"], "purpose": "Bounded OpenAPI-style golden-path route schema."},
     {"route": "/api/matm/route-inventory", "access": "public", "methods": ["GET"], "purpose": "Route inventory with access boundaries."},
     {"route": "/api/matm/readiness-result", "access": "public", "methods": ["GET"], "purpose": "AI-ready web readiness evidence."},
     {"route": "/api/matm/redacted-example-receipts", "access": "public", "methods": ["GET"], "purpose": "Public-safe receipt examples."},
@@ -379,12 +380,162 @@ def connector_contract():
         },
         "publicDiscovery": {
             "capabilityMatrix": "/api/matm/live-capability-matrix",
+            "openApi": "/api/matm/openapi.json",
             "routeInventory": "/api/matm/route-inventory",
             "readiness": "/api/matm/readiness-result",
             "mcpResources": "/mcp/resources",
             "aiManifest": "/ai-manifest.json",
             "companionDocs": COMPANION_DOCS_URL,
             "sourceRepository": GITHUB_REPO_URL,
+        },
+    }
+
+
+def openapi_spec():
+    json_type = {"application/json": {"schema": {"type": "object"}}}
+    safe_problem = {
+        "description": "Safe no-op error. Raw credentials and raw private payloads are not echoed.",
+        "content": json_type,
+    }
+    protected_security = [{"workspaceBearer": []}, {"workspaceHeader": []}]
+
+    def public_operation(summary, description):
+        return {
+            "summary": summary,
+            "description": description,
+            "responses": {
+                "200": {"description": "Public-safe response.", "content": json_type},
+                "400": safe_problem,
+            },
+        }
+
+    def protected_operation(summary, description, method="get", mutation=False):
+        operation = {
+            "summary": summary,
+            "description": description,
+            "security": protected_security,
+            "responses": {
+                "200": {"description": "Protected redacted response.", "content": json_type},
+                "201": {"description": "Protected redacted creation response.", "content": json_type},
+                "202": {"description": "Protected redacted accepted response.", "content": json_type},
+                "400": safe_problem,
+                "401": safe_problem,
+                "404": safe_problem,
+                "422": safe_problem,
+            },
+        }
+        if method.lower() == "get":
+            operation["parameters"] = [
+                {"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Authorized workspace id."}
+            ]
+        else:
+            operation["requestBody"] = {"required": True, "content": json_type}
+        if mutation:
+            operation["parameters"] = [
+                {
+                    "name": "Idempotency-Key",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string"},
+                    "description": "Stable idempotency key for exact retries. Never include secrets.",
+                }
+            ]
+        return operation
+
+    paths = {
+        "/api/matm/connector-contract": {"get": public_operation("Read connector contract", "Public-safe integration contract, browser key guidance, CORS boundary, and UI expectations.")},
+        "/api/matm/live-capability-matrix": {"get": public_operation("Read capability matrix", "Current public capability state and truth boundaries.")},
+        "/api/matm/readiness-result": {"get": public_operation("Read readiness result", "Current readiness evidence without certification overclaim.")},
+        "/api/matm/route-inventory": {"get": public_operation("Read route inventory", "Public and protected route inventory with access boundaries.")},
+        "/api/matm/agent-setup/free-account": {
+            "get": public_operation("Inspect free workspace setup", "Read quota, hierarchy, and one-time key handling rules."),
+            "post": {
+                "summary": "Create free workspace",
+                "description": "Returns a one-time workspace key. Clients must mask it immediately and store it only in a user-approved secret store.",
+                "requestBody": {"required": False, "content": json_type},
+                "responses": {
+                    "201": {"description": "Workspace created; one-time workspace key returned once.", "content": json_type},
+                    "400": safe_problem,
+                },
+            },
+        },
+        "/api/matm/workspace": {"get": protected_operation("Load workspace boundary", "Read account, company, workspace, project, storage, and redaction operator summary.")},
+        "/api/matm/agents/register": {"post": protected_operation("Register agent", "Register or refresh a stable public-safe agent id.", "post", True)},
+        "/api/matm/memory-events/submit": {"post": protected_operation("Submit memory event", "Save a public-safe hosted memory summary; raw private payloads and credentials are rejected/redacted.", "post", True)},
+        "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, scope, tag, memory type, review status, and promotion filters.")},
+        "/api/matm/review-queue": {"get": protected_operation("Read review queue", "Read memory review and long-term-memory promotion health without parsing raw debug JSON.")},
+        "/api/matm/review-queue/decide": {"post": protected_operation("Decide review", "Promote, reject, or quarantine a review-pending memory item with idempotent reviewer action.", "post", True)},
+        "/api/matm/meeting-rooms": {
+            "get": protected_operation("List meeting rooms", "List always-present company/workspace/project rooms plus goal/task rooms."),
+            "post": protected_operation("Create goal or task room", "Create first-class goal/task coordination room.", "post", True),
+        },
+        "/api/matm/meeting-messages": {
+            "get": protected_operation("Read meeting transcript", "Read durable room transcript and read-state summary."),
+            "post": protected_operation("Post meeting message", "Post a public-safe coordination note to a room.", "post", True),
+        },
+        "/api/matm/meeting-messages/promote": {"post": protected_operation("Promote meeting message", "Promote a public-safe meeting note into hosted memory while preserving source linkage.", "post", True)},
+        "/api/matm/meeting-rooms/read": {"post": protected_operation("Mark meeting room read", "Advance an agent read cursor for a room.", "post", True)},
+        "/api/matm/routing-decisions": {
+            "get": protected_operation("Read routing decisions", "Read machine-readable coordinator routing decisions by room, lane, agent, destination, or status."),
+            "post": protected_operation("Create routing decision", "Persist lane, destination room, specific goal, expected evidence, next action, and support plan.", "post", True),
+        },
+        "/api/matm/agent-messages": {"post": protected_operation("Send current message", "Send broadcast or targeted current-message notification with recipient-specific acknowledgement isolation.", "post", True)},
+        "/api/matm/current-message": {"get": protected_operation("Read current messages", "Read current-message inbox with agent_id, message_id, and notification_id filters.")},
+        "/api/matm/notifications/ack": {"post": protected_operation("Acknowledge notification", "Mark a notification read and create a redacted receipt.", "post", True)},
+        "/api/matm/receipts": {"get": protected_operation("Read receipts", "Read redacted acknowledgement receipts for an agent.")},
+        "/api/matm/audit-log": {"get": protected_operation("Read audit log", "Read redacted protected-operation audit events.")},
+    }
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "MemoryEndpoints MATM Golden Path API",
+            "version": __version__,
+            "summary": "Bounded public-safe OpenAPI-style schema for setup, hosted memory, coordination, receipts, audit, and discovery.",
+        },
+        "servers": [{"url": SITE_URL}],
+        "tags": [
+            {"name": "discovery", "description": "Public-safe discovery and readiness routes."},
+            {"name": "setup", "description": "Workspace setup and agent registration."},
+            {"name": "memory", "description": "Hosted public-safe memory and review promotion."},
+            {"name": "coordination", "description": "Meeting rooms, routing, and current messages."},
+            {"name": "evidence", "description": "Receipts and audit evidence."},
+        ],
+        "x-memoryendpoints-goldenPath": [
+            "create_or_enter_workspace",
+            "register_agent",
+            "load_workspace",
+            "save_memory",
+            "search_memory",
+            "create_or_read_meeting_room",
+            "send_current_message",
+            "acknowledge_notification",
+            "read_receipts_and_audit",
+        ],
+        "x-truthBoundary": {
+            "notFullGeneratedSpec": True,
+            "protectedWritesRequireWorkspaceKey": True,
+            "rawWorkspaceKeysInPublicResponses": False,
+            "rawPrivatePayloadsStored": False,
+            "valuesRedacted": True,
+            "examplesUsePlaceholdersOnly": True,
+        },
+        "paths": paths,
+        "components": {
+            "securitySchemes": {
+                "workspaceBearer": {"type": "http", "scheme": "bearer", "description": "Workspace key supplied by the user; never echo or log."},
+                "workspaceHeader": {"type": "apiKey", "in": "header", "name": "X-MemoryEndpoints-Key", "description": "Alternate workspace key header for browser connectors."},
+            },
+            "schemas": {
+                "SafeEnvelope": {
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "valuesRedacted": {"type": "boolean"},
+                        "rawCredentialExposed": {"type": "boolean"},
+                        "rawPayloadExposed": {"type": "boolean"},
+                    },
+                }
+            },
         },
     }
 
@@ -413,6 +564,7 @@ def manifest():
             "readinessResult": "%s/api/matm/readiness-result" % SITE_URL,
             "capabilityMatrix": "%s/api/matm/live-capability-matrix" % SITE_URL,
             "connectorContract": "%s/api/matm/connector-contract" % SITE_URL,
+            "openApi": "%s/api/matm/openapi.json" % SITE_URL,
             "sitemap": "%s/sitemap.xml" % SITE_URL,
             "llmsTxt": "%s/llms.txt" % SITE_URL,
             "companionDocs": COMPANION_DOCS_URL,

@@ -94,6 +94,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "/api/version",
             "/api/matm/live-capability-matrix",
             "/api/matm/connector-contract",
+            "/api/matm/openapi.json",
             "/api/matm/readiness-result",
             "/ai-manifest.json",
             "/.well-known/mcp.json",
@@ -156,6 +157,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('href="/ai-manifest.json"', docs)
         self.assertIn('href="/.well-known/mcp.json"', docs)
         self.assertIn('href="/mcp/resources"', docs)
+        self.assertIn('href="/api/matm/openapi.json"', docs)
 
         status, _headers, setup = call_app("/agent-setup")
         self.assertEqual("200 OK", status)
@@ -258,6 +260,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(any("routing-decisions" in item for item in data["coordinationFlow"]["routingPolicy"]))
         self.assertTrue(any("Create goal or task rooms" in item for item in data["coordinationFlow"]["routingPolicy"]))
         self.assertTrue(any("project-room status note" in item for item in data["evidenceToPostBack"]))
+        self.assertEqual("/api/matm/openapi.json", data["publicDiscovery"]["openApi"])
         self.assertIn("/mcp/resources", data["publicDiscovery"]["mcpResources"])
         self.assertNotIn("apiKeySecret", text)
         self.assertNotIn("Bearer me_", text)
@@ -267,6 +270,32 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         resources = json.loads(text)["resources"]
         routes = {item.get("route") for item in resources}
         self.assertIn("/api/matm/connector-contract", routes)
+        self.assertIn("/api/matm/openapi.json", routes)
+
+    def test_openapi_golden_path_is_public_and_secret_safe(self):
+        status, _headers, text = call_app("/api/matm/openapi.json")
+
+        self.assertEqual("200 OK", status)
+        data = json.loads(text)
+        self.assertEqual("3.1.0", data["openapi"])
+        self.assertEqual("MemoryEndpoints MATM Golden Path API", data["info"]["title"])
+        self.assertTrue(data["x-truthBoundary"]["protectedWritesRequireWorkspaceKey"])
+        self.assertFalse(data["x-truthBoundary"]["rawWorkspaceKeysInPublicResponses"])
+        self.assertFalse(data["x-truthBoundary"]["rawPrivatePayloadsStored"])
+        self.assertTrue(data["x-truthBoundary"]["examplesUsePlaceholdersOnly"])
+        self.assertIn("register_agent", data["x-memoryendpoints-goldenPath"])
+        self.assertIn("search_memory", data["x-memoryendpoints-goldenPath"])
+        paths = data["paths"]
+        self.assertIn("/api/matm/agent-setup/free-account", paths)
+        self.assertIn("/api/matm/memory-events/submit", paths)
+        self.assertIn("/api/matm/current-message", paths)
+        self.assertIn("/api/matm/notifications/ack", paths)
+        security_schemes = data["components"]["securitySchemes"]
+        self.assertIn("workspaceBearer", security_schemes)
+        self.assertIn("workspaceHeader", security_schemes)
+        self.assertIn("Idempotency-Key", text)
+        self.assertNotIn("apiKeySecret", text)
+        self.assertNotIn("Bearer me_", text)
 
     def test_api_cors_preflight_allows_browser_connectors_without_workspace_key(self):
         status, headers, text = call_app(
@@ -3040,6 +3069,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         routes = {item["route"]: item for item in data["routes"]}
         self.assertIn("/docs/", routes)
         self.assertIn("/api/matm/connector-contract", routes)
+        self.assertIn("/api/matm/openapi.json", routes)
         self.assertIn("/api/matm/readiness-result", routes)
         self.assertIn("/api/matm/review-queue/decide", routes)
         self.assertIn("/api/matm/audit-log", routes)
@@ -3050,6 +3080,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["POST"], routes["/api/matm/review-queue/decide"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/audit-log"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/connector-contract"]["methods"])
+        self.assertEqual(["GET"], routes["/api/matm/openapi.json"]["methods"])
 
     def test_readiness_result_does_not_overclaim_completion(self):
         status, _headers, text = call_app("/api/matm/readiness-result")
