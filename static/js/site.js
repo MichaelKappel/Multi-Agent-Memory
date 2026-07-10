@@ -234,6 +234,28 @@
     appendCountBadges(line, "Reviews", summary.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
     appendCountBadges(line, "Promotion", summary.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
     parent.appendChild(line);
+    renderLongTermMemoryOperatorSummary(parent, summary.longTermMemoryMigration);
+  }
+
+  function formatStatusText(value) {
+    return String(value || "unknown").replace(/_/g, " ");
+  }
+
+  function renderLongTermMemoryOperatorSummary(parent, migration) {
+    if (!migration) {
+      return;
+    }
+    var line = el("div", "filter-summary long-term-memory-summary");
+    line.appendChild(el("span", "filter-summary-label", "Long-term memory"));
+    appendBadge(line, formatStatusText(migration.status), migration.status === "promoted" ? "good" : "warn");
+    appendBadge(line, (migration.count || 0) + " hosted", migration.count ? "good" : "neutral");
+    appendBadge(line, (migration.sourcePathCount || 0) + " source paths", migration.sourcePathCount ? "good" : "neutral");
+    appendBadge(line, migration.filesystemDocsIncluded ? "filesystem included" : "filesystem excluded", migration.filesystemDocsIncluded ? "warn" : "good");
+    appendBadge(line, migration.allValuesRedacted ? "redacted" : "redaction review", migration.allValuesRedacted ? "good" : "warn");
+    appendBadge(line, migration.rawPrivatePayloadStoredCount ? "payload storage review" : "private payload hidden", migration.rawPrivatePayloadStoredCount ? "warn" : "good");
+    appendCountBadges(line, "Reviews", migration.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(line, "Promotion", migration.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
+    parent.appendChild(line);
   }
 
   function operatorLevel(operatorSummary, level) {
@@ -1695,7 +1717,9 @@
       var count = payload && payload.operatorSummary && payload.operatorSummary.count !== undefined
         ? payload.operatorSummary.count
         : ((payload && payload.items) || []).length;
-      setStatus("Hosted long-term memory search refreshed: " + count + " item(s).", false);
+      var migration = payload && payload.operatorSummary && payload.operatorSummary.longTermMemoryMigration;
+      var sourceDetail = migration ? ", " + (migration.sourcePathCount || 0) + " source path(s)" : "";
+      setStatus("Hosted long-term memory search refreshed: " + count + " item(s)" + sourceDetail + ".", false);
       return payload;
     });
   }
