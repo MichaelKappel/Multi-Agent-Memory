@@ -934,6 +934,12 @@
     summaryLine.appendChild(el("span", "filter-summary-label", "Meeting rooms"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral");
     appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project", "goal", "task"]);
+    if (summary.filters && (summary.filters.scope || summary.filters.scopeId)) {
+      appendBadge(summaryLine, "filter " + (summary.filters.scope || "any"), "neutral");
+      if (summary.filters.scopeId) {
+        appendBadge(summaryLine, "scope " + shortId(summary.filters.scopeId), "neutral");
+      }
+    }
     appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn");
     appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -1644,7 +1650,13 @@
       renderMeetingRooms({items: [], operatorSummary: {count: 0}});
       return Promise.resolve({items: []});
     }
-    var qs = query({workspace_id: state.workspaceId, agent_id: state.agentId});
+    var params = {workspace_id: state.workspaceId, agent_id: state.agentId};
+    var filterForm = pick("[data-console-meeting-room-filter]");
+    if (filterForm) {
+      params.scope = filterForm.elements.scope ? filterForm.elements.scope.value : "";
+      params.scope_id = filterForm.elements.scopeId ? filterForm.elements.scopeId.value.trim() : "";
+    }
+    var qs = query(params);
     return api("/api/matm/meeting-rooms?" + qs).then(function (payload) {
       render("[data-console-meeting-output]", payload);
       renderMeetingRooms(payload);
@@ -1862,6 +1874,35 @@
     });
   }
 
+  var meetingRoomFilterForm = pick("[data-console-meeting-room-filter]");
+  if (meetingRoomFilterForm) {
+    meetingRoomFilterForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before filtering meeting rooms.", true);
+        return;
+      }
+      state.selectedMeetingRoomId = "";
+      refreshMeetingRooms()
+        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
+        .then(function () { setStatus("Meeting rooms filtered.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var clearMeetingRoomFilterButton = pick("[data-console-clear-meeting-room-filter]");
+  if (clearMeetingRoomFilterButton && meetingRoomFilterForm) {
+    clearMeetingRoomFilterButton.addEventListener("click", function () {
+      meetingRoomFilterForm.elements.scope.value = "";
+      meetingRoomFilterForm.elements.scopeId.value = "";
+      state.selectedMeetingRoomId = "";
+      refreshMeetingRooms()
+        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
+        .then(function () { setStatus("Meeting room filter cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
   var createMeetingRoomForm = pick("[data-console-create-meeting-room]");
   if (createMeetingRoomForm) {
     createMeetingRoomForm.addEventListener("submit", function (event) {
@@ -1892,6 +1933,10 @@
           renderMeetingRoomCreate(payload);
           if (payload.room && payload.room.roomId) {
             setMeetingRoom(payload.room.roomId);
+            if (meetingRoomFilterForm) {
+              meetingRoomFilterForm.elements.scope.value = payload.room.scope || "";
+              meetingRoomFilterForm.elements.scopeId.value = payload.room.scopeId || "";
+            }
           }
           return refreshMeetingRooms().then(function () {
             return refreshMeetingMessages(state.selectedMeetingRoomId);

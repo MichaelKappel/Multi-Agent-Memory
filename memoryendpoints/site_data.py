@@ -292,6 +292,7 @@ def connector_contract():
             "sendCurrentMessageRoute": "/api/matm/agent-messages",
             "ackRoute": "/api/matm/notifications/ack",
             "supportedMeetingRoomScopes": ["company", "workspace", "project", "goal", "task"],
+            "meetingRoomQueryFilters": ["agent_id", "scope", "scope_id"],
             "requiredMeetingRoomCreateFields": ["workspaceId", "creatorAgentId", "scope", "scopeId"],
             "customMeetingRoomCreateScopes": ["goal", "task"],
             "meetingSummaryMaxCharacters": 2000,

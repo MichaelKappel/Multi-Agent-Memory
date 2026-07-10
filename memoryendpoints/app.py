@@ -1062,6 +1062,23 @@ def route_console(start_response):
       <button class="button" type="button" data-console-refresh-meeting-rooms>Refresh rooms</button>
       <button class="button" type="button" data-console-mark-meeting-read>Mark room read</button>
     </div>
+    <form class="console-grid compact-grid" data-console-meeting-room-filter>
+      <label>Filter scope
+        <select name="scope">
+          <option value="">all rooms</option>
+          <option value="company">company</option>
+          <option value="workspace">workspace</option>
+          <option value="project">project</option>
+          <option value="goal">goal</option>
+          <option value="task">task</option>
+        </select>
+      </label>
+      <label>Filter scope id
+        <input name="scopeId" placeholder="optional scope id">
+      </label>
+      <button class="button" type="submit">Filter rooms</button>
+      <button class="button" type="button" data-console-clear-meeting-room-filter>Clear filter</button>
+    </form>
     <form class="console-grid" data-console-create-meeting-room>
       <label>Room scope
         <select name="scope">
@@ -1839,8 +1856,20 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "201 Created" if created else "200 OK")
     if path == "/api/matm/meeting-rooms" and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
-        filters = {"agentId": agent_filter} if agent_filter else {}
+        scope_filter = (query.get("scope") or "").strip().lower()
+        scope_id_filter = query.get("scope_id") or query.get("scopeId") or ""
+        filters = {}
+        if agent_filter:
+            filters["agentId"] = agent_filter
+        if scope_filter:
+            filters["scope"] = scope_filter
+        if scope_id_filter:
+            filters["scopeId"] = scope_id_filter
         rooms = store.meeting_rooms(workspace_id, agent_filter)
+        if scope_filter:
+            rooms = [room for room in rooms if room.get("scope") == scope_filter]
+        if scope_id_filter:
+            rooms = [room for room in rooms if room.get("scopeId") == scope_id_filter]
         operator_summary = _meeting_rooms_operator_summary(rooms, filters)
         _audit_read(
             store,

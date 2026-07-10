@@ -189,6 +189,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("/api/matm/memory-events/submit", data["memoryFlow"]["submitRoute"])
         self.assertEqual("/api/matm/meeting-rooms", data["coordinationFlow"]["meetingRoomsRoute"])
         self.assertEqual("/api/matm/meeting-rooms", data["coordinationFlow"]["meetingRoomCreateRoute"])
+        self.assertEqual(["agent_id", "scope", "scope_id"], data["coordinationFlow"]["meetingRoomQueryFilters"])
         self.assertEqual(["company", "workspace", "project", "goal", "task"], data["coordinationFlow"]["supportedMeetingRoomScopes"])
         self.assertIn("workspaceId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
         self.assertIn("creatorAgentId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
@@ -256,6 +257,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('id="meeting-rooms"', text)
         self.assertIn("data-console-refresh-meeting-rooms", text)
         self.assertIn("data-console-mark-meeting-read", text)
+        self.assertIn("data-console-meeting-room-filter", text)
+        self.assertIn("data-console-clear-meeting-room-filter", text)
         self.assertIn("data-console-create-meeting-room", text)
         self.assertIn("data-console-meeting-room-create-summary", text)
         self.assertIn("data-console-meeting-rooms-list", text)
@@ -518,7 +521,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/api/matm/meeting-messages", js)
         self.assertIn("/api/matm/meeting-rooms/read", js)
         self.assertIn("data-console-create-meeting-room", js)
+        self.assertIn("data-console-meeting-room-filter", js)
+        self.assertIn("data-console-clear-meeting-room-filter", js)
         self.assertIn("data-console-meeting-room-create-summary", js)
+        self.assertIn("Meeting rooms filtered.", js)
+        self.assertIn("Meeting room filter cleared.", js)
         self.assertIn("Load workspace before creating a meeting room.", js)
         self.assertIn("Scope id is required for goal and task meeting rooms.", js)
         self.assertIn("Meeting room created and selected.", js)
@@ -1418,6 +1425,18 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 self.assertEqual(["company", "workspace", "project", "goal", "task"], rooms_payload["operatorSummary"]["roomFlow"]["routingOrder"])
                 self.assertTrue(rooms_payload["operatorSummary"]["roomFlow"]["customGoalTaskRoomsSupported"])
                 self.assertTrue(any(item["roomId"] == room["roomId"] for item in rooms_payload["items"]))
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    headers=auth,
+                    query="workspace_id=%s&agent_id=codex-coordinator&scope=goal&scope_id=goal-enterprise-room-routing" % workspace_id,
+                )
+                self.assertEqual("200 OK", status)
+                filtered_rooms = json.loads(text)
+                self.assertEqual(1, filtered_rooms["count"])
+                self.assertEqual({"agentId": "codex-coordinator", "scope": "goal", "scopeId": "goal-enterprise-room-routing"}, filtered_rooms["filters"])
+                self.assertEqual(room["roomId"], filtered_rooms["items"][0]["roomId"])
+                self.assertEqual(1, filtered_rooms["operatorSummary"]["scopeCounts"]["goal"])
 
                 status, _headers, text = call_app(
                     "/api/matm/meeting-messages",
