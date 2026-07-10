@@ -337,6 +337,14 @@ pre {
   margin: 14px 0;
 }
 
+.message-delivery {
+  margin: 8px 0 18px;
+}
+
+.message-delivery .delivery-row {
+  border-left: 4px solid var(--accent);
+}
+
 .result-count,
 .result-group-title {
   font-weight: 700;

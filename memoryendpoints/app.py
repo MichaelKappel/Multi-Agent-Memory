@@ -92,7 +92,7 @@ def _require_auth(environ, workspace_id):
 
 
 def html_page(title, main):
-    css_version = build_provenance().get("sourceShaShort") or __version__
+    asset_version = build_provenance().get("sourceShaShort") or __version__
     json_ld = json.dumps(
         {
             "@context": "https://schema.org",
@@ -111,7 +111,7 @@ def html_page(title, main):
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title} | MemoryEndpoints.com</title>
   <meta name="description" content="Pure MATM Multi-Agent Transactive Memory endpoint reference implementation.">
-  <link rel="stylesheet" href="/static/css/site.css?v={css_version}">
+  <link rel="stylesheet" href="/static/css/site.css?v={asset_version}">
   <script type="application/ld+json">{json_ld}</script>
 </head>
 <body>
@@ -133,14 +133,14 @@ def html_page(title, main):
   <footer>
     <p>Source-available MATM endpoint reference. No certification, endorsement, or hidden authority claim is implied.</p>
   </footer>
-  <script src="/static/js/site.js"></script>
+  <script src="/static/js/site.js?v={asset_version}"></script>
 </body>
 </html>""".format(
         title=escape_html(title),
         main=main,
         json_ld=json_ld,
         companion_docs_url=COMPANION_DOCS_URL,
-        css_version=escape_html(css_version),
+        asset_version=escape_html(asset_version),
     )
 
 
@@ -378,6 +378,9 @@ def route_console(start_response):
       <button class="button compact" type="button" data-console-target-agent="human-verifier-agent">Human</button>
       <button class="button compact" type="button" data-console-target-agent="codex-agent">Codex</button>
       <button class="button compact" type="button" data-console-target-agent="swarm-observer-agent">Observer</button>
+    </div>
+    <div class="console-results message-delivery" data-console-message-delivery>
+      <p class="empty-state">Delivery details will appear after a message is sent.</p>
     </div>
     <form class="console-grid" data-console-inbox>
       <label>Inbox agent

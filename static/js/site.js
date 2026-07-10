@@ -263,6 +263,37 @@
     });
   }
 
+  function renderMessageDelivery(payload, refreshedAgentId) {
+    var node = pick("[data-console-message-delivery]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var message = (payload && payload.message) || {};
+    var notification = (payload && payload.notification) || {};
+    var target = message.targetAgentId || notification.targetAgentId || "";
+    var refreshedLane = refreshedAgentId || target || state.agentId;
+    var row = resultRow(
+      target ? "Targeted message delivered" : "Broadcast delivered",
+      message.safeSummary || "The message was accepted by the current-message lane.",
+      [
+        { text: target ? "targeted" : "broadcast", kind: target ? "neutral" : "good" },
+        { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
+        { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "from " + (message.senderAgentId || "unknown"),
+        "to " + (target || "all agents"),
+        "message " + shortId(message.messageId),
+        "notification " + shortId(notification.notificationId),
+        "refreshed " + refreshedLane + " inbox",
+      ]
+    );
+    row.className += " delivery-row";
+    node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; current inbox refreshed."));
+    node.appendChild(row);
+  }
+
   function renderReceiptSummary(payload) {
     var node = pick("[data-console-receipts-list]");
     if (!node) {
@@ -607,14 +638,16 @@
         headers: {"Idempotency-Key": "console-message-" + Date.now()},
         body: body,
       })
-        .then(function () {
+        .then(function (payload) {
           if (target) {
             setInboxAgent(target);
-            return refreshInbox(target);
+            renderMessageDelivery(payload, target);
+            return refreshInbox(target).then(function () { return payload; });
           }
-          return refreshInbox(state.agentId);
+          renderMessageDelivery(payload, state.agentId);
+          return refreshInbox(state.agentId).then(function () { return payload; });
         })
-        .then(function () { setStatus(target ? "Targeted message sent; target inbox refreshed." : "Broadcast message sent.", false); })
+        .then(function () { setStatus(target ? "Targeted message sent; " + target + " inbox refreshed." : "Broadcast message sent; current inbox refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }

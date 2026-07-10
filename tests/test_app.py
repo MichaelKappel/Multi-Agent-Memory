@@ -114,6 +114,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-inbox-list", text)
         self.assertIn("data-console-message-targets", text)
+        self.assertIn("data-console-message-delivery", text)
         self.assertIn('data-console-target-agent="codex-agent"', text)
         self.assertIn("data-console-inbox-lanes", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
@@ -122,6 +123,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-audit-list", text)
         self.assertIn("Debug JSON", text)
         self.assertIn("/static/css/site.css?v=", text)
+        self.assertIn("/static/js/site.js?v=", text)
 
     def test_console_css_keeps_mobile_nav_and_memory_rows_readable(self):
         css = (Path(__file__).resolve().parents[1] / "static" / "css" / "site.css").read_text(encoding="utf-8")
@@ -131,6 +133,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere", css)
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
+        self.assertIn(".message-delivery", css)
 
     def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -139,6 +142,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-ack-visible", js)
         self.assertIn("ackNotification(notificationId", js)
         self.assertIn("visible notification(s) acknowledged", js)
+
+    def test_console_js_renders_message_delivery_feedback(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderMessageDelivery", js)
+        self.assertIn("Targeted message delivered", js)
+        self.assertIn("Broadcast delivered", js)
+        self.assertIn("Broadcast message sent; current inbox refreshed.", js)
+        self.assertIn('target + " inbox refreshed."', js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
