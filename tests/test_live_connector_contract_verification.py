@@ -10,6 +10,18 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
                 "schemaVersion": "memoryendpoints.connector_contract.v1",
                 "memoryFlow": {
                     "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
+                    "searchQueryFilters": [
+                        "q",
+                        "scope",
+                        "scope_id",
+                        "source_prefix",
+                        "tag",
+                        "actor_agent_id",
+                        "memory_type",
+                        "review_status",
+                        "promotion_state",
+                        "event_id",
+                    ],
                     "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews.",
                 },
                 "coordinationFlow": {
@@ -43,12 +55,14 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         self.assertTrue(check["visibleAgentsConfirmationAdvertised"])
         self.assertTrue(check["recipientCountConfirmationAdvertised"])
         self.assertTrue(check["browserCorsHeadersVerified"])
+        self.assertTrue(check["searchQueryFiltersVerified"])
 
     def test_connector_contract_check_rejects_missing_ack_isolation_fields(self):
         payload = {
             "data": {
                 "memoryFlow": {
                     "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
+                    "searchQueryFilters": ["q", "scope"],
                     "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews.",
                 },
                 "coordinationFlow": {
@@ -74,6 +88,55 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         self.assertFalse(check["ackIsolationAdvertised"])
         self.assertFalse(check["visibleAgentsConfirmationAdvertised"])
         self.assertFalse(check["recipientCountConfirmationAdvertised"])
+        self.assertFalse(check["searchQueryFiltersVerified"])
+        self.assertIn("event_id", check["missingSearchQueryFilters"])
+
+    def test_protected_exact_memory_readback_requires_single_filtered_row(self):
+        seed = {
+            "ok": True,
+            "items": [{"eventId": "mem-123"}],
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        exact = {
+            "ok": True,
+            "items": [{"eventId": "mem-123"}],
+            "filters": {"eventId": "mem-123"},
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+        check = verifier.protected_exact_memory_readback_check(seed, exact, "mem-123")
+
+        self.assertTrue(check["verified"])
+        self.assertEqual(1, check["exactCount"])
+        self.assertTrue(check["eventIdFilterEchoed"])
+        self.assertNotIn("mem-123", check["eventIdHash"])
+
+    def test_protected_exact_memory_readback_rejects_ignored_filter(self):
+        seed = {
+            "ok": True,
+            "items": [{"eventId": "mem-123"}, {"eventId": "mem-456"}],
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        exact = {
+            "ok": True,
+            "items": [{"eventId": "mem-123"}, {"eventId": "mem-456"}],
+            "filters": {},
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+        check = verifier.protected_exact_memory_readback_check(seed, exact, "mem-123")
+
+        self.assertFalse(check["verified"])
+        self.assertEqual(2, check["exactCount"])
+        self.assertFalse(check["eventIdFilterEchoed"])
 
     def test_capability_matrix_check_requires_current_message_ack_contract(self):
         payload = {
@@ -109,6 +172,7 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         protected = {"verified": True}
         contract = {
             "reviewQueueFiltersVerified": True,
+            "searchQueryFiltersVerified": True,
             "reviewQueueOperatorSummaryVerified": True,
             "browserCorsHeadersVerified": True,
             "broadcastFanoutAdvertised": True,

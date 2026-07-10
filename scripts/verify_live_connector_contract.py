@@ -11,6 +11,18 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
 DEFAULT_REPORT = ROOT / "docs" / "reports" / "live-connector-contract-verification.json"
 REVIEW_QUEUE_FILTERS = ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"]
+MEMORY_SEARCH_FILTERS = [
+    "q",
+    "scope",
+    "scope_id",
+    "source_prefix",
+    "tag",
+    "actor_agent_id",
+    "memory_type",
+    "review_status",
+    "promotion_state",
+    "event_id",
+]
 CORS_HEADERS = ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"]
 SOURCE_PREFIX = "docs/long-term-memory/"
 MIGRATION_TAG = "long-term-memory-migration"
@@ -84,12 +96,15 @@ def connector_contract_check(payload):
     response_contract = data.get("responseContract") or {}
     browser_cors = data.get("browserCors") or {}
     missing_filters = missing_values(memory_flow.get("reviewQueueFilters"), REVIEW_QUEUE_FILTERS)
+    missing_search_filters = missing_values(memory_flow.get("searchQueryFilters"), MEMORY_SEARCH_FILTERS)
     missing_headers = missing_values(browser_cors.get("allowedHeaders"), CORS_HEADERS)
     post_confirmation_fields = response_contract.get("postConfirmationFields") or []
     return {
         "schemaVersion": data.get("schemaVersion"),
         "reviewQueueFiltersVerified": not missing_filters,
         "missingReviewQueueFilters": missing_filters,
+        "searchQueryFiltersVerified": not missing_search_filters,
+        "missingSearchQueryFilters": missing_search_filters,
         "reviewQueueOperatorSummaryVerified": "longTermMemoryReviews" in (memory_flow.get("reviewQueueOperatorSummary") or ""),
         "broadcastFanoutAdvertised": coordination_flow.get("broadcastFanout") == "per_active_agent_notification",
         "ackIsolationAdvertised": coordination_flow.get("ackIsolation") == "per_recipient_notification",
@@ -167,7 +182,37 @@ def protected_review_filter_check(payload):
     }
 
 
-def build_report(base_url, source_sha, contract_check, capability_check, preflight_check, protected_check, workspace_id="", token=""):
+def protected_exact_memory_readback_check(seed_payload, exact_payload, event_id):
+    seed_items = (seed_payload or {}).get("items") or []
+    exact_items = (exact_payload or {}).get("items") or []
+    exact_filters = (exact_payload or {}).get("filters") or {}
+    return {
+        "seedCount": len(seed_items),
+        "eventIdHash": "sha256:" + sha256_text(event_id) if event_id else None,
+        "exactCount": len(exact_items),
+        "exactContainsEvent": bool(event_id and any(item.get("eventId") == event_id for item in exact_items)),
+        "eventIdFilterEchoed": exact_filters.get("eventId") == event_id,
+        "valuesRedacted": bool((seed_payload or {}).get("valuesRedacted") and (exact_payload or {}).get("valuesRedacted")),
+        "rawCredentialExposed": bool((seed_payload or {}).get("rawCredentialExposed") or (exact_payload or {}).get("rawCredentialExposed")),
+        "rawPayloadExposed": bool((seed_payload or {}).get("rawPayloadExposed") or (exact_payload or {}).get("rawPayloadExposed")),
+        "verified": bool(
+            event_id
+            and seed_items
+            and len(exact_items) == 1
+            and any(item.get("eventId") == event_id for item in exact_items)
+            and exact_filters.get("eventId") == event_id
+            and (seed_payload or {}).get("valuesRedacted")
+            and (exact_payload or {}).get("valuesRedacted")
+            and not (seed_payload or {}).get("rawCredentialExposed")
+            and not (seed_payload or {}).get("rawPayloadExposed")
+            and not (exact_payload or {}).get("rawCredentialExposed")
+            and not (exact_payload or {}).get("rawPayloadExposed")
+        ),
+    }
+
+
+def build_report(base_url, source_sha, contract_check, capability_check, preflight_check, protected_check, exact_memory_check=None, workspace_id="", token=""):
+    exact_memory_check = exact_memory_check or {}
     report = {
         "schemaVersion": "memoryendpoints.live_connector_contract_verification.v2",
         "baseUrl": base_url.rstrip("/"),
@@ -176,6 +221,7 @@ def build_report(base_url, source_sha, contract_check, capability_check, preflig
         "capabilityMatrix": capability_check,
         "browserCorsPreflight": preflight_check,
         "protectedReviewQueueFilter": protected_check,
+        "protectedExactMemoryReadback": exact_memory_check,
         "workspaceIdHash": "sha256:" + sha256_text(workspace_id) if workspace_id else None,
         "valuesRedacted": True,
         "rawCredentialValuesStored": False,
@@ -186,6 +232,7 @@ def build_report(base_url, source_sha, contract_check, capability_check, preflig
     report["rawWorkspaceIdStored"] = bool(workspace_id and workspace_id in report_text)
     report["ok"] = bool(
         contract_check.get("reviewQueueFiltersVerified")
+        and contract_check.get("searchQueryFiltersVerified")
         and contract_check.get("reviewQueueOperatorSummaryVerified")
         and contract_check.get("broadcastFanoutAdvertised")
         and contract_check.get("ackIsolationAdvertised")
@@ -200,6 +247,7 @@ def build_report(base_url, source_sha, contract_check, capability_check, preflig
         and capability_check.get("visibleAgentsConfirmationAdvertised")
         and preflight_check.get("verified")
         and (protected_check.get("verified") if protected_check else True)
+        and (exact_memory_check.get("verified") if exact_memory_check else True)
         and not report["rawCredentialValuesStored"]
         and not report["rawWorkspaceIdStored"]
     )
@@ -226,6 +274,7 @@ def main(argv=None):
     preflight_status, preflight_headers = request_preflight(base_url, "/api/matm/review-queue")
 
     protected_check = {}
+    exact_memory_check = {}
     workspace_id = ""
     token = ""
     if not args.skip_protected:
@@ -250,6 +299,37 @@ def main(argv=None):
         if status != 200:
             raise RuntimeError("protected review queue fetch failed")
         protected_check = protected_review_filter_check(protected_payload)
+        status, seed_payload, _headers = request_json(
+            base_url,
+            "/api/matm/search",
+            token=token,
+            query=urlencode(
+                {
+                    "workspace_id": workspace_id,
+                    "q": MIGRATION_TAG,
+                    "tag": MIGRATION_TAG,
+                }
+            ),
+        )
+        if status != 200:
+            raise RuntimeError("protected memory search seed fetch failed")
+        seed_items = seed_payload.get("items") or []
+        event_id = (seed_items[0] or {}).get("eventId") if seed_items else ""
+        status, exact_payload, _headers = request_json(
+            base_url,
+            "/api/matm/search",
+            token=token,
+            query=urlencode(
+                {
+                    "workspace_id": workspace_id,
+                    "q": "",
+                    "event_id": event_id,
+                }
+            ),
+        )
+        if status != 200:
+            raise RuntimeError("protected exact memory readback fetch failed")
+        exact_memory_check = protected_exact_memory_readback_check(seed_payload, exact_payload, event_id)
 
     report = build_report(
         base_url,
@@ -258,6 +338,7 @@ def main(argv=None):
         capability_matrix_check(capability),
         cors_preflight_check(preflight_status, preflight_headers),
         protected_check,
+        exact_memory_check,
         workspace_id=workspace_id,
         token=token,
     )
