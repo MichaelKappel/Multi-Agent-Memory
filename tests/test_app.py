@@ -107,6 +107,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Workspace Overview", text)
         self.assertIn("data-console-workspace-summary", text)
         self.assertIn("data-console-memory-list", text)
+        self.assertIn("data-console-review-list", text)
+        self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-inbox-list", text)
         self.assertIn("data-console-receipts-list", text)
         self.assertIn("data-console-audit-list", text)
@@ -536,6 +538,72 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         search = json.loads(text)
         self.assertEqual(1, search["count"])
         self.assertNotIn("supersecretvalue", json.dumps(search))
+
+    def test_review_queue_promotes_pending_memory(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Review Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        status, _headers, text = call_app(
+            "/api/matm/memory-events/submit",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "actorAgentId": "review-agent",
+                "memoryType": "status",
+                "title": "Reviewable hosted memory",
+                "summary": "This hosted memory should be promotable from the review queue.",
+                "tags": ["review"],
+            },
+        )
+        self.assertEqual("201 Created", status)
+        event = json.loads(text)["event"]
+        self.assertEqual("pending", event["reviewStatus"])
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query="workspace_id=%s&status=pending" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        queue = json.loads(text)
+        self.assertEqual(1, queue["count"])
+        self.assertTrue(queue["valuesRedacted"])
+        review_id = queue["items"][0]["reviewId"]
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue/decide",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="promote-pending-review"),
+            body={
+                "workspaceId": workspace_id,
+                "reviewId": review_id,
+                "reviewerAgentId": "human-verifier-agent",
+                "decision": "promote",
+                "reviewNote": "Public-safe review note should not be returned verbatim.",
+            },
+        )
+        self.assertEqual("200 OK", status)
+        review = json.loads(text)["review"]
+        self.assertEqual("promoted", review["status"])
+        self.assertNotIn("Public-safe review note", text)
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=Reviewable" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        item = json.loads(text)["items"][0]
+        self.assertEqual("promoted", item["reviewStatus"])
+        self.assertEqual("promoted", item["promotionState"])
 
     def test_idempotency_replay_and_conflict(self):
         status, _headers, text = call_app(

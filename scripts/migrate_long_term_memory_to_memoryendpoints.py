@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -10,19 +11,31 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_DIR = ROOT / "docs" / "long-term-memory"
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
-DEFAULT_REPORT = ROOT / "docs" / "reports" / "hosted-long-term-memory-migration.json"
+DEFAULT_REPORT = ROOT / "docs" / "reports" / "long-term-memory-migration.json"
+SUMMARY_LIMIT = 1800
 
 
 MEMORY_TYPE_BY_STEM = {
-    "api-contract-summary": "procedure",
+    "api-contract-summary": "status",
     "architecture-notes": "decision",
     "enterprise-engineering-best-practices": "procedure",
-    "matm-architecture-strategy": "decision",
-    "project-charter": "fact",
-    "release-verification-summary": "evidence",
-    "strategy-index": "note",
-    "system-targets": "decision",
+    "matm-architecture-strategy": "procedure",
+    "project-charter": "decision",
+    "release-verification-summary": "status",
+    "strategy-index": "procedure",
+    "system-targets": "procedure",
 }
+
+
+def sha256_text(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def display_path(path):
+    try:
+        return str(Path(path).resolve().relative_to(ROOT)).replace("\\", "/")
+    except ValueError:
+        return str(path)
 
 
 def read_json(path):
@@ -35,15 +48,82 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def call_json(base_url, path, method="GET", body=None, token=None, idempotency_key=None, query=None):
+def first_heading(text, fallback):
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+            if title:
+                return title
+    return fallback
+
+
+def compact_summary(text, limit=SUMMARY_LIMIT):
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if line.startswith("#"):
+            continue
+        lines.append(re.sub(r"\s+", " ", line))
+    summary = "\n".join(lines).strip()
+    if len(summary) <= limit:
+        return summary
+    return summary[: limit - 3].rstrip() + "..."
+
+
+def tag_slug(path):
+    return Path(path).stem.lower().replace("_", "-")
+
+
+def memory_type_for(path):
+    return MEMORY_TYPE_BY_STEM.get(Path(path).stem, "note")
+
+
+def idempotency_key(source_path, text):
+    content_hash = sha256_text(text)
+    digest = sha256_text(source_path + ":" + content_hash)
+    return "ltm-migration-" + digest[:32]
+
+
+def load_memory_items(source_dir):
+    source_dir = Path(source_dir)
+    items = []
+    for path in sorted(source_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = display_path(path)
+        title = first_heading(text, path.stem.replace("-", " ").title())
+        items.append(
+            {
+                "sourcePath": rel,
+                "contentHash": "sha256:" + sha256_text(text),
+                "idempotencyKey": idempotency_key(rel, text),
+                "title": title,
+                "summary": compact_summary(text),
+                "memoryType": memory_type_for(path),
+                "tags": [
+                    "long-term-memory-migration",
+                    "hosted-memory",
+                    "dogfood",
+                    tag_slug(path),
+                ],
+            }
+        )
+    return items
+
+
+def call_json(base_url, path, method="GET", body=None, token=None, idempotency_key_value=None, query=None):
     url = base_url.rstrip("/") + path
     if query:
         url += "?" + query
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    if idempotency_key:
-        headers["Idempotency-Key"] = idempotency_key
+    if idempotency_key_value:
+        headers["Idempotency-Key"] = idempotency_key_value
     data = None
     if body is not None:
         data = json.dumps(body, sort_keys=True).encode("utf-8")
@@ -59,52 +139,115 @@ def call_json(base_url, path, method="GET", body=None, token=None, idempotency_k
         except ValueError:
             payload = {
                 "ok": False,
-                "error": {
-                    "code": "non_json_http_error",
-                    "status": exc.code,
-                    "valuesRedacted": True,
-                },
                 "valuesRedacted": True,
+                "error": {"code": "non_json_http_error", "status": exc.code, "valuesRedacted": True},
             }
         return exc.code, payload
 
 
-def token_hash(token):
-    return "sha256:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
+def require_ok(status, payload, step):
+    if not (200 <= int(status) < 300) or not payload.get("ok"):
+        code = (payload.get("error") or {}).get("code") or "unknown"
+        raise RuntimeError("%s failed with status %s and code %s" % (step, status, code))
+    return payload
 
 
-def first_heading(text, fallback):
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            return stripped.lstrip("#").strip() or fallback
-    return fallback
+def workspace_context(base_url, token, configured_workspace_id=None):
+    query = urlencode({"workspace_id": configured_workspace_id}) if configured_workspace_id else ""
+    status, payload = call_json(base_url, "/api/matm/workspace", token=token, query=query)
+    payload = require_ok(status, payload, "read workspace")
+    workspace = payload.get("workspace") or {}
+    return {
+        "workspaceId": workspace.get("workspaceId") or configured_workspace_id,
+        "companyId": workspace.get("companyId"),
+        "projectId": workspace.get("primaryProjectId"),
+        "storageRemainingBytes": workspace.get("storageRemainingBytes"),
+        "rawKeyStoredByServer": bool(workspace.get("rawKeyStoredByServer")),
+    }
 
 
-def public_safe_summary(relative_path, text):
-    normalized = "\n".join(line.rstrip() for line in text.strip().splitlines()).strip()
-    prefix = "Deep link: %s\n\n" % relative_path
-    max_body = 4000 - len(prefix)
-    if len(normalized) <= max_body:
-        return prefix + normalized
-    suffix = "\n\n[Truncated for hosted memory summary limit; source document remains the canonical migration seed.]"
-    return prefix + normalized[: max_body - len(suffix)].rstrip() + suffix
+def build_dry_run_report(base_url, source_dir, items):
+    return {
+        "schemaVersion": "memoryendpoints.long_term_memory_migration.v1",
+        "mode": "dry_run",
+        "baseUrl": base_url.rstrip("/"),
+        "sourceDirectory": display_path(source_dir),
+        "itemCount": len(items),
+        "items": [
+            {
+                "sourcePath": item["sourcePath"],
+                "title": item["title"],
+                "contentHash": item["contentHash"],
+                "idempotencyKeyHash": "sha256:" + sha256_text(item["idempotencyKey"]),
+                "memoryType": item["memoryType"],
+                "summaryLength": len(item["summary"]),
+                "tags": item["tags"],
+                "valuesRedacted": True,
+            }
+            for item in items
+        ],
+        "rawCredentialValuesStored": False,
+        "rawWorkspaceIdStored": False,
+        "valuesRedacted": True,
+        "ok": True,
+    }
 
 
-def idempotency_key(relative_path, text):
-    digest = hashlib.sha256((relative_path + "\n" + text).encode("utf-8")).hexdigest()
-    return "ltm-doc-" + digest[:40]
-
-
-def event_shape(payload):
+def submit_item(base_url, token, context, actor_agent_id, item):
+    scope_id = context.get("projectId") or context.get("workspaceId")
+    body = {
+        "workspaceId": context["workspaceId"],
+        "actorAgentId": actor_agent_id,
+        "scope": "project" if context.get("projectId") else "workspace",
+        "scopeId": scope_id,
+        "memoryType": item["memoryType"],
+        "subject": item["title"],
+        "title": item["title"],
+        "summary": item["summary"],
+        "tags": item["tags"],
+        "source": item["sourcePath"],
+        "confidence": 0.88,
+    }
+    status, payload = call_json(
+        base_url,
+        "/api/matm/memory-events/submit",
+        method="POST",
+        body=body,
+        token=token,
+        idempotency_key_value=item["idempotencyKey"],
+    )
+    payload = require_ok(status, payload, "submit %s" % item["sourcePath"])
     event = payload.get("event") or {}
     return {
+        "sourcePath": item["sourcePath"],
+        "title": item["title"],
+        "status": status,
         "eventId": event.get("eventId"),
         "reviewStatus": event.get("reviewStatus"),
         "promotionState": event.get("promotionState"),
         "memoryType": event.get("memoryType"),
-        "source": event.get("source"),
-        "valuesRedacted": bool(event.get("valuesRedacted")),
+        "valuesRedacted": bool(event.get("valuesRedacted", True)),
+        "rawPrivatePayloadStored": bool(event.get("rawPrivatePayloadStored")),
+        "idempotentReplay": bool(payload.get("idempotentReplay")),
+    }
+
+
+def verify_search(base_url, token, workspace_id):
+    status, payload = call_json(
+        base_url,
+        "/api/matm/search",
+        token=token,
+        query=urlencode({"workspace_id": workspace_id, "q": "long-term-memory-migration"}),
+    )
+    payload = require_ok(status, payload, "verify hosted long-term memory search")
+    items = payload.get("items") or []
+    return {
+        "status": status,
+        "count": payload.get("count", len(items)),
+        "hostedItemTitles": sorted(item.get("title") for item in items if item.get("title")),
+        "memorySource": payload.get("memorySource"),
+        "filesystemDocsIncluded": payload.get("filesystemDocsIncluded"),
+        "valuesRedacted": True,
     }
 
 
@@ -114,98 +257,67 @@ def main(argv=None):
     parser.add_argument("--secret", default=str(DEFAULT_SECRET))
     parser.add_argument("--source-dir", default=str(DEFAULT_SOURCE_DIR))
     parser.add_argument("--report-out", default=str(DEFAULT_REPORT))
-    parser.add_argument("--agent-id", default="codex-agent")
+    parser.add_argument("--agent-id", default="")
+    parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
-    secret = read_json(args.secret)
     base_url = args.base_url.rstrip("/")
-    token = secret["apiKeySecret"]
-    workspace_id = secret["workspaceId"]
-    project_id = secret.get("projectId") or workspace_id
     source_dir = Path(args.source_dir)
-    records = []
+    items = load_memory_items(source_dir)
+    if not args.apply:
+        report = build_dry_run_report(base_url, source_dir, items)
+        write_json(args.report_out, report)
+        print(json.dumps({"ok": True, "mode": "dry_run", "itemCount": len(items), "report": display_path(args.report_out), "valuesRedacted": True}, indent=2, sort_keys=True))
+        return 0
 
-    for path in sorted(source_dir.glob("*.md")):
-        relative_path = path.relative_to(ROOT).as_posix()
-        text = path.read_text(encoding="utf-8")
-        title = first_heading(text, path.stem.replace("-", " ").title())
-        body = {
-            "workspaceId": workspace_id,
-            "actorAgentId": args.agent_id,
-            "scope": "project",
-            "scopeId": project_id,
-            "memoryType": MEMORY_TYPE_BY_STEM.get(path.stem, "note"),
-            "subject": title,
-            "title": title,
-            "summary": public_safe_summary(relative_path, text),
-            "tags": [
-                "long-term-memory",
-                "dogfood-migration",
-                "docs-seed",
-                path.stem,
-            ],
-            "confidence": 0.91,
-            "source": relative_path,
-        }
-        status, payload = call_json(
-            base_url,
-            "/api/matm/memory-events/submit",
-            method="POST",
-            body=body,
-            token=token,
-            idempotency_key=idempotency_key(relative_path, text),
-        )
-        records.append(
-            {
-                "source": relative_path,
-                "title": title,
-                "httpStatus": status,
-                "ok": 200 <= int(status) < 300 and bool(payload.get("ok")),
-                "idempotencyKeyHash": "sha256:" + hashlib.sha256(idempotency_key(relative_path, text).encode("utf-8")).hexdigest(),
-                "event": event_shape(payload),
-                "payloadShape": sorted(payload.keys()),
-            }
-        )
+    secret = read_json(args.secret)
+    token = secret.get("apiKeySecret") or ""
+    if not token:
+        raise RuntimeError("secret file does not contain apiKeySecret")
+    actor_agent_id = args.agent_id or secret.get("codexAgentId") or "codex-agent"
+    context = workspace_context(base_url, token, secret.get("workspaceId"))
 
-    searches = []
-    for term in ("enterprise", "MATM", "hierarchical", "MemoryEndpoints"):
-        status, payload = call_json(
-            base_url,
-            "/api/matm/search",
-            token=token,
-            query=urlencode({"workspace_id": workspace_id, "q": term}),
-        )
-        searches.append(
-            {
-                "term": term,
-                "httpStatus": status,
-                "ok": 200 <= int(status) < 300 and bool(payload.get("ok")),
-                "count": payload.get("count"),
-                "memorySource": payload.get("memorySource"),
-                "filesystemDocsIncluded": payload.get("filesystemDocsIncluded"),
-                "payloadShape": sorted(payload.keys()),
-            }
-        )
+    status, register = call_json(
+        base_url,
+        "/api/matm/agents/register",
+        method="POST",
+        token=token,
+        idempotency_key_value="ltm-migration-register-" + actor_agent_id,
+        body={"workspaceId": context["workspaceId"], "agentId": actor_agent_id, "displayName": actor_agent_id},
+    )
+    require_ok(status, register, "register migration actor")
 
+    submitted = [submit_item(base_url, token, context, actor_agent_id, item) for item in items]
+    search = verify_search(base_url, token, context["workspaceId"])
+    ok = (
+        len(submitted) == len(items)
+        and search["count"] >= len(items)
+        and not context["rawKeyStoredByServer"]
+        and all(item["valuesRedacted"] and not item["rawPrivatePayloadStored"] for item in submitted)
+    )
     report = {
-        "schemaVersion": "memoryendpoints.hosted_long_term_memory_migration.v1",
+        "schemaVersion": "memoryendpoints.long_term_memory_migration.v1",
+        "mode": "live_apply",
         "baseUrl": base_url,
-        "workspaceId": workspace_id,
-        "projectId": project_id,
-        "actorAgentId": args.agent_id,
-        "apiKeyHash": token_hash(token),
-        "sourceDirectory": source_dir.relative_to(ROOT).as_posix(),
-        "submittedCount": len(records),
-        "successfulCount": sum(1 for item in records if item["ok"]),
-        "allSubmissionsOk": all(item["ok"] for item in records),
-        "searches": searches,
-        "records": records,
+        "sourceDirectory": display_path(source_dir),
+        "workspaceIdHash": "sha256:" + sha256_text(context["workspaceId"] or ""),
+        "projectId": context.get("projectId"),
+        "actorAgentId": actor_agent_id,
+        "itemCount": len(items),
+        "submittedCount": len(submitted),
+        "searchReadback": search,
+        "submitted": submitted,
+        "rawCredentialValuesStored": False,
+        "rawWorkspaceIdStored": False,
         "valuesRedacted": True,
-        "rawCredentialsStored": False,
+        "ok": ok,
     }
+    report_text = json.dumps(report, sort_keys=True)
+    report["rawCredentialValuesStored"] = bool(token and token in report_text)
+    report["rawWorkspaceIdStored"] = bool(context["workspaceId"] and context["workspaceId"] in report_text)
     write_json(args.report_out, report)
-    print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if report["allSubmissionsOk"] and all(item["ok"] for item in searches) else 1
+    print(json.dumps({"ok": ok, "mode": "live_apply", "itemCount": len(items), "submittedCount": len(submitted), "searchReadbackCount": search["count"], "report": display_path(args.report_out), "valuesRedacted": True}, indent=2, sort_keys=True))
+    return 0 if ok and not report["rawCredentialValuesStored"] and not report["rawWorkspaceIdStored"] else 1
 
 
 if __name__ == "__main__":

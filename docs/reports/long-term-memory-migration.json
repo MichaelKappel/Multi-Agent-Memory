@@ -1,0 +1,130 @@
+{
+  "actorAgentId": "codex-agent",
+  "baseUrl": "https://memoryendpoints.com",
+  "itemCount": 8,
+  "mode": "live_apply",
+  "ok": true,
+  "projectId": "project-7474be75df6643b89953",
+  "rawCredentialValuesStored": false,
+  "rawWorkspaceIdStored": false,
+  "schemaVersion": "memoryendpoints.long_term_memory_migration.v1",
+  "searchReadback": {
+    "count": 8,
+    "filesystemDocsIncluded": false,
+    "hostedItemTitles": [
+      "API Contract Summary",
+      "Architecture Notes",
+      "Enterprise Engineering Best Practices",
+      "MATM Architecture Strategy",
+      "MemoryEndpoints Project Charter",
+      "Release Verification Summary",
+      "Strategy Memory Index",
+      "System Targets"
+    ],
+    "memorySource": "hosted_workspace_store",
+    "status": 200,
+    "valuesRedacted": true
+  },
+  "sourceDirectory": "docs/long-term-memory",
+  "submitted": [
+    {
+      "eventId": "mem-676181fa30eb4f5bacc6",
+      "idempotentReplay": true,
+      "memoryType": "status",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/api-contract-summary.md",
+      "status": 201,
+      "title": "API Contract Summary",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-bd0874590c4d4c21b0e0",
+      "idempotentReplay": true,
+      "memoryType": "decision",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/architecture-notes.md",
+      "status": 201,
+      "title": "Architecture Notes",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-3a4d6eae509348ab9c4f",
+      "idempotentReplay": true,
+      "memoryType": "procedure",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/enterprise-engineering-best-practices.md",
+      "status": 201,
+      "title": "Enterprise Engineering Best Practices",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-6a64f9582ff64921a15d",
+      "idempotentReplay": true,
+      "memoryType": "procedure",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/matm-architecture-strategy.md",
+      "status": 201,
+      "title": "MATM Architecture Strategy",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-28b78078ecd84339a895",
+      "idempotentReplay": true,
+      "memoryType": "decision",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/project-charter.md",
+      "status": 201,
+      "title": "MemoryEndpoints Project Charter",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-4dd87cc1985741548d18",
+      "idempotentReplay": true,
+      "memoryType": "status",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/release-verification-summary.md",
+      "status": 201,
+      "title": "Release Verification Summary",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-f69851d78b49420c9b55",
+      "idempotentReplay": true,
+      "memoryType": "procedure",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/strategy-index.md",
+      "status": 201,
+      "title": "Strategy Memory Index",
+      "valuesRedacted": true
+    },
+    {
+      "eventId": "mem-4befe9659d7345bcb699",
+      "idempotentReplay": true,
+      "memoryType": "procedure",
+      "promotionState": "review_pending",
+      "rawPrivatePayloadStored": false,
+      "reviewStatus": "pending",
+      "sourcePath": "docs/long-term-memory/system-targets.md",
+      "status": 201,
+      "title": "System Targets",
+      "valuesRedacted": true
+    }
+  ],
+  "submittedCount": 8,
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

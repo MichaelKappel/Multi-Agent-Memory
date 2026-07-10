@@ -274,6 +274,51 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel">
+    <h2>Review Queue</h2>
+    <form class="console-grid" data-console-review>
+      <label>Review status
+        <select name="status">
+          <option value="pending" selected>pending</option>
+          <option value="quarantined">quarantined</option>
+          <option value="promoted">promoted</option>
+          <option value="rejected">rejected</option>
+          <option value="">all</option>
+        </select>
+      </label>
+      <button class="button" type="submit">Refresh reviews</button>
+    </form>
+    <div class="console-results" data-console-review-list>
+      <p class="empty-state">Review queue items will appear as promotion rows.</p>
+    </div>
+    <form class="console-grid" data-console-review-decision>
+      <label>Reviewer agent
+        <input name="reviewerAgentId" value="human-verifier-agent" required>
+      </label>
+      <label>Review id
+        <input name="reviewId" placeholder="select or paste a review id" required>
+      </label>
+      <label>Decision
+        <select name="decision">
+          <option value="promote" selected>promote</option>
+          <option value="reject">reject</option>
+          <option value="quarantine">quarantine</option>
+        </select>
+      </label>
+      <label class="wide">Review note
+        <textarea name="reviewNote" rows="3">Public-safe operator review from the human console.</textarea>
+      </label>
+      <button class="button primary" type="submit">Submit decision</button>
+    </form>
+    <details class="debug-json">
+      <summary>Review JSON</summary>
+      <pre data-console-review-output>{}</pre>
+    </details>
+    <details class="debug-json">
+      <summary>Decision JSON</summary>
+      <pre data-console-review-decision-output>{}</pre>
+    </details>
+  </section>
+  <section class="console-panel">
     <h2>Messages</h2>
     <form class="console-grid" data-console-message>
       <label>Sender agent

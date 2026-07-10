@@ -19,6 +19,7 @@
     projectId: "",
     agentId: "human-verifier-agent",
     firstNotificationId: "",
+    firstReviewId: "",
   };
 
   function pick(selector) {
@@ -308,6 +309,38 @@
     });
   }
 
+  function renderReviewSummary(payload) {
+    var node = pick("[data-console-review-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No review queue items matched this status."));
+      return;
+    }
+    node.appendChild(el("div", "result-count", items.length + " review item(s)."));
+    items.forEach(function (item) {
+      node.appendChild(resultRow(
+        "Review " + shortId(item.reviewId),
+        item.publicSafeSummary || "No public-safe summary returned.",
+        [
+          { text: item.status || "pending", kind: item.status === "promoted" ? "good" : (item.status === "quarantined" ? "warn" : "neutral") },
+          { text: item.firewallDecision || "review", kind: item.firewallDecision === "quarantine_for_review" ? "warn" : "good" },
+          { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+        ],
+        [
+          "proposed by " + (item.proposedByAgentId || "unknown"),
+          "review " + shortId(item.reviewId),
+          "memory " + shortId(item.memoryEventId),
+          "risk " + String(item.riskScore || 0),
+          item.createdAt || "",
+        ]
+      ));
+    });
+  }
+
   function authHeaders(extra) {
     var headers = {
       "Accept": "application/json",
@@ -420,6 +453,21 @@
     });
   }
 
+  function refreshReviewQueue(status) {
+    var qs = query({workspace_id: state.workspaceId, status: status || ""});
+    return api("/api/matm/review-queue?" + qs).then(function (payload) {
+      var first = payload.items && payload.items.length ? payload.items[0] : null;
+      state.firstReviewId = first ? first.reviewId : "";
+      render("[data-console-review-output]", payload);
+      renderReviewSummary(payload);
+      var decisionForm = pick("[data-console-review-decision]");
+      if (decisionForm && state.firstReviewId && !decisionForm.elements.reviewId.value) {
+        decisionForm.elements.reviewId.value = state.firstReviewId;
+      }
+      return payload;
+    });
+  }
+
   var authForm = pick("[data-console-auth]");
   if (authForm) {
     authForm.addEventListener("submit", function (event) {
@@ -433,6 +481,7 @@
       loadWorkspace()
         .then(function () { return registerAgent(state.agentId); })
         .then(function () { return refreshMemory("verification"); })
+        .then(function () { return refreshReviewQueue("pending"); })
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
         .then(refreshAudit)
@@ -499,6 +548,47 @@
       })
         .then(function () { return refreshInbox(state.agentId); })
         .then(function () { setStatus(target ? "Targeted message sent." : "Broadcast message sent.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var reviewForm = pick("[data-console-review]");
+  if (reviewForm) {
+    reviewForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      refreshReviewQueue(reviewForm.elements.status.value).catch(function (error) {
+        setStatus(error.message, true);
+      });
+    });
+  }
+
+  var reviewDecisionForm = pick("[data-console-review-decision]");
+  if (reviewDecisionForm) {
+    reviewDecisionForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var reviewId = reviewDecisionForm.elements.reviewId.value.trim() || state.firstReviewId;
+      var decision = reviewDecisionForm.elements.decision.value;
+      if (!reviewId) {
+        setStatus("Review id is required.", true);
+        return;
+      }
+      api("/api/matm/review-queue/decide", {
+        method: "POST",
+        headers: {"Idempotency-Key": "console-review-" + reviewId + "-" + decision + "-" + Date.now()},
+        body: {
+          workspaceId: state.workspaceId,
+          reviewId: reviewId,
+          reviewerAgentId: reviewDecisionForm.elements.reviewerAgentId.value.trim(),
+          decision: decision,
+          reviewNote: reviewDecisionForm.elements.reviewNote.value.trim(),
+        },
+      })
+        .then(function (payload) {
+          render("[data-console-review-decision-output]", payload);
+          return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending");
+        })
+        .then(function () { return refreshMemory(searchForm ? searchForm.elements.query.value : ""); })
+        .then(function () { setStatus("Review decision recorded and queue refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }
