@@ -100,6 +100,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(status.startswith("200"), route)
             self.assertIn("MemoryEndpoints", text)
 
+    def test_home_page_prioritizes_operational_entry_points(self):
+        status, _headers, text = call_app("/")
+
+        self.assertEqual("200 OK", status)
+        self.assertIn("Operational Surface", text)
+        self.assertIn('class="home-status"', text)
+        self.assertIn('href="/console"', text)
+        self.assertIn('href="/api/matm/readiness-result"', text)
+        self.assertNotIn("system-map", text)
+
     def test_console_exposes_operator_views_and_debug_json(self):
         status, _headers, text = call_app("/console")
 
@@ -136,6 +146,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('nav a[href*="multiagentmemory"]', css)
         self.assertIn(".summary-meta", css)
         self.assertIn("overflow-wrap: anywhere", css)
+        self.assertIn(".home-status", css)
+        self.assertIn("font-size: 2.15rem", css)
+        self.assertNotIn(".system-map", css)
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
@@ -158,6 +171,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Broadcast delivered", js)
         self.assertIn("Broadcast message sent; current inbox refreshed.", js)
         self.assertIn('target + " inbox refreshed."', js)
+
+    def test_console_js_exposes_copy_safe_row_ids(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("appendCopyActions", js)
+        self.assertIn("Copy memory id", js)
+        self.assertIn("Copy message id", js)
+        self.assertIn("Copy notification id", js)
+        self.assertIn("Copy receipt id", js)
+        self.assertIn("Copy audit id", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")

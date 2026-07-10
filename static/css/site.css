@@ -69,10 +69,10 @@ nav a,
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-  gap: 26px;
-  align-items: center;
-  padding: 34px clamp(18px, 4vw, 56px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 22px;
+  align-items: start;
+  padding: 26px clamp(18px, 4vw, 56px);
   border-bottom: 1px solid var(--line);
 }
 
@@ -90,7 +90,7 @@ h1 {
 }
 
 .hero h1 {
-  font-size: 2.55rem;
+  font-size: 2.15rem;
 }
 
 .lead {
@@ -103,34 +103,37 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
-.system-map {
-  margin: 0;
+.home-status {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  padding: 18px;
+  gap: 8px;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 8px;
+  padding: 14px;
 }
 
-.system-map div {
-  min-height: 84px;
+.home-status h2 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.home-status a {
   display: grid;
-  place-items: center;
+  gap: 2px;
   border: 1px solid var(--line);
-  background: #fff;
   border-radius: 6px;
-  font-weight: 700;
+  padding: 10px;
+  color: var(--ink);
+  background: #fff;
+  text-decoration: none;
 }
 
-.system-map figcaption {
-  grid-column: 1 / -1;
+.home-status span {
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
 .grid {

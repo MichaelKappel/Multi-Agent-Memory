@@ -160,7 +160,7 @@ def route_home(start_response):
   <div>
     <p class="eyebrow">Pure MATM endpoint reference</p>
     <h1>MemoryEndpoints.com</h1>
-    <p class="lead">A practical MATM operator console for bounded workspace memory, current messages, redacted receipts, and AI-ready discovery without third-party runtime dependencies.</p>
+    <p class="lead">A practical MATM operator surface for bounded workspace memory, current messages, redacted receipts, and AI-ready discovery.</p>
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/console">Open human console</a>
@@ -168,10 +168,13 @@ def route_home(start_response):
       <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
   </div>
-  <figure class="system-map" aria-label="MATM memory flow diagram">
-    <div>Agent</div><div>Inbox</div><div>Memory</div><div>Receipts</div>
-    <figcaption>Current messages remain separate from durable memory promotion.</figcaption>
-  </figure>
+  <aside class="home-status" aria-label="Operational entry points">
+    <h2>Operational Surface</h2>
+    <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
+    <a href="/api/matm/readiness-result"><strong>Readiness</strong><span>deployment and capability evidence</span></a>
+    <a href="/memory-lifecycle"><strong>Memory lifecycle</strong><span>review, promotion, acknowledgement</span></a>
+    <a href="/transparency"><strong>Transparency</strong><span>claims, redaction, unsupported areas</span></a>
+  </aside>
 </section>
 <section class="grid">
   <article><h2>For humans</h2><p>Readable pages explain what is live, planned, gated, and unsupported.</p></article>
