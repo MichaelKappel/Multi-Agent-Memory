@@ -126,9 +126,18 @@ def main(argv=None):
         "excludedNames": sorted(EXCLUDE_NAMES),
         "excludedPathPrefixes": sorted(EXCLUDE_PATH_PREFIXES),
         "excludedSuffixes": sorted(EXCLUDE_SUFFIXES),
-        "thirdPartyRuntimeDependencies": True,
-        "thirdPartyRuntimeDependencyNames": ["PyMySQL"],
-        "productionDatabaseBackend": "mysql_or_mariadb_required",
+        "thirdPartyRuntimeDependencies": False,
+        "thirdPartyRuntimeDependencyNames": [],
+        "packageManagedThirdPartyRuntimeDependencies": False,
+        "hostProvidedRuntimeAdapters": [
+            {
+                "name": "mysql_python_driver",
+                "source": "host_environment",
+                "packagedWithRepository": False,
+                "requiredWhen": "MEMORYENDPOINTS_STORE_BACKEND=mysql",
+            }
+        ],
+        "productionDatabaseBackend": "mysql_or_mariadb_verified_when_host_adapter_available",
         "build": {
             "sourceSha": build_info["sourceSha"],
             "sourceShaShort": build_info["sourceShaShort"],

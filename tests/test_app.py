@@ -2943,7 +2943,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("mysql_unavailable", payload["storeBackend"])
         self.assertFalse(payload["storeBackendVerified"])
         self.assertEqual("mysql_missing_settings", payload["storeBackendHealth"]["errorCode"])
-        self.assertTrue(payload["thirdPartyRuntimeDependencies"])
+        self.assertFalse(payload["thirdPartyRuntimeDependencies"])
+        self.assertFalse(payload["packageManagedThirdPartyRuntimeDependencies"])
+        self.assertEqual("mysql_python_driver", payload["hostProvidedRuntimeAdapters"][0]["name"])
+        self.assertFalse(payload["hostProvidedRuntimeAdapters"][0]["packagedWithRepository"])
 
     def test_sqlite_backend_supports_core_memory_flow(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"

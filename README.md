@@ -11,7 +11,7 @@ This repository contains two coordinated surfaces:
 | [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Live-verified and deployed from the pushed source SHA |
 | [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public memory model | Live-published companion documentation |
 
-The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no third-party runtime packages.
+The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no package-managed third-party runtime dependencies.
 
 ## What This Is
 
@@ -24,6 +24,8 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Protected workspace status, agent registration, memory submit/search, current-message, acknowledgement, and redacted receipt routes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
+
+The repository does not vendor, pin, install, or package a MySQL driver. The live cPanel deployment can use a host-provided MySQL Python adapter when the MySQL backend is selected; stdlib SQLite remains the pure-Python relational backend for environments that require zero host-provided database adapters.
 
 MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the architecture, memory boundary, GitHub repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API; MemoryEndpoints.com owns that runtime.
 

@@ -1823,6 +1823,8 @@ def route_public_json(path, start_response):
                 "storeBackendStatus": backend_health["storeBackendStatus"],
                 "storeBackendHealth": backend_health,
                 "thirdPartyRuntimeDependencies": backend_health["thirdPartyRuntimeDependencies"],
+                "packageManagedThirdPartyRuntimeDependencies": backend_health["packageManagedThirdPartyRuntimeDependencies"],
+                "hostProvidedRuntimeAdapters": backend_health["hostProvidedRuntimeAdapters"],
             },
         )
     if path == "/api/matm/live-capability-matrix":

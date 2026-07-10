@@ -109,7 +109,7 @@ def capability_matrix():
         "storageBackends": [
             {"backend": "file", "status": "current" if backend == "file" else "available_local", "dependency": "python_stdlib"},
             {"backend": "sqlite", "status": "current" if backend == "sqlite" else "available_local_relational", "dependency": "python_stdlib_sqlite3"},
-            {"backend": "mysql", "status": "current_verified" if mysql_active else "required_unverified", "dependency": "PyMySQL or mysql.connector"},
+            {"backend": "mysql", "status": "current_verified" if mysql_active else "required_unverified", "dependency": "host_provided_mysql_python_driver_not_packaged"},
         ],
         "runtimeBackendHealth": health,
         "currentMessageLane": {

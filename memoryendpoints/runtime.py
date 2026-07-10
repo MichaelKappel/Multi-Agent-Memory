@@ -22,8 +22,17 @@ def mysql_backend_name(backend):
     return backend in ("mysql", "mariadb")
 
 
-def backend_requires_third_party_runtime(backend):
-    return mysql_backend_name(backend)
+def host_provided_runtime_adapters(backend):
+    if not mysql_backend_name(backend):
+        return []
+    return [
+        {
+            "name": "mysql_python_driver",
+            "source": "host_environment",
+            "packagedWithRepository": False,
+            "requiredWhen": "MEMORYENDPOINTS_STORE_BACKEND=mysql",
+        }
+    ]
 
 
 def backend_error_code(backend, exc):
@@ -53,7 +62,9 @@ def store_backend_health():
         "storeBackend": configured,
         "storeBackendVerified": False,
         "storeBackendStatus": "not_checked",
-        "thirdPartyRuntimeDependencies": backend_requires_third_party_runtime(configured),
+        "thirdPartyRuntimeDependencies": False,
+        "packageManagedThirdPartyRuntimeDependencies": False,
+        "hostProvidedRuntimeAdapters": host_provided_runtime_adapters(configured),
         "valuesRedacted": True,
     }
     try:
