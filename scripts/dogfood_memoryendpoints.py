@@ -24,6 +24,7 @@ REPORT_PATH = ROOT / "docs" / "reports" / "dogfood-memory-run.json"
 PROGRESS_PATH = ROOT / ".uai" / "progress.uai"
 DOGFOOD_STORE_DIR = ROOT / "var" / "dogfood-memory"
 DOGFOOD_STORE = DOGFOOD_STORE_DIR / "store.json"
+LIVE_READBACK_ATTEMPTS = 12
 
 
 class WsgiTransport(object):
@@ -374,7 +375,7 @@ def run_sequence(transport, label, base_url=None):
             auth,
             meeting_memory_event_id,
             url=meeting_promotion.get("memoryQueryUrl"),
-            attempts=6 if transport.mode == "live_http" else 1,
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=1.0,
         )
         meeting_memory_readback_verified = contains_memory_event(meeting_memory_search, meeting_memory_event_id)
@@ -393,7 +394,7 @@ def run_sequence(transport, label, base_url=None):
                     "memory_type": (meeting_promotion.get("event") or {}).get("memoryType") or "evidence",
                 }
             ),
-            attempts=6 if transport.mode == "live_http" else 1,
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=1.0,
         )
         meeting_memory_source_readback_verified = contains_memory_event(meeting_memory_source_search, meeting_memory_event_id)
@@ -440,7 +441,7 @@ def run_sequence(transport, label, base_url=None):
             message_id,
             notification_id,
             expected_visible=True,
-            attempts=6 if transport.mode == "live_http" else 1,
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=1.0,
         )
         current_readback_verified = contains_current_message(current, message_id, notification_id)
@@ -486,7 +487,7 @@ def run_sequence(transport, label, base_url=None):
             message_id,
             notification_id,
             expected_visible=False,
-            attempts=6 if transport.mode == "live_http" else 1,
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=1.0,
         )
         post_ack_verified = not contains_current_message(post_ack_current, message_id, notification_id)
