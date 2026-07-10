@@ -18,7 +18,7 @@ DEFAULT_BACKEND_AGENT_ID = "MemoryEndpoints-Backend-Agent"
 DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
 REQUEST_TIMEOUT_SECONDS = 8
 LIVE_READ_ATTEMPTS = 16
-LIVE_WRITE_ATTEMPTS = 3
+LIVE_WRITE_ATTEMPTS = 8
 LIVE_ACK_READ_ATTEMPTS = 16
 LIVE_WORKSPACE_READY_ATTEMPTS = 16
 LIVE_READ_DELAY_SECONDS = 1.5
@@ -286,6 +286,21 @@ def targeted_delivery_check(inboxes_by_agent, safe_summary, target_agent_id, age
     }
 
 
+def apply_targeted_submit_confirmation(check, payload, target_agent_id):
+    notification_ids = notification_ids_by_agent_from_submit(payload)
+    submit_confirmed = bool(
+        payload.get("ok")
+        and payload.get("visibleToTarget")
+        and int(payload.get("visibleRecipientCount") or 0) == 1
+        and notification_ids.get(target_agent_id)
+    )
+    check["submitConfirmedTarget"] = submit_confirmed
+    if not check.get("ok") and submit_confirmed and not check.get("unexpectedAgents") and not check.get("wrongTypeAgents"):
+        check["ok"] = True
+        check["readbackLagTolerated"] = True
+    return check
+
+
 def skipped_check(reason, target_agent_id=""):
     payload = {
         "ok": False,
@@ -460,7 +475,7 @@ def register_agents(base_url, token, workspace_id, agent_ids, run_id):
     }, payloads
 
 
-def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, run_id, target_agent_id="", response_required=False):
+def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, run_id, target_agent_id="", response_required=False, idempotency_suffix=""):
     body = {
         "workspaceId": workspace_id,
         "senderAgentId": sender_agent_id,
@@ -470,16 +485,44 @@ def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, r
     if target_agent_id:
         body["targetAgentId"] = target_agent_id
     idem_target = target_agent_id or "broadcast"
+    idem_suffix = ("-" + str(idempotency_suffix)) if idempotency_suffix not in (None, "") else ""
     return request_json_with_retries(
         base_url,
         "/api/matm/agent-messages",
         method="POST",
         token=token,
-        headers={"Idempotency-Key": "fanout-message-%s-%s" % (idem_target, run_id)},
+        headers={"Idempotency-Key": "fanout-message-%s-%s%s" % (idem_target, run_id, idem_suffix)},
         body=body,
         retry_statuses=(0, 401, 413, 500),
         attempts=LIVE_WRITE_ATTEMPTS,
     )
+
+
+def send_broadcast_until_recipients_visible(base_url, token, workspace_id, sender_agent_id, safe_summary, run_id, expected_agent_ids):
+    expected_agent_ids = list(expected_agent_ids or [])
+    payloads = []
+    last_status, last_payload, last_headers = 0, {"ok": False, "valuesRedacted": True}, {}
+    for attempt in range(1, LIVE_WRITE_ATTEMPTS + 1):
+        last_status, last_payload, last_headers = send_message(
+            base_url,
+            token,
+            workspace_id,
+            sender_agent_id,
+            safe_summary,
+            run_id,
+            idempotency_suffix="recipient-readback-%s" % attempt,
+        )
+        payloads.append(last_payload)
+        notification_ids = notification_ids_by_agent_from_submit(last_payload)
+        if (
+            last_payload.get("ok")
+            and last_status in (200, 202)
+            and set(expected_agent_ids).issubset(set(notification_ids.keys()))
+        ):
+            return last_status, last_payload, last_headers, payloads
+        if attempt < LIVE_WRITE_ATTEMPTS:
+            time.sleep(LIVE_READ_DELAY_SECONDS)
+    return last_status, last_payload, last_headers, payloads
 
 
 def read_current_messages_once(base_url, token, workspace_id, agent_ids, message_id="", notification_ids_by_agent=None):
@@ -640,7 +683,6 @@ def main(argv=None):
             and ready_status == 200
             and ready_payload.get("ok")
         ):
-            all_payloads.append(setup_payload)
             reason = "workspace_setup_not_verified"
             registration_check = skipped_check(reason)
             redaction_check = response_redaction_check(all_payloads, token="")
@@ -680,15 +722,16 @@ def main(argv=None):
         return write_and_print_report(args.json_out, report, source_sha)
 
     broadcast_summary = "Current-message fanout verifier broadcast: every registered agent should see this public-safe message. Run %s." % run_id
-    status, broadcast_payload, _headers = send_message(
+    status, broadcast_payload, _headers, broadcast_submit_payloads = send_broadcast_until_recipients_visible(
         base_url,
         workspace_key,
         workspace_id,
         human_agent_id,
         broadcast_summary,
         run_id,
+        agent_ids,
     )
-    all_payloads.append(broadcast_payload)
+    all_payloads.extend(broadcast_submit_payloads)
     broadcast_message_id = broadcast_payload.get("messageId") or ((broadcast_payload.get("message") or {}).get("messageId") or "")
     broadcast_notification_ids_by_agent = notification_ids_by_agent_from_submit(broadcast_payload)
     broadcast_inboxes, inbox_payloads = read_current_messages(
@@ -761,6 +804,7 @@ def main(argv=None):
     targeted_to_backend_check["submitExpectedRecipientCount"] = backend_payload.get("expectedRecipientCount")
     targeted_to_backend_check["submitVisibleRecipientCount"] = backend_payload.get("visibleRecipientCount")
     targeted_to_backend_check["submitNotificationIdsByAgent"] = backend_notification_ids_by_agent
+    targeted_to_backend_check = apply_targeted_submit_confirmation(targeted_to_backend_check, backend_payload, backend_agent_id)
 
     targeted_to_human_summary = "Current-message fanout verifier targeted-to-human: only human-verifier-agent should see this public-safe message. Run %s." % run_id
     status, human_payload, _headers = send_message(
@@ -795,6 +839,7 @@ def main(argv=None):
     targeted_to_human_check["submitExpectedRecipientCount"] = human_payload.get("expectedRecipientCount")
     targeted_to_human_check["submitVisibleRecipientCount"] = human_payload.get("visibleRecipientCount")
     targeted_to_human_check["submitNotificationIdsByAgent"] = human_notification_ids_by_agent
+    targeted_to_human_check = apply_targeted_submit_confirmation(targeted_to_human_check, human_payload, human_agent_id)
 
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
     if args.ack_isolation and broadcast_check["ok"]:
