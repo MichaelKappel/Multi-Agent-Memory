@@ -2161,6 +2161,55 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("Broadcast to every active agent in the swarm.", observer["items"][0]["message"]["safeSummary"])
         self.assertEqual("broadcast", observer["items"][0]["delivery"]["messageType"])
 
+    def test_current_message_inbox_returns_newest_unread_first(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={
+                "companyLabel": "Inbox Ordering Company",
+                "label": "Inbox Ordering Workspace",
+                "projectLabel": "Inbox Ordering Project",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        for agent_id in ("codex-agent", "human-verifier-agent"):
+            status, _headers, _text = call_app(
+                "/api/matm/agents/register",
+                method="POST",
+                headers=auth,
+                body={"workspaceId": workspace_id, "agentId": agent_id, "displayName": agent_id},
+            )
+            self.assertEqual("201 Created", status)
+
+        for summary in ("Older coordination message.", "Newest coordination message."):
+            status, _headers, _text = call_app(
+                "/api/matm/agent-messages",
+                method="POST",
+                headers=auth,
+                body={
+                    "workspaceId": workspace_id,
+                    "senderAgentId": "human-verifier-agent",
+                    "targetAgentId": "codex-agent",
+                    "safeSummary": summary,
+                },
+            )
+            self.assertEqual("202 Accepted", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        inbox = json.loads(text)
+        self.assertEqual(2, inbox["unreadCount"])
+        self.assertEqual("Newest coordination message.", inbox["items"][0]["message"]["safeSummary"])
+        self.assertEqual("Older coordination message.", inbox["items"][1]["message"]["safeSummary"])
+
     def test_meeting_rooms_require_workspace_key_for_company_access(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -3225,8 +3274,58 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertEqual(workspace_id, row[1])
             self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), row[2])
 
+    def test_sqlite_backend_quota_and_broadcast_are_workspace_scoped(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "quota-scope.sqlite3")
+        workspaces = []
+        for index in range(2):
+            status, _headers, text = call_app(
+                "/api/matm/agent-setup/free-account",
+                method="POST",
+                body={"label": "Scoped Workspace %s" % index},
+            )
+            self.assertEqual("201 Created", status)
+            setup = json.loads(text)
+            auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+            agent_id = "scoped-agent-%s" % index
+            status, _headers, _text = call_app(
+                "/api/matm/agents/register",
+                method="POST",
+                headers=auth,
+                body={"workspaceId": setup["workspaceId"], "agentId": agent_id, "displayName": agent_id},
+            )
+            self.assertEqual("201 Created", status)
+            workspaces.append((setup["workspaceId"], auth, agent_id, setup["apiKeySecret"]))
+
+        for workspace_id, auth, agent_id, _token in workspaces:
+            status, _headers, text = call_app(
+                "/api/matm/workspace",
+                headers=auth,
+                query="workspace_id=%s" % workspace_id,
+            )
+            self.assertEqual("200 OK", status)
+            workspace = json.loads(text)["workspace"]
+            self.assertFalse(workspace["quotaExceeded"])
+            self.assertLess(workspace["storageUsedBytes"], workspace["storageLimitBytes"])
+
+            status, _headers, text = call_app(
+                "/api/matm/agent-messages",
+                method="POST",
+                headers=auth,
+                body={
+                    "workspaceId": workspace_id,
+                    "senderAgentId": agent_id,
+                    "safeSummary": "Workspace-scoped broadcast must fan out only to active agents in this workspace.",
+                },
+            )
+            self.assertEqual("202 Accepted", status)
+            broadcast = json.loads(text)
+            self.assertEqual(1, broadcast["expectedRecipientCount"])
+            self.assertEqual(1, broadcast["visibleRecipientCount"])
+
         sqlite_bytes = Path(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]).read_bytes()
-        self.assertNotIn(token.encode("utf-8"), sqlite_bytes)
+        for _workspace_id, _auth, _agent_id, token in workspaces:
+            self.assertNotIn(token.encode("utf-8"), sqlite_bytes)
         self.assertNotIn(b"apiKeySecret", sqlite_bytes)
 
     def test_mysql_backend_requires_real_configuration(self):

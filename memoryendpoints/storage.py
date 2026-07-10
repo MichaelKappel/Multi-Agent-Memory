@@ -1265,7 +1265,7 @@ class FileStore(object):
         message_id = str(message_id or "").strip()
         notification_id = str(notification_id or "").strip()
         messages = []
-            for note in reversed(data["notifications"]):
+        for note in reversed(data["notifications"]):
             if note.get("workspaceId") != workspace_id or note.get("status") != "unread":
                 continue
             if note.get("targetAgentId") and note.get("targetAgentId") != agent_id:
