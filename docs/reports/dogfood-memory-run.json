@@ -2,14 +2,14 @@
   "auditLogCount": 10,
   "auditTrailReadbackVerified": true,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-10T01:40:22Z",
+  "generatedAt": "2026-07-10T02:57:17Z",
   "latestDogfoodContractVerified": true,
   "liveAuditTrailReadbackVerified": true,
   "liveCoreDogfoodVerified": true,
   "liveDogfoodVerified": true,
-  "localAuditTrailReadbackVerified": true,
-  "localDogfoodVerified": true,
-  "mode": "combined",
+  "localAuditTrailReadbackVerified": false,
+  "localDogfoodVerified": false,
+  "mode": "live_http",
   "ok": true,
   "oneTimeKeyReturned": true,
   "optionalStepFailureCount": 0,
@@ -25,177 +25,7 @@
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-10T01:40:10Z",
-      "latestDogfoodContractVerified": true,
-      "liveCoreDogfoodVerified": false,
-      "liveDogfoodVerified": false,
-      "localDogfoodVerified": true,
-      "mode": "local_wsgi",
-      "ok": true,
-      "oneTimeKeyReturned": true,
-      "optionalStepFailureCount": 0,
-      "postAckUnreadCount": 0,
-      "rawCredentialValuesStored": false,
-      "rawPrivatePayloadsStored": false,
-      "rawWorkspaceIdStoredInReport": false,
-      "receiptCount": 1,
-      "requiredStepFailureCount": 0,
-      "searchReadbackCount": 1,
-      "steps": [
-        {
-          "httpStatus": "201 Created",
-          "name": "create_free_workspace",
-          "ok": true,
-          "payloadShape": [
-            "accountId",
-            "apiKeySecret",
-            "checkoutRequired",
-            "companyId",
-            "hierarchy",
-            "idempotencySupported",
-            "keyId",
-            "ok",
-            "projectId",
-            "rawKeyStoredByServer",
-            "showKeyOnce",
-            "storageLimitBytes",
-            "storeKeySafely",
-            "workspaceId"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "201 Created",
-          "name": "register_agent",
-          "ok": true,
-          "payloadShape": [
-            "agent",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "201 Created",
-          "name": "submit_memory",
-          "ok": true,
-          "payloadShape": [
-            "event",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "search_memory",
-          "ok": true,
-          "payloadShape": [
-            "count",
-            "filesystemDocsIncluded",
-            "filters",
-            "items",
-            "memorySource",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_review_queue",
-          "ok": true,
-          "payloadShape": [
-            "count",
-            "items",
-            "ok",
-            "promotionRoute",
-            "valuesRedacted"
-          ],
-          "required": false
-        },
-        {
-          "httpStatus": "202 Accepted",
-          "name": "create_current_message",
-          "ok": true,
-          "payloadShape": [
-            "message",
-            "notification",
-            "ok"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_current_message",
-          "ok": true,
-          "payloadShape": [
-            "currentMessageLane",
-            "items",
-            "ok",
-            "responseStates",
-            "unreadCount"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "acknowledge_notification",
-          "ok": true,
-          "payloadShape": [
-            "ok",
-            "receipt"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_redacted_receipts",
-          "ok": true,
-          "payloadShape": [
-            "count",
-            "items",
-            "ok",
-            "valuesRedacted"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_audit_log",
-          "ok": true,
-          "payloadShape": [
-            "count",
-            "items",
-            "ok",
-            "rawCredentialExposed",
-            "rawPayloadExposed",
-            "schemaVersion",
-            "valuesRedacted"
-          ],
-          "required": true
-        },
-        {
-          "httpStatus": "200 OK",
-          "name": "read_current_message_after_ack",
-          "ok": true,
-          "payloadShape": [
-            "currentMessageLane",
-            "items",
-            "ok",
-            "responseStates",
-            "unreadCount"
-          ],
-          "required": true
-        }
-      ],
-      "target": "local_wsgi_application",
-      "valuesRedacted": true,
-      "workspaceIdHash": "sha256:166f7135f1fa53c30c2879c4a755b0432a95a0b27f1a6c67a67afbcecb4b922c"
-    },
-    {
-      "auditLogCount": 10,
-      "auditTrailReadbackVerified": true,
-      "coreDogfoodWorkflowVerified": true,
-      "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-10T01:40:10Z",
+      "generatedAt": "2026-07-10T02:56:55Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": true,
       "liveDogfoodVerified": true,
@@ -286,9 +116,11 @@
           "name": "create_current_message",
           "ok": true,
           "payloadShape": [
+            "delivery",
             "message",
             "notification",
-            "ok"
+            "ok",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -298,10 +130,13 @@
           "ok": true,
           "payloadShape": [
             "currentMessageLane",
+            "deliveryCounts",
+            "filters",
             "items",
             "ok",
             "responseStates",
-            "unreadCount"
+            "unreadCount",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -321,6 +156,7 @@
           "ok": true,
           "payloadShape": [
             "count",
+            "filters",
             "items",
             "ok",
             "valuesRedacted"
@@ -333,6 +169,7 @@
           "ok": true,
           "payloadShape": [
             "count",
+            "filters",
             "items",
             "ok",
             "rawCredentialExposed",
@@ -348,17 +185,20 @@
           "ok": true,
           "payloadShape": [
             "currentMessageLane",
+            "deliveryCounts",
+            "filters",
             "items",
             "ok",
             "responseStates",
-            "unreadCount"
+            "unreadCount",
+            "valuesRedacted"
           ],
           "required": true
         }
       ],
       "target": "https://memoryendpoints.com",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:65463e86af9856cd93c3f577790feba751023dfb5b7964fdf26bc89267142d17"
+      "workspaceIdHash": "sha256:846d519eb8765ab2cd3d118339c47febc090415e64dc1be878a18b85ef923dca"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -438,9 +278,11 @@
       "name": "create_current_message",
       "ok": true,
       "payloadShape": [
+        "delivery",
         "message",
         "notification",
-        "ok"
+        "ok",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -450,10 +292,13 @@
       "ok": true,
       "payloadShape": [
         "currentMessageLane",
+        "deliveryCounts",
+        "filters",
         "items",
         "ok",
         "responseStates",
-        "unreadCount"
+        "unreadCount",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -473,6 +318,7 @@
       "ok": true,
       "payloadShape": [
         "count",
+        "filters",
         "items",
         "ok",
         "valuesRedacted"
@@ -485,6 +331,7 @@
       "ok": true,
       "payloadShape": [
         "count",
+        "filters",
         "items",
         "ok",
         "rawCredentialExposed",
@@ -500,14 +347,17 @@
       "ok": true,
       "payloadShape": [
         "currentMessageLane",
+        "deliveryCounts",
+        "filters",
         "items",
         "ok",
         "responseStates",
-        "unreadCount"
+        "unreadCount",
+        "valuesRedacted"
       ],
       "required": true
     }
   ],
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:65463e86af9856cd93c3f577790feba751023dfb5b7964fdf26bc89267142d17"
+  "workspaceIdHash": "sha256:846d519eb8765ab2cd3d118339c47febc090415e64dc1be878a18b85ef923dca"
 }
