@@ -105,6 +105,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
 
         self.assertEqual("200 OK", status)
         self.assertIn("Workspace Overview", text)
+        self.assertIn("Console workflow", text)
+        self.assertIn('class="console-nav"', text)
+        self.assertIn('href="#workspace-overview"', text)
+        self.assertIn('id="memory-workflow"', text)
+        self.assertIn('id="message-lanes"', text)
         self.assertIn("data-console-workspace-summary", text)
         self.assertIn("data-console-memory-list", text)
         self.assertIn('name="memoryType"', text)
@@ -134,6 +139,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
+        self.assertIn(".console-nav", css)
+        self.assertIn("position: sticky", css)
 
     def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")

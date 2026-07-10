@@ -222,6 +222,13 @@ def route_console(start_response):
 <section class="console-shell" data-matm-console>
   <h1>Human Verification Console</h1>
   <p>Enter a workspace key returned by the setup route. The key is used only in this browser session and is never printed back by this console.</p>
+  <nav class="console-nav" aria-label="Console workflow">
+    <a href="#workspace-overview">Workspace</a>
+    <a href="#memory-workflow">Memory</a>
+    <a href="#review-queue">Reviews</a>
+    <a href="#message-lanes">Messages</a>
+    <a href="#receipts-audit">Receipts/Audit</a>
+  </nav>
   <form class="console-grid" data-console-auth>
     <label>Workspace key
       <input type="password" name="workspaceKey" autocomplete="off" placeholder="me_live_..." required>
@@ -232,7 +239,7 @@ def route_console(start_response):
     <button class="button primary" type="submit">Load workspace</button>
   </form>
   <div class="console-status" data-console-status>Waiting for a key.</div>
-  <section class="console-panel">
+  <section class="console-panel" id="workspace-overview">
     <h2>Workspace Overview</h2>
     <div class="operator-summary" data-console-workspace-summary>
       <p class="empty-state">Load a workspace to see account, company, workspace, project, storage, and redaction status.</p>
@@ -242,7 +249,7 @@ def route_console(start_response):
       <pre data-console-workspace>{}</pre>
     </details>
   </section>
-  <section class="console-panel">
+  <section class="console-panel" id="memory-workflow">
     <h2>Memory</h2>
     <form class="console-grid" data-console-memory>
       <label>Actor agent
@@ -310,7 +317,7 @@ def route_console(start_response):
       <pre data-console-memory-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel">
+  <section class="console-panel" id="review-queue">
     <h2>Review Queue</h2>
     <form class="console-grid" data-console-review>
       <label>Review status
@@ -355,7 +362,7 @@ def route_console(start_response):
       <pre data-console-review-decision-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel">
+  <section class="console-panel" id="message-lanes">
     <h2>Messages</h2>
     <form class="console-grid" data-console-message>
       <label>Sender agent
@@ -403,7 +410,7 @@ def route_console(start_response):
       <pre data-console-inbox-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel">
+  <section class="console-panel" id="receipts-audit">
     <h2>Receipts And Audit</h2>
     <div class="actions">
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
