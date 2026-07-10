@@ -249,6 +249,40 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertEqual(1, len(all_payloads))
         self.assertEqual("broadcast summary", payloads["agent-a"]["items"][0]["message"]["safeSummary"])
 
+    def test_read_current_messages_polls_until_excluded_agent_clears(self):
+        calls = []
+        original_request_json = fanout.request_json
+
+        def fake_request_json(*_args, **_kwargs):
+            query = _kwargs.get("query") or ""
+            calls.append(query)
+            if "agent_id=agent-a" in query:
+                return 200, inbox(message_item("broadcast summary", "broadcast", "note-a"), broadcast=1), {}
+            if len(calls) <= 2:
+                return 200, inbox(message_item("broadcast summary", "broadcast", "note-b"), broadcast=1), {}
+            return 200, inbox(), {}
+
+        try:
+            fanout.request_json = fake_request_json
+            payloads, _all_payloads = fanout.read_current_messages(
+                "https://memoryendpoints.com",
+                "token",
+                "workspace-id",
+                ["agent-a", "agent-b"],
+                "msg-a",
+                expected_summary="broadcast summary",
+                expected_agents=["agent-a"],
+                excluded_agents=["agent-b"],
+                attempts=2,
+                delay_seconds=0,
+            )
+        finally:
+            fanout.request_json = original_request_json
+
+        self.assertEqual(4, len(calls))
+        self.assertEqual("broadcast summary", payloads["agent-a"]["items"][0]["message"]["safeSummary"])
+        self.assertEqual([], payloads["agent-b"]["items"])
+
     def test_read_current_messages_filters_by_agent_notification_id(self):
         calls = []
         original_request_json = fanout.request_json

@@ -427,10 +427,12 @@ def read_current_messages(
     notification_ids_by_agent=None,
     expected_summary="",
     expected_agents=None,
+    excluded_agents=None,
     attempts=1,
     delay_seconds=1.0,
 ):
     expected_agents = list(expected_agents or [])
+    excluded_agents = list(excluded_agents or [])
     attempts = max(1, int(attempts or 1))
     last_payloads, last_all_payloads = {}, []
     for attempt in range(attempts):
@@ -448,7 +450,12 @@ def read_current_messages(
                 for agent_id in expected_agents
                 if items_for_summary(last_payloads.get(agent_id), expected_summary)
             ]
-            if set(expected_agents).issubset(set(visible_agents)):
+            excluded_visible_agents = [
+                agent_id
+                for agent_id in excluded_agents
+                if items_for_summary(last_payloads.get(agent_id), expected_summary)
+            ]
+            if set(expected_agents).issubset(set(visible_agents)) and not excluded_visible_agents:
                 return last_payloads, last_all_payloads
         else:
             return last_payloads, last_all_payloads
@@ -634,8 +641,9 @@ def main(argv=None):
             notification_ids_by_agent=broadcast_notification_ids_by_agent,
             expected_summary=broadcast_summary,
             expected_agents=[agent_id for agent_id in agent_ids if agent_id != ack_agent_id],
-            attempts=4,
-            delay_seconds=1.0,
+            excluded_agents=[ack_agent_id],
+            attempts=8,
+            delay_seconds=1.5,
         )
         all_payloads.extend(inbox_payloads)
         ack_check = acknowledgement_isolation_check(before_payload, after_ack_inboxes, broadcast_summary, ack_agent_id, agent_ids)
