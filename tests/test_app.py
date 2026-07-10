@@ -3152,6 +3152,216 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         details = [detail for item in audit["items"] for detail in item["detailsSummary"]]
         self.assertIn("long-term reviews 1 sources / 2 actionable / 1 duplicates", details)
 
+    def test_sync_capabilities_are_public_and_advertised(self):
+        status, _headers, text = call_app("/api/matm/sync/capabilities")
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        capabilities = payload["data"]
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual("live", capabilities["status"])
+        self.assertEqual("/api/matm/sync/mutations", capabilities["routes"]["submitMutation"])
+        self.assertFalse(capabilities["retention"]["hardForgetSupported"])
+        self.assertTrue(capabilities["checkpointContract"]["monotonicServerSequence"])
+
+        status, _headers, text = call_app("/api/matm/openapi.json")
+        self.assertEqual("200 OK", status)
+        openapi = json.loads(text)
+        self.assertIn("/api/matm/sync/capabilities", openapi["paths"])
+        self.assertIn("/api/matm/sync/mutations", openapi["paths"])
+
+    def test_distributed_sync_lifecycle_is_idempotent_and_conflict_safe(self):
+        for backend in ("file", "sqlite"):
+            os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+            os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "%s-sync.sqlite" % backend)
+            status, _headers, text = call_app(
+                "/api/matm/agent-setup/free-account",
+                method="POST",
+                body={"label": "Distributed Sync Workspace " + backend},
+            )
+            self.assertEqual("201 Created", status)
+            setup = json.loads(text)
+            workspace_id = setup["workspaceId"]
+            token = setup["apiKeySecret"]
+            auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+
+            status, _headers, text = call_app(
+                "/api/matm/sync/devices",
+                method="POST",
+                headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-" + backend),
+                body={"workspaceId": workspace_id, "agentId": "tinyrustlm-agent", "deviceId": "device-" + backend, "label": "TinyRustLM " + backend},
+            )
+            self.assertEqual("201 Created", status)
+            device_payload = json.loads(text)
+            self.assertTrue(device_payload["ok"])
+            self.assertEqual(1, device_payload["device"]["authorityEpoch"])
+            self.assertFalse(device_payload["rawCredentialExposed"])
+
+            mutation_body = {
+                "workspaceId": workspace_id,
+                "actorAgentId": "tinyrustlm-agent",
+                "deviceId": "device-" + backend,
+                "deviceEpoch": 1,
+                "logicalMemoryId": "logical-sync-" + backend,
+                "operation": "upsert",
+                "title": "Offline sync memory",
+                "summary": "Public-safe sync mutation body.",
+                "scope": "goal",
+                "scopeId": "goal-tinyrustlm-hosted-memory",
+                "memoryType": "handoff",
+                "sourceRef": "tinyrustlm://offline-sync/test",
+            }
+            mutation_headers = dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mut-1-" + backend)
+            status, _headers, text = call_app(
+                "/api/matm/sync/mutations",
+                method="POST",
+                headers=mutation_headers,
+                body=mutation_body,
+            )
+            self.assertEqual("202 Accepted", status)
+            applied = json.loads(text)
+            self.assertTrue(applied["ok"])
+            self.assertTrue(applied["persisted"])
+            self.assertEqual("applied", applied["receipt"]["status"])
+            self.assertEqual(1, applied["serverSequence"])
+            self.assertEqual("active", applied["head"]["status"])
+            self.assertNotIn("sync-mut-1-" + backend, text)
+            first_revision_id = applied["revision"]["syncRevisionId"]
+
+            status, _headers, text = call_app(
+                "/api/matm/sync/mutations",
+                method="POST",
+                headers=mutation_headers,
+                body=mutation_body,
+            )
+            self.assertEqual("202 Accepted", status)
+            replay = json.loads(text)
+            self.assertTrue(replay["idempotentReplay"])
+            self.assertFalse(replay["idempotencyKeyExposed"])
+
+            status, _headers, text = call_app(
+                "/api/matm/sync/receipts",
+                headers=mutation_headers,
+                query="workspace_id=%s" % workspace_id,
+            )
+            self.assertEqual("200 OK", status)
+            receipt = json.loads(text)["receipt"]
+            self.assertEqual("applied", receipt["status"])
+            self.assertFalse(receipt["idempotencyKeyExposed"])
+            self.assertNotIn("sync-mut-1-" + backend, text)
+
+            status, _headers, text = call_app(
+                "/api/matm/sync/changes",
+                headers=auth,
+                query="workspace_id=%s&after_sequence=0&limit=10" % workspace_id,
+            )
+            self.assertEqual("200 OK", status)
+            changes = json.loads(text)["changes"]
+            self.assertEqual(1, changes["count"])
+            self.assertEqual(1, changes["indexedThroughSequence"])
+            self.assertEqual(1, changes["nextAfterSequence"])
+
+            status, _headers, text = call_app(
+                "/api/matm/sync/heads",
+                headers=auth,
+                query="workspace_id=%s&logical_memory_id=logical-sync-%s" % (workspace_id, backend),
+            )
+            self.assertEqual("200 OK", status)
+            heads = json.loads(text)
+            self.assertEqual(1, heads["count"])
+            self.assertEqual(first_revision_id, heads["items"][0]["headRevisionId"])
+
+            stale_body = dict(mutation_body)
+            stale_body["summary"] = "Public-safe stale sibling body."
+            status, _headers, text = call_app(
+                "/api/matm/sync/mutations",
+                method="POST",
+                headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mut-conflict-" + backend),
+                body=stale_body,
+            )
+            self.assertEqual("409 Conflict", status)
+            conflict = json.loads(text)
+            self.assertFalse(conflict["ok"])
+            self.assertEqual("conflict", conflict["receipt"]["status"])
+            self.assertEqual("parent_revision_mismatch", conflict["receipt"]["conflictCode"])
+
+            delete_body = dict(mutation_body)
+            delete_body["operation"] = "delete"
+            delete_body["parentRevisionId"] = first_revision_id
+            delete_body["summary"] = "Public-safe delete tombstone."
+            status, _headers, text = call_app(
+                "/api/matm/sync/mutations",
+                method="POST",
+                headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mut-delete-" + backend),
+                body=delete_body,
+            )
+            self.assertEqual("202 Accepted", status)
+            tombstone = json.loads(text)
+            self.assertEqual("tombstoned", tombstone["head"]["status"])
+
+            resurrect_body = dict(mutation_body)
+            resurrect_body["parentRevisionId"] = tombstone["revision"]["syncRevisionId"]
+            resurrect_body["summary"] = "Public-safe blocked resurrection."
+            status, _headers, text = call_app(
+                "/api/matm/sync/mutations",
+                method="POST",
+                headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mut-resurrect-" + backend),
+                body=resurrect_body,
+            )
+            self.assertEqual("409 Conflict", status)
+            resurrection = json.loads(text)
+            self.assertEqual("tombstone_resurrection_blocked", resurrection["receipt"]["conflictCode"])
+
+    def test_distributed_sync_rejects_revoked_device_with_receipt(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Revoked Sync Device Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        status, _headers, _text = call_app(
+            "/api/matm/sync/devices",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-revoked"),
+            body={"workspaceId": workspace_id, "agentId": "tinyrustlm-agent", "deviceId": "device-revoked"},
+        )
+        self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/devices/revoke",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-revoke"),
+            body={"workspaceId": workspace_id, "agentId": "tinyrustlm-agent", "deviceId": "device-revoked"},
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual("revoked", json.loads(text)["device"]["status"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/mutations",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mut-revoked"),
+            body={
+                "workspaceId": workspace_id,
+                "actorAgentId": "tinyrustlm-agent",
+                "deviceId": "device-revoked",
+                "deviceEpoch": 1,
+                "logicalMemoryId": "logical-revoked",
+                "operation": "upsert",
+                "summary": "Public-safe revoked device mutation.",
+            },
+        )
+        self.assertEqual("409 Conflict", status)
+        payload = json.loads(text)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("rejected", payload["receipt"]["status"])
+        self.assertEqual("device_revoked", payload["receipt"]["conflictCode"])
+        self.assertTrue(payload["persisted"])
+        self.assertFalse(payload["rawCredentialExposed"])
+
     def test_idempotency_replay_and_conflict(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -3285,13 +3495,180 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/api/matm/review-queue/decide", routes)
         self.assertIn("/api/matm/audit-log", routes)
         self.assertIn("/api/matm/meeting-messages/promote", routes)
+        self.assertIn("/api/matm/sync/capabilities", routes)
+        self.assertIn("/api/matm/sync/mutations", routes)
         self.assertEqual(["GET", "POST"], routes["/api/matm/meeting-rooms"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/meeting-messages/promote"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/notifications/ack"]["methods"])
+        self.assertEqual(["POST"], routes["/api/matm/sync/mutations"]["methods"])
+        self.assertEqual(["GET"], routes["/api/matm/sync/changes"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/review-queue/decide"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/audit-log"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/connector-contract"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/openapi.json"]["methods"])
+
+    def test_sync_capabilities_are_public(self):
+        status, _headers, text = call_app("/api/matm/sync/capabilities")
+        self.assertEqual("200 OK", status)
+        data = json.loads(text)["data"]
+        self.assertEqual("memoryendpoints.distributed_sync_capabilities.v1", data["schemaVersion"])
+        self.assertEqual("/api/matm/sync/mutations", data["routes"]["submitMutation"])
+        self.assertFalse(data["mutationContract"]["hardForgetSupported"])
+        self.assertFalse(data["rawCredentialExposed"])
+
+    def test_sync_routes_support_device_mutation_conflict_and_readback(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Sync API Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/devices",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-register-1"),
+            body={
+                "workspaceId": workspace_id,
+                "agentId": "sync-agent",
+                "deviceId": "device-a",
+                "label": "Sync test device",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        register = json.loads(text)
+        self.assertTrue(register["ok"])
+        self.assertEqual("active", register["device"]["status"])
+        self.assertEqual(1, register["device"]["authorityEpoch"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/mutations",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "actorAgentId": "sync-agent",
+                "deviceId": "device-a",
+                "logicalMemoryId": "logical-1",
+                "title": "Missing idempotency",
+                "summary": "This write must be refused without an idempotency key.",
+            },
+        )
+        self.assertEqual("422 Unprocessable Entity", status)
+        self.assert_safe_noop_response(text, "idempotency_key_required")
+
+        mutation_body = {
+            "workspaceId": workspace_id,
+            "actorAgentId": "sync-agent",
+            "deviceId": "device-a",
+            "deviceEpoch": 1,
+            "logicalMemoryId": "logical-1",
+            "operation": "upsert",
+            "title": "Distributed sync memory",
+            "summary": "Public-safe distributed sync mutation.",
+            "source": "memoryendpoints://tests/sync-route",
+        }
+        status, _headers, text = call_app(
+            "/api/matm/sync/mutations",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-1"),
+            body=mutation_body,
+        )
+        self.assertEqual("202 Accepted", status)
+        mutation = json.loads(text)
+        self.assertTrue(mutation["ok"])
+        self.assertEqual("applied", mutation["status"])
+        self.assertEqual(1, mutation["serverSequence"])
+        self.assertFalse(mutation["receipt"]["idempotencyKeyExposed"])
+        self.assertIn("/api/matm/sync/receipts?", mutation["receiptQueryUrl"])
+        receipt_id = mutation["receipt"]["receiptId"]
+        head_revision_id = mutation["revision"]["syncRevisionId"]
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/mutations",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-1"),
+            body=mutation_body,
+        )
+        self.assertEqual("202 Accepted", status)
+        replay = json.loads(text)
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(receipt_id, replay["receipt"]["receiptId"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/receipts",
+            headers=auth,
+            query="workspace_id=%s&receipt_id=%s" % (workspace_id, receipt_id),
+        )
+        self.assertEqual("200 OK", status)
+        receipt = json.loads(text)["receipt"]
+        self.assertEqual(receipt_id, receipt["receiptId"])
+        self.assertFalse(receipt["idempotencyKeyExposed"])
+        self.assertNotIn("sync-mutation-1", json.dumps(receipt))
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/changes",
+            headers=auth,
+            query="workspace_id=%s&after_sequence=0&logical_memory_id=logical-1" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        changes = json.loads(text)["changes"]
+        self.assertEqual(1, changes["count"])
+        self.assertEqual(head_revision_id, changes["items"][0]["syncRevisionId"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/heads",
+            headers=auth,
+            query="workspace_id=%s&logical_memory_id=logical-1" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        heads = json.loads(text)
+        self.assertEqual(1, heads["count"])
+        self.assertEqual(head_revision_id, heads["items"][0]["headRevisionId"])
+
+        conflict_body = dict(mutation_body, parentRevisionId="stale-parent", title="Conflicting sync memory")
+        status, _headers, text = call_app(
+            "/api/matm/sync/mutations",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-conflict-1"),
+            body=conflict_body,
+        )
+        self.assertEqual("409 Conflict", status)
+        conflict = json.loads(text)
+        self.assertFalse(conflict["ok"])
+        self.assertTrue(conflict["conflict"])
+        self.assertEqual("parent_revision_mismatch", conflict["receipt"]["conflictCode"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/devices/rotate",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-rotate-1"),
+            body={"workspaceId": workspace_id, "agentId": "sync-agent", "deviceId": "device-a"},
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual(2, json.loads(text)["device"]["authorityEpoch"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/devices/revoke",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="sync-device-revoke-1"),
+            body={"workspaceId": workspace_id, "agentId": "sync-agent", "deviceId": "device-a"},
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual("revoked", json.loads(text)["device"]["status"])
+
+        status, _headers, text = call_app(
+            "/api/matm/sync/retention",
+            headers=auth,
+            query="workspace_id=%s" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        retention = json.loads(text)["policy"]
+        self.assertFalse(retention["hardForgetSupported"])
+        self.assertEqual(30, retention["tombstoneRetentionDays"])
 
     def test_readiness_result_does_not_overclaim_completion(self):
         status, _headers, text = call_app("/api/matm/readiness-result")
@@ -3581,6 +3958,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "matm_meeting_messages",
                     "matm_routing_decisions",
                     "matm_meeting_reads",
+                    "matm_sync_devices",
+                    "matm_sync_heads",
+                    "matm_sync_revisions",
+                    "matm_sync_receipts",
                     "matm_idempotency",
                     "matm_outbox_events",
                     "matm_storage_ledger",

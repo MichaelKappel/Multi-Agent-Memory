@@ -11,7 +11,7 @@ from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, R
 from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
-from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory
+from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 
 
@@ -225,6 +225,42 @@ def _current_message_confirmation(store, workspace_id, message, notes):
         ),
         "valuesRedacted": True,
     }
+
+
+def _sync_retention_policy():
+    return {
+        "schemaVersion": "memoryendpoints.sync_retention.v1",
+        "tombstoneRetentionDays": 30,
+        "hardForgetSupported": False,
+        "hardForgetBehavior": "safe_rejected_receipt",
+        "rawPrivatePayloadStored": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _sync_operator_summary(action, payload=None):
+    payload = payload or {}
+    receipt = payload.get("receipt") or {}
+    return {
+        "schemaVersion": "memoryendpoints.sync_operator_summary.v1",
+        "action": action,
+        "status": payload.get("status") or receipt.get("status") or "unknown",
+        "serverSequence": payload.get("serverSequence") or receipt.get("serverSequence") or 0,
+        "conflict": bool(payload.get("conflict") or receipt.get("conflict")),
+        "conflictCode": receipt.get("conflictCode") or "",
+        "persisted": bool(payload.get("persisted")),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _sync_query_url(route, workspace_id, params=None):
+    active = {"workspace_id": workspace_id}
+    active.update(params or {})
+    return _protected_query_url(route, active)
 
 
 def _admin_diagnostics_path():
@@ -1918,6 +1954,8 @@ def route_public_json(path, start_response):
         )
     if path == "/api/matm/live-capability-matrix":
         return json_response(start_response, {"ok": True, "data": capability_matrix()})
+    if path == "/api/matm/sync/capabilities":
+        return json_response(start_response, {"ok": True, "data": sync_capabilities()})
     if path == "/api/matm/connector-contract":
         return json_response(start_response, {"ok": True, "data": connector_contract()})
     if path == "/api/matm/openapi.json":
@@ -2177,6 +2215,174 @@ def route_protected(environ, start_response, path):
                 "ok": True,
                 "workspace": status,
                 "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/sync/retention" and method == "GET":
+        _audit_read(store, workspace_id, auth, "sync.retention.read", path, {"hardForgetSupported": False})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "policy": _sync_retention_policy(),
+                "capabilities": sync_capabilities(),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/sync/devices" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-register", body)
+        if replay:
+            return replay
+        agent_id = body.get("agentId") or body.get("agent_id")
+        if not agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Sync device registration requires agentId.", "agent_id_required")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this sync device.", "quota_exceeded")
+        device = store.register_sync_device(workspace_id, agent_id, body.get("deviceId") or body.get("device_id"), body.get("label"))
+        visible_device = store.sync_device(workspace_id, device.get("deviceId") if device else "")
+        if not visible_device:
+            return problem(start_response, "500 Internal Server Error", "Sync device was not persisted", "The sync device could not be confirmed by readback after registration.", "sync_device_not_persisted")
+        device = visible_device
+        payload = {
+            "ok": True,
+            "persisted": True,
+            "visibleToAgent": True,
+            "deviceAuthorityPersisted": True,
+            "canonicalWorkspaceId": workspace_id,
+            "canonicalDeviceId": device.get("deviceId"),
+            "device": device,
+            "capabilityRoute": "/api/matm/sync/capabilities",
+            "operatorSummary": {
+                "schemaVersion": "memoryendpoints.sync_device_operator_summary.v1",
+                "action": "register",
+                "deviceId": device.get("deviceId"),
+                "status": device.get("status"),
+                "authorityEpoch": device.get("authorityEpoch"),
+                "persisted": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "sync-device-register", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
+    if path in ("/api/matm/sync/devices/rotate", "/api/matm/sync/devices/revoke") and method == "POST":
+        operation = "rotate" if path.endswith("/rotate") else "revoke"
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-" + operation, body)
+        if replay:
+            return replay
+        agent_id = body.get("agentId") or body.get("agent_id")
+        device_id = body.get("deviceId") or body.get("device_id")
+        if not agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Sync device authority changes require agentId.", "agent_id_required")
+        if not device_id:
+            return problem(start_response, "422 Unprocessable Entity", "Device id required", "Sync device authority changes require deviceId.", "device_id_required")
+        if operation == "rotate":
+            device, error = store.rotate_sync_device(workspace_id, device_id, agent_id)
+        else:
+            device, error = store.revoke_sync_device(workspace_id, device_id, agent_id)
+        if error == "device_not_found":
+            return problem(start_response, "404 Not Found", "Sync device not found", "No matching sync device exists for this workspace.", "sync_device_not_found")
+        if error == "device_revoked":
+            return problem(start_response, "409 Conflict", "Sync device revoked", "Revoked devices cannot be rotated.", "sync_device_revoked")
+        visible_device = store.sync_device(workspace_id, device.get("deviceId") if device else "")
+        if not visible_device:
+            return problem(start_response, "500 Internal Server Error", "Sync device was not persisted", "The sync device authority change could not be confirmed by readback.", "sync_device_not_persisted")
+        device = visible_device
+        payload = {
+            "ok": True,
+            "persisted": True,
+            "visibleToAgent": True,
+            "deviceAuthorityPersisted": True,
+            "canonicalWorkspaceId": workspace_id,
+            "canonicalDeviceId": device.get("deviceId"),
+            "device": device,
+            "capabilityRoute": "/api/matm/sync/capabilities",
+            "operatorSummary": {
+                "schemaVersion": "memoryendpoints.sync_device_operator_summary.v1",
+                "action": operation,
+                "deviceId": device.get("deviceId"),
+                "status": device.get("status"),
+                "authorityEpoch": device.get("authorityEpoch"),
+                "persisted": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "sync-device-" + operation, body, payload, "200 OK")
+        return json_response(start_response, payload)
+    if path == "/api/matm/sync/mutations" and method == "POST":
+        if not idem:
+            return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Sync mutations require Idempotency-Key so offline clients can recover receipts after timeouts.", "idempotency_key_required")
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-mutation", body)
+        if replay:
+            return replay
+        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
+        if not actor_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "Sync mutations require actorAgentId.", "actor_agent_id_required")
+        if len(body.get("summary") or "") > 4000:
+            return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Sync mutation summaries must be at most 4000 characters.", "summary_too_long")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this sync mutation.", "quota_exceeded")
+        payload, http_status = store.submit_sync_mutation(workspace_id, actor_agent_id, body, idem)
+        payload["operatorSummary"] = _sync_operator_summary("mutation", payload)
+        payload["receiptQueryUrl"] = _sync_query_url("/api/matm/sync/receipts", workspace_id, {"receipt_id": (payload.get("receipt") or {}).get("receiptId")})
+        payload["changesQueryUrl"] = _sync_query_url("/api/matm/sync/changes", workspace_id, {"after_sequence": max(0, int(payload.get("serverSequence") or 0) - 1)})
+        payload["headsQueryUrl"] = _sync_query_url("/api/matm/sync/heads", workspace_id, {"logical_memory_id": (payload.get("receipt") or {}).get("logicalMemoryId")})
+        payload["capabilityRoute"] = "/api/matm/sync/capabilities"
+        store.record_idempotency(workspace_id, idem, "sync-mutation", body, payload, http_status)
+        return json_response(start_response, payload, http_status)
+    if path == "/api/matm/sync/receipts" and method == "GET":
+        lookup_key = _idempotency_key(environ) or query.get("idempotency_key") or query.get("idempotencyKey") or ""
+        receipt_id = query.get("receipt_id") or query.get("receiptId") or ""
+        if not lookup_key and not receipt_id:
+            return problem(start_response, "422 Unprocessable Entity", "Receipt lookup key required", "Provide Idempotency-Key, idempotency_key, or receipt_id.", "sync_receipt_lookup_required")
+        receipt = store.sync_receipt(workspace_id, lookup_key, receipt_id)
+        if not receipt:
+            return problem(start_response, "404 Not Found", "Sync receipt not found", "No matching sync mutation receipt exists for this workspace.", "sync_receipt_not_found")
+        _audit_read(store, workspace_id, auth, "sync.receipt.read", path, {"receiptStatus": receipt.get("status"), "idempotencyKeyProvided": bool(lookup_key)})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "receipt": receipt,
+                "operatorSummary": _sync_operator_summary("receipt", {"receipt": receipt, "persisted": True}),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/sync/changes" and method == "GET":
+        changes = store.sync_changes(
+            workspace_id,
+            query.get("after_sequence") or query.get("afterSequence") or 0,
+            query.get("limit") or 50,
+            query.get("logical_memory_id") or query.get("logicalMemoryId") or "",
+        )
+        _audit_read(store, workspace_id, auth, "sync.changes.read", path, {"count": changes["count"], "indexedThroughSequence": changes["indexedThroughSequence"]})
+        return json_response(start_response, {"ok": True, "changes": changes, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
+    if path == "/api/matm/sync/heads" and method == "GET":
+        logical_memory_id = query.get("logical_memory_id") or query.get("logicalMemoryId") or ""
+        heads = store.sync_heads(workspace_id, logical_memory_id)
+        _audit_read(store, workspace_id, auth, "sync.heads.read", path, {"count": len(heads), "logicalMemoryIdProvided": bool(logical_memory_id)})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "items": heads,
+                "count": len(heads),
+                "filters": {"logicalMemoryId": logical_memory_id} if logical_memory_id else {},
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,

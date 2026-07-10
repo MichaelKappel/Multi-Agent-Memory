@@ -14,6 +14,7 @@ ROUTE_TABLE = [
     {"route": "/transparency", "access": "public", "methods": ["GET"], "purpose": "Support boundaries and no-op behavior."},
     {"route": "/api/version", "access": "public", "methods": ["GET"], "purpose": "Runtime version and dependency facts."},
     {"route": "/api/matm/live-capability-matrix", "access": "public", "methods": ["GET"], "purpose": "Current MATM capability state."},
+    {"route": "/api/matm/sync/capabilities", "access": "public", "methods": ["GET"], "purpose": "Public distributed-sync v1 capability negotiation."},
     {"route": "/api/matm/connector-contract", "access": "public", "methods": ["GET"], "purpose": "Public-safe optional connector integration contract for external agents and apps."},
     {"route": "/api/matm/openapi.json", "access": "public", "methods": ["GET"], "purpose": "Bounded OpenAPI-style golden-path route schema."},
     {"route": "/api/matm/route-inventory", "access": "public", "methods": ["GET"], "purpose": "Route inventory with access boundaries."},
@@ -47,6 +48,14 @@ ROUTE_TABLE = [
     {"route": "/api/matm/notifications/ack", "access": "protected", "methods": ["POST"], "purpose": "Notification acknowledgement and receipt creation."},
     {"route": "/api/matm/receipts", "access": "protected", "methods": ["GET"], "purpose": "Redacted receipt readback."},
     {"route": "/api/matm/audit-log", "access": "protected", "methods": ["GET"], "purpose": "Redacted protected-operation audit log readback."},
+    {"route": "/api/matm/sync/devices", "access": "protected", "methods": ["POST"], "purpose": "Register a public-safe distributed-sync device authority."},
+    {"route": "/api/matm/sync/devices/rotate", "access": "protected", "methods": ["POST"], "purpose": "Rotate a sync device authority epoch."},
+    {"route": "/api/matm/sync/devices/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke a sync device authority epoch."},
+    {"route": "/api/matm/sync/mutations", "access": "protected", "methods": ["POST"], "purpose": "Submit conflict-safe public-safe memory sync mutation."},
+    {"route": "/api/matm/sync/receipts", "access": "protected", "methods": ["GET"], "purpose": "Read mutation receipt by idempotency key or receipt id."},
+    {"route": "/api/matm/sync/changes", "access": "protected", "methods": ["GET"], "purpose": "Read monotonic sync revision changes after a checkpoint sequence."},
+    {"route": "/api/matm/sync/heads", "access": "protected", "methods": ["GET"], "purpose": "Read authoritative sync memory heads."},
+    {"route": "/api/matm/sync/retention", "access": "protected", "methods": ["GET"], "purpose": "Read sync tombstone and hard-forget retention policy."},
 ]
 
 
@@ -58,6 +67,56 @@ PROTECTED_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "
 
 def current_store_backend():
     return configured_store_backend()
+
+
+def sync_capabilities():
+    return {
+        "schemaVersion": "memoryendpoints.distributed_sync_capabilities.v1",
+        "status": "live",
+        "protocol": "memoryendpoints-distributed-sync-v1",
+        "capabilityRoute": "/api/matm/sync/capabilities",
+        "routes": {
+            "registerDevice": "/api/matm/sync/devices",
+            "rotateDevice": "/api/matm/sync/devices/rotate",
+            "revokeDevice": "/api/matm/sync/devices/revoke",
+            "submitMutation": "/api/matm/sync/mutations",
+            "lookupReceipt": "/api/matm/sync/receipts",
+            "changes": "/api/matm/sync/changes",
+            "heads": "/api/matm/sync/heads",
+            "retention": "/api/matm/sync/retention",
+        },
+        "mutationContract": {
+            "operations": ["upsert", "delete", "hard_forget"],
+            "hardForgetSupported": False,
+            "hardForgetBehavior": "safe_rejected_receipt",
+            "idempotency": "Idempotency-Key is required for reliable offline retry; receipt lookup accepts the same key and never echoes it.",
+            "revisionFields": ["logicalMemoryId", "parentRevisionId", "syncRevisionId", "serverSequence", "bodyHash", "conflict", "conflictCode"],
+            "conflictSemantics": "When an existing head is updated without the current parent revision, the mutation is durably recorded as conflict and the head remains unchanged.",
+            "tombstoneSemantics": "Delete creates a tombstoned head; later upsert is blocked unless a future explicit resurrection contract is advertised.",
+        },
+        "checkpointContract": {
+            "changesQuery": ["workspace_id", "after_sequence", "limit", "logical_memory_id"],
+            "monotonicServerSequence": True,
+            "indexedThroughWatermark": True,
+            "paginationFields": ["items", "hasMore", "nextAfterSequence", "indexedThroughSequence", "checkpoint"],
+        },
+        "deviceContract": {
+            "authorityEpoch": True,
+            "registerRotateRevoke": True,
+            "revokedDeviceMutationBehavior": "safe_rejected_receipt",
+            "secretMaterialStored": False,
+        },
+        "retention": {
+            "tombstoneRetentionDays": 30,
+            "hardForgetSupported": False,
+            "rawPrivatePayloadStored": False,
+            "valuesRedacted": True,
+        },
+        "publicSafeOnly": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "valuesRedacted": True,
+    }
 
 
 def capability_matrix():
@@ -160,6 +219,7 @@ def capability_matrix():
                 "allowedHeaders": ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"],
             },
         },
+        "distributedSync": sync_capabilities(),
         "auditTrail": {
             "status": "live",
             "readRoute": "/api/matm/audit-log",
@@ -447,6 +507,7 @@ def openapi_spec():
     paths = {
         "/api/matm/connector-contract": {"get": public_operation("Read connector contract", "Public-safe integration contract, browser key guidance, CORS boundary, and UI expectations.")},
         "/api/matm/live-capability-matrix": {"get": public_operation("Read capability matrix", "Current public capability state and truth boundaries.")},
+        "/api/matm/sync/capabilities": {"get": public_operation("Read distributed sync capabilities", "Public-safe distributed-sync v1 routes, revision/conflict semantics, checkpoint fields, and retention policy.")},
         "/api/matm/readiness-result": {"get": public_operation("Read readiness result", "Current readiness evidence without certification overclaim.")},
         "/api/matm/route-inventory": {"get": public_operation("Read route inventory", "Public and protected route inventory with access boundaries.")},
         "/api/matm/agent-setup/free-account": {
@@ -486,6 +547,14 @@ def openapi_spec():
         "/api/matm/notifications/ack": {"post": protected_operation("Acknowledge notification", "Mark a notification read and create a redacted receipt.", "post", True)},
         "/api/matm/receipts": {"get": protected_operation("Read receipts", "Read redacted acknowledgement receipts for an agent.")},
         "/api/matm/audit-log": {"get": protected_operation("Read audit log", "Read redacted protected-operation audit events.")},
+        "/api/matm/sync/devices": {"post": protected_operation("Register sync device", "Register a public-safe device authority for distributed sync.", "post", True)},
+        "/api/matm/sync/devices/rotate": {"post": protected_operation("Rotate sync device", "Increment device authority epoch for distributed sync.", "post", True)},
+        "/api/matm/sync/devices/revoke": {"post": protected_operation("Revoke sync device", "Revoke a device authority so future mutations are rejected with durable receipts.", "post", True)},
+        "/api/matm/sync/mutations": {"post": protected_operation("Submit sync mutation", "Submit a public-safe conflict-aware memory sync mutation with durable idempotent receipt.", "post", True)},
+        "/api/matm/sync/receipts": {"get": protected_operation("Read sync receipt", "Read mutation receipt by Idempotency-Key header, idempotency_key query, or receipt_id query.")},
+        "/api/matm/sync/changes": {"get": protected_operation("Read sync changes", "Read monotonic server-sequence revisions after a checkpoint.")},
+        "/api/matm/sync/heads": {"get": protected_operation("Read sync heads", "Read authoritative logical memory heads.")},
+        "/api/matm/sync/retention": {"get": protected_operation("Read sync retention", "Read tombstone retention and hard-forget support policy.")},
     }
     paths["/api/matm/search"]["get"]["parameters"] = [
         {"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Authorized workspace id."},

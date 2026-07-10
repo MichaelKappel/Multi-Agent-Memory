@@ -201,6 +201,10 @@ def _blank_store():
         "meetingMessages": [],
         "meetingReads": [],
         "routingDecisions": [],
+        "syncDevices": {},
+        "syncHeads": {},
+        "syncRevisions": [],
+        "syncReceipts": [],
         "outboxEvents": [],
         "storageLedger": [],
         "auditLog": [],
@@ -903,6 +907,295 @@ class FileStore(object):
         }
         self._save(data)
 
+    def _sync_device_key(self, workspace_id, device_id):
+        return "%s:%s" % (workspace_id, device_id)
+
+    def _sync_head_key(self, workspace_id, logical_memory_id):
+        return "%s:%s" % (workspace_id, logical_memory_id)
+
+    def _sync_next_sequence(self, data, workspace_id):
+        current = 0
+        for revision in data.get("syncRevisions", []):
+            if revision.get("workspaceId") == workspace_id:
+                current = max(current, int(revision.get("serverSequence") or 0))
+        return current + 1
+
+    def _public_sync_revision(self, revision):
+        item = dict(revision or {})
+        item["valuesRedacted"] = True
+        item["rawPayloadExposed"] = False
+        return item
+
+    def _public_sync_receipt(self, receipt):
+        item = dict(receipt or {})
+        item["idempotencyKeyExposed"] = False
+        item["valuesRedacted"] = True
+        item["rawCredentialExposed"] = False
+        item["rawPayloadExposed"] = False
+        return item
+
+    def register_sync_device(self, workspace_id, agent_id, device_id=None, label=None):
+        data = self._load()
+        now = utc_now()
+        device_id = (device_id or _id("device")).strip()
+        key = self._sync_device_key(workspace_id, device_id)
+        device = data.setdefault("syncDevices", {}).get(key)
+        if device:
+            device["agentId"] = agent_id or device.get("agentId") or ""
+            device["label"] = redact_text(label or device.get("label") or device_id)
+            device["status"] = "active"
+            device["updatedAt"] = now
+        else:
+            device = {
+                "deviceId": device_id,
+                "workspaceId": workspace_id,
+                "agentId": agent_id or "",
+                "label": redact_text(label or device_id),
+                "status": "active",
+                "authorityEpoch": 1,
+                "createdAt": now,
+                "updatedAt": now,
+                "revokedAt": None,
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            }
+            data.setdefault("syncDevices", {})[key] = device
+        self.audit(data, "sync.device.register", agent_id, device_id, workspace_id, {"authorityEpoch": device["authorityEpoch"]})
+        self._save(data)
+        return dict(device)
+
+    def rotate_sync_device(self, workspace_id, device_id, agent_id):
+        data = self._load()
+        key = self._sync_device_key(workspace_id, device_id)
+        device = data.setdefault("syncDevices", {}).get(key)
+        if not device:
+            return None, "device_not_found"
+        if device.get("status") == "revoked":
+            return None, "device_revoked"
+        device["authorityEpoch"] = int(device.get("authorityEpoch") or 1) + 1
+        device["updatedAt"] = utc_now()
+        self.audit(data, "sync.device.rotate", agent_id, device_id, workspace_id, {"authorityEpoch": device["authorityEpoch"]})
+        self._save(data)
+        return dict(device), None
+
+    def revoke_sync_device(self, workspace_id, device_id, agent_id):
+        data = self._load()
+        key = self._sync_device_key(workspace_id, device_id)
+        device = data.setdefault("syncDevices", {}).get(key)
+        if not device:
+            return None, "device_not_found"
+        device["status"] = "revoked"
+        device["revokedAt"] = utc_now()
+        device["updatedAt"] = device["revokedAt"]
+        self.audit(data, "sync.device.revoke", agent_id, device_id, workspace_id, {"authorityEpoch": device.get("authorityEpoch")})
+        self._save(data)
+        return dict(device), None
+
+    def sync_device(self, workspace_id, device_id):
+        if not device_id:
+            return None
+        data = self._load()
+        return data.setdefault("syncDevices", {}).get(self._sync_device_key(workspace_id, device_id))
+
+    def submit_sync_mutation(self, workspace_id, actor_agent_id, body, idempotency_key=""):
+        data = self._load()
+        now = utc_now()
+        body = body or {}
+        operation = (body.get("operation") or "upsert").strip().lower()
+        if operation not in ("upsert", "delete", "hard_forget"):
+            operation = "upsert"
+        logical_memory_id = (body.get("logicalMemoryId") or body.get("logical_memory_id") or "").strip()
+        if not logical_memory_id and operation == "upsert":
+            logical_memory_id = _id("lm")
+        parent_revision_id = (body.get("parentRevisionId") or body.get("parent_revision_id") or "").strip()
+        device_id = (body.get("deviceId") or body.get("device_id") or "").strip()
+        device_epoch = int(body.get("deviceEpoch") or body.get("device_epoch") or 0)
+        idempotency_hash = _hash(idempotency_key) if idempotency_key else ""
+        body_hash = (body.get("bodyHash") or body.get("body_hash") or "").strip()
+        if not re.fullmatch(r"[a-fA-F0-9]{64}", body_hash or ""):
+            body_hash = _canonical_hash(
+                {
+                    "operation": operation,
+                    "logicalMemoryId": logical_memory_id,
+                    "parentRevisionId": parent_revision_id,
+                    "summary": body.get("summary") or "",
+                    "title": body.get("title") or "",
+                    "source": body.get("source") or body.get("sourceRef") or "",
+                }
+            )
+        device = self.sync_device(workspace_id, device_id) if device_id else None
+        reject_code = ""
+        if device_id and not device:
+            reject_code = "device_not_registered"
+        elif device and device.get("status") == "revoked":
+            reject_code = "device_revoked"
+        elif device and device_epoch and int(device.get("authorityEpoch") or 1) != device_epoch:
+            reject_code = "device_epoch_mismatch"
+        elif operation == "hard_forget":
+            reject_code = "hard_forget_not_supported"
+        elif not logical_memory_id:
+            reject_code = "logical_memory_id_required"
+
+        head_key = self._sync_head_key(workspace_id, logical_memory_id)
+        current_head = data.setdefault("syncHeads", {}).get(head_key)
+        current_head_revision = (current_head or {}).get("headRevisionId") or ""
+        current_status = (current_head or {}).get("status") or ""
+        conflict_code = ""
+        if not reject_code:
+            if operation in ("upsert", "delete") and current_head and parent_revision_id != current_head_revision:
+                conflict_code = "parent_revision_mismatch"
+            if operation == "upsert" and current_status == "tombstoned":
+                conflict_code = "tombstone_resurrection_blocked"
+            if operation == "delete" and not current_head:
+                conflict_code = "head_not_found"
+
+        server_sequence = self._sync_next_sequence(data, workspace_id)
+        revision_id = _id("syncrev")
+        receipt_id = _id("syncreceipt")
+        status = "rejected" if reject_code else ("conflict" if conflict_code else "applied")
+        http_status = "409 Conflict" if status in ("rejected", "conflict") else "202 Accepted"
+        revision = None
+        if status != "rejected":
+            revision = {
+                "syncRevisionId": revision_id,
+                "workspaceId": workspace_id,
+                "logicalMemoryId": logical_memory_id,
+                "parentRevisionId": parent_revision_id,
+                "memoryEventId": "",
+                "actorAgentId": actor_agent_id,
+                "deviceId": device_id,
+                "deviceEpoch": device_epoch or (int(device.get("authorityEpoch") or 0) if device else 0),
+                "operation": operation,
+                "status": status,
+                "conflict": bool(conflict_code),
+                "conflictCode": conflict_code,
+                "serverSequence": server_sequence,
+                "bodyHash": body_hash,
+                "source": redact_text(body.get("sourceRef") or body.get("source") or "api"),
+                "title": redact_text(body.get("title") or logical_memory_id),
+                "summary": redact_text(body.get("summary") or ""),
+                "scope": (body.get("scope") or "workspace").strip().lower(),
+                "scopeId": body.get("scopeId") or body.get("scope_id") or workspace_id,
+                "memoryType": (body.get("memoryType") or body.get("memory_type") or "note").strip().lower(),
+                "tombstone": operation == "delete",
+                "createdAt": now,
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            }
+            data.setdefault("syncRevisions", []).append(revision)
+            if status == "applied":
+                data.setdefault("syncHeads", {})[head_key] = {
+                    "logicalMemoryId": logical_memory_id,
+                    "workspaceId": workspace_id,
+                    "headRevisionId": revision_id,
+                    "serverSequence": server_sequence,
+                    "indexedThroughSequence": server_sequence,
+                    "status": "tombstoned" if operation == "delete" else "active",
+                    "updatedAt": now,
+                    "valuesRedacted": True,
+                    "rawPayloadExposed": False,
+                }
+            self._append_outbox(data, workspace_id, "matm.sync.revision.%s" % status, "sync_revision", revision_id, revision)
+            self._append_storage_ledger(data, workspace_id, "sync_revision", revision_id, revision)
+
+        receipt = {
+            "receiptId": receipt_id,
+            "workspaceId": workspace_id,
+            "idempotencyKeyHash": ("sha256:" + idempotency_hash) if idempotency_hash else "",
+            "bodyHash": body_hash,
+            "logicalMemoryId": logical_memory_id,
+            "syncRevisionId": revision_id if revision else "",
+            "serverSequence": server_sequence if revision else 0,
+            "status": status,
+            "conflict": bool(conflict_code),
+            "conflictCode": conflict_code or reject_code,
+            "currentHeadRevisionId": current_head_revision,
+            "httpStatus": http_status,
+            "createdAt": now,
+            "idempotencyKeyExposed": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        data.setdefault("syncReceipts", []).append(receipt)
+        self.audit(data, "sync.mutation.%s" % status, actor_agent_id, receipt_id, workspace_id, {"logicalMemoryId": logical_memory_id, "serverSequence": receipt["serverSequence"], "conflictCode": receipt["conflictCode"]})
+        self._save(data)
+        return {
+            "ok": status == "applied",
+            "persisted": True,
+            "receipt": self._public_sync_receipt(receipt),
+            "revision": self._public_sync_revision(revision) if revision else None,
+            "head": data.setdefault("syncHeads", {}).get(head_key),
+            "serverSequence": receipt["serverSequence"],
+            "indexedThroughSequence": (data.setdefault("syncHeads", {}).get(head_key) or {}).get("indexedThroughSequence") or 0,
+            "conflict": status == "conflict",
+            "status": status,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }, http_status
+
+    def sync_receipt(self, workspace_id, idempotency_key=None, receipt_id=None):
+        data = self._load()
+        idempotency_hash = _hash(idempotency_key) if idempotency_key else ""
+        for receipt in reversed(data.get("syncReceipts", [])):
+            if receipt.get("workspaceId") != workspace_id:
+                continue
+            if receipt_id and receipt.get("receiptId") == receipt_id:
+                return self._public_sync_receipt(receipt)
+            if idempotency_hash and receipt.get("idempotencyKeyHash") == "sha256:" + idempotency_hash:
+                return self._public_sync_receipt(receipt)
+        return None
+
+    def sync_changes(self, workspace_id, after_sequence=0, limit=50, logical_memory_id=None):
+        try:
+            after_value = int(after_sequence or 0)
+        except (TypeError, ValueError):
+            after_value = 0
+        limit_value = max(1, min(int(limit or 50), 200))
+        data = self._load()
+        rows = [
+            self._public_sync_revision(item)
+            for item in data.get("syncRevisions", [])
+            if item.get("workspaceId") == workspace_id
+            and int(item.get("serverSequence") or 0) > after_value
+            and (not logical_memory_id or item.get("logicalMemoryId") == logical_memory_id)
+        ]
+        rows.sort(key=lambda item: int(item.get("serverSequence") or 0))
+        page = rows[:limit_value]
+        latest = max([int(item.get("serverSequence") or 0) for item in data.get("syncRevisions", []) if item.get("workspaceId") == workspace_id] or [0])
+        return {
+            "items": page,
+            "count": len(page),
+            "hasMore": len(rows) > len(page),
+            "nextAfterSequence": int(page[-1].get("serverSequence") or after_value) if page else after_value,
+            "indexedThroughSequence": latest,
+            "checkpoint": {
+                "workspaceIdHash": "sha256:" + _hash(workspace_id),
+                "afterSequence": after_value,
+                "nextAfterSequence": int(page[-1].get("serverSequence") or after_value) if page else after_value,
+                "valuesRedacted": True,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def sync_heads(self, workspace_id, logical_memory_id=None):
+        data = self._load()
+        items = []
+        for head in data.setdefault("syncHeads", {}).values():
+            if head.get("workspaceId") != workspace_id:
+                continue
+            if logical_memory_id and head.get("logicalMemoryId") != logical_memory_id:
+                continue
+            item = dict(head)
+            item["valuesRedacted"] = True
+            item["rawPayloadExposed"] = False
+            items.append(item)
+        items.sort(key=lambda item: (item.get("logicalMemoryId") or ""))
+        return items
+
     def create_free_account(self, label, company_label=None, project_label=None):
         data = self._load()
         created_at = utc_now()
@@ -1367,6 +1660,10 @@ class SQLiteStore(FileStore):
         "matm_routing_decisions",
         "matm_meeting_messages",
         "matm_meeting_rooms",
+        "matm_sync_receipts",
+        "matm_sync_revisions",
+        "matm_sync_heads",
+        "matm_sync_devices",
         "matm_outbox_events",
         "matm_storage_ledger",
         "matm_audit_log",
@@ -1715,6 +2012,94 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_meeting_reads_agent ON matm_meeting_reads (workspace_id, agent_id);
+
+            CREATE TABLE IF NOT EXISTS matm_sync_devices (
+              device_record_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              agent_id TEXT,
+              label TEXT NOT NULL,
+              status TEXT NOT NULL,
+              authority_epoch INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              revoked_at TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (workspace_id, device_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_sync_devices_workspace ON matm_sync_devices (workspace_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_sync_heads (
+              head_record_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              logical_memory_id TEXT NOT NULL,
+              head_revision_id TEXT,
+              server_sequence INTEGER NOT NULL,
+              indexed_through_sequence INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (workspace_id, logical_memory_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_sync_heads_workspace ON matm_sync_heads (workspace_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_sync_revisions (
+              sync_revision_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              logical_memory_id TEXT NOT NULL,
+              parent_revision_id TEXT,
+              memory_event_id TEXT,
+              actor_agent_id TEXT,
+              device_id TEXT,
+              device_epoch INTEGER NOT NULL DEFAULT 0,
+              operation TEXT NOT NULL,
+              status TEXT NOT NULL,
+              conflict INTEGER NOT NULL DEFAULT 0,
+              conflict_code TEXT,
+              server_sequence INTEGER NOT NULL,
+              body_hash TEXT NOT NULL,
+              source_uri TEXT,
+              title TEXT NOT NULL,
+              public_safe_summary TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT,
+              memory_type TEXT NOT NULL,
+              tombstone INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_sync_revisions_sequence ON matm_sync_revisions (workspace_id, server_sequence);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_sync_revisions_logical ON matm_sync_revisions (workspace_id, logical_memory_id, server_sequence);
+
+            CREATE TABLE IF NOT EXISTS matm_sync_receipts (
+              receipt_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              idempotency_key_hash TEXT,
+              body_hash TEXT NOT NULL,
+              logical_memory_id TEXT,
+              sync_revision_id TEXT,
+              server_sequence INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL,
+              conflict INTEGER NOT NULL DEFAULT 0,
+              conflict_code TEXT,
+              current_head_revision_id TEXT,
+              http_status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              idempotency_key_exposed INTEGER NOT NULL DEFAULT 0,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (sync_revision_id) REFERENCES matm_sync_revisions (sync_revision_id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_sync_receipts_idem ON matm_sync_receipts (workspace_id, idempotency_key_hash);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_sync_receipts_workspace ON matm_sync_receipts (workspace_id, created_at);
 
             CREATE TABLE IF NOT EXISTS matm_idempotency (
               record_key TEXT PRIMARY KEY,
@@ -3740,6 +4125,504 @@ class SQLiteStore(FileStore):
                     )
                     return receipt
 
+    def _sync_device_record_id(self, workspace_id, device_id):
+        return "syncdevice-" + _hash("%s:%s" % (workspace_id, device_id))[:20]
+
+    def _sync_head_record_id(self, workspace_id, logical_memory_id):
+        return "synchead-" + _hash("%s:%s" % (workspace_id, logical_memory_id))[:20]
+
+    def sync_device(self, workspace_id, device_id):
+        if not device_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM matm_sync_devices WHERE workspace_id = ? AND device_id = ?",
+                    (workspace_id, device_id),
+                ).fetchone()
+        if not row:
+            return None
+        return {
+            "deviceId": row["device_id"],
+            "workspaceId": row["workspace_id"],
+            "agentId": row["agent_id"],
+            "label": row["label"],
+            "status": row["status"],
+            "authorityEpoch": row["authority_epoch"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "revokedAt": row["revoked_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def register_sync_device(self, workspace_id, agent_id, device_id=None, label=None):
+        now = utc_now()
+        device_id = (device_id or _id("device")).strip()
+        record_id = self._sync_device_record_id(workspace_id, device_id)
+        safe_label = redact_text(label or device_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    existing = connection.execute(
+                        "SELECT * FROM matm_sync_devices WHERE workspace_id = ? AND device_id = ?",
+                        (workspace_id, device_id),
+                    ).fetchone()
+                    if existing:
+                        connection.execute(
+                            """
+                            UPDATE matm_sync_devices
+                            SET agent_id = ?, label = ?, status = 'active', updated_at = ?
+                            WHERE workspace_id = ? AND device_id = ?
+                            """,
+                            (agent_id or existing["agent_id"], safe_label, now, workspace_id, device_id),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_sync_devices (
+                              device_record_id, workspace_id, device_id, agent_id, label, status,
+                              authority_epoch, created_at, updated_at, revoked_at, values_redacted,
+                              raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record_id,
+                                workspace_id,
+                                device_id,
+                                agent_id or "",
+                                safe_label,
+                                "active",
+                                1,
+                                now,
+                                now,
+                                None,
+                                self._int_bool(True),
+                                self._int_bool(False),
+                            ),
+                        )
+                    self._record_audit_sql(connection, workspace_id, "sync.device.register", agent_id, device_id, {"deviceIdHash": _hash(device_id), "valuesRedacted": True})
+        return self.sync_device(workspace_id, device_id)
+
+    def rotate_sync_device(self, workspace_id, device_id, agent_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT * FROM matm_sync_devices WHERE workspace_id = ? AND device_id = ?",
+                        (workspace_id, device_id),
+                    ).fetchone()
+                    if not row:
+                        return None, "device_not_found"
+                    if row["status"] == "revoked":
+                        return None, "device_revoked"
+                    epoch = int(row["authority_epoch"] or 1) + 1
+                    now = utc_now()
+                    connection.execute(
+                        """
+                        UPDATE matm_sync_devices
+                        SET authority_epoch = ?, updated_at = ?
+                        WHERE workspace_id = ? AND device_id = ?
+                        """,
+                        (epoch, now, workspace_id, device_id),
+                    )
+                    self._record_audit_sql(connection, workspace_id, "sync.device.rotate", agent_id, device_id, {"authorityEpoch": epoch})
+        return self.sync_device(workspace_id, device_id), None
+
+    def revoke_sync_device(self, workspace_id, device_id, agent_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT * FROM matm_sync_devices WHERE workspace_id = ? AND device_id = ?",
+                        (workspace_id, device_id),
+                    ).fetchone()
+                    if not row:
+                        return None, "device_not_found"
+                    now = utc_now()
+                    connection.execute(
+                        """
+                        UPDATE matm_sync_devices
+                        SET status = 'revoked', revoked_at = ?, updated_at = ?
+                        WHERE workspace_id = ? AND device_id = ?
+                        """,
+                        (now, now, workspace_id, device_id),
+                    )
+                    self._record_audit_sql(connection, workspace_id, "sync.device.revoke", agent_id, device_id, {"authorityEpoch": row["authority_epoch"]})
+        return self.sync_device(workspace_id, device_id), None
+
+    def _sync_head_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "logicalMemoryId": row["logical_memory_id"],
+            "workspaceId": row["workspace_id"],
+            "headRevisionId": row["head_revision_id"],
+            "serverSequence": row["server_sequence"],
+            "indexedThroughSequence": row["indexed_through_sequence"],
+            "status": row["status"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _sync_revision_from_row(self, row):
+        return {
+            "syncRevisionId": row["sync_revision_id"],
+            "workspaceId": row["workspace_id"],
+            "logicalMemoryId": row["logical_memory_id"],
+            "parentRevisionId": row["parent_revision_id"],
+            "memoryEventId": row["memory_event_id"],
+            "actorAgentId": row["actor_agent_id"],
+            "deviceId": row["device_id"],
+            "deviceEpoch": row["device_epoch"],
+            "operation": row["operation"],
+            "status": row["status"],
+            "conflict": self._bool(row["conflict"]),
+            "conflictCode": row["conflict_code"],
+            "serverSequence": row["server_sequence"],
+            "bodyHash": row["body_hash"],
+            "source": row["source_uri"],
+            "title": row["title"],
+            "summary": row["public_safe_summary"],
+            "scope": row["scope_type"],
+            "scopeId": row["scope_id"],
+            "memoryType": row["memory_type"],
+            "tombstone": self._bool(row["tombstone"]),
+            "createdAt": row["created_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _sync_receipt_from_row(self, row):
+        return {
+            "receiptId": row["receipt_id"],
+            "workspaceId": row["workspace_id"],
+            "idempotencyKeyHash": row["idempotency_key_hash"],
+            "bodyHash": row["body_hash"],
+            "logicalMemoryId": row["logical_memory_id"],
+            "syncRevisionId": row["sync_revision_id"],
+            "serverSequence": row["server_sequence"],
+            "status": row["status"],
+            "conflict": self._bool(row["conflict"]),
+            "conflictCode": row["conflict_code"],
+            "currentHeadRevisionId": row["current_head_revision_id"],
+            "httpStatus": row["http_status"],
+            "createdAt": row["created_at"],
+            "idempotencyKeyExposed": self._bool(row["idempotency_key_exposed"]),
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _sql_value(self, row, key, default=None):
+        if not row:
+            return default
+        try:
+            return row[key]
+        except (KeyError, IndexError, TypeError):
+            return default
+
+    def _sync_next_sequence_sql(self, connection, workspace_id):
+        row = connection.execute(
+            "SELECT COALESCE(MAX(server_sequence), 0) AS max_sequence FROM matm_sync_revisions WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        return int(self._sql_value(row, "max_sequence", 0) or 0) + 1
+
+    def submit_sync_mutation(self, workspace_id, actor_agent_id, body, idempotency_key=""):
+        body = body or {}
+        operation = (body.get("operation") or "upsert").strip().lower()
+        if operation not in ("upsert", "delete", "hard_forget"):
+            operation = "upsert"
+        logical_memory_id = (body.get("logicalMemoryId") or body.get("logical_memory_id") or "").strip()
+        if not logical_memory_id and operation == "upsert":
+            logical_memory_id = _id("lm")
+        parent_revision_id = (body.get("parentRevisionId") or body.get("parent_revision_id") or "").strip()
+        device_id = (body.get("deviceId") or body.get("device_id") or "").strip()
+        device_epoch = int(body.get("deviceEpoch") or body.get("device_epoch") or 0)
+        body_hash = (body.get("bodyHash") or body.get("body_hash") or "").strip()
+        if not re.fullmatch(r"[a-fA-F0-9]{64}", body_hash or ""):
+            body_hash = _canonical_hash({"operation": operation, "logicalMemoryId": logical_memory_id, "parentRevisionId": parent_revision_id, "summary": body.get("summary") or "", "title": body.get("title") or "", "source": body.get("source") or body.get("sourceRef") or ""})
+        idempotency_hash = ("sha256:" + _hash(idempotency_key)) if idempotency_key else ""
+        now = utc_now()
+        revision = None
+        head = None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    device = None
+                    if device_id:
+                        device = connection.execute(
+                            "SELECT * FROM matm_sync_devices WHERE workspace_id = ? AND device_id = ?",
+                            (workspace_id, device_id),
+                        ).fetchone()
+                    reject_code = ""
+                    if device_id and not device:
+                        reject_code = "device_not_registered"
+                    elif device and device["status"] == "revoked":
+                        reject_code = "device_revoked"
+                    elif device and device_epoch and int(device["authority_epoch"] or 1) != device_epoch:
+                        reject_code = "device_epoch_mismatch"
+                    elif operation == "hard_forget":
+                        reject_code = "hard_forget_not_supported"
+                    elif not logical_memory_id:
+                        reject_code = "logical_memory_id_required"
+                    head_row = connection.execute(
+                        "SELECT * FROM matm_sync_heads WHERE workspace_id = ? AND logical_memory_id = ?",
+                        (workspace_id, logical_memory_id),
+                    ).fetchone() if logical_memory_id else None
+                    current_head_revision = self._sql_value(head_row, "head_revision_id", "") or ""
+                    current_status = self._sql_value(head_row, "status", "") or ""
+                    conflict_code = ""
+                    if not reject_code:
+                        if operation in ("upsert", "delete") and head_row and parent_revision_id != current_head_revision:
+                            conflict_code = "parent_revision_mismatch"
+                        if operation == "upsert" and current_status == "tombstoned":
+                            conflict_code = "tombstone_resurrection_blocked"
+                        if operation == "delete" and not head_row:
+                            conflict_code = "head_not_found"
+                    server_sequence = self._sync_next_sequence_sql(connection, workspace_id)
+                    revision_id = _id("syncrev")
+                    receipt_id = _id("syncreceipt")
+                    status = "rejected" if reject_code else ("conflict" if conflict_code else "applied")
+                    http_status = "409 Conflict" if status in ("rejected", "conflict") else "202 Accepted"
+                    if status != "rejected":
+                        revision = {
+                            "syncRevisionId": revision_id,
+                            "workspaceId": workspace_id,
+                            "logicalMemoryId": logical_memory_id,
+                            "parentRevisionId": parent_revision_id,
+                            "memoryEventId": "",
+                            "actorAgentId": actor_agent_id,
+                            "deviceId": device_id,
+                            "deviceEpoch": device_epoch or (int(device["authority_epoch"] or 0) if device else 0),
+                            "operation": operation,
+                            "status": status,
+                            "conflict": bool(conflict_code),
+                            "conflictCode": conflict_code,
+                            "serverSequence": server_sequence,
+                            "bodyHash": body_hash,
+                            "source": redact_text(body.get("sourceRef") or body.get("source") or "api"),
+                            "title": redact_text(body.get("title") or logical_memory_id),
+                            "summary": redact_text(body.get("summary") or ""),
+                            "scope": (body.get("scope") or "workspace").strip().lower(),
+                            "scopeId": body.get("scopeId") or body.get("scope_id") or workspace_id,
+                            "memoryType": (body.get("memoryType") or body.get("memory_type") or "note").strip().lower(),
+                            "tombstone": operation == "delete",
+                            "createdAt": now,
+                            "valuesRedacted": True,
+                            "rawPayloadExposed": False,
+                        }
+                        connection.execute(
+                            """
+                            INSERT INTO matm_sync_revisions (
+                              sync_revision_id, workspace_id, logical_memory_id, parent_revision_id,
+                              memory_event_id, actor_agent_id, device_id, device_epoch, operation,
+                              status, conflict, conflict_code, server_sequence, body_hash, source_uri,
+                              title, public_safe_summary, scope_type, scope_id, memory_type, tombstone,
+                              created_at, values_redacted, raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                revision_id,
+                                workspace_id,
+                                logical_memory_id,
+                                parent_revision_id,
+                                "",
+                                actor_agent_id,
+                                device_id,
+                                revision["deviceEpoch"],
+                                operation,
+                                status,
+                                self._int_bool(bool(conflict_code)),
+                                conflict_code,
+                                server_sequence,
+                                body_hash,
+                                revision["source"],
+                                revision["title"],
+                                revision["summary"],
+                                revision["scope"],
+                                revision["scopeId"],
+                                revision["memoryType"],
+                                self._int_bool(operation == "delete"),
+                                now,
+                                self._int_bool(True),
+                                self._int_bool(False),
+                            ),
+                        )
+                        if status == "applied":
+                            connection.execute(
+                                """
+                                INSERT OR REPLACE INTO matm_sync_heads (
+                                  head_record_id, logical_memory_id, workspace_id, head_revision_id, server_sequence,
+                                  indexed_through_sequence, status, updated_at, values_redacted,
+                                  raw_payload_exposed
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    self._sync_head_record_id(workspace_id, logical_memory_id),
+                                    logical_memory_id,
+                                    workspace_id,
+                                    revision_id,
+                                    server_sequence,
+                                    server_sequence,
+                                    "tombstoned" if operation == "delete" else "active",
+                                    now,
+                                    self._int_bool(True),
+                                    self._int_bool(False),
+                                ),
+                            )
+                        self._insert_outbox_sql(connection, workspace_id, "matm.sync.revision.%s" % status, "sync_revision", revision_id, revision)
+                        self._insert_storage_ledger_sql(connection, workspace_id, "sync_revision", revision_id, revision)
+                    receipt = {
+                        "receiptId": receipt_id,
+                        "workspaceId": workspace_id,
+                        "idempotencyKeyHash": idempotency_hash,
+                        "bodyHash": body_hash,
+                        "logicalMemoryId": logical_memory_id,
+                        "syncRevisionId": revision_id if revision else "",
+                        "serverSequence": server_sequence if revision else 0,
+                        "status": status,
+                        "conflict": bool(conflict_code),
+                        "conflictCode": conflict_code or reject_code,
+                        "currentHeadRevisionId": current_head_revision,
+                        "httpStatus": http_status,
+                        "createdAt": now,
+                        "idempotencyKeyExposed": False,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+                    connection.execute(
+                        """
+                        INSERT INTO matm_sync_receipts (
+                          receipt_id, workspace_id, idempotency_key_hash, body_hash,
+                          logical_memory_id, sync_revision_id, server_sequence, status, conflict,
+                          conflict_code, current_head_revision_id, http_status, created_at,
+                          idempotency_key_exposed, values_redacted, raw_credential_exposed,
+                          raw_payload_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            receipt_id,
+                            workspace_id,
+                            idempotency_hash,
+                            body_hash,
+                            logical_memory_id,
+                            receipt["syncRevisionId"] or None,
+                            receipt["serverSequence"],
+                            status,
+                            self._int_bool(bool(conflict_code)),
+                            receipt["conflictCode"],
+                            current_head_revision,
+                            http_status,
+                            now,
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            self._int_bool(False),
+                        ),
+                    )
+                    self._record_audit_sql(connection, workspace_id, "sync.mutation.%s" % status, actor_agent_id, receipt_id, {"logicalMemoryId": logical_memory_id, "serverSequence": receipt["serverSequence"], "conflictCode": receipt["conflictCode"]})
+                    head = connection.execute(
+                        "SELECT * FROM matm_sync_heads WHERE workspace_id = ? AND logical_memory_id = ?",
+                        (workspace_id, logical_memory_id),
+                    ).fetchone() if logical_memory_id else None
+        return {
+            "ok": status == "applied",
+            "persisted": True,
+            "receipt": self._public_sync_receipt(receipt),
+            "revision": self._public_sync_revision(revision) if revision else None,
+            "head": self._sync_head_from_row(head),
+            "serverSequence": receipt["serverSequence"],
+            "indexedThroughSequence": self._sql_value(head, "indexed_through_sequence", 0) or 0,
+            "conflict": status == "conflict",
+            "status": status,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }, http_status
+
+    def sync_receipt(self, workspace_id, idempotency_key=None, receipt_id=None):
+        idempotency_hash = "sha256:" + _hash(idempotency_key) if idempotency_key else ""
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if receipt_id:
+            clauses.append("receipt_id = ?")
+            params.append(receipt_id)
+        elif idempotency_hash:
+            clauses.append("idempotency_key_hash = ?")
+            params.append(idempotency_hash)
+        else:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM matm_sync_receipts WHERE %s ORDER BY created_at DESC, receipt_id DESC" % " AND ".join(clauses),
+                    tuple(params),
+                ).fetchone()
+        return self._public_sync_receipt(self._sync_receipt_from_row(row)) if row else None
+
+    def sync_changes(self, workspace_id, after_sequence=0, limit=50, logical_memory_id=None):
+        try:
+            after_value = int(after_sequence or 0)
+        except (TypeError, ValueError):
+            after_value = 0
+        limit_value = max(1, min(int(limit or 50), 200))
+        clauses = ["workspace_id = ?", "server_sequence > ?"]
+        params = [workspace_id, after_value]
+        if logical_memory_id:
+            clauses.append("logical_memory_id = ?")
+            params.append(logical_memory_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        "SELECT * FROM matm_sync_revisions WHERE %s ORDER BY server_sequence ASC LIMIT ?" % " AND ".join(clauses),
+                        tuple(params + [limit_value + 1]),
+                    )
+                )
+                latest_row = connection.execute(
+                    "SELECT COALESCE(MAX(server_sequence), 0) AS max_sequence FROM matm_sync_revisions WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchone()
+        page_rows = rows[:limit_value]
+        page = [self._public_sync_revision(self._sync_revision_from_row(row)) for row in page_rows]
+        next_after = int(page[-1].get("serverSequence") or after_value) if page else after_value
+        return {
+            "items": page,
+            "count": len(page),
+            "hasMore": len(rows) > len(page_rows),
+            "nextAfterSequence": next_after,
+            "indexedThroughSequence": int(self._sql_value(latest_row, "max_sequence", 0) or 0),
+            "checkpoint": {
+                "workspaceIdHash": "sha256:" + _hash(workspace_id),
+                "afterSequence": after_value,
+                "nextAfterSequence": next_after,
+                "valuesRedacted": True,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def sync_heads(self, workspace_id, logical_memory_id=None):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if logical_memory_id:
+            clauses.append("logical_memory_id = ?")
+            params.append(logical_memory_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        "SELECT * FROM matm_sync_heads WHERE %s ORDER BY logical_memory_id" % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        return [self._sync_head_from_row(row) for row in rows]
+
     def _load(self):
         with _LOCK:
             with self._open_connection() as connection:
@@ -3984,6 +4867,32 @@ class SQLiteStore(FileStore):
                             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
                         }
                     )
+
+                for row in connection.execute("SELECT * FROM matm_sync_devices ORDER BY created_at, device_id"):
+                    key = "%s:%s" % (row["workspace_id"], row["device_id"])
+                    data["syncDevices"][key] = {
+                        "deviceId": row["device_id"],
+                        "workspaceId": row["workspace_id"],
+                        "agentId": row["agent_id"],
+                        "label": row["label"],
+                        "status": row["status"],
+                        "authorityEpoch": row["authority_epoch"],
+                        "createdAt": row["created_at"],
+                        "updatedAt": row["updated_at"],
+                        "revokedAt": row["revoked_at"],
+                        "valuesRedacted": self._bool(row["values_redacted"]),
+                        "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_sync_heads ORDER BY updated_at, logical_memory_id"):
+                    key = "%s:%s" % (row["workspace_id"], row["logical_memory_id"])
+                    data["syncHeads"][key] = self._sync_head_from_row(row)
+
+                for row in connection.execute("SELECT * FROM matm_sync_revisions ORDER BY server_sequence, sync_revision_id"):
+                    data["syncRevisions"].append(self._sync_revision_from_row(row))
+
+                for row in connection.execute("SELECT * FROM matm_sync_receipts ORDER BY created_at, receipt_id"):
+                    data["syncReceipts"].append(self._sync_receipt_from_row(row))
 
                 for row in connection.execute("SELECT * FROM matm_outbox_events ORDER BY created_at, outbox_event_id"):
                     data["outboxEvents"].append(
@@ -4437,6 +5346,126 @@ class SQLiteStore(FileStore):
                                 self._int_bool(read_state.get("rawPayloadExposed")),
                                 read_state.get("createdAt") or utc_now(),
                                 read_state.get("updatedAt"),
+                            ),
+                        )
+
+                    for device in data.get("syncDevices", {}).values():
+                        device_id = device.get("deviceId")
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE INTO matm_sync_devices (
+                              device_record_id, workspace_id, device_id, agent_id, label, status,
+                              authority_epoch, created_at, updated_at, revoked_at, values_redacted,
+                              raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                self._sync_device_record_id(device.get("workspaceId"), device_id),
+                                device.get("workspaceId"),
+                                device_id,
+                                device.get("agentId"),
+                                device.get("label") or device_id,
+                                device.get("status") or "active",
+                                int(device.get("authorityEpoch") or 1),
+                                device.get("createdAt") or utc_now(),
+                                device.get("updatedAt"),
+                                device.get("revokedAt"),
+                                self._int_bool(device.get("valuesRedacted", True)),
+                                self._int_bool(device.get("rawPayloadExposed")),
+                            ),
+                        )
+
+                    for head in data.get("syncHeads", {}).values():
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE INTO matm_sync_heads (
+                              head_record_id, logical_memory_id, workspace_id, head_revision_id, server_sequence,
+                              indexed_through_sequence, status, updated_at, values_redacted,
+                              raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                self._sync_head_record_id(head.get("workspaceId"), head.get("logicalMemoryId")),
+                                head.get("logicalMemoryId"),
+                                head.get("workspaceId"),
+                                head.get("headRevisionId"),
+                                int(head.get("serverSequence") or 0),
+                                int(head.get("indexedThroughSequence") or head.get("serverSequence") or 0),
+                                head.get("status") or "active",
+                                head.get("updatedAt") or utc_now(),
+                                self._int_bool(head.get("valuesRedacted", True)),
+                                self._int_bool(head.get("rawPayloadExposed")),
+                            ),
+                        )
+
+                    for revision in data.get("syncRevisions", []):
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE INTO matm_sync_revisions (
+                              sync_revision_id, workspace_id, logical_memory_id, parent_revision_id,
+                              memory_event_id, actor_agent_id, device_id, device_epoch, operation,
+                              status, conflict, conflict_code, server_sequence, body_hash, source_uri,
+                              title, public_safe_summary, scope_type, scope_id, memory_type, tombstone,
+                              created_at, values_redacted, raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                revision.get("syncRevisionId"),
+                                revision.get("workspaceId"),
+                                revision.get("logicalMemoryId"),
+                                revision.get("parentRevisionId"),
+                                revision.get("memoryEventId"),
+                                revision.get("actorAgentId"),
+                                revision.get("deviceId"),
+                                int(revision.get("deviceEpoch") or 0),
+                                revision.get("operation") or "upsert",
+                                revision.get("status") or "applied",
+                                self._int_bool(revision.get("conflict")),
+                                revision.get("conflictCode"),
+                                int(revision.get("serverSequence") or 0),
+                                revision.get("bodyHash") or _canonical_hash(revision),
+                                revision.get("source") or "api",
+                                revision.get("title") or revision.get("logicalMemoryId"),
+                                revision.get("summary") or "",
+                                revision.get("scope") or "workspace",
+                                revision.get("scopeId") or revision.get("workspaceId"),
+                                revision.get("memoryType") or "note",
+                                self._int_bool(revision.get("tombstone")),
+                                revision.get("createdAt") or utc_now(),
+                                self._int_bool(revision.get("valuesRedacted", True)),
+                                self._int_bool(revision.get("rawPayloadExposed")),
+                            ),
+                        )
+
+                    for receipt in data.get("syncReceipts", []):
+                        connection.execute(
+                            """
+                            INSERT OR REPLACE INTO matm_sync_receipts (
+                              receipt_id, workspace_id, idempotency_key_hash, body_hash,
+                              logical_memory_id, sync_revision_id, server_sequence, status, conflict,
+                              conflict_code, current_head_revision_id, http_status, created_at,
+                              idempotency_key_exposed, values_redacted, raw_credential_exposed,
+                              raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                receipt.get("receiptId"),
+                                receipt.get("workspaceId"),
+                                receipt.get("idempotencyKeyHash"),
+                                receipt.get("bodyHash") or _canonical_hash(receipt),
+                                receipt.get("logicalMemoryId"),
+                                receipt.get("syncRevisionId") or None,
+                                int(receipt.get("serverSequence") or 0),
+                                receipt.get("status") or "applied",
+                                self._int_bool(receipt.get("conflict")),
+                                receipt.get("conflictCode"),
+                                receipt.get("currentHeadRevisionId"),
+                                receipt.get("httpStatus") or "200 OK",
+                                receipt.get("createdAt") or utc_now(),
+                                self._int_bool(receipt.get("idempotencyKeyExposed")),
+                                self._int_bool(receipt.get("valuesRedacted", True)),
+                                self._int_bool(receipt.get("rawCredentialExposed")),
+                                self._int_bool(receipt.get("rawPayloadExposed")),
                             ),
                         )
 

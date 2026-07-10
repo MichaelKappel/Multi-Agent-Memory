@@ -269,6 +269,78 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertTrue(evidence["contractVerified"])
         self.assertIn("Full live current-message", evidence["state"])
 
+    def test_live_memory_submit_consistency_accepts_durable_readback(self):
+        evidence = build_readiness_reports.live_memory_submit_consistency_evidence(
+            {
+                "ok": True,
+                "sourceSha": "abc123",
+                "probeCount": 2,
+                "passedCount": 2,
+                "failedCount": 0,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+                "probes": [
+                    {
+                        "ok": True,
+                        "mismatches": [],
+                        "readbackAttemptsUsed": 1,
+                        "durableReadback": {
+                            "exactSearchCount": 1,
+                            "reviewQueueMatchCount": 1,
+                            "auditMatchCount": 1,
+                        },
+                    },
+                    {
+                        "ok": True,
+                        "mismatches": [],
+                        "readbackAttemptsUsed": 2,
+                        "durableReadback": {
+                            "exactSearchCount": 1,
+                            "reviewQueueMatchCount": 1,
+                            "auditMatchCount": 1,
+                        },
+                    },
+                ],
+            }
+        )
+
+        self.assertTrue(evidence["verified"])
+        self.assertTrue(evidence["probeReadbackVerified"])
+        self.assertEqual(2, evidence["maxReadbackAttemptsUsed"])
+        self.assertIn("response/readback consistency is verified", evidence["state"])
+
+    def test_live_memory_submit_consistency_rejects_response_overclaim(self):
+        evidence = build_readiness_reports.live_memory_submit_consistency_evidence(
+            {
+                "ok": True,
+                "probeCount": 1,
+                "passedCount": 1,
+                "failedCount": 0,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+                "probes": [
+                    {
+                        "ok": False,
+                        "mismatches": ["response_visible_search_without_exact_readback"],
+                        "durableReadback": {
+                            "exactSearchCount": 0,
+                            "reviewQueueMatchCount": 1,
+                            "auditMatchCount": 1,
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(evidence["verified"])
+        self.assertFalse(evidence["probeReadbackVerified"])
+        self.assertIn("not fully proven", evidence["state"])
+        self.assertIn("verify_live_memory_submit_consistency", evidence["needed"])
+
     def test_hosted_long_term_memory_evidence_requires_promoted_hosted_records(self):
         evidence = build_readiness_reports.hosted_long_term_memory_evidence(
             {

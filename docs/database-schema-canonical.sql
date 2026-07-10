@@ -293,6 +293,94 @@ CREATE TABLE IF NOT EXISTS matm_meeting_reads (
   CONSTRAINT fk_matm_meeting_reads_room FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_sync_devices (
+  device_record_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  device_id VARCHAR(128) NOT NULL,
+  agent_id VARCHAR(128) NULL,
+  label VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  authority_epoch INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  UNIQUE KEY ux_matm_sync_device_workspace (workspace_id, device_id),
+  KEY ix_matm_sync_devices_workspace (workspace_id, status),
+  CONSTRAINT fk_matm_sync_devices_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_sync_heads (
+  head_record_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  logical_memory_id VARCHAR(128) NOT NULL,
+  head_revision_id VARCHAR(96) NULL,
+  server_sequence BIGINT NOT NULL,
+  indexed_through_sequence BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  UNIQUE KEY ux_matm_sync_heads_logical (workspace_id, logical_memory_id),
+  KEY ix_matm_sync_heads_workspace (workspace_id, status),
+  CONSTRAINT fk_matm_sync_heads_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_sync_revisions (
+  sync_revision_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  logical_memory_id VARCHAR(128) NOT NULL,
+  parent_revision_id VARCHAR(96) NULL,
+  memory_event_id VARCHAR(96) NULL,
+  actor_agent_id VARCHAR(128) NULL,
+  device_id VARCHAR(128) NULL,
+  device_epoch INT NOT NULL DEFAULT 0,
+  operation VARCHAR(32) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  conflict TINYINT(1) NOT NULL DEFAULT 0,
+  conflict_code VARCHAR(96) NULL,
+  server_sequence BIGINT NOT NULL,
+  body_hash CHAR(64) NOT NULL,
+  source_uri VARCHAR(512) NULL,
+  title VARCHAR(255) NOT NULL,
+  public_safe_summary TEXT NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NULL,
+  memory_type VARCHAR(32) NOT NULL,
+  tombstone TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  UNIQUE KEY ux_matm_sync_revisions_sequence (workspace_id, server_sequence),
+  KEY ix_matm_sync_revisions_logical (workspace_id, logical_memory_id, server_sequence),
+  CONSTRAINT fk_matm_sync_revisions_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_sync_receipts (
+  receipt_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  idempotency_key_hash VARCHAR(80) NULL,
+  body_hash CHAR(64) NOT NULL,
+  logical_memory_id VARCHAR(128) NULL,
+  sync_revision_id VARCHAR(96) NULL,
+  server_sequence BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL,
+  conflict TINYINT(1) NOT NULL DEFAULT 0,
+  conflict_code VARCHAR(96) NULL,
+  current_head_revision_id VARCHAR(96) NULL,
+  http_status VARCHAR(32) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  idempotency_key_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_credential_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  UNIQUE KEY ux_matm_sync_receipts_idem (workspace_id, idempotency_key_hash),
+  KEY ix_matm_sync_receipts_workspace (workspace_id, created_at),
+  CONSTRAINT fk_matm_sync_receipts_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_sync_receipts_revision FOREIGN KEY (sync_revision_id) REFERENCES matm_sync_revisions (sync_revision_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_review_queue (
   review_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,

@@ -332,6 +332,56 @@ def current_message_contract_evidence(fanout, connector_contract):
     }
 
 
+def live_memory_submit_consistency_evidence(report):
+    report = report or {}
+    probes = report.get("probes") or []
+    redaction_verified = bool(
+        not report.get("rawCredentialValuesStored")
+        and not report.get("rawWorkspaceIdStored")
+        and not report.get("rawCredentialExposed")
+        and not report.get("rawPayloadExposed")
+    )
+    probe_readback_verified = bool(probes) and all(
+        item.get("ok")
+        and not item.get("mismatches")
+        and (item.get("durableReadback") or {}).get("exactSearchCount", 0) >= 1
+        and (item.get("durableReadback") or {}).get("reviewQueueMatchCount", 0) >= 1
+        and (item.get("durableReadback") or {}).get("auditMatchCount", 0) >= 1
+        for item in probes
+    )
+    verified = bool(
+        report.get("ok")
+        and report.get("failedCount", 1) == 0
+        and report.get("probeCount", 0) >= 1
+        and probe_readback_verified
+        and redaction_verified
+    )
+    attempts_used = [
+        int(item.get("readbackAttemptsUsed") or 0)
+        for item in probes
+        if item.get("readbackAttemptsUsed") is not None
+    ]
+    if verified:
+        state = "Live memory submit response/readback consistency is verified across search, review queue, and audit log."
+        needed = "Rerun `scripts/verify_live_memory_submit_consistency.py` after each deployment or storage-path change."
+    else:
+        state = "Live memory submit response/readback consistency is not fully proven."
+        needed = "Run `scripts/verify_live_memory_submit_consistency.py`, then fix any submit confirmation or durable readback mismatch before claiming completion."
+    return {
+        "verified": verified,
+        "probeReadbackVerified": probe_readback_verified,
+        "redactionVerified": redaction_verified,
+        "sourceSha": report.get("sourceSha"),
+        "probeCount": report.get("probeCount", 0),
+        "passedCount": report.get("passedCount", 0),
+        "failedCount": report.get("failedCount", 0),
+        "maxReadbackAttemptsUsed": max(attempts_used or [0]),
+        "state": state,
+        "needed": needed,
+        "valuesRedacted": True,
+    }
+
+
 def hosted_long_term_memory_evidence(migration, promotion, duplicate_cleanup):
     migration = migration or {}
     promotion = promotion or {}
@@ -403,6 +453,7 @@ def build_local_report():
     live_routes = load_json("live-route-verification.json")
     fanout = load_json("current-message-fanout-verification.json")
     connector_contract = load_json("live-connector-contract-verification.json")
+    memory_submit_consistency = load_json("live-memory-submit-consistency.json")
     uai = load_json("uai-memory-audit.json")
     dogfood = load_json("dogfood-memory-run.json")
     local_dogfood = load_json("dogfood-memory-run-local.json")
@@ -429,6 +480,7 @@ def build_local_report():
     repository_boundary_check_current = bool((check_result(enterprise, "repository_boundary_audit") or {}).get("ok"))
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    live_memory_submit = live_memory_submit_consistency_evidence(memory_submit_consistency)
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -454,6 +506,7 @@ def build_local_report():
             "evidence": ["docs/reports/uai-memory-audit.json", ".uai/memory-maintenance.uai", ".uai/startup-packet.uai", ".uai/totem.uai"],
         },
         {"id": "local_dogfood", "status": status(local_dogfood_ok), "evidence": ["docs/reports/dogfood-memory-run.json", "docs/reports/dogfood-memory-run-local.json"]},
+        {"id": "live_memory_submit_consistency", "status": status(live_memory_submit["verified"]), "evidence": ["docs/reports/live-memory-submit-consistency.json", "scripts/verify_live_memory_submit_consistency.py"]},
         {"id": "package_check", "status": status(package_evidence_current), "evidence": ["docs/reports/package-verification-report.json", "docs/reports/enterprise-readiness-audit.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool((boundary and boundary.get("ok")) or repository_boundary_check_current)), "evidence": ["docs/reports/repository-boundary-audit.json", "scripts/audit_repository_boundary.py", "sites/multiagentmemory.com/"]},
@@ -505,6 +558,8 @@ def build_local_report():
         "liveCurrentMessageDiscoveryContractVerified": current_message_contract["discoveryVerified"],
         "liveCurrentMessageContractVerified": current_message_contract["contractVerified"],
         "liveCurrentMessageContract": current_message_contract,
+        "liveMemorySubmitConsistencyVerified": live_memory_submit["verified"],
+        "liveMemorySubmitConsistency": live_memory_submit,
         "meetingMemoryPromotionVerified": memory_loop_evidence["meetingMemoryPromotionVerified"],
         "meetingMemoryReadbackVerified": memory_loop_evidence["meetingMemoryReadbackVerified"],
         "meetingMemorySourceReadbackVerified": memory_loop_evidence["meetingMemorySourceReadbackVerified"],
@@ -536,6 +591,7 @@ def build_enterprise_gap_matrix():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    memory_submit_consistency = load_json("live-memory-submit-consistency.json") or {}
     long_term_migration = load_json("long-term-memory-migration.json") or {}
     long_term_promotion = load_json("long-term-memory-promotion.json") or {}
     long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
@@ -553,6 +609,7 @@ def build_enterprise_gap_matrix():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    live_memory_submit = live_memory_submit_consistency_evidence(memory_submit_consistency)
     long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     head_sha = git_head_sha()
     dirty_source_paths = source_dirty_paths()
@@ -562,7 +619,7 @@ def build_enterprise_gap_matrix():
     )
     latest_deployed = latest_code_live_deployed(deploy, live_latest_code)
     mysql_verified = bool(live_mysql_backend.get("ok"))
-    tracked_live_gates_verified = bool(latest_deployed and dogfood.get("liveDogfoodVerified") and mysql_verified and multiagentmemory_verified and not dirty_source_paths)
+    tracked_live_gates_verified = bool(latest_deployed and dogfood.get("liveDogfoodVerified") and live_memory_submit["verified"] and mysql_verified and multiagentmemory_verified and not dirty_source_paths)
     claim_boundary = (
         "Tracked live deployment, live dogfood, live MySQL/MariaDB, and companion-site gates are verified for this evidence snapshot. Rerun these checks after any source or deployment change before making a new completion claim."
         if tracked_live_gates_verified
@@ -585,6 +642,7 @@ def build_enterprise_gap_matrix():
         "| Hosted long-term memory migration | %s | `%s` |" % ("Verified" if long_term_memory["verified"] else "Not fully verified", long_term_memory["state"]),
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
         "| Live dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified full live contract" if dogfood.get("liveDogfoodVerified") else ("Verified current deployed core surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified")),
+        "| Live memory submit consistency | %s | `%s` |" % ("Verified" if live_memory_submit["verified"] else "Not fully verified", live_memory_submit["state"]),
         "| Current-message fanout and acknowledgement isolation | %s | `docs/reports/current-message-fanout-verification.json` verifies runtime behavior; `docs/reports/live-connector-contract-verification.json` verifies public discovery contract fields. |" % ("Verified runtime and discovery" if current_message_contract["contractVerified"] else ("Runtime verified, discovery pending" if current_message_contract["behaviorVerified"] else "Not fully verified")),
         "| MultiAgentMemory.com live companion site | %s | `docs/reports/multiagentmemory-deploy-live-attempt-latest.json` and `docs/reports/multiagentmemory-live-site-verification.json`. |" % ("Verified" if multiagentmemory_verified else "Not verified"),
         "| Live MySQL/MariaDB database backend | %s | `docs/reports/live-mysql-backend-verification.json` and `/api/version` `storeBackendVerified`. |" % ("Verified" if mysql_verified else "Not verified"),
@@ -606,6 +664,7 @@ def build_enterprise_gap_matrix():
             "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
         ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
+        "| Live memory submit consistency | %s | %s |" % (live_memory_submit["state"], live_memory_submit["needed"]),
         "| Hosted long-term memory | %s | %s |" % (long_term_memory["state"], long_term_memory["needed"]),
         "| Current-message fanout discovery contract | %s | %s |" % (current_message_contract["state"], current_message_contract["needed"]),
         "| Source worktree cleanliness | %s | %s |" % (
@@ -640,6 +699,7 @@ def build_current_implementation_audit():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    memory_submit_consistency = load_json("live-memory-submit-consistency.json") or {}
     long_term_migration = load_json("long-term-memory-migration.json") or {}
     long_term_promotion = load_json("long-term-memory-promotion.json") or {}
     long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
@@ -654,6 +714,7 @@ def build_current_implementation_audit():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    live_memory_submit = live_memory_submit_consistency_evidence(memory_submit_consistency)
     long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
@@ -692,6 +753,12 @@ def build_current_implementation_audit():
             str(current_message_contract["ackIsolationVerified"]).lower(),
             str(current_message_contract["discoveryVerified"]).lower(),
         ),
+        "- Live memory-submit consistency verifier reports `%s`, probes `%s`, failures `%s`, and max readback attempts used `%s`." % (
+            str(live_memory_submit["verified"]).lower(),
+            live_memory_submit["probeCount"],
+            live_memory_submit["failedCount"],
+            live_memory_submit["maxReadbackAttemptsUsed"],
+        ),
         "- Hosted long-term memory verifier reports `%s`, matched source paths `%s/%s`, current promoted records `%s`, filesystem docs included `%s`, and remaining duplicate seeds `%s`." % (
             str(long_term_memory["verified"]).lower(),
             long_term_memory["matchedSourcePathCount"],
@@ -723,6 +790,8 @@ def build_current_implementation_audit():
         "- %s" % live_dogfood_needed,
         "- %s" % current_message_contract["state"],
         "- %s" % current_message_contract["needed"],
+        "- %s" % live_memory_submit["state"],
+        "- %s" % live_memory_submit["needed"],
         "- MultiAgentMemory.com live companion site is verified." if multiagentmemory_verified else "- MultiAgentMemory.com live domain is not yet serving the expected companion-site files.",
         "- Live MySQL/MariaDB backend verification is proven." if mysql_verified else "- Live MySQL/MariaDB backend verification is blocked; `/api/version` must report `storeBackendVerified: true`.",
         "- The full objective still needs a final current-commit audit after commit, push, deploy, live verification, and remote SHA verification.",
@@ -737,6 +806,7 @@ def build_final_verification_alias():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    memory_submit_consistency = load_json("live-memory-submit-consistency.json") or {}
     long_term_migration = load_json("long-term-memory-migration.json") or {}
     long_term_promotion = load_json("long-term-memory-promotion.json") or {}
     long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
@@ -747,6 +817,7 @@ def build_final_verification_alias():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    live_memory_submit = live_memory_submit_consistency_evidence(memory_submit_consistency)
     long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     dirty_source_paths = source_dirty_paths()
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
@@ -775,6 +846,8 @@ def build_final_verification_alias():
         "- %s" % live_dogfood_needed,
         "- %s" % current_message_contract["state"],
         "- %s" % current_message_contract["needed"],
+        "- %s" % live_memory_submit["state"],
+        "- %s" % live_memory_submit["needed"],
         "- Hosted coordination memory loop: %s" % memory_loop_summary,
         "- Hosted long-term memory: %s" % long_term_memory["state"],
         "- Source worktree cleanliness: `%s`." % ("clean" if not dirty_source_paths else "dirty"),
@@ -808,6 +881,7 @@ def build_final_markdown(local_report):
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    memory_submit_consistency = load_json("live-memory-submit-consistency.json") or {}
     long_term_migration = load_json("long-term-memory-migration.json") or {}
     long_term_promotion = load_json("long-term-memory-promotion.json") or {}
     long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
@@ -830,6 +904,7 @@ def build_final_markdown(local_report):
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    live_memory_submit = live_memory_submit_consistency_evidence(memory_submit_consistency)
     long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     mysql_verified = bool(
         live_mysql_backend.get("ok")
@@ -845,7 +920,7 @@ def build_final_markdown(local_report):
         for item in (local_report.get("checks") or [])
         if item.get("status") != "pass"
     ]
-    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and current_message_contract["contractVerified"] and not enterprise_blockers and not dirty_source_paths)
+    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and live_memory_submit["verified"] and current_message_contract["contractVerified"] and not enterprise_blockers and not dirty_source_paths)
     status_line = "Status: complete for this evidence snapshot. `completionClaimAllowed` is `true`." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
     lines = [
         "# Final Readiness Report",
@@ -901,6 +976,12 @@ def build_final_markdown(local_report):
             str(current_message_contract["discoveryVerified"]).lower(),
             str(current_message_contract["uniqueRecipientNotificationIds"]).lower(),
             str(current_message_contract["ackIsolationVerified"]).lower(),
+        ),
+        "- Live memory submit consistency: `%s`; probes `%s`, failures `%s`, max readback attempts used `%s`." % (
+            "pass" if live_memory_submit["verified"] else "not pass",
+            live_memory_submit["probeCount"],
+            live_memory_submit["failedCount"],
+            live_memory_submit["maxReadbackAttemptsUsed"],
         ),
         "- Hosted long-term memory migration: `%s`; matched source paths `%s/%s`, promoted records `%s`, filesystem docs included `%s`, remaining duplicate seeds `%s`." % (
             "pass" if long_term_memory["verified"] else "not pass",
@@ -975,6 +1056,8 @@ def build_final_markdown(local_report):
         )
     if not current_message_contract["contractVerified"]:
         blocked_lines.append("- Current-message fanout contract: %s %s" % (current_message_contract["state"], current_message_contract["needed"]))
+    if not live_memory_submit["verified"]:
+        blocked_lines.append("- Live memory submit consistency: %s %s" % (live_memory_submit["state"], live_memory_submit["needed"]))
     if not long_term_memory["verified"]:
         blocked_lines.append("- Hosted long-term memory: %s %s" % (long_term_memory["state"], long_term_memory["needed"]))
     if not local_report.get("ok"):
@@ -1016,6 +1099,9 @@ def build_final_markdown(local_report):
         "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
         "liveCurrentMessageDiscoveryContractVerified": current_message_contract["discoveryVerified"],
         "liveCurrentMessageContractVerified": current_message_contract["contractVerified"],
+        "liveMemorySubmitConsistencyVerified": live_memory_submit["verified"],
+        "liveMemorySubmitConsistencyProbeCount": live_memory_submit["probeCount"],
+        "liveMemorySubmitConsistencyFailedCount": live_memory_submit["failedCount"],
         "hostedLongTermMemoryVerified": long_term_memory["verified"],
         "hostedLongTermMemorySourcePathsVerified": long_term_memory["sourcePathsVerified"],
         "hostedLongTermMemoryCurrentAllPromoted": long_term_memory["currentAllPromoted"],
