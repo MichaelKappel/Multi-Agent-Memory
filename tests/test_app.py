@@ -324,6 +324,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(project_id, event["scopeId"])
         self.assertEqual("review_pending", event["promotionState"])
         self.assertEqual("accepted", event["firewall"]["decision"])
+        self.assertTrue(event["firewall"]["valuesRedacted"])
+        self.assertFalse(event["firewall"]["redactionApplied"])
 
         status, _headers, text = call_app(
             "/api/matm/search",
@@ -336,6 +338,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("hosted_workspace_store", search_payload["memorySource"])
         self.assertFalse(search_payload["filesystemDocsIncluded"])
         self.assertNotIn("docsMemory", search_payload)
+        self.assertTrue(search_payload["items"][0]["firewall"]["valuesRedacted"])
+        self.assertFalse(search_payload["items"][0]["firewall"]["redactionApplied"])
 
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
@@ -542,6 +546,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         event = json.loads(text)["event"]
         self.assertEqual("risk", event["memoryType"])
         self.assertEqual("quarantine_for_review", event["firewall"]["decision"])
+        self.assertTrue(event["firewall"]["valuesRedacted"])
+        self.assertTrue(event["firewall"]["redactionApplied"])
         self.assertEqual("quarantined", event["promotionState"])
         self.assertIn("[REDACTED_SECRET]", event["summary"])
         self.assertNotIn("supersecretvalue", event["summary"])

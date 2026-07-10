@@ -43,6 +43,18 @@ def _public_value(value):
     return value
 
 
+def _public_memory_event(event):
+    item = dict(event or {})
+    firewall = dict(item.get("firewall") or {})
+    if firewall:
+        firewall.setdefault("redactionApplied", bool(firewall.get("valuesRedacted")))
+        firewall["valuesRedacted"] = True
+        item["firewall"] = firewall
+    item["valuesRedacted"] = True
+    item["rawPrivatePayloadStored"] = False
+    return item
+
+
 def _blank_store():
     return {
         "schemaVersion": "memoryendpoints.file_store.v1",
@@ -493,7 +505,8 @@ class FileStore(object):
                 "decision": firewall["decision"],
                 "riskScore": firewall["riskScore"],
                 "detectedThreats": firewall["detectedThreats"],
-                "valuesRedacted": firewall["valuesRedacted"],
+                "redactionApplied": firewall["valuesRedacted"],
+                "valuesRedacted": True,
             },
             "createdAt": utc_now(),
             "status": event_status,
@@ -566,7 +579,7 @@ class FileStore(object):
                 ]
             ).lower()
             if not q or q in haystack:
-                items.append(event)
+                items.append(_public_memory_event(event))
         return items
 
     def review_queue(self, workspace_id, status=None):
