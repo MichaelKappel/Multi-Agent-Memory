@@ -104,6 +104,29 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertEqual("/api/matm/current-message", transport.calls[0]["path"])
         self.assertEqual(["note-1"], parse_qs(transport.calls[0]["query"])["notification_id"])
 
+    def test_read_memory_until_polls_until_memory_event_visible(self):
+        transport = FakeTransport(
+            [
+                ("200 OK", {"ok": True, "items": [], "valuesRedacted": True}),
+                ("200 OK", {"ok": True, "items": [{"eventId": "mem-1"}], "valuesRedacted": True}),
+            ]
+        )
+
+        status, payload = dogfood_memoryendpoints.read_memory_until(
+            transport,
+            {"HTTP_AUTHORIZATION": "Bearer hidden"},
+            "mem-1",
+            url="https://memoryendpoints.com/api/matm/search?q=Meeting",
+            attempts=3,
+            delay_seconds=0,
+        )
+
+        self.assertEqual("200 OK", status)
+        self.assertTrue(dogfood_memoryendpoints.contains_memory_event(payload, "mem-1"))
+        self.assertEqual(2, len(transport.calls))
+        self.assertEqual("/api/matm/search", transport.calls[0]["path"])
+        self.assertEqual(["Meeting"], parse_qs(transport.calls[0]["query"])["q"])
+
     def test_combined_report_preserves_audit_readback_evidence(self):
         report = dogfood_memoryendpoints.combine_reports(
             [

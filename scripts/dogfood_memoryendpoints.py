@@ -141,6 +141,23 @@ def contains_memory_event(payload, event_id):
     return any(item.get("eventId") == event_id for item in payload.get("items") or [])
 
 
+def read_memory_until(transport, headers, event_id, path=None, query="", url=None, attempts=1, delay_seconds=1.0):
+    attempts = max(1, int(attempts or 1))
+    if url:
+        path, query = canonical_path_query(url)
+    if not path:
+        return "500 Missing Canonical URL", {"ok": False, "error": "missing_canonical_url", "valuesRedacted": True}
+    last_status = "500 Missing Memory Read"
+    last_payload = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_status, last_payload = transport.call(path, headers=headers, query=query)
+        if contains_memory_event(last_payload, event_id):
+            return last_status, last_payload
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload
+
+
 def contains_meeting_message(payload, message_id):
     if not message_id:
         return False
@@ -352,13 +369,22 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "promote_meeting_message_to_memory", status, meeting_promotion, verified=meeting_promotion_verified)
 
-        status, meeting_memory_search = call_canonical_url(transport, meeting_promotion.get("memoryQueryUrl"), auth)
+        status, meeting_memory_search = read_memory_until(
+            transport,
+            auth,
+            meeting_memory_event_id,
+            url=meeting_promotion.get("memoryQueryUrl"),
+            attempts=6 if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
+        )
         meeting_memory_readback_verified = contains_memory_event(meeting_memory_search, meeting_memory_event_id)
         step(report, "read_promoted_meeting_memory", status, meeting_memory_search, verified=meeting_memory_readback_verified)
 
-        status, meeting_memory_source_search = transport.call(
-            "/api/matm/search",
-            headers=auth,
+        status, meeting_memory_source_search = read_memory_until(
+            transport,
+            auth,
+            meeting_memory_event_id,
+            path="/api/matm/search",
             query=urlencode(
                 {
                     "workspace_id": workspace_id,
@@ -367,6 +393,8 @@ def run_sequence(transport, label, base_url=None):
                     "memory_type": (meeting_promotion.get("event") or {}).get("memoryType") or "evidence",
                 }
             ),
+            attempts=6 if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
         )
         meeting_memory_source_readback_verified = contains_memory_event(meeting_memory_source_search, meeting_memory_event_id)
         step(report, "read_promoted_meeting_memory_by_source", status, meeting_memory_source_search, verified=meeting_memory_source_readback_verified)
