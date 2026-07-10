@@ -1,0 +1,42 @@
+﻿{
+    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v2",
+    "baseUrl":  "https://memoryendpoints.com/console",
+    "sourceSha":  "ce54017d2dd4cb3723ef7d3f2c53cfce5021c968",
+    "transport":  "http_html_static_assets_and_protected_api",
+    "browserAutomation":  "blocked_by_stale_in_app_browser_session_after_reconnect",
+    "htmlStatus":  200,
+    "assetStatus":  {
+                        "siteJs":  200,
+                        "siteCss":  200
+                    },
+    "htmlMarkers":  {
+                        "workspaceOverview":  true,
+                        "operatorSummary":  true,
+                        "consoleResults":  true,
+                        "reviewQueue":  true,
+                        "reviewList":  true,
+                        "reviewDecision":  true,
+                        "debugJson":  true
+                    },
+    "assetMarkers":  {
+                         "renderReviewSummary":  true,
+                         "rowActions":  true,
+                         "useReview":  true,
+                         "copyReviewId":  true,
+                         "clipboardGuard":  true,
+                         "compactButtons":  true,
+                         "rowActionStyles":  true
+                     },
+    "protectedReadbacks":  {
+                               "hostedMemorySearchOk":  true,
+                               "hostedMemorySearchCount":  6,
+                               "memorySource":  "hosted_workspace_store",
+                               "filesystemDocsIncluded":  false,
+                               "reviewQueueOk":  true,
+                               "reviewQueueCount":  20,
+                               "reviewQueueValuesRedacted":  true
+                           },
+    "ok":  true,
+    "valuesRedacted":  true,
+    "rawCredentialsStored":  false
+}
