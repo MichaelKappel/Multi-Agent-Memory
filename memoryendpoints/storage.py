@@ -43,6 +43,47 @@ def _public_value(value):
     return value
 
 
+def _audit_detail_summary(details):
+    safe = _public_value(details or {})
+    if not isinstance(safe, dict):
+        return []
+    items = []
+    method = safe.get("method") or ""
+    route = safe.get("route") or ""
+    if method or route:
+        items.append(("%s %s" % (method, route)).strip())
+    for key, label in (
+        ("count", "count"),
+        ("memoryCount", "memory"),
+        ("unreadCount", "unread"),
+        ("limit", "limit"),
+    ):
+        if safe.get(key) not in (None, ""):
+            items.append("%s %s" % (label, safe.get(key)))
+    if safe.get("memorySource"):
+        items.append("source %s" % safe.get("memorySource"))
+    if safe.get("statusFilter"):
+        items.append("status %s" % safe.get("statusFilter"))
+    if safe.get("actionFilter"):
+        items.append("action %s" % safe.get("actionFilter"))
+    filter_keys = safe.get("filterKeys")
+    if isinstance(filter_keys, list) and filter_keys:
+        items.append("filters %s" % ", ".join(str(item) for item in filter_keys[:4]))
+    filters = safe.get("filters")
+    if isinstance(filters, dict):
+        for key in sorted(filters.keys())[:4]:
+            value = filters.get(key)
+            if value not in (None, ""):
+                items.append("%s %s" % (key, value))
+    delivery_counts = safe.get("deliveryCounts")
+    if isinstance(delivery_counts, dict):
+        items.append(
+            "delivery %s broadcast / %s targeted"
+            % (delivery_counts.get("broadcast") or 0, delivery_counts.get("targeted") or 0)
+        )
+    return items[:8]
+
+
 def _public_memory_event(event):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
@@ -151,6 +192,7 @@ class FileStore(object):
                 "actor": redact_text(actor),
                 "target": redact_text(target),
                 "details": _public_value(details or {}),
+                "detailsSummary": _audit_detail_summary(details),
                 "createdAt": utc_now(),
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
@@ -185,6 +227,7 @@ class FileStore(object):
                     "actor": redact_text(item.get("actor") or ""),
                     "target": redact_text(item.get("target") or ""),
                     "details": _public_value(item.get("details") or {}),
+                    "detailsSummary": _audit_detail_summary(item.get("details") or {}),
                     "createdAt": item.get("createdAt"),
                     "valuesRedacted": True,
                     "rawCredentialExposed": False,
@@ -531,6 +574,7 @@ class FileStore(object):
             "reviewerNoteHash": None,
             "valuesRedacted": True,
         }
+        event["reviewId"] = review["reviewId"]
         data.setdefault("reviewQueue", []).append(review)
         self._append_outbox(data, workspace_id, "matm.memory_event.submitted", "memory_event", event["eventId"], event)
         self._append_storage_ledger(data, workspace_id, "memory_event", event["eventId"], event)

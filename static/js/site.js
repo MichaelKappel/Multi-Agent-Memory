@@ -431,6 +431,47 @@
     });
   }
 
+  function renderMemorySubmissionSummary(payload) {
+    var node = pick("[data-console-memory-submit-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var event = (payload && payload.event) || {};
+    var submission = (payload && payload.submission) || {};
+    var memoryId = submission.memoryEventId || event.eventId || "";
+    if (!memoryId) {
+      node.appendChild(el("p", "empty-state", "Saved memory confirmations will appear here."));
+      return;
+    }
+    var firewall = event.firewall || {};
+    var firewallDecision = submission.firewallDecision || firewall.decision || "accepted";
+    var row = resultRow(
+      "Memory saved",
+      event.summary || "Memory event recorded without exposing raw private payloads.",
+      [
+        { text: submission.scope || event.scope || "workspace", kind: "neutral" },
+        { text: submission.memoryType || event.memoryType || "memory", kind: "neutral" },
+        { text: submission.reviewStatus || event.reviewStatus || "pending", kind: (submission.reviewStatus || event.reviewStatus) === "quarantined" ? "warn" : "good" },
+        { text: firewallDecision, kind: firewallDecision === "quarantine_for_review" ? "warn" : "good" },
+        { text: submission.valuesRedacted ? "redacted" : "", kind: "good" },
+        { text: submission.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: submission.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "memory " + shortId(memoryId),
+        "review " + shortId(submission.reviewId || event.reviewId),
+        "actor " + (event.actorAgentId || "unknown"),
+        event.createdAt || "",
+      ]
+    );
+    row.className += " submission-row";
+    appendCopyActions(row, [
+      { label: "Copy memory id", copyLabel: "Memory id", value: memoryId },
+      { label: "Copy review id", copyLabel: "Review id", value: submission.reviewId || event.reviewId },
+    ]);
+    node.appendChild(row);
+  }
+
   function renderInboxSummary(payload, agentId) {
     var node = pick("[data-console-inbox-list]");
     if (!node) {
@@ -665,6 +706,11 @@
     node.appendChild(el("div", "result-count", items.length + " audit event(s), newest first."));
     appendFilterSummary(node, payload && payload.filters);
     items.slice().reverse().slice(0, 24).forEach(function (item) {
+      var detailSummary = item.detailsSummary || [];
+      var metaItems = [
+        "audit " + shortId(item.auditId),
+        item.createdAt || "",
+      ].concat(detailSummary);
       var row = resultRow(
         item.action,
         "Actor " + (item.actor || "unknown") + " touched " + (item.target || "unknown target") + ".",
@@ -673,10 +719,7 @@
           { text: item.rawCredentialExposed ? "credential exposed" : "credentials hidden", kind: item.rawCredentialExposed ? "warn" : "good" },
           { text: item.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
         ],
-        [
-          "audit " + shortId(item.auditId),
-          item.createdAt || "",
-        ]
+        metaItems
       );
       appendCopyActions(row, [
         { label: "Copy audit id", copyLabel: "Audit id", value: item.auditId },
@@ -1029,6 +1072,11 @@
           source: "MemoryEndpoints.com human verification console",
         },
       })
+        .then(function (payload) {
+          render("[data-console-memory-output]", payload);
+          renderMemorySubmissionSummary(payload);
+          return payload;
+        })
         .then(function () { return refreshMemory("verification"); })
         .then(function () { return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending"); })
         .then(function () { setStatus("Memory saved; search and review queue refreshed.", false); })

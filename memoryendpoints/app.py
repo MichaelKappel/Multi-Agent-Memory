@@ -173,6 +173,23 @@ def _delivery_metadata(message, notification=None, inbox_agent_id=""):
     }
 
 
+def _memory_submission_metadata(event):
+    event = event or {}
+    firewall = event.get("firewall") or {}
+    return {
+        "memoryEventId": event.get("eventId") or "",
+        "reviewId": event.get("reviewId") or "",
+        "scope": event.get("scope") or "",
+        "memoryType": event.get("memoryType") or "",
+        "reviewStatus": event.get("reviewStatus") or "",
+        "promotionState": event.get("promotionState") or "",
+        "firewallDecision": firewall.get("decision") or "",
+        "redactionApplied": bool(firewall.get("redactionApplied")),
+        "valuesRedacted": True,
+        "rawPayloadExposed": False,
+    }
+
+
 def route_home(start_response):
     body = """
 <section class="hero">
@@ -298,6 +315,9 @@ def route_console(start_response):
       </label>
       <button class="button primary" type="submit">Save memory</button>
     </form>
+    <div class="console-results memory-submit-summary" data-console-memory-submit-summary>
+      <p class="empty-state">Saved memory confirmations will appear here.</p>
+    </div>
     <form class="console-grid" data-console-search>
       <label class="wide">Search memory
         <input name="query" value="verification">
@@ -883,7 +903,7 @@ def route_protected(environ, start_response, path):
             body.get("confidence"),
             body.get("scopeId") or body.get("scope_id"),
         )
-        payload = {"ok": True, "event": event}
+        payload = {"ok": True, "event": event, "submission": _memory_submission_metadata(event)}
         store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":

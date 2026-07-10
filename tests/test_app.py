@@ -123,6 +123,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('id="message-lanes"', text)
         self.assertIn("data-console-workspace-summary", text)
         self.assertIn("data-console-memory-list", text)
+        self.assertIn("data-console-memory-submit-summary", text)
         self.assertIn('name="memoryType"', text)
         self.assertIn('name="reviewStatus"', text)
         self.assertIn('name="promotionState"', text)
@@ -165,6 +166,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
+        self.assertIn(".memory-submit-summary", css)
         self.assertIn(".review-decision-summary", css)
         self.assertIn(".acknowledgement-summary", css)
         self.assertIn(".lane-overview", css)
@@ -214,6 +216,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("delivery.responseDisposition", js)
         self.assertIn("delivery.messageType", js)
         self.assertIn("appendCopyActions(row", js)
+
+    def test_console_js_renders_memory_submission_feedback(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderMemorySubmissionSummary", js)
+        self.assertIn("data-console-memory-submit-summary", js)
+        self.assertIn("Memory saved", js)
+        self.assertIn("payload.submission", js)
+        self.assertIn("submission.firewallDecision", js)
+        self.assertIn("submission.rawPayloadExposed", js)
+        self.assertIn("Copy review id", js)
 
     def test_console_js_exposes_copy_safe_row_ids(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -279,6 +292,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-audit-filter", js)
         self.assertIn("params.action", js)
         self.assertIn("params.limit", js)
+        self.assertIn("detailsSummary", js)
+        self.assertIn(".concat(detailSummary)", js)
         self.assertIn('selectedLimit === "50" ? "" : selectedLimit', js)
         self.assertIn("data-console-clear-audit-filter", js)
         self.assertIn("Audit filter cleared.", js)
@@ -427,10 +442,19 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("201 Created", status)
-        event = json.loads(text)["event"]
+        submit_payload = json.loads(text)
+        event = submit_payload["event"]
+        submission = submit_payload["submission"]
         self.assertEqual("decision", event["memoryType"])
         self.assertEqual("project", event["scope"])
         self.assertEqual(project_id, event["scopeId"])
+        self.assertTrue(event["reviewId"].startswith("review-"))
+        self.assertEqual(event["eventId"], submission["memoryEventId"])
+        self.assertEqual(event["reviewId"], submission["reviewId"])
+        self.assertEqual("accepted", submission["firewallDecision"])
+        self.assertEqual("pending", submission["reviewStatus"])
+        self.assertTrue(submission["valuesRedacted"])
+        self.assertFalse(submission["rawPayloadExposed"])
         self.assertEqual("review_pending", event["promotionState"])
         self.assertEqual("accepted", event["firewall"]["decision"])
         self.assertTrue(event["firewall"]["valuesRedacted"])
@@ -559,6 +583,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertTrue(item["valuesRedacted"])
             self.assertFalse(item["rawCredentialExposed"])
             self.assertFalse(item["rawPayloadExposed"])
+            self.assertIn("detailsSummary", item)
+            self.assertIsInstance(item["detailsSummary"], list)
+        current_message_summaries = [
+            summary
+            for item in audit["items"]
+            if item["action"] == "current_message.read"
+            for summary in item["detailsSummary"]
+        ]
+        self.assertIn("delivery 0 broadcast / 1 targeted", current_message_summaries)
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",
@@ -570,6 +603,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_audit["filters"])
         self.assertTrue(filtered_audit["items"])
         self.assertTrue(all(item["action"] == "memory.search" for item in filtered_audit["items"]))
+        filtered_summaries = [summary for item in filtered_audit["items"] for summary in item["detailsSummary"]]
+        self.assertIn("source hosted_workspace_store", filtered_summaries)
 
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(
@@ -688,9 +723,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("201 Created", status)
-        event = json.loads(text)["event"]
+        submit_payload = json.loads(text)
+        event = submit_payload["event"]
+        submission = submit_payload["submission"]
         self.assertEqual("risk", event["memoryType"])
         self.assertEqual("quarantine_for_review", event["firewall"]["decision"])
+        self.assertEqual("quarantine_for_review", submission["firewallDecision"])
+        self.assertEqual("quarantined", submission["reviewStatus"])
+        self.assertTrue(submission["redactionApplied"])
+        self.assertFalse(submission["rawPayloadExposed"])
         self.assertTrue(event["firewall"]["valuesRedacted"])
         self.assertTrue(event["firewall"]["redactionApplied"])
         self.assertEqual("quarantined", event["promotionState"])
