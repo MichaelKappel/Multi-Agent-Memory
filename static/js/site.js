@@ -194,6 +194,28 @@
     return row;
   }
 
+  function appendCopyActions(row, actions) {
+    var usable = (actions || []).filter(function (action) {
+      return action && action.value;
+    });
+    if (!usable.length) {
+      return row;
+    }
+    var wrapper = el("div", "row-actions");
+    usable.forEach(function (action) {
+      var button = el("button", "button compact", action.label);
+      button.type = "button";
+      button.setAttribute("data-console-copy-action", "");
+      button.setAttribute("aria-label", action.copyLabel || action.label);
+      button.addEventListener("click", function () {
+        copySafeText(action.value, action.copyLabel || action.label);
+      });
+      wrapper.appendChild(button);
+    });
+    row.appendChild(wrapper);
+    return row;
+  }
+
   function renderMemorySummary(payload) {
     var node = pick("[data-console-memory-list]");
     if (!node) {
@@ -207,7 +229,7 @@
     }
     node.appendChild(el("div", "result-count", items.length + " hosted memory item(s). Filesystem docs are excluded from protected search."));
     items.forEach(function (item) {
-      node.appendChild(resultRow(
+      var row = resultRow(
         item.title || item.subject,
         item.summary,
         [
@@ -222,7 +244,11 @@
           item.createdAt || "",
           "source " + (item.source || "api"),
         ]
-      ));
+      );
+      appendCopyActions(row, [
+        { label: "Copy memory id", copyLabel: "Memory id", value: item.eventId },
+      ]);
+      node.appendChild(row);
     });
   }
 
@@ -243,7 +269,7 @@
       var message = item.message || {};
       var notification = item.notification || {};
       var target = message.targetAgentId || notification.targetAgentId;
-      node.appendChild(resultRow(
+      var row = resultRow(
         target ? "Targeted message" : "Broadcast message",
         message.safeSummary,
         [
@@ -259,7 +285,12 @@
           "notification " + shortId(notification.notificationId),
           message.createdAt || "",
         ]
-      ));
+      );
+      appendCopyActions(row, [
+        { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
+        { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
+      ]);
+      node.appendChild(row);
     });
   }
 
@@ -290,6 +321,10 @@
       ]
     );
     row.className += " delivery-row";
+    appendCopyActions(row, [
+      { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
+      { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
+    ]);
     node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; current inbox refreshed."));
     node.appendChild(row);
   }
@@ -307,7 +342,7 @@
     }
     node.appendChild(el("div", "result-count", items.length + " receipt(s)."));
     items.forEach(function (item) {
-      node.appendChild(resultRow(
+      var row = resultRow(
         "Notification " + (item.status || "read"),
         "Receipt confirms an acknowledgement without exposing raw private payloads.",
         [
@@ -321,7 +356,12 @@
           "notification " + shortId(item.notificationId),
           item.createdAt || "",
         ]
-      ));
+      );
+      appendCopyActions(row, [
+        { label: "Copy receipt id", copyLabel: "Receipt id", value: item.receiptId },
+        { label: "Copy notification id", copyLabel: "Notification id", value: item.notificationId },
+      ]);
+      node.appendChild(row);
     });
   }
 
@@ -338,7 +378,7 @@
     }
     node.appendChild(el("div", "result-count", items.length + " audit event(s), newest first."));
     items.slice().reverse().slice(0, 24).forEach(function (item) {
-      node.appendChild(resultRow(
+      var row = resultRow(
         item.action,
         "Actor " + (item.actor || "unknown") + " touched " + (item.target || "unknown target") + ".",
         [
@@ -350,7 +390,11 @@
           "audit " + shortId(item.auditId),
           item.createdAt || "",
         ]
-      ));
+      );
+      appendCopyActions(row, [
+        { label: "Copy audit id", copyLabel: "Audit id", value: item.auditId },
+      ]);
+      node.appendChild(row);
     });
   }
 

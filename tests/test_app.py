@@ -171,11 +171,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Broadcast delivered", js)
         self.assertIn("Broadcast message sent; current inbox refreshed.", js)
         self.assertIn('target + " inbox refreshed."', js)
+        self.assertIn("appendCopyActions(row", js)
 
     def test_console_js_exposes_copy_safe_row_ids(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
         self.assertIn("appendCopyActions", js)
+        self.assertIn("data-console-copy-action", js)
+        self.assertIn("aria-label", js)
         self.assertIn("Copy memory id", js)
         self.assertIn("Copy message id", js)
         self.assertIn("Copy notification id", js)
