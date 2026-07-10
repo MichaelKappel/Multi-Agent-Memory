@@ -67,6 +67,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "MYSQL_DATABASE",
             "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
             "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
+            "MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS",
         ):
             os.environ.pop(key, None)
 
@@ -114,6 +115,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("/api/matm/meeting-messages/promote", meeting_rooms["promoteMessageRoute"])
         self.assertEqual(["company", "workspace", "project"], meeting_rooms["defaultScopes"])
         self.assertEqual(["goal", "task"], meeting_rooms["customScopes"])
+        browser_cors = payload["data"]["connectorContract"]["browserCors"]
+        self.assertEqual("live", browser_cors["status"])
+        self.assertTrue(browser_cors["preflightWithoutWorkspaceKey"])
+        self.assertIn("Authorization", browser_cors["allowedHeaders"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
         status, _headers, text = call_app("/")
@@ -187,6 +192,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("secretStorage", {item["name"] for item in data["manifestFields"]})
         self.assertEqual("bearer_workspace_key", data["authentication"]["scheme"])
         self.assertFalse(data["authentication"]["serverStoresRawKey"])
+        self.assertEqual("live", data["browserCors"]["status"])
+        self.assertFalse(data["browserCors"]["preflightRequiresWorkspaceKey"])
+        self.assertIn("Authorization", data["browserCors"]["allowedHeaders"])
+        self.assertIn("Idempotency-Key", data["browserCors"]["allowedHeaders"])
         self.assertIn("/api/matm/agents/register", [item["route"] for item in data["setupFlow"]])
         self.assertEqual("/api/matm/memory-events/submit", data["memoryFlow"]["submitRoute"])
         self.assertEqual("/api/matm/meeting-messages/promote", data["memoryFlow"]["promoteMeetingMessageRoute"])
@@ -225,6 +234,75 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         resources = json.loads(text)["resources"]
         routes = {item.get("route") for item in resources}
         self.assertIn("/api/matm/connector-contract", routes)
+
+    def test_api_cors_preflight_allows_browser_connectors_without_workspace_key(self):
+        status, headers, text = call_app(
+            "/api/matm/agents/register",
+            method="OPTIONS",
+            headers={
+                "HTTP_ORIGIN": "https://tinyrustlm.com",
+                "HTTP_ACCESS_CONTROL_REQUEST_METHOD": "POST",
+                "HTTP_ACCESS_CONTROL_REQUEST_HEADERS": "Authorization, Content-Type, Idempotency-Key",
+            },
+        )
+
+        self.assertEqual("204 No Content", status)
+        self.assertEqual("", text)
+        self.assertEqual("*", headers["Access-Control-Allow-Origin"])
+        self.assertIn("POST", headers["Access-Control-Allow-Methods"])
+        self.assertIn("OPTIONS", headers["Access-Control-Allow-Methods"])
+        self.assertIn("Authorization", headers["Access-Control-Allow-Headers"])
+        self.assertIn("Idempotency-Key", headers["Access-Control-Allow-Headers"])
+        self.assertEqual("600", headers["Access-Control-Max-Age"])
+
+    def test_api_cors_headers_are_present_on_public_and_protected_api_responses(self):
+        status, headers, text = call_app(
+            "/api/matm/connector-contract",
+            headers={"HTTP_ORIGIN": "https://tinyrustlm.com"},
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual("*", headers["Access-Control-Allow-Origin"])
+        self.assertIn("Authorization", headers["Access-Control-Allow-Headers"])
+        data = json.loads(text)["data"]
+        self.assertFalse(data["browserCors"]["preflightRequiresWorkspaceKey"])
+
+        status, headers, text = call_app(
+            "/api/matm/search",
+            headers={"HTTP_ORIGIN": "https://tinyrustlm.com"},
+            query="workspace_id=workspace-missing&q=test",
+        )
+        self.assertEqual("401 Unauthorized", status)
+        self.assertEqual("*", headers["Access-Control-Allow-Origin"])
+        self.assert_safe_noop_response(text, "auth_required")
+
+    def test_api_cors_can_restrict_allowed_origins(self):
+        os.environ["MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS"] = "https://tinyrustlm.com,https://multiagentmemory.com"
+
+        status, headers, _text = call_app(
+            "/api/matm/search",
+            method="OPTIONS",
+            headers={
+                "HTTP_ORIGIN": "https://tinyrustlm.com",
+                "HTTP_ACCESS_CONTROL_REQUEST_METHOD": "GET",
+                "HTTP_ACCESS_CONTROL_REQUEST_HEADERS": "Authorization",
+            },
+        )
+        self.assertEqual("204 No Content", status)
+        self.assertEqual("https://tinyrustlm.com", headers["Access-Control-Allow-Origin"])
+        self.assertEqual("Origin", headers["Vary"])
+
+        status, headers, text = call_app(
+            "/api/matm/search",
+            method="OPTIONS",
+            headers={
+                "HTTP_ORIGIN": "https://example.invalid",
+                "HTTP_ACCESS_CONTROL_REQUEST_METHOD": "GET",
+                "HTTP_ACCESS_CONTROL_REQUEST_HEADERS": "Authorization",
+            },
+        )
+        self.assertEqual("403 Forbidden", status)
+        self.assertNotIn("Access-Control-Allow-Origin", headers)
+        self.assert_safe_noop_response(text, "cors_origin_not_allowed")
 
     def test_console_exposes_operator_views_and_debug_json(self):
         status, _headers, text = call_app("/console")
@@ -267,6 +345,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-review-decision-summary", text)
+        self.assertIn('name="sourcePrefix"', text)
+        self.assertIn("data-console-long-term-reviews", text)
+        self.assertIn("data-console-clear-review-filters", text)
         self.assertIn('id="meeting-rooms"', text)
         self.assertIn("data-console-refresh-meeting-rooms", text)
         self.assertIn("data-console-mark-meeting-read", text)
@@ -521,6 +602,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("long-term-review-summary", js)
         self.assertIn("Long-term reviews", js)
         self.assertIn("actionable", js)
+        self.assertIn("reviewQueueFilters", js)
+        self.assertIn("source_prefix", js)
+        self.assertIn("memory_type", js)
+        self.assertIn("actor_agent_id", js)
+        self.assertIn("Copy source", js)
+        self.assertIn("data-console-long-term-reviews", js)
+        self.assertIn("Long-term review queue refreshed", js)
+        self.assertIn("Review filters cleared.", js)
         self.assertIn("meeting_room.create", js)
 
     def test_console_js_renders_all_agent_lane_overview(self):
@@ -2348,6 +2437,44 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(summary["valuesRedacted"])
         self.assertFalse(summary["rawCredentialExposed"])
         self.assertFalse(summary["rawPayloadExposed"])
+        self.assertIn("memory", payload["items"][0])
+        self.assertEqual("docs/long-term-memory/system-targets.md", payload["items"][0]["memory"]["source"])
+        self.assertEqual("procedure", payload["items"][0]["memory"]["memoryType"])
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query=(
+                "workspace_id=%s&status=pending&source_prefix=docs/long-term-memory/"
+                "&tag=long-term-memory-migration&memory_type=procedure&actor_agent_id=codex-agent"
+            )
+            % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        filtered = json.loads(text)
+        filtered_summary = filtered["operatorSummary"]["longTermMemoryReviews"]
+        self.assertEqual(2, filtered["count"])
+        self.assertEqual(
+            {
+                "actorAgentId": "codex-agent",
+                "memoryType": "procedure",
+                "sourcePrefix": "docs/long-term-memory/",
+                "status": "pending",
+                "tag": "long-term-memory-migration",
+            },
+            filtered["filters"],
+        )
+        self.assertEqual(2, filtered_summary["visibleRecordCount"])
+        self.assertEqual(1, filtered_summary["sourcePathCount"])
+        self.assertTrue(all(item["memory"]["source"].startswith("docs/long-term-memory/") for item in filtered["items"]))
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query="workspace_id=%s&status=pending&source_prefix=docs/long-term-memory/&memory_type=status" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual(0, json.loads(text)["count"])
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",

@@ -131,6 +131,12 @@ def capability_matrix():
             "route": "/api/matm/connector-contract",
             "purpose": "Public-safe integration contract for optional app and agent connectors.",
             "credentialBoundary": "workspace keys are user-provided protected credentials; connector UIs must keep them in secure local settings and never print them back.",
+            "browserCors": {
+                "status": "live",
+                "preflightWithoutWorkspaceKey": True,
+                "allowedMethods": ["GET", "POST", "OPTIONS"],
+                "allowedHeaders": ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"],
+            },
         },
         "auditTrail": {
             "status": "live",
@@ -207,6 +213,17 @@ def connector_contract():
                 "persist raw private payloads as memory",
                 "treat public discovery routes as proof of workspace authorization",
             ],
+        },
+        "browserCors": {
+            "status": "live",
+            "preflightRoutePattern": "/api/*",
+            "preflightMethod": "OPTIONS",
+            "preflightRequiresWorkspaceKey": False,
+            "allowedMethods": ["GET", "POST", "OPTIONS"],
+            "allowedHeaders": ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"],
+            "defaultAllowedOrigins": "*",
+            "credentialMode": "omit_or_same_origin_cookie_free; send workspace key in Authorization or X-MemoryEndpoints-Key, not browser cookies",
+            "connectorGuidance": "Browser connectors should preflight /api/matm routes, keep the workspace key out of localStorage, and use explicit user opt-in before calling protected routes.",
         },
         "manifestFields": [
             {"name": "id", "required": True, "example": "tiny-rust-lm-memoryendpoints"},

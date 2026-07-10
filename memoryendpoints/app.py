@@ -18,6 +18,8 @@ from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostic
 STATIC_ROOT = ROOT / "static"
 LONG_TERM_MEMORY_TAG = "long-term-memory-migration"
 LONG_TERM_MEMORY_SOURCE_PREFIX = "docs/long-term-memory/"
+DEFAULT_CORS_ALLOWED_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-MemoryEndpoints-Key"
+DEFAULT_CORS_ALLOWED_METHODS = "GET, POST, OPTIONS"
 
 
 def _read_body(environ):
@@ -47,6 +49,65 @@ def _token(environ):
 
 def _idempotency_key(environ):
     return environ.get("HTTP_IDEMPOTENCY_KEY", "").strip()
+
+
+def _cors_allowed_origin(environ):
+    allowed = os.environ.get("MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS", "*").strip() or "*"
+    origin = (environ.get("HTTP_ORIGIN") or "").strip()
+    if allowed == "*":
+        return "*"
+    allowed_origins = [item.strip() for item in allowed.split(",") if item.strip()]
+    if origin and origin in allowed_origins:
+        return origin
+    if not origin:
+        return ""
+    return None
+
+
+def _cors_headers(environ):
+    origin = _cors_allowed_origin(environ)
+    if origin is None:
+        return []
+    request_headers = (environ.get("HTTP_ACCESS_CONTROL_REQUEST_HEADERS") or "").strip()
+    allowed_headers = request_headers or DEFAULT_CORS_ALLOWED_HEADERS
+    headers = [
+        ("Access-Control-Allow-Origin", origin or "*"),
+        ("Access-Control-Allow-Methods", DEFAULT_CORS_ALLOWED_METHODS),
+        ("Access-Control-Allow-Headers", allowed_headers),
+        ("Access-Control-Max-Age", "600"),
+        ("Access-Control-Expose-Headers", "Content-Length, Content-Type"),
+    ]
+    if origin and origin != "*":
+        headers.append(("Vary", "Origin"))
+    return headers
+
+
+def _cors_start_response(environ, start_response):
+    cors_headers = _cors_headers(environ)
+
+    def wrapped(status, response_headers, exc_info=None):
+        existing = {key.lower() for key, _value in response_headers}
+        merged = list(response_headers)
+        for key, value in cors_headers:
+            if key.lower() not in existing:
+                merged.append((key, value))
+        if exc_info is None:
+            return start_response(status, merged)
+        return start_response(status, merged, exc_info)
+
+    return wrapped
+
+
+def _route_cors_preflight(environ, start_response):
+    if _cors_allowed_origin(environ) is None:
+        return problem(start_response, "403 Forbidden", "CORS origin not allowed", "This origin is not allowed to call the MemoryEndpoints API.", "cors_origin_not_allowed")
+    return response(
+        start_response,
+        "204 No Content",
+        b"",
+        "text/plain; charset=utf-8",
+        headers=[("Allow", DEFAULT_CORS_ALLOWED_METHODS)],
+    )
 
 
 def _protected_query_url(route, params):
@@ -441,6 +502,48 @@ def _long_term_review_operator_summary(visible_reviews, all_reviews, memory_item
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
     }
+
+
+def _review_memory_metadata(review, memory_by_id):
+    event = memory_by_id.get((review or {}).get("memoryEventId")) or {}
+    if not event:
+        return {}
+    return {
+        "eventId": event.get("eventId") or "",
+        "source": event.get("source") or "",
+        "memoryType": event.get("memoryType") or "",
+        "scope": event.get("scope") or "",
+        "scopeId": event.get("scopeId") or "",
+        "actorAgentId": event.get("actorAgentId") or "",
+        "tags": list(event.get("tags") or []),
+        "valuesRedacted": True,
+    }
+
+
+def _review_matches_memory_filters(review, memory_by_id, filters):
+    filters = filters or {}
+    metadata = _review_memory_metadata(review, memory_by_id)
+    source_prefix = (filters.get("sourcePrefix") or "").strip()
+    if source_prefix and not (metadata.get("source") or "").startswith(source_prefix):
+        return False
+    tag_filter = (filters.get("tag") or "").strip().lower()
+    if tag_filter and tag_filter not in [str(tag).lower() for tag in metadata.get("tags") or []]:
+        return False
+    memory_type = (filters.get("memoryType") or "").strip().lower()
+    if memory_type and (metadata.get("memoryType") or "").lower() != memory_type:
+        return False
+    actor_agent_id = (filters.get("actorAgentId") or "").strip().lower()
+    if actor_agent_id and (metadata.get("actorAgentId") or "").lower() != actor_agent_id:
+        return False
+    return True
+
+
+def _review_public_item(review, memory_by_id):
+    item = dict(review or {})
+    metadata = _review_memory_metadata(item, memory_by_id)
+    if metadata:
+        item["memory"] = metadata
+    return item
 
 
 def _memory_search_operator_summary(items, query_text, filters):
@@ -1196,7 +1299,30 @@ def route_console(start_response):
           <option value="">all</option>
         </select>
       </label>
+      <label>Source prefix
+        <input name="sourcePrefix" placeholder="docs/long-term-memory/">
+      </label>
+      <label>Tag filter
+        <input name="tag" placeholder="long-term-memory-migration">
+      </label>
+      <label>Memory type
+        <select name="memoryType">
+          <option value="">all memory types</option>
+          <option value="status">status</option>
+          <option value="decision">decision</option>
+          <option value="procedure">procedure</option>
+          <option value="risk">risk</option>
+          <option value="evidence">evidence</option>
+          <option value="handoff">handoff</option>
+          <option value="note">note</option>
+        </select>
+      </label>
+      <label>Actor filter
+        <input name="actorAgentId" placeholder="codex-agent">
+      </label>
       <button class="button" type="submit">Refresh reviews</button>
+      <button class="button" type="button" data-console-long-term-reviews>Long-term reviews</button>
+      <button class="button" type="button" data-console-clear-review-filters>Clear filters</button>
     </form>
     <div class="console-results" data-console-review-list>
       <p class="empty-state">Review queue items will appear as promotion rows.</p>
@@ -1867,11 +1993,30 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":
         status_filter = query.get("status") or ""
-        items = store.review_queue(workspace_id, status_filter)
-        all_review_items = store.review_queue(workspace_id, "")
+        review_filters = {
+            "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
+            "tag": query.get("tag") or "",
+            "memoryType": query.get("memory_type") or query.get("memoryType") or "",
+            "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
+        }
+        active_review_filters = {key: value for key, value in review_filters.items() if value}
         memory_items = store.search_memory(workspace_id, "", {})
+        memory_by_id = {item.get("eventId"): item for item in memory_items if item.get("eventId")}
+        all_review_items = [
+            item
+            for item in store.review_queue(workspace_id, "")
+            if _review_matches_memory_filters(item, memory_by_id, active_review_filters)
+        ]
+        items = [
+            item
+            for item in all_review_items
+            if not status_filter or item.get("status") == status_filter
+        ]
+        public_items = [_review_public_item(item, memory_by_id) for item in items]
         status_counts = _review_status_counts(all_review_items)
-        filters = {"status": status_filter} if status_filter else {}
+        filters = dict(active_review_filters)
+        if status_filter:
+            filters["status"] = status_filter
         operator_summary = _review_queue_operator_summary(items, all_review_items, filters, status_counts, memory_items)
         _audit_read(
             store,
@@ -1883,6 +2028,7 @@ def route_protected(environ, start_response, path):
                 "statusFilter": status_filter,
                 "count": len(items),
                 "filters": filters,
+                "filterKeys": sorted(filters.keys()),
                 "reviewStatusCounts": status_counts,
                 "firewallDecisionCounts": operator_summary["firewallDecisionCounts"],
                 "detectedThreatCount": operator_summary["detectedThreatCount"],
@@ -1893,7 +2039,7 @@ def route_protected(environ, start_response, path):
             start_response,
             {
                 "ok": True,
-                "items": items,
+                "items": public_items,
                 "count": len(items),
                 "filters": filters,
                 "statusCounts": status_counts,
@@ -2419,6 +2565,11 @@ def route_protected(environ, start_response, path):
 def application(environ, start_response):
     path = environ.get("PATH_INFO", "/") or "/"
     method = environ.get("REQUEST_METHOD", "GET")
+    cors_api_route = path.startswith("/api/")
+    if cors_api_route:
+        start_response = _cors_start_response(environ, start_response)
+        if method == "OPTIONS":
+            return _route_cors_preflight(environ, start_response)
     if path == "/" and method == "GET":
         return route_home(start_response)
     if path in ("/docs", "/docs/") and method == "GET":

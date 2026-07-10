@@ -50,6 +50,7 @@
     { agentId: "swarm-observer-agent", label: "Observer" },
   ];
   var longTermMemoryTag = "long-term-memory-migration";
+  var longTermMemorySourcePrefix = "docs/long-term-memory/";
   var workflowLabels = {
     all: "All",
     workspace: "Workspace",
@@ -1501,10 +1502,14 @@
     node.appendChild(el("div", "result-count", countText));
     items.forEach(function (item) {
       var threats = item.detectedThreats || [];
+      var memory = item.memory || {};
       var metaItems = [
         "proposed by " + (item.proposedByAgentId || "unknown"),
         "review " + shortId(item.reviewId),
         "memory " + shortId(item.memoryEventId),
+        memory.source ? "source " + memory.source : "",
+        memory.scope ? "scope " + memory.scope : "",
+        memory.actorAgentId ? "actor " + memory.actorAgentId : "",
         "risk " + String(item.riskScore || 0),
         threats.length ? "threats " + threats.slice(0, 3).join(", ") : "",
         item.createdAt || "",
@@ -1514,6 +1519,7 @@
         item.publicSafeSummary || "No public-safe summary returned.",
         [
           { text: item.status || "pending", kind: item.status === "promoted" ? "good" : (item.status === "quarantined" ? "warn" : "neutral") },
+          { text: memory.memoryType || item.reviewType || "memory", kind: "neutral" },
           { text: item.firewallDecision || "review", kind: item.firewallDecision === "quarantine_for_review" ? "warn" : "good" },
           { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
         ],
@@ -1536,6 +1542,14 @@
       });
       actions.appendChild(useButton);
       actions.appendChild(copyButton);
+      if (memory.source) {
+        var sourceButton = el("button", "button compact", "Copy source");
+        sourceButton.type = "button";
+        sourceButton.addEventListener("click", function () {
+          copySafeText(memory.source, "Source path");
+        });
+        actions.appendChild(sourceButton);
+      }
       row.appendChild(actions);
       node.appendChild(row);
     });
@@ -1931,8 +1945,21 @@
     });
   }
 
+  function reviewQueueFilters(status) {
+    var form = pick("[data-console-review]");
+    var params = {workspace_id: state.workspaceId, status: status || ""};
+    if (form) {
+      params.status = status !== undefined ? status : (form.elements.status ? form.elements.status.value : "");
+      params.source_prefix = form.elements.sourcePrefix ? form.elements.sourcePrefix.value.trim() : "";
+      params.tag = form.elements.tag ? form.elements.tag.value.trim() : "";
+      params.memory_type = form.elements.memoryType ? form.elements.memoryType.value : "";
+      params.actor_agent_id = form.elements.actorAgentId ? form.elements.actorAgentId.value.trim() : "";
+    }
+    return params;
+  }
+
   function refreshReviewQueue(status) {
-    var qs = query({workspace_id: state.workspaceId, status: status || ""});
+    var qs = query(reviewQueueFilters(status));
     return api("/api/matm/review-queue?" + qs).then(function (payload) {
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstReviewId = first ? first.reviewId : "";
@@ -2262,9 +2289,42 @@
   if (reviewForm) {
     reviewForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      refreshReviewQueue(reviewForm.elements.status.value).catch(function (error) {
+      refreshReviewQueue().catch(function (error) {
         setStatus(error.message, true);
       });
+    });
+  }
+
+  var longTermReviewsButton = pick("[data-console-long-term-reviews]");
+  if (longTermReviewsButton && reviewForm) {
+    longTermReviewsButton.addEventListener("click", function () {
+      reviewForm.elements.status.value = "";
+      reviewForm.elements.sourcePrefix.value = longTermMemorySourcePrefix;
+      reviewForm.elements.tag.value = longTermMemoryTag;
+      reviewForm.elements.memoryType.value = "";
+      reviewForm.elements.actorAgentId.value = "";
+      refreshReviewQueue()
+        .then(function (payload) {
+          var summary = payload && payload.operatorSummary && payload.operatorSummary.longTermMemoryReviews;
+          var count = summary ? summary.sourcePathCount : ((payload && payload.count) || 0);
+          setStatus("Long-term review queue refreshed: " + count + " source path(s).", false);
+        })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var clearReviewFiltersButton = pick("[data-console-clear-review-filters]");
+  if (clearReviewFiltersButton && reviewForm) {
+    clearReviewFiltersButton.addEventListener("click", function () {
+      reviewForm.elements.status.value = "pending";
+      ["sourcePrefix", "tag", "memoryType", "actorAgentId"].forEach(function (field) {
+        if (reviewForm.elements[field]) {
+          reviewForm.elements[field].value = "";
+        }
+      });
+      refreshReviewQueue()
+        .then(function () { setStatus("Review filters cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 

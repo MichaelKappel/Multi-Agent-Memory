@@ -79,6 +79,20 @@ def _audit_detail_summary(details):
         items.append("status %s" % safe.get("statusFilter"))
     if safe.get("actionFilter"):
         items.append("action %s" % safe.get("actionFilter"))
+    long_term_reviews = safe.get("longTermMemoryReviews")
+    if isinstance(long_term_reviews, dict):
+        if long_term_reviews.get("sourcePathCount") not in (None, ""):
+            duplicate_suffix = ""
+            if long_term_reviews.get("duplicateRecordCount"):
+                duplicate_suffix = " / %s duplicates" % long_term_reviews.get("duplicateRecordCount")
+            items.append(
+                "long-term reviews %s sources / %s actionable%s"
+                % (
+                    long_term_reviews.get("sourcePathCount") or 0,
+                    long_term_reviews.get("actionableCount") or 0,
+                    duplicate_suffix,
+                )
+            )
     if safe.get("hierarchyReady") is not None:
         items.append("hierarchy ready" if safe.get("hierarchyReady") else "hierarchy incomplete")
     filter_keys = safe.get("filterKeys")
@@ -122,20 +136,6 @@ def _audit_detail_summary(details):
             items.append("firewall %s" % ", ".join(active[:3]))
     if safe.get("detectedThreatCount") not in (None, ""):
         items.append("threats %s" % (safe.get("detectedThreatCount") or 0))
-    long_term_reviews = safe.get("longTermMemoryReviews")
-    if isinstance(long_term_reviews, dict):
-        if long_term_reviews.get("sourcePathCount") not in (None, ""):
-            duplicate_suffix = ""
-            if long_term_reviews.get("duplicateRecordCount"):
-                duplicate_suffix = " / %s duplicates" % long_term_reviews.get("duplicateRecordCount")
-            items.append(
-                "long-term reviews %s sources / %s actionable%s"
-                % (
-                    long_term_reviews.get("sourcePathCount") or 0,
-                    long_term_reviews.get("actionableCount") or 0,
-                    duplicate_suffix,
-                )
-            )
     receipt_status_counts = safe.get("receiptStatusCounts")
     if isinstance(receipt_status_counts, dict):
         active = ["%s %s" % (key, receipt_status_counts.get(key)) for key in ("read", "unread", "acknowledged") if receipt_status_counts.get(key)]
