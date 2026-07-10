@@ -460,6 +460,7 @@ def _long_term_memory_operator_summary(items, query_text, filters):
     items = items or []
     filters = filters or {}
     relevant_items = [item for item in items if _is_long_term_memory_item(item)]
+    related_items = [item for item in items if not _is_long_term_memory_item(item)]
     if not _requests_long_term_memory_summary(items, query_text, filters):
         return None
     source_paths = sorted({item.get("source") for item in relevant_items if (item.get("source") or "").startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)})
@@ -472,17 +473,26 @@ def _long_term_memory_operator_summary(items, query_text, filters):
         "schemaVersion": "memoryendpoints.long_term_memory_operator_summary.v1",
         "migrationTag": LONG_TERM_MEMORY_TAG,
         "status": status,
+        "searchResultCount": len(items),
         "count": len(source_paths),
+        "canonicalSourceCount": len(source_paths),
         "recordCount": len(relevant_items),
+        "canonicalRecordCount": len(relevant_items),
         "duplicateRecordCount": duplicate_record_count,
         "sourcePathCount": len(source_paths),
         "sourcePathSamples": source_paths[:8],
+        "relatedRecordCount": len(related_items),
+        "relatedRecordsExcludedFromCanonical": bool(related_items),
         "memorySource": "hosted_workspace_store",
         "filesystemDocsIncluded": False,
         "scopeCounts": _count_by(relevant_items, "scope", {"account": 0, "company": 0, "workspace": 0, "project": 0}),
         "memoryTypeCounts": _count_by(relevant_items, "memoryType"),
         "reviewStatusCounts": _count_by(relevant_items, "reviewStatus", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
         "promotionStateCounts": _count_by(relevant_items, "promotionState", {"review_pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "relatedScopeCounts": _count_by(related_items, "scope", {"account": 0, "company": 0, "workspace": 0, "project": 0}),
+        "relatedMemoryTypeCounts": _count_by(related_items, "memoryType"),
+        "relatedReviewStatusCounts": _count_by(related_items, "reviewStatus", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "relatedPromotionStateCounts": _count_by(related_items, "promotionState", {"review_pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
         "allPromoted": bool(relevant_items) and promoted_count == len(relevant_items),
         "allValuesRedacted": all_values_redacted,
         "rawPrivatePayloadStoredCount": raw_private_payload_count,

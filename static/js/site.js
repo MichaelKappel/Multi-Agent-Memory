@@ -252,9 +252,13 @@
     var line = el("div", "filter-summary long-term-memory-summary");
     line.appendChild(el("span", "filter-summary-label", "Long-term memory"));
     appendBadge(line, formatStatusText(migration.status), migration.status === "promoted" ? "good" : "warn");
-    appendBadge(line, (migration.count || 0) + " hosted sources", migration.count ? "good" : "neutral");
+    appendBadge(line, (migration.searchResultCount || 0) + " search hits", migration.searchResultCount ? "neutral" : "good");
+    appendBadge(line, (migration.canonicalSourceCount || migration.count || 0) + " canonical sources", (migration.canonicalSourceCount || migration.count) ? "good" : "neutral");
     appendBadge(line, (migration.sourcePathCount || 0) + " source paths", migration.sourcePathCount ? "good" : "neutral");
-    appendBadge(line, (migration.recordCount || migration.count || 0) + " records", migration.recordCount ? "neutral" : "good");
+    appendBadge(line, (migration.canonicalRecordCount || migration.recordCount || migration.count || 0) + " canonical records", (migration.canonicalRecordCount || migration.recordCount) ? "neutral" : "good");
+    if (migration.relatedRecordCount) {
+      appendBadge(line, migration.relatedRecordCount + " related records excluded from canonical", "neutral");
+    }
     if (migration.duplicateRecordCount) {
       appendBadge(line, migration.duplicateRecordCount + " duplicate records", "warn");
     }
@@ -263,6 +267,7 @@
     appendBadge(line, migration.rawPrivatePayloadStoredCount ? "payload storage review" : "private payload hidden", migration.rawPrivatePayloadStoredCount ? "warn" : "good");
     appendCountBadges(line, "Reviews", migration.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
     appendCountBadges(line, "Promotion", migration.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(line, "Related reviews", migration.relatedReviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
     parent.appendChild(line);
   }
 
