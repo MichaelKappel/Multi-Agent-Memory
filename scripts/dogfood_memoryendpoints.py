@@ -599,6 +599,17 @@ def combine_reports(runs):
     return report
 
 
+def restore_store_environment(previous_store_path, previous_backend):
+    if previous_store_path is None:
+        os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
+    else:
+        os.environ["MEMORYENDPOINTS_STORE_PATH"] = previous_store_path
+    if previous_backend is None:
+        os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
+    else:
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = previous_backend
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["local", "live", "both"], default="local")
@@ -621,16 +632,10 @@ def main(argv=None):
             local["rawCredentialValuesStored"] = local["rawCredentialValuesStored"] or ("me_live_" in store_text)
             runs.append(local)
         if args.mode in ("live", "both"):
+            restore_store_environment(previous_store_path, previous_backend)
             runs.append(run_sequence(HttpTransport(args.base_url), "live-http", args.base_url))
     finally:
-        if previous_store_path is None:
-            os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
-        else:
-            os.environ["MEMORYENDPOINTS_STORE_PATH"] = previous_store_path
-        if previous_backend is None:
-            os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
-        else:
-            os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = previous_backend
+        restore_store_environment(previous_store_path, previous_backend)
 
     report = combine_reports(runs)
     if not args.no_progress_update:

@@ -1,3 +1,4 @@
+import os
 import unittest
 from urllib.parse import parse_qs
 
@@ -190,6 +191,25 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertFalse(report["latestDogfoodContractVerified"])
         self.assertFalse(report["liveAuditTrailReadbackVerified"])
         self.assertEqual(0, report["auditLogCount"])
+
+    def test_restore_store_environment_removes_local_store_before_live(self):
+        previous_path = os.environ.get("MEMORYENDPOINTS_STORE_PATH")
+        previous_backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND")
+        try:
+            os.environ["MEMORYENDPOINTS_STORE_PATH"] = "local-dogfood-store.json"
+            os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "file"
+
+            dogfood_memoryendpoints.restore_store_environment(None, None)
+
+            self.assertNotIn("MEMORYENDPOINTS_STORE_PATH", os.environ)
+            self.assertNotIn("MEMORYENDPOINTS_STORE_BACKEND", os.environ)
+
+            dogfood_memoryendpoints.restore_store_environment("existing-store.json", "sqlite")
+
+            self.assertEqual("existing-store.json", os.environ["MEMORYENDPOINTS_STORE_PATH"])
+            self.assertEqual("sqlite", os.environ["MEMORYENDPOINTS_STORE_BACKEND"])
+        finally:
+            dogfood_memoryendpoints.restore_store_environment(previous_path, previous_backend)
 
 
 if __name__ == "__main__":
