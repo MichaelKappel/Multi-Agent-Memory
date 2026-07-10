@@ -19,7 +19,9 @@ DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
 REQUEST_TIMEOUT_SECONDS = 8
 LIVE_READ_ATTEMPTS = 3
 LIVE_WRITE_ATTEMPTS = 3
+LIVE_ACK_READ_ATTEMPTS = 16
 LIVE_READ_DELAY_SECONDS = 0.5
+LIVE_ACK_READ_DELAY_SECONDS = 1.5
 LIVE_WRITE_DELAY_SECONDS = 1.0
 
 
@@ -777,8 +779,8 @@ def main(argv=None):
             expected_summary=broadcast_summary,
             expected_agents=[agent_id for agent_id in agent_ids if agent_id != ack_agent_id],
             excluded_agents=[ack_agent_id],
-            attempts=LIVE_READ_ATTEMPTS,
-            delay_seconds=LIVE_READ_DELAY_SECONDS,
+            attempts=LIVE_ACK_READ_ATTEMPTS,
+            delay_seconds=LIVE_ACK_READ_DELAY_SECONDS,
         )
         all_payloads.extend(inbox_payloads)
         ack_check = acknowledgement_isolation_check(before_payload, after_ack_inboxes, broadcast_summary, ack_agent_id, agent_ids)
