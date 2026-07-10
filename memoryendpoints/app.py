@@ -2298,6 +2298,7 @@ def route_protected(environ, start_response, path):
             "memoryType": query.get("memory_type") or query.get("memoryType") or "",
             "reviewStatus": query.get("review_status") or query.get("reviewStatus") or "",
             "promotionState": query.get("promotion_state") or query.get("promotionState") or "",
+            "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
             "tag": query.get("tag") or "",
             "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
         }

@@ -5,7 +5,7 @@ import json
 import secrets
 import time
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -16,6 +16,11 @@ DEFAULT_REPORT = ROOT / "docs" / "reports" / "current-message-fanout-verificatio
 DEFAULT_HUMAN_AGENT_ID = "human-verifier-agent"
 DEFAULT_BACKEND_AGENT_ID = "MemoryEndpoints-Backend-Agent"
 DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
+REQUEST_TIMEOUT_SECONDS = 8
+LIVE_READ_ATTEMPTS = 3
+LIVE_WRITE_ATTEMPTS = 3
+LIVE_READ_DELAY_SECONDS = 0.5
+LIVE_WRITE_DELAY_SECONDS = 1.0
 
 
 def sha256_text(value):
@@ -46,7 +51,7 @@ def request_json(base_url, path, method="GET", token=None, query=None, headers=N
         request_headers["Authorization"] = "Bearer " + token
     request = Request(url, headers=request_headers, method=method, data=data)
     try:
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             raw = response.read().decode("utf-8", errors="replace")
             payload = json.loads(raw) if raw else {}
             return response.status, payload, dict(response.headers)
@@ -61,6 +66,54 @@ def request_json(base_url, path, method="GET", token=None, query=None, headers=N
                 "valuesRedacted": True,
             }
         return exc.code, payload, dict(exc.headers)
+    except (TimeoutError, URLError, OSError) as exc:
+        return 0, {
+            "ok": False,
+            "error": {
+                "code": "request_failed",
+                "type": exc.__class__.__name__,
+                "safeNoOp": True,
+                "valuesRedacted": True,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }, {}
+
+
+def retryable_status(status, retry_statuses):
+    return str(status or "") in {str(item) for item in retry_statuses}
+
+
+def request_json_with_retries(
+    base_url,
+    path,
+    method="GET",
+    token=None,
+    query=None,
+    headers=None,
+    body=None,
+    retry_statuses=(),
+    attempts=1,
+    delay_seconds=LIVE_WRITE_DELAY_SECONDS,
+):
+    attempts = max(1, int(attempts or 1))
+    last_status, last_payload, last_headers = 0, {"ok": False, "valuesRedacted": True}, {}
+    for attempt in range(attempts):
+        last_status, last_payload, last_headers = request_json(
+            base_url,
+            path,
+            method=method,
+            token=token,
+            query=query,
+            headers=headers,
+            body=body,
+        )
+        if 200 <= int(last_status or 0) < 300 or not retryable_status(last_status, retry_statuses):
+            return last_status, last_payload, last_headers
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload, last_headers
 
 
 def agent_id_from_secret(secret, fallback=DEFAULT_HUMAN_AGENT_ID):
@@ -230,6 +283,21 @@ def targeted_delivery_check(inboxes_by_agent, safe_summary, target_agent_id, age
     }
 
 
+def skipped_check(reason, target_agent_id=""):
+    payload = {
+        "ok": False,
+        "skipped": True,
+        "reason": reason,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+    if target_agent_id:
+        payload["targetAgentId"] = target_agent_id
+        payload["visibleToTarget"] = False
+    return payload
+
+
 def acknowledgement_isolation_check(before_payload, after_payloads_by_agent, broadcast_summary, ack_agent_id, agent_ids):
     before_matches = items_for_summary(before_payload, broadcast_summary)
     ack_notification_ids = [notification_id(item) for item in before_matches if message_type(item) == "broadcast" and notification_id(item)]
@@ -333,11 +401,29 @@ def build_report(
     return report
 
 
+def write_and_print_report(path, report, source_sha):
+    write_json(path, report)
+    print(
+        json.dumps(
+            {
+                "ok": report["ok"],
+                "sourceSha": source_sha,
+                "report": str(Path(path)),
+                "messageTypesVerified": report["messageTypesVerified"],
+                "valuesRedacted": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if report["ok"] else 1
+
+
 def register_agents(base_url, token, workspace_id, agent_ids, run_id):
     registrations = []
     payloads = []
     for agent_id in agent_ids:
-        status, payload, _headers = request_json(
+        status, payload, _headers = request_json_with_retries(
             base_url,
             "/api/matm/agents/register",
             method="POST",
@@ -348,6 +434,8 @@ def register_agents(base_url, token, workspace_id, agent_ids, run_id):
                 "agentId": agent_id,
                 "displayName": agent_id,
             },
+            retry_statuses=(0, 401, 413, 500),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         payloads.append(payload)
         registrations.append(
@@ -379,13 +467,15 @@ def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, r
     if target_agent_id:
         body["targetAgentId"] = target_agent_id
     idem_target = target_agent_id or "broadcast"
-    return request_json(
+    return request_json_with_retries(
         base_url,
         "/api/matm/agent-messages",
         method="POST",
         token=token,
         headers={"Idempotency-Key": "fanout-message-%s-%s" % (idem_target, run_id)},
         body=body,
+        retry_statuses=(0, 401, 413, 500),
+        attempts=LIVE_WRITE_ATTEMPTS,
     )
 
 
@@ -467,7 +557,7 @@ def read_current_messages(
 def ack_notification(base_url, token, workspace_id, notification_id_value, consumer_agent_id, run_id):
     if not notification_id_value:
         return 0, {"ok": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}, {}
-    return request_json(
+    return request_json_with_retries(
         base_url,
         "/api/matm/notifications/ack",
         method="POST",
@@ -479,6 +569,8 @@ def ack_notification(base_url, token, workspace_id, notification_id_value, consu
             "consumerAgentId": consumer_agent_id,
             "status": "read",
         },
+        retry_statuses=(0, 401, 404, 500),
+        attempts=LIVE_WRITE_ATTEMPTS,
     )
 
 
@@ -515,6 +607,23 @@ def main(argv=None):
 
     registration_check, registration_payloads = register_agents(base_url, token, workspace_id, agent_ids, run_id)
     all_payloads.extend(registration_payloads)
+    if not registration_check.get("ok"):
+        reason = "registration_not_verified"
+        redaction_check = response_redaction_check(all_payloads, token=token)
+        report = build_report(
+            base_url,
+            source_sha,
+            agent_ids,
+            registration_check,
+            skipped_check(reason),
+            skipped_check(reason, backend_agent_id),
+            skipped_check(reason, human_agent_id),
+            redaction_check,
+            ack_check=skipped_check(reason),
+            workspace_id=workspace_id,
+            token=token,
+        )
+        return write_and_print_report(args.json_out, report, source_sha)
 
     broadcast_summary = "Current-message fanout verifier broadcast: every registered agent should see this public-safe message. Run %s." % run_id
     status, broadcast_payload, _headers = send_message(
@@ -537,13 +646,33 @@ def main(argv=None):
         notification_ids_by_agent=broadcast_notification_ids_by_agent,
         expected_summary=broadcast_summary,
         expected_agents=agent_ids,
-        attempts=8,
-        delay_seconds=1.5,
+        attempts=LIVE_READ_ATTEMPTS,
+        delay_seconds=LIVE_READ_DELAY_SECONDS,
     )
     all_payloads.extend(inbox_payloads)
     broadcast_check = broadcast_fanout_check(broadcast_inboxes, broadcast_summary, agent_ids)
     broadcast_check["submitStatus"] = status
     broadcast_check["submitAccepted"] = bool(broadcast_payload.get("ok") and status in (200, 202))
+    broadcast_check["submitExpectedRecipientCount"] = broadcast_payload.get("expectedRecipientCount")
+    broadcast_check["submitVisibleRecipientCount"] = broadcast_payload.get("visibleRecipientCount")
+    broadcast_check["submitNotificationIdsByAgent"] = broadcast_notification_ids_by_agent
+    if not broadcast_check.get("ok"):
+        reason = "broadcast_not_verified"
+        redaction_check = response_redaction_check(all_payloads, token=token)
+        report = build_report(
+            base_url,
+            source_sha,
+            agent_ids,
+            registration_check,
+            broadcast_check,
+            skipped_check(reason, backend_agent_id),
+            skipped_check(reason, human_agent_id),
+            redaction_check,
+            ack_check=skipped_check(reason),
+            workspace_id=workspace_id,
+            token=token,
+        )
+        return write_and_print_report(args.json_out, report, source_sha)
 
     targeted_to_backend_summary = "Current-message fanout verifier targeted-to-backend: only %s should see this public-safe message. Run %s." % (backend_agent_id, run_id)
     status, backend_payload, _headers = send_message(
@@ -568,13 +697,16 @@ def main(argv=None):
         notification_ids_by_agent=backend_notification_ids_by_agent,
         expected_summary=targeted_to_backend_summary,
         expected_agents=[backend_agent_id],
-        attempts=4,
-        delay_seconds=1.0,
+        attempts=LIVE_READ_ATTEMPTS,
+        delay_seconds=LIVE_READ_DELAY_SECONDS,
     )
     all_payloads.extend(inbox_payloads)
     targeted_to_backend_check = targeted_delivery_check(backend_inboxes, targeted_to_backend_summary, backend_agent_id, agent_ids)
     targeted_to_backend_check["submitStatus"] = status
     targeted_to_backend_check["submitAccepted"] = bool(backend_payload.get("ok") and status in (200, 202))
+    targeted_to_backend_check["submitExpectedRecipientCount"] = backend_payload.get("expectedRecipientCount")
+    targeted_to_backend_check["submitVisibleRecipientCount"] = backend_payload.get("visibleRecipientCount")
+    targeted_to_backend_check["submitNotificationIdsByAgent"] = backend_notification_ids_by_agent
 
     targeted_to_human_summary = "Current-message fanout verifier targeted-to-human: only human-verifier-agent should see this public-safe message. Run %s." % run_id
     status, human_payload, _headers = send_message(
@@ -599,16 +731,19 @@ def main(argv=None):
         notification_ids_by_agent=human_notification_ids_by_agent,
         expected_summary=targeted_to_human_summary,
         expected_agents=[human_agent_id],
-        attempts=4,
-        delay_seconds=1.0,
+        attempts=LIVE_READ_ATTEMPTS,
+        delay_seconds=LIVE_READ_DELAY_SECONDS,
     )
     all_payloads.extend(inbox_payloads)
     targeted_to_human_check = targeted_delivery_check(latest_inboxes, targeted_to_human_summary, human_agent_id, agent_ids)
     targeted_to_human_check["submitStatus"] = status
     targeted_to_human_check["submitAccepted"] = bool(human_payload.get("ok") and status in (200, 202))
+    targeted_to_human_check["submitExpectedRecipientCount"] = human_payload.get("expectedRecipientCount")
+    targeted_to_human_check["submitVisibleRecipientCount"] = human_payload.get("visibleRecipientCount")
+    targeted_to_human_check["submitNotificationIdsByAgent"] = human_notification_ids_by_agent
 
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
-    if args.ack_isolation:
+    if args.ack_isolation and broadcast_check["ok"]:
         ack_agent_id = backend_agent_id
         before_inboxes, inbox_payloads = read_current_messages(
             base_url,
@@ -619,8 +754,8 @@ def main(argv=None):
             notification_ids_by_agent=broadcast_notification_ids_by_agent,
             expected_summary=broadcast_summary,
             expected_agents=[ack_agent_id],
-            attempts=4,
-            delay_seconds=1.0,
+            attempts=LIVE_READ_ATTEMPTS,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         all_payloads.extend(inbox_payloads)
         before_payload = before_inboxes.get(ack_agent_id) or {}
@@ -642,12 +777,21 @@ def main(argv=None):
             expected_summary=broadcast_summary,
             expected_agents=[agent_id for agent_id in agent_ids if agent_id != ack_agent_id],
             excluded_agents=[ack_agent_id],
-            attempts=8,
-            delay_seconds=1.5,
+            attempts=LIVE_READ_ATTEMPTS,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         all_payloads.extend(inbox_payloads)
         ack_check = acknowledgement_isolation_check(before_payload, after_ack_inboxes, broadcast_summary, ack_agent_id, agent_ids)
         ack_check["submitAccepted"] = bool(ack_payload.get("ok"))
+    elif args.ack_isolation:
+        ack_check = {
+            "ok": False,
+            "skipped": True,
+            "reason": "broadcast_not_verified",
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
 
     redaction_check = response_redaction_check(all_payloads, token=token)
     report = build_report(
@@ -663,21 +807,7 @@ def main(argv=None):
         workspace_id=workspace_id,
         token=token,
     )
-    write_json(args.json_out, report)
-    print(
-        json.dumps(
-            {
-                "ok": report["ok"],
-                "sourceSha": source_sha,
-                "report": str(Path(args.json_out)),
-                "messageTypesVerified": report["messageTypesVerified"],
-                "valuesRedacted": True,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0 if report["ok"] else 1
+    return write_and_print_report(args.json_out, report, source_sha)
 
 
 if __name__ == "__main__":

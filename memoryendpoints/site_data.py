@@ -304,7 +304,7 @@ def connector_contract():
             "sourceReferenceFields": ["source", "subject", "tags"],
             "publicSafeRule": "submit summaries only; do not send raw logs, source secrets, full files, or private prompt payloads",
             "updateRule": "Submit a new reviewed public-safe memory event with the same subject/source and an explicit update tag; do not overwrite history until a dedicated revision route is advertised.",
-            "retrieveByScope": "Use /api/matm/search with scope, tag, actor_agent_id, memory_type, review_status, and promotion_state filters. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
+            "retrieveByScope": "Use /api/matm/search with scope, source_prefix, tag, actor_agent_id, memory_type, review_status, and promotion_state filters. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
             "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
             "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews to monitor hosted long-term memory promotion health without parsing raw review JSON.",
             "meetingPromotionRule": "Use POST /api/matm/meeting-messages/promote to turn a public-safe meeting transcript note into a durable memory event while preserving the source meeting message id.",
@@ -462,7 +462,7 @@ def openapi_spec():
         "/api/matm/workspace": {"get": protected_operation("Load workspace boundary", "Read account, company, workspace, project, storage, and redaction operator summary.")},
         "/api/matm/agents/register": {"post": protected_operation("Register agent", "Register or refresh a stable public-safe agent id.", "post", True)},
         "/api/matm/memory-events/submit": {"post": protected_operation("Submit memory event", "Save a public-safe hosted memory summary; raw private payloads and credentials are rejected/redacted.", "post", True)},
-        "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, scope, tag, memory type, review status, and promotion filters.")},
+        "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, scope, source prefix, tag, memory type, review status, and promotion filters.")},
         "/api/matm/review-queue": {"get": protected_operation("Read review queue", "Read memory review and long-term-memory promotion health without parsing raw debug JSON.")},
         "/api/matm/review-queue/decide": {"post": protected_operation("Decide review", "Promote, reject, or quarantine a review-pending memory item with idempotent reviewer action.", "post", True)},
         "/api/matm/meeting-rooms": {

@@ -219,6 +219,81 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertTrue(check["rawCredentialEchoed"])
         self.assertTrue(check["apiKeySecretFieldEchoed"])
 
+    def test_request_json_with_retries_retries_configured_transient_status(self):
+        calls = []
+        original_request_json = fanout.request_json
+
+        def fake_request_json(*_args, **_kwargs):
+            calls.append(_kwargs.get("body"))
+            if len(calls) == 1:
+                return 500, {"ok": False, "valuesRedacted": True}, {}
+            return 202, {"ok": True, "valuesRedacted": True}, {"x-test": "ok"}
+
+        try:
+            fanout.request_json = fake_request_json
+            status, payload, headers = fanout.request_json_with_retries(
+                "https://memoryendpoints.com",
+                "/api/matm/agent-messages",
+                method="POST",
+                body={"workspaceId": "workspace-id"},
+                retry_statuses=(500,),
+                attempts=2,
+                delay_seconds=0,
+            )
+        finally:
+            fanout.request_json = original_request_json
+
+        self.assertEqual(2, len(calls))
+        self.assertEqual(202, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("ok", headers["x-test"])
+
+    def test_request_json_converts_timeout_to_safe_failed_payload(self):
+        original_urlopen = fanout.urlopen
+
+        def fake_urlopen(*_args, **_kwargs):
+            raise TimeoutError("simulated timeout")
+
+        try:
+            fanout.urlopen = fake_urlopen
+            status, payload, headers = fanout.request_json(
+                "https://memoryendpoints.com",
+                "/api/matm/current-message",
+            )
+        finally:
+            fanout.urlopen = original_urlopen
+
+        self.assertEqual(0, status)
+        self.assertEqual({}, headers)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("request_failed", payload["error"]["code"])
+        self.assertTrue(payload["valuesRedacted"])
+        self.assertFalse(payload["rawCredentialExposed"])
+
+    def test_request_json_with_retries_stops_on_non_retry_status(self):
+        calls = []
+        original_request_json = fanout.request_json
+
+        def fake_request_json(*_args, **_kwargs):
+            calls.append(_kwargs.get("path"))
+            return 422, {"ok": False, "valuesRedacted": True}, {}
+
+        try:
+            fanout.request_json = fake_request_json
+            status, payload, _headers = fanout.request_json_with_retries(
+                "https://memoryendpoints.com",
+                "/api/matm/agent-messages",
+                retry_statuses=(500,),
+                attempts=3,
+                delay_seconds=0,
+            )
+        finally:
+            fanout.request_json = original_request_json
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual(422, status)
+        self.assertFalse(payload["ok"])
+
     def test_read_current_messages_polls_until_expected_summary_is_visible(self):
         calls = []
         original_request_json = fanout.request_json

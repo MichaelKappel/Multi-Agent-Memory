@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from app import application
+from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -83,6 +84,30 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         if code:
             self.assertEqual(code, payload["error"]["code"])
         return payload
+
+    def test_mysql_schema_initialization_is_cached_per_connection_config(self):
+        class CountingMySQLStore(MySQLStore):
+            def __init__(self):
+                self.ensure_count = 0
+
+            def _ensure_schema(self, connection):
+                self.ensure_count += 1
+
+        store = CountingMySQLStore()
+        config = {
+            "host": "db.example",
+            "port": "3306",
+            "database": "memoryendpoints",
+            "user": "app",
+            "password": "not-part-of-cache-key",
+            "unix_socket": "",
+        }
+
+        _MYSQL_SCHEMA_READY.discard(store._schema_cache_key(config))
+        store._ensure_schema_once(object(), config)
+        store._ensure_schema_once(object(), dict(config, password="rotated-secret"))
+
+        self.assertEqual(1, store.ensure_count)
 
     def test_public_discovery_routes(self):
         for route in [
@@ -2691,6 +2716,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "title": "Promoted project decision",
                 "summary": "Filterable hosted memory decision for promoted project search.",
                 "tags": ["filter-demo", "project-lane"],
+                "source": "docs/long-term-memory/project-decision.md",
             },
             {
                 "workspaceId": workspace_id,
@@ -2701,6 +2727,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "title": "Workspace status",
                 "summary": "Filterable hosted memory status for workspace search.",
                 "tags": ["filter-demo", "workspace-lane"],
+                "source": "api/workspace-status",
             },
         ]:
             status, _headers, _text = call_app(
@@ -2716,7 +2743,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query=(
                 "workspace_id=%s&q=Filterable&scope=project&memory_type=decision"
-                "&review_status=pending&tag=project-lane&actor_agent_id=agent-filter-a"
+                "&review_status=pending&source_prefix=docs/long-term-memory/"
+                "&tag=project-lane&actor_agent_id=agent-filter-a"
             )
             % workspace_id,
         )
@@ -2730,10 +2758,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "memoryType": "decision",
                 "reviewStatus": "pending",
                 "scope": "project",
+                "sourcePrefix": "docs/long-term-memory/",
                 "tag": "project-lane",
             },
             payload["filters"],
         )
+        self.assertEqual("docs/long-term-memory/project-decision.md", payload["items"][0]["source"])
 
         status, _headers, text = call_app(
             "/api/matm/search",

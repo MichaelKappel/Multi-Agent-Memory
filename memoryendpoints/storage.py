@@ -17,6 +17,7 @@ from .security import evaluate_memory_firewall, redact_text
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
+_MYSQL_SCHEMA_READY = set()
 
 
 def _id(prefix):
@@ -1126,6 +1127,7 @@ class FileStore(object):
         memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
         review_status_filter = (filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
         promotion_state_filter = (filters.get("promotionState") or filters.get("promotion_state") or "").strip().lower()
+        source_prefix_filter = (filters.get("sourcePrefix") or filters.get("source_prefix") or "").strip()
         tag_filter = (filters.get("tag") or "").strip().lower()
         actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
         items = []
@@ -1143,6 +1145,8 @@ class FileStore(object):
             if review_status_filter and (event.get("reviewStatus") or "").lower() != review_status_filter:
                 continue
             if promotion_state_filter and (event.get("promotionState") or "").lower() != promotion_state_filter:
+                continue
+            if source_prefix_filter and not (event.get("source") or "").startswith(source_prefix_filter):
                 continue
             if actor_agent_filter and (event.get("actorAgentId") or "").lower() != actor_agent_filter:
                 continue
@@ -2506,6 +2510,7 @@ class SQLiteStore(FileStore):
         memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
         review_status_filter = (filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
         promotion_state_filter = (filters.get("promotionState") or filters.get("promotion_state") or "").strip().lower()
+        source_prefix_filter = (filters.get("sourcePrefix") or filters.get("source_prefix") or "").strip()
         tag_filter = (filters.get("tag") or "").strip().lower()
         actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
         clauses = ["workspace_id = ?", "status NOT IN ('rejected', 'quarantined')"]
@@ -2525,6 +2530,9 @@ class SQLiteStore(FileStore):
         if promotion_state_filter:
             clauses.append("LOWER(promotion_state) = ?")
             params.append(promotion_state_filter)
+        if source_prefix_filter:
+            clauses.append("source_uri LIKE ?")
+            params.append(source_prefix_filter + "%")
         if actor_agent_filter:
             clauses.append("LOWER(actor_agent_id) = ?")
             params.append(actor_agent_filter)
@@ -4626,6 +4634,22 @@ def _mysql_config_from_env():
 
 
 class MySQLStore(SQLiteStore):
+    def _schema_cache_key(self, config):
+        return (
+            config.get("host") or "",
+            str(config.get("port") or ""),
+            config.get("database") or "",
+            config.get("user") or "",
+            config.get("unix_socket") or "",
+        )
+
+    def _ensure_schema_once(self, connection, config):
+        schema_key = self._schema_cache_key(config)
+        with _LOCK:
+            if schema_key not in _MYSQL_SCHEMA_READY:
+                self._ensure_schema(connection)
+                _MYSQL_SCHEMA_READY.add(schema_key)
+
     def _connect(self):
         config = _mysql_config_from_env()
         missing = [key for key in ("user", "password", "database") if not config.get(key)]
@@ -4662,7 +4686,7 @@ class MySQLStore(SQLiteStore):
         if connection.__class__.__module__.startswith("mysql.connector"):
             cursor_options = {"dictionary": True}
         wrapped = _DbConnection(connection, "mysql", cursor_options)
-        self._ensure_schema(wrapped)
+        self._ensure_schema_once(wrapped, config)
         return wrapped
 
     def _ensure_schema(self, connection):

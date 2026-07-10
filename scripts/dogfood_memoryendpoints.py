@@ -25,7 +25,9 @@ PROGRESS_PATH = ROOT / ".uai" / "progress.uai"
 DOGFOOD_STORE_DIR = ROOT / "var" / "dogfood-memory"
 DOGFOOD_STORE = DOGFOOD_STORE_DIR / "store.json"
 LIVE_READBACK_ATTEMPTS = 16
-LIVE_WRITE_ATTEMPTS = 6
+LIVE_WRITE_ATTEMPTS = 16
+LIVE_WORKSPACE_SETUP_ATTEMPTS = 8
+LIVE_WORKSPACE_READY_ATTEMPTS = 6
 
 
 class WsgiTransport(object):
@@ -115,6 +117,40 @@ def call_with_retries(transport, path, method="GET", body=None, headers=None, qu
         if attempt < attempts - 1:
             time.sleep(delay_seconds)
     return last_status, last_payload
+
+
+def create_ready_workspace(transport, label):
+    attempts = LIVE_WORKSPACE_SETUP_ATTEMPTS if transport.mode == "live_http" else 1
+    last_setup_status = "500 Missing Setup"
+    last_setup = {"ok": False, "valuesRedacted": True}
+    last_ready_status = "500 Missing Workspace Readiness"
+    last_ready = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_setup_status, last_setup = call_with_retries(
+            transport,
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "MemoryEndpoints %s dogfood workspace" % label},
+            retry_statuses=("500",),
+            attempts=LIVE_WRITE_ATTEMPTS,
+        )
+        token = last_setup.get("apiKeySecret", "")
+        workspace_id = last_setup.get("workspaceId", "")
+        if ok_status(last_setup_status) and token and workspace_id:
+            last_ready_status, last_ready = call_with_retries(
+                transport,
+                "/api/matm/workspace",
+                headers={"HTTP_AUTHORIZATION": "Bearer " + token},
+                query=urlencode({"workspace_id": workspace_id}),
+                retry_statuses=("401", "404", "500"),
+                attempts=LIVE_WORKSPACE_READY_ATTEMPTS if transport.mode == "live_http" else 1,
+                delay_seconds=1.0,
+            )
+            if ok_status(last_ready_status):
+                return last_setup_status, last_setup, last_ready_status, last_ready
+        if attempt < attempts - 1:
+            time.sleep(1.0)
+    return last_setup_status, last_setup, last_ready_status, last_ready
 
 
 def step(report, name, status, payload=None, required=True, verified=None):
@@ -303,19 +339,13 @@ def run_sequence(transport, label, base_url=None):
     token = ""
     workspace_id = ""
     try:
-        status, setup = call_with_retries(
-            transport,
-            "/api/matm/agent-setup/free-account",
-            method="POST",
-            body={"label": "MemoryEndpoints %s dogfood workspace" % label},
-            retry_statuses=("500",),
-            attempts=LIVE_WRITE_ATTEMPTS,
-        )
+        status, setup, ready_status, workspace_ready = create_ready_workspace(transport, label)
         step(report, "create_free_workspace", status, setup)
         token = setup.get("apiKeySecret", "")
         workspace_id = setup.get("workspaceId", "")
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
         run_tag = hashlib.sha256((workspace_id + label + utc_now()).encode("utf-8")).hexdigest()[:12]
+        step(report, "workspace_key_ready", ready_status, workspace_ready)
 
         status, agent = call_with_retries(
             transport,
@@ -352,7 +382,7 @@ def run_sequence(transport, label, base_url=None):
             auth,
             memory_event_id,
             path="/api/matm/search",
-            query=urlencode({"workspace_id": workspace_id, "q": "dogfood"}),
+            query=urlencode({"workspace_id": workspace_id, "q": memory_event_id}),
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=1.0,
         )
@@ -445,7 +475,7 @@ def run_sequence(transport, label, base_url=None):
             query=urlencode(
                 {
                     "workspace_id": workspace_id,
-                    "q": meeting_message_id,
+                    "source_prefix": (meeting_promotion.get("event") or {}).get("source") or "memoryendpoints://matm/meeting-messages/%s" % meeting_message_id,
                     "scope": (meeting_promotion.get("event") or {}).get("scope") or "project",
                     "memory_type": (meeting_promotion.get("event") or {}).get("memoryType") or "evidence",
                 }
@@ -506,7 +536,8 @@ def run_sequence(transport, label, base_url=None):
         current_readback_verified = contains_current_message(current, message_id, notification_id)
         step(report, "read_current_message", status, current, verified=current_readback_verified)
 
-        status, ack = transport.call(
+        status, ack = call_with_retries(
+            transport,
             "/api/matm/notifications/ack",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-ack-" + run_tag),
@@ -516,6 +547,8 @@ def run_sequence(transport, label, base_url=None):
                 "consumerAgentId": "memoryendpoints-followup-agent",
                 "status": "read",
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         ack_verified = bool(
             ack.get("ok")

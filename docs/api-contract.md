@@ -147,6 +147,7 @@ Query:
 - `memory_type` or `memoryType` optional exact filter
 - `review_status` or `reviewStatus` optional exact filter such as `pending` or `promoted`
 - `promotion_state` or `promotionState` optional exact filter
+- `source_prefix` or `sourcePrefix` optional prefix filter for source references such as `docs/long-term-memory/` or `memoryendpoints://matm/meeting-messages/`
 - `tag` optional exact tag filter
 - `actor_agent_id` or `actorAgentId` optional exact actor filter
 
