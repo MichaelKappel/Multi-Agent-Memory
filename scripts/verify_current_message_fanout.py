@@ -16,14 +16,16 @@ DEFAULT_REPORT = ROOT / "docs" / "reports" / "current-message-fanout-verificatio
 DEFAULT_HUMAN_AGENT_ID = "human-verifier-agent"
 DEFAULT_BACKEND_AGENT_ID = "MemoryEndpoints-Backend-Agent"
 DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
-REQUEST_TIMEOUT_SECONDS = 8
-LIVE_READ_ATTEMPTS = 16
-LIVE_WRITE_ATTEMPTS = 8
-LIVE_ACK_READ_ATTEMPTS = 16
-LIVE_WORKSPACE_READY_ATTEMPTS = 16
-LIVE_READ_DELAY_SECONDS = 1.5
-LIVE_ACK_READ_DELAY_SECONDS = 1.5
-LIVE_WRITE_DELAY_SECONDS = 1.0
+REQUEST_TIMEOUT_SECONDS = 10
+LIVE_READ_ATTEMPTS = 4
+LIVE_WRITE_ATTEMPTS = 6
+LIVE_ACK_READ_ATTEMPTS = 4
+LIVE_WORKSPACE_READY_ATTEMPTS = 8
+LIVE_READ_DELAY_SECONDS = 1.0
+LIVE_ACK_READ_DELAY_SECONDS = 1.0
+LIVE_WRITE_DELAY_SECONDS = 0.75
+MAX_RUNTIME_SECONDS = 120
+RUNTIME_DEADLINE = None
 
 
 def sha256_text(value):
@@ -34,6 +36,72 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def configure_runtime_limits(args):
+    global REQUEST_TIMEOUT_SECONDS
+    global LIVE_READ_ATTEMPTS
+    global LIVE_WRITE_ATTEMPTS
+    global LIVE_ACK_READ_ATTEMPTS
+    global LIVE_WORKSPACE_READY_ATTEMPTS
+    global LIVE_READ_DELAY_SECONDS
+    global LIVE_ACK_READ_DELAY_SECONDS
+    global LIVE_WRITE_DELAY_SECONDS
+    global MAX_RUNTIME_SECONDS
+    global RUNTIME_DEADLINE
+
+    REQUEST_TIMEOUT_SECONDS = max(1, int(args.request_timeout))
+    LIVE_READ_ATTEMPTS = max(1, int(args.read_attempts))
+    LIVE_WRITE_ATTEMPTS = max(1, int(args.write_attempts))
+    LIVE_ACK_READ_ATTEMPTS = max(1, int(args.ack_read_attempts))
+    LIVE_WORKSPACE_READY_ATTEMPTS = max(1, int(args.workspace_ready_attempts))
+    LIVE_READ_DELAY_SECONDS = max(0.0, float(args.read_delay))
+    LIVE_ACK_READ_DELAY_SECONDS = max(0.0, float(args.ack_delay))
+    LIVE_WRITE_DELAY_SECONDS = max(0.0, float(args.write_delay))
+    MAX_RUNTIME_SECONDS = max(0, int(args.max_runtime_seconds))
+    RUNTIME_DEADLINE = time.monotonic() + MAX_RUNTIME_SECONDS if MAX_RUNTIME_SECONDS else None
+
+
+def runtime_limits_summary():
+    return {
+        "requestTimeoutSeconds": REQUEST_TIMEOUT_SECONDS,
+        "readAttempts": LIVE_READ_ATTEMPTS,
+        "writeAttempts": LIVE_WRITE_ATTEMPTS,
+        "ackReadAttempts": LIVE_ACK_READ_ATTEMPTS,
+        "workspaceReadyAttempts": LIVE_WORKSPACE_READY_ATTEMPTS,
+        "readDelaySeconds": LIVE_READ_DELAY_SECONDS,
+        "ackDelaySeconds": LIVE_ACK_READ_DELAY_SECONDS,
+        "writeDelaySeconds": LIVE_WRITE_DELAY_SECONDS,
+        "maxRuntimeSeconds": MAX_RUNTIME_SECONDS,
+        "deadlineActive": bool(RUNTIME_DEADLINE),
+        "valuesRedacted": True,
+    }
+
+
+def seconds_until_deadline():
+    if RUNTIME_DEADLINE is None:
+        return None
+    return max(0.0, RUNTIME_DEADLINE - time.monotonic())
+
+
+def deadline_exceeded():
+    remaining = seconds_until_deadline()
+    return remaining is not None and remaining <= 0
+
+
+def deadline_payload(path):
+    return {
+        "ok": False,
+        "error": {
+            "code": "verification_deadline_exceeded",
+            "path": path,
+            "safeNoOp": True,
+            "valuesRedacted": True,
+        },
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def write_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +109,8 @@ def write_json(path, payload):
 
 
 def request_json(base_url, path, method="GET", token=None, query=None, headers=None, body=None):
+    if deadline_exceeded():
+        return 0, deadline_payload(path), {}
     url = base_url.rstrip("/") + path
     if query:
         url += "?" + query
@@ -53,8 +123,14 @@ def request_json(base_url, path, method="GET", token=None, query=None, headers=N
     if token:
         request_headers["Authorization"] = "Bearer " + token
     request = Request(url, headers=request_headers, method=method, data=data)
+    timeout = REQUEST_TIMEOUT_SECONDS
+    remaining = seconds_until_deadline()
+    if remaining is not None:
+        if remaining <= 0:
+            return 0, deadline_payload(path), {}
+        timeout = max(1, min(timeout, int(remaining)))
     try:
-        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
             payload = json.loads(raw) if raw else {}
             return response.status, payload, dict(response.headers)
@@ -188,6 +264,33 @@ def delivery_counts(payload):
     }
 
 
+def read_status(payload):
+    return (payload or {}).get("readStatus")
+
+
+def read_error_code(payload):
+    return (((payload or {}).get("error") or {}).get("code") or "")
+
+
+def read_diagnostics_by_agent(inboxes_by_agent, agent_ids):
+    diagnostics = {}
+    for agent_id in agent_ids:
+        payload = (inboxes_by_agent or {}).get(agent_id) or {}
+        status = read_status(payload)
+        if status is None:
+            status = 200
+        diagnostics[agent_id] = {
+            "readStatus": status,
+            "ok": bool(payload.get("ok")),
+            "itemCount": len(inbox_items(payload)),
+            "errorCode": read_error_code(payload),
+            "valuesRedacted": bool(payload.get("valuesRedacted", True)),
+            "rawCredentialExposed": bool(payload.get("rawCredentialExposed")),
+            "rawPayloadExposed": bool(payload.get("rawPayloadExposed")),
+        }
+    return diagnostics
+
+
 def broadcast_fanout_check(inboxes_by_agent, broadcast_summary, agent_ids):
     visible_agents = []
     visible_any_type_agents = []
@@ -242,6 +345,7 @@ def broadcast_fanout_check(inboxes_by_agent, broadcast_summary, agent_ids):
         "deliveryCountsByAgent": {
             agent_id: delivery_counts((inboxes_by_agent or {}).get(agent_id)) for agent_id in agent_ids
         },
+        "readDiagnosticsByAgent": read_diagnostics_by_agent(inboxes_by_agent, agent_ids),
         "notificationIdsByAgent": notification_ids_by_agent,
         "valuesRedacted": True,
         "rawCredentialExposed": False,
@@ -279,6 +383,7 @@ def targeted_delivery_check(inboxes_by_agent, safe_summary, target_agent_id, age
         "deliveryCountsByAgent": {
             agent_id: delivery_counts((inboxes_by_agent or {}).get(agent_id)) for agent_id in agent_ids
         },
+        "readDiagnosticsByAgent": read_diagnostics_by_agent(inboxes_by_agent, agent_ids),
         "notificationIdsByAgent": notification_ids_by_agent,
         "valuesRedacted": True,
         "rawCredentialExposed": False,
@@ -314,6 +419,33 @@ def skipped_check(reason, target_agent_id=""):
         payload["targetAgentId"] = target_agent_id
         payload["visibleToTarget"] = False
     return payload
+
+
+def workspace_setup_check(mode, setup_status, setup_payload, ready_status, ready_payload, workspace_id="", workspace_key=""):
+    setup_payload = setup_payload or {}
+    ready_payload = ready_payload or {}
+    ok = bool(
+        workspace_id
+        and workspace_key
+        and ready_status == 200
+        and ready_payload.get("ok")
+        and (mode == "secret_workspace" or (setup_status in (200, 201) and setup_payload.get("ok")))
+    )
+    return {
+        "ok": ok,
+        "mode": mode,
+        "setupStatus": setup_status,
+        "setupOk": bool(setup_payload.get("ok")) if setup_payload else mode == "secret_workspace",
+        "readyStatus": ready_status,
+        "readyOk": bool(ready_payload.get("ok")),
+        "workspaceIdPresent": bool(workspace_id),
+        "workspaceKeyPresent": bool(workspace_key),
+        "oneTimeKeyReturned": bool(workspace_key and mode != "secret_workspace"),
+        "hierarchyReady": bool(((ready_payload.get("workspace") or {}).get("hierarchy") or ready_payload.get("hierarchy") or {}).get("companyId")),
+        "valuesRedacted": True,
+        "rawCredentialExposed": bool(ready_payload.get("rawCredentialExposed")),
+        "rawPayloadExposed": bool(ready_payload.get("rawPayloadExposed")),
+    }
 
 
 def acknowledgement_isolation_check(before_payload, after_payloads_by_agent, broadcast_summary, ack_agent_id, agent_ids):
@@ -374,16 +506,24 @@ def build_report(
     targeted_to_human_check,
     redaction_check,
     ack_check=None,
+    workspace_check=None,
+    runtime_limits=None,
+    run_id="",
     workspace_id="",
     token="",
 ):
     ack_check = ack_check or {"skipped": True, "ok": True, "valuesRedacted": True}
+    workspace_check = workspace_check or {"ok": True, "valuesRedacted": True}
+    runtime_limits = runtime_limits or runtime_limits_summary()
     report = {
         "schemaVersion": "memoryendpoints.current_message_fanout_verification.v1",
         "baseUrl": base_url.rstrip("/"),
         "sourceSha": source_sha,
+        "runId": run_id,
         "workspaceIdHash": "sha256:" + sha256_text(workspace_id) if workspace_id else None,
         "agentIds": list(agent_ids),
+        "workspaceSetup": workspace_check,
+        "runtimeLimits": runtime_limits,
         "registration": registration_check,
         "broadcast": broadcast_check,
         "targeted": {
@@ -405,7 +545,8 @@ def build_report(
     report["rawCredentialValuesStored"] = bool(token and token in report_text)
     report["rawWorkspaceIdStored"] = bool(workspace_id and workspace_id in report_text)
     report["ok"] = bool(
-        registration_check.get("ok")
+        workspace_check.get("ok", True)
+        and registration_check.get("ok")
         and broadcast_check.get("ok")
         and targeted_to_backend_check.get("ok")
         and targeted_to_human_check.get("ok")
@@ -545,10 +686,13 @@ def read_current_messages_once(base_url, token, workspace_id, agent_ids, message
             payload = {
                 "ok": False,
                 "error": {"code": "current_message_read_failed", "status": status},
+                "readStatus": status,
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
             }
+        else:
+            payload["readStatus"] = status
         payloads[agent_id] = payload
         all_payloads.append(payload)
     return payloads, all_payloads
@@ -630,7 +774,17 @@ def main(argv=None):
     parser.add_argument("--observer-agent-id", default=DEFAULT_OBSERVER_AGENT_ID)
     parser.add_argument("--ack-isolation", action="store_true")
     parser.add_argument("--use-secret-workspace", action="store_true")
+    parser.add_argument("--request-timeout", type=int, default=REQUEST_TIMEOUT_SECONDS)
+    parser.add_argument("--read-attempts", type=int, default=LIVE_READ_ATTEMPTS)
+    parser.add_argument("--write-attempts", type=int, default=LIVE_WRITE_ATTEMPTS)
+    parser.add_argument("--ack-read-attempts", type=int, default=LIVE_ACK_READ_ATTEMPTS)
+    parser.add_argument("--workspace-ready-attempts", type=int, default=LIVE_WORKSPACE_READY_ATTEMPTS)
+    parser.add_argument("--read-delay", type=float, default=LIVE_READ_DELAY_SECONDS)
+    parser.add_argument("--write-delay", type=float, default=LIVE_WRITE_DELAY_SECONDS)
+    parser.add_argument("--ack-delay", type=float, default=LIVE_ACK_READ_DELAY_SECONDS)
+    parser.add_argument("--max-runtime-seconds", type=int, default=MAX_RUNTIME_SECONDS)
     args = parser.parse_args(argv)
+    configure_runtime_limits(args)
 
     base_url = args.base_url.rstrip("/")
     secret = read_json(args.secret)
@@ -648,13 +802,36 @@ def main(argv=None):
     if status == 200:
         source_sha = (version.get("build") or {}).get("sourceSha")
 
+    setup_status = None
+    setup_payload = {}
+    ready_status = None
+    ready_payload = {}
     if args.use_secret_workspace:
         workspace_id = secret.get("workspaceId") or ""
         workspace_key = secret.get("apiKeySecret") or ""
         if not workspace_id or not workspace_key:
             raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
+        ready_status, ready_payload, _ready_headers = request_json_with_retries(
+            base_url,
+            "/api/matm/workspace",
+            token=workspace_key,
+            query=urlencode({"workspace_id": workspace_id}),
+            retry_statuses=(0, 401, 404, 413, 500),
+            attempts=LIVE_WORKSPACE_READY_ATTEMPTS,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
+        )
+        all_payloads.append(ready_payload)
+        workspace_check = workspace_setup_check(
+            "secret_workspace",
+            setup_status,
+            setup_payload,
+            ready_status,
+            ready_payload,
+            workspace_id=workspace_id,
+            workspace_key=workspace_key,
+        )
     else:
-        status, setup_payload, _headers = request_json_with_retries(
+        setup_status, setup_payload, _headers = request_json_with_retries(
             base_url,
             "/api/matm/agent-setup/free-account",
             method="POST",
@@ -675,31 +852,37 @@ def main(argv=None):
             delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         all_payloads.append(ready_payload)
-        if not (
-            setup_payload.get("ok")
-            and status in (200, 201)
-            and workspace_id
-            and workspace_key
-            and ready_status == 200
-            and ready_payload.get("ok")
-        ):
-            reason = "workspace_setup_not_verified"
-            registration_check = skipped_check(reason)
-            redaction_check = response_redaction_check(all_payloads, token="")
-            report = build_report(
-                base_url,
-                source_sha,
-                agent_ids,
-                registration_check,
-                skipped_check(reason),
-                skipped_check(reason, backend_agent_id),
-                skipped_check(reason, human_agent_id),
-                redaction_check,
-                ack_check=skipped_check(reason),
-                workspace_id="",
-                token="",
-            )
-            return write_and_print_report(args.json_out, report, source_sha)
+        workspace_check = workspace_setup_check(
+            "new_workspace",
+            setup_status,
+            setup_payload,
+            ready_status,
+            ready_payload,
+            workspace_id=workspace_id,
+            workspace_key=workspace_key,
+        )
+
+    if not workspace_check.get("ok"):
+        reason = "workspace_setup_not_verified"
+        registration_check = skipped_check(reason)
+        redaction_check = response_redaction_check(all_payloads, token=workspace_key)
+        report = build_report(
+            base_url,
+            source_sha,
+            agent_ids,
+            registration_check,
+            skipped_check(reason),
+            skipped_check(reason, backend_agent_id),
+            skipped_check(reason, human_agent_id),
+            redaction_check,
+            ack_check=skipped_check(reason),
+            workspace_check=workspace_check,
+            runtime_limits=runtime_limits_summary(),
+            run_id=run_id,
+            workspace_id=workspace_id,
+            token=workspace_key,
+        )
+        return write_and_print_report(args.json_out, report, source_sha)
 
     registration_check, registration_payloads = register_agents(base_url, workspace_key, workspace_id, agent_ids, run_id)
     all_payloads.extend(registration_payloads)
@@ -716,6 +899,9 @@ def main(argv=None):
             skipped_check(reason, human_agent_id),
             redaction_check,
             ack_check=skipped_check(reason),
+            workspace_check=workspace_check,
+            runtime_limits=runtime_limits_summary(),
+            run_id=run_id,
             workspace_id=workspace_id,
             token=workspace_key,
         )
@@ -766,6 +952,9 @@ def main(argv=None):
             skipped_check(reason, human_agent_id),
             redaction_check,
             ack_check=skipped_check(reason),
+            workspace_check=workspace_check,
+            runtime_limits=runtime_limits_summary(),
+            run_id=run_id,
             workspace_id=workspace_id,
             token=workspace_key,
         )
@@ -844,26 +1033,15 @@ def main(argv=None):
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
     if args.ack_isolation and broadcast_check["ok"]:
         ack_agent_id = backend_agent_id
-        before_inboxes, inbox_payloads = read_current_messages(
-            base_url,
-            workspace_key,
-            workspace_id,
-            agent_ids,
-            broadcast_message_id,
-            notification_ids_by_agent=broadcast_notification_ids_by_agent,
-            expected_summary=broadcast_summary,
-            expected_agents=[ack_agent_id],
-            attempts=LIVE_READ_ATTEMPTS,
-            delay_seconds=LIVE_READ_DELAY_SECONDS,
-        )
-        all_payloads.extend(inbox_payloads)
-        before_payload = before_inboxes.get(ack_agent_id) or {}
+        before_payload = broadcast_inboxes.get(ack_agent_id) or {}
         before_matches = [
             item
             for item in items_for_summary(before_payload, broadcast_summary)
             if message_type(item) == "broadcast"
         ]
         ack_id = notification_id(before_matches[0]) if before_matches else ""
+        if not ack_id:
+            ack_id = (broadcast_check.get("primaryNotificationIdsByAgent") or {}).get(ack_agent_id) or broadcast_notification_ids_by_agent.get(ack_agent_id, "")
         _status, ack_payload, _headers = ack_notification(base_url, workspace_key, workspace_id, ack_id, ack_agent_id, run_id)
         all_payloads.append(ack_payload)
         after_ack_inboxes, inbox_payloads = read_current_messages(
@@ -903,6 +1081,9 @@ def main(argv=None):
         targeted_to_human_check,
         redaction_check,
         ack_check=ack_check,
+        workspace_check=workspace_check,
+        runtime_limits=runtime_limits_summary(),
+        run_id=run_id,
         workspace_id=workspace_id,
         token=workspace_key,
     )

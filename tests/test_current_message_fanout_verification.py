@@ -8,6 +8,7 @@ def inbox(*items, broadcast=0, targeted=0):
     return {
         "ok": True,
         "items": list(items),
+        "readStatus": 200,
         "deliveryCounts": {"broadcast": broadcast, "targeted": targeted},
         "valuesRedacted": True,
         "rawCredentialExposed": False,
@@ -43,6 +44,7 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertFalse(check["uniqueRecipientNotificationIds"])
         self.assertEqual(2, check["distinctNotificationIdCount"])
         self.assertEqual({"broadcast": 0, "targeted": 0}, check["deliveryCountsByAgent"]["swarm-observer-agent"])
+        self.assertEqual(200, check["readDiagnosticsByAgent"]["swarm-observer-agent"]["readStatus"])
         self.assertFalse(check["rawCredentialExposed"])
         self.assertFalse(check["rawPayloadExposed"])
 
@@ -134,6 +136,26 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertEqual(["human-verifier-agent"], check["unexpectedAgents"])
         self.assertTrue(check["visibleToTarget"])
 
+    def test_read_diagnostics_record_failed_current_message_reads(self):
+        agents = ["agent-a"]
+        payloads = {
+            "agent-a": {
+                "ok": False,
+                "readStatus": 0,
+                "error": {"code": "current_message_read_failed", "status": 0},
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
+        }
+
+        diagnostics = fanout.read_diagnostics_by_agent(payloads, agents)
+
+        self.assertEqual(0, diagnostics["agent-a"]["readStatus"])
+        self.assertFalse(diagnostics["agent-a"]["ok"])
+        self.assertEqual("current_message_read_failed", diagnostics["agent-a"]["errorCode"])
+        self.assertEqual(0, diagnostics["agent-a"]["itemCount"])
+
     def test_acknowledgement_isolation_keeps_broadcast_visible_to_other_agents(self):
         agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "broadcast ack run"
@@ -195,11 +217,115 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertTrue(report["messageTypesVerified"]["broadcast"])
         self.assertTrue(report["messageTypesVerified"]["targetedToBackend"])
+        self.assertTrue(report["workspaceSetup"]["ok"])
+        self.assertIn("runtimeLimits", report)
         self.assertIn("sha256:", report["workspaceIdHash"])
         self.assertNotIn("ws-private-value", text)
         self.assertNotIn("token-fixture", text)
         self.assertFalse(report["rawCredentialValuesStored"])
         self.assertFalse(report["rawWorkspaceIdStored"])
+
+    def test_workspace_setup_check_records_safe_diagnostics_for_failed_setup(self):
+        check = fanout.workspace_setup_check(
+            "new_workspace",
+            201,
+            {"ok": True, "apiKeySecret": "must-not-appear"},
+            401,
+            {"ok": False, "error": {"code": "unauthorized"}, "valuesRedacted": True},
+            workspace_id="workspace-private",
+            workspace_key="token-private",
+        )
+        text = json.dumps(check, sort_keys=True)
+
+        self.assertFalse(check["ok"])
+        self.assertEqual("new_workspace", check["mode"])
+        self.assertEqual(201, check["setupStatus"])
+        self.assertEqual(401, check["readyStatus"])
+        self.assertTrue(check["workspaceIdPresent"])
+        self.assertTrue(check["workspaceKeyPresent"])
+        self.assertTrue(check["oneTimeKeyReturned"])
+        self.assertNotIn("workspace-private", text)
+        self.assertNotIn("token-private", text)
+        self.assertNotIn("must-not-appear", text)
+
+    def test_workspace_setup_check_accepts_secret_workspace_readiness_without_setup_payload(self):
+        check = fanout.workspace_setup_check(
+            "secret_workspace",
+            None,
+            {},
+            200,
+            {
+                "ok": True,
+                "workspace": {"hierarchy": {"companyId": "company-redacted"}},
+                "valuesRedacted": True,
+            },
+            workspace_id="workspace-private",
+            workspace_key="token-private",
+        )
+
+        self.assertTrue(check["ok"])
+        self.assertTrue(check["setupOk"])
+        self.assertTrue(check["readyOk"])
+        self.assertTrue(check["hierarchyReady"])
+        self.assertFalse(check["oneTimeKeyReturned"])
+
+    def test_configure_runtime_limits_clamps_to_safe_minimums(self):
+        class Args(object):
+            request_timeout = 0
+            read_attempts = 0
+            write_attempts = 0
+            ack_read_attempts = 0
+            workspace_ready_attempts = 0
+            read_delay = -1
+            write_delay = -1
+            ack_delay = -1
+            max_runtime_seconds = -1
+
+        original = fanout.runtime_limits_summary()
+        try:
+            fanout.configure_runtime_limits(Args())
+            limits = fanout.runtime_limits_summary()
+        finally:
+            class Restore(object):
+                request_timeout = original["requestTimeoutSeconds"]
+                read_attempts = original["readAttempts"]
+                write_attempts = original["writeAttempts"]
+                ack_read_attempts = original["ackReadAttempts"]
+                workspace_ready_attempts = original["workspaceReadyAttempts"]
+                read_delay = original["readDelaySeconds"]
+                write_delay = original["writeDelaySeconds"]
+                ack_delay = original["ackDelaySeconds"]
+                max_runtime_seconds = original["maxRuntimeSeconds"]
+
+            fanout.configure_runtime_limits(Restore())
+
+        self.assertEqual(1, limits["requestTimeoutSeconds"])
+        self.assertEqual(1, limits["readAttempts"])
+        self.assertEqual(1, limits["writeAttempts"])
+        self.assertEqual(1, limits["ackReadAttempts"])
+        self.assertEqual(1, limits["workspaceReadyAttempts"])
+        self.assertEqual(0.0, limits["readDelaySeconds"])
+        self.assertEqual(0.0, limits["writeDelaySeconds"])
+        self.assertEqual(0.0, limits["ackDelaySeconds"])
+        self.assertEqual(0, limits["maxRuntimeSeconds"])
+
+    def test_request_json_returns_safe_payload_after_deadline(self):
+        original_deadline = fanout.RUNTIME_DEADLINE
+        try:
+            fanout.RUNTIME_DEADLINE = 1
+            status, payload, headers = fanout.request_json(
+                "https://memoryendpoints.com",
+                "/api/matm/current-message",
+            )
+        finally:
+            fanout.RUNTIME_DEADLINE = original_deadline
+
+        self.assertEqual(0, status)
+        self.assertEqual({}, headers)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("verification_deadline_exceeded", payload["error"]["code"])
+        self.assertTrue(payload["valuesRedacted"])
+        self.assertFalse(payload["rawCredentialExposed"])
 
     def test_response_redaction_check_flags_secret_echoes(self):
         payloads = [

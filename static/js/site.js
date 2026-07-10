@@ -25,7 +25,7 @@
     lastAckedBroadcast: null,
     firstReviewId: "",
     debugJson: false,
-    workflowView: "all",
+    workflowView: "workspace",
     workspaceOperatorSummary: null,
     agentRegistrationSummary: null,
     selectedMeetingRoomId: "",
@@ -77,6 +77,7 @@
     "#message-lanes": "messages",
     "#receipts-audit": "evidence",
   };
+  var defaultWorkflowView = consoleRoot.getAttribute("data-console-default-workflow") || "workspace";
 
   function pick(selector) {
     return consoleRoot.querySelector(selector);
@@ -427,6 +428,75 @@
     return card;
   }
 
+  function checklistStatus(status, text) {
+    return {status: status, text: text};
+  }
+
+  function checklistRow(title, status, detail, meta) {
+    var row = el("article", "checklist-row");
+    var badgeKind = status.status === "pass" ? "good" : (status.status === "review" ? "warn" : "neutral");
+    var top = el("div", "checklist-row-top");
+    top.appendChild(el("strong", "", title));
+    appendBadge(top, status.text, badgeKind);
+    row.appendChild(top);
+    row.appendChild(el("p", "result-summary", detail));
+    if (meta) {
+      row.appendChild(el("span", "summary-meta", meta));
+    }
+    return row;
+  }
+
+  function renderVerifierChecklist() {
+    var node = pick("[data-console-verifier-checklist]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var boundaryReady = Boolean(state.workspaceOperatorSummary && state.workspaceOperatorSummary.hierarchyReady);
+    var memoryKnown = state.memoryCount !== null && state.memoryCount !== undefined;
+    var unreadKnown = state.laneUnreadCount !== null && state.laneUnreadCount !== undefined;
+    var deliveryCounts = state.messageDeliveryCounts || {};
+    var broadcastSeen = Boolean(deliveryCounts.broadcast);
+    var targetedSeen = Boolean(deliveryCounts.targeted);
+    var receiptsKnown = state.receiptCount !== null && state.receiptCount !== undefined;
+    var redactionKnown = state.auditCredentialsHidden !== null && state.auditPayloadsHidden !== null && state.receiptsPayloadsHidden !== null;
+    var redactionReview = state.auditCredentialsHidden === false || state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false;
+    var header = el("div", "verifier-checklist-header");
+    header.appendChild(el("span", "section-kicker", "Verifier checklist"));
+    appendBadge(header, state.workspaceId ? "operator status" : "waiting for workspace", state.workspaceId ? "neutral" : "neutral");
+    node.appendChild(header);
+    node.appendChild(checklistRow(
+      "Workspace boundary",
+      boundaryReady ? checklistStatus("pass", "pass") : checklistStatus("pending", "pending"),
+      boundaryReady ? "Account, company, workspace, and project are loaded as operator cards." : "Load a workspace key to confirm the account/company/workspace/project hierarchy.",
+      boundaryReady ? "4 hierarchy levels" : "boundary not loaded"
+    ));
+    node.appendChild(checklistRow(
+      "Hosted memory",
+      !memoryKnown ? checklistStatus("pending", "pending") : (state.memoryCount > 0 && !state.memoryFilesystemIncluded ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
+      !memoryKnown ? "Run Search Verification or Hosted long-term memory." : (state.memoryCount + " hosted memory row(s); filesystem docs " + (state.memoryFilesystemIncluded ? "need review." : "excluded.")),
+      countMeta(state.memoryScopeCounts, ["account", "company", "workspace", "project"]) || "memory search"
+    ));
+    node.appendChild(checklistRow(
+      "Broadcast and targeted messages",
+      !unreadKnown ? checklistStatus("pending", "pending") : (broadcastSeen && targetedSeen ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
+      !unreadKnown ? "Refresh all lanes to distinguish broadcast from targeted messages." : ((deliveryCounts.broadcast || 0) + " broadcast / " + (deliveryCounts.targeted || 0) + " targeted visible across refreshed lanes."),
+      unreadKnown ? state.laneUnreadCount + " unread across lanes" : "message lanes not refreshed"
+    ));
+    node.appendChild(checklistRow(
+      "Receipts",
+      !receiptsKnown ? checklistStatus("pending", "pending") : (state.receiptCount > 0 && state.receiptsPayloadsHidden !== false ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
+      !receiptsKnown ? "Refresh receipts or acknowledge a visible notification." : (state.receiptCount + " receipt(s); payloads " + (state.receiptsPayloadsHidden === false ? "need review." : "hidden.")),
+      "acknowledgement evidence"
+    ));
+    node.appendChild(checklistRow(
+      "Redaction",
+      !redactionKnown ? checklistStatus("pending", "pending") : (redactionReview ? checklistStatus("review", "review") : checklistStatus("pass", "pass")),
+      !redactionKnown ? "Refresh receipts and audit to verify hidden credentials and payloads." : (redactionReview ? "One redaction signal needs review." : "Credentials and private payloads are hidden in visible evidence."),
+      "receipts / audit"
+    ));
+  }
+
   function renderOperatorMetrics() {
     var node = pick("[data-console-operator-metrics]");
     if (!node) {
@@ -484,6 +554,7 @@
         { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
       ]
     ));
+    renderVerifierChecklist();
     renderOperatorDesk();
     renderCommandBar();
   }
@@ -2642,7 +2713,7 @@
   var authForm = pick("[data-console-auth]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
-  setWorkflowView("all", false);
+  setWorkflowView(defaultWorkflowView, false);
   updateSurfaceBadge();
   renderOperatorMetrics();
   renderCommandBar();

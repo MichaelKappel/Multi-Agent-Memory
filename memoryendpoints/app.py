@@ -1277,7 +1277,7 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
 
 def route_console(start_response):
     body = """
-<section class="console-shell debug-json-hidden" data-matm-console>
+<section class="console-shell debug-json-hidden" data-matm-console data-console-default-workflow="workspace" data-console-active-workflow="workspace">
   <header class="console-hero">
     <div>
       <p class="eyebrow">Operator console</p>
@@ -1302,8 +1302,8 @@ def route_console(start_response):
     </nav>
     <div class="console-utility-actions">
       <div class="console-view-switcher" role="group" aria-label="Workflow focus" data-console-view-switcher>
-        <button type="button" data-console-workflow-view="all" aria-pressed="true">All</button>
-        <button type="button" data-console-workflow-view="workspace" aria-pressed="false">Workspace</button>
+        <button type="button" data-console-workflow-view="all" aria-pressed="false">All</button>
+        <button type="button" class="is-active" data-console-workflow-view="workspace" aria-pressed="true">Workspace</button>
         <button type="button" data-console-workflow-view="memory" aria-pressed="false">Memory</button>
         <button type="button" data-console-workflow-view="reviews" aria-pressed="false">Reviews</button>
         <button type="button" data-console-workflow-view="meetings" aria-pressed="false">Meetings</button>
@@ -1344,6 +1344,13 @@ def route_console(start_response):
   <div class="operator-metrics" data-console-operator-metrics>
     <p class="empty-state">Operator status will appear after the workspace loads.</p>
   </div>
+  <section class="verifier-checklist" data-console-verifier-checklist aria-label="Verifier checklist">
+    <div class="verifier-checklist-header">
+      <span class="section-kicker">Verifier checklist</span>
+      <span class="status-badge neutral">waiting for workspace</span>
+    </div>
+    <p class="empty-state">Boundary, memory, messaging, receipts, and redaction status will appear here.</p>
+  </section>
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>
   </div>
