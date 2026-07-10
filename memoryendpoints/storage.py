@@ -102,6 +102,13 @@ def _audit_detail_summary(details):
         active = ["%s %s" % (key, review_status_counts.get(key)) for key in ("pending", "quarantined", "promoted", "rejected") if review_status_counts.get(key)]
         if active:
             items.append("reviews %s" % ", ".join(active))
+    firewall_decision_counts = safe.get("firewallDecisionCounts")
+    if isinstance(firewall_decision_counts, dict):
+        active = ["%s %s" % (key, firewall_decision_counts.get(key)) for key in sorted(firewall_decision_counts.keys()) if firewall_decision_counts.get(key)]
+        if active:
+            items.append("firewall %s" % ", ".join(active[:3]))
+    if safe.get("detectedThreatCount") not in (None, ""):
+        items.append("threats %s" % (safe.get("detectedThreatCount") or 0))
     receipt_status_counts = safe.get("receiptStatusCounts")
     if isinstance(receipt_status_counts, dict):
         active = ["%s %s" % (key, receipt_status_counts.get(key)) for key in ("read", "unread", "acknowledged") if receipt_status_counts.get(key)]

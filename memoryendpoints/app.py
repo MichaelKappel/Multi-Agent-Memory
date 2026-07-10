@@ -263,6 +263,48 @@ def _receipts_operator_summary(items, filters):
     }
 
 
+def _audit_log_operator_summary(items, filters):
+    items = items or []
+    raw_credential_exposed_count = sum(1 for item in items if item.get("rawCredentialExposed"))
+    raw_payload_exposed_count = sum(1 for item in items if item.get("rawPayloadExposed"))
+    return {
+        "schemaVersion": "memoryendpoints.audit_log_operator_summary.v1",
+        "count": len(items),
+        "filters": dict(filters or {}),
+        "actionCounts": _count_by(items, "action"),
+        "redactedCount": sum(1 for item in items if item.get("valuesRedacted")),
+        "rawCredentialExposedCount": raw_credential_exposed_count,
+        "rawPayloadExposedCount": raw_payload_exposed_count,
+        "allCredentialsHidden": raw_credential_exposed_count == 0,
+        "allPayloadsHidden": raw_payload_exposed_count == 0,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _review_queue_operator_summary(items, all_items, filters, status_counts):
+    items = items or []
+    threat_count = sum(len(item.get("detectedThreats") or []) for item in items)
+    risk_scores = [item.get("riskScore") or 0 for item in items]
+    return {
+        "schemaVersion": "memoryendpoints.review_queue_operator_summary.v1",
+        "count": len(items),
+        "filters": dict(filters or {}),
+        "statusCounts": dict(status_counts or {}),
+        "visibleStatusCounts": _count_by(items, "status", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "firewallDecisionCounts": _count_by(items, "firewallDecision"),
+        "itemsWithDetectedThreats": sum(1 for item in items if item.get("detectedThreats")),
+        "detectedThreatCount": threat_count,
+        "highestRiskScore": max(risk_scores) if risk_scores else 0,
+        "totalQueueCount": len(all_items or []),
+        "promotionRoute": "/api/matm/review-queue/decide",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _workspace_operator_summary(workspace):
     workspace = workspace or {}
     accounts = workspace.get("accounts") or []
@@ -1005,6 +1047,7 @@ def route_protected(environ, start_response, path):
             active_filters["limit"] = audit_filters["limit"]
         _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": audit_filters["action"], "limit": audit_filters["limit"]})
         items = store.audit_log(workspace_id, audit_filters["limit"], audit_filters["action"])
+        operator_summary = _audit_log_operator_summary(items, active_filters)
         return json_response(
             start_response,
             {
@@ -1013,6 +1056,7 @@ def route_protected(environ, start_response, path):
                 "items": items,
                 "count": len(items),
                 "filters": active_filters,
+                "operatorSummary": operator_summary,
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
@@ -1066,13 +1110,21 @@ def route_protected(environ, start_response, path):
         all_review_items = store.review_queue(workspace_id, "")
         status_counts = _review_status_counts(all_review_items)
         filters = {"status": status_filter} if status_filter else {}
+        operator_summary = _review_queue_operator_summary(items, all_review_items, filters, status_counts)
         _audit_read(
             store,
             workspace_id,
             auth,
             "review_queue.read",
             path,
-            {"statusFilter": status_filter, "count": len(items), "filters": filters, "statusCounts": status_counts},
+            {
+                "statusFilter": status_filter,
+                "count": len(items),
+                "filters": filters,
+                "reviewStatusCounts": status_counts,
+                "firewallDecisionCounts": operator_summary["firewallDecisionCounts"],
+                "detectedThreatCount": operator_summary["detectedThreatCount"],
+            },
         )
         return json_response(
             start_response,
@@ -1082,7 +1134,10 @@ def route_protected(environ, start_response, path):
                 "count": len(items),
                 "filters": filters,
                 "statusCounts": status_counts,
+                "operatorSummary": operator_summary,
                 "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
                 "promotionRoute": "/api/matm/review-queue/decide",
             },
         )

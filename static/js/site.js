@@ -795,6 +795,14 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    var summary = (payload && payload.operatorSummary) || {};
+    var summaryLine = el("div", "filter-summary audit-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Audit"));
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " events", items.length ? "good" : "neutral");
+    appendCountBadges(summaryLine, "Actions", summary.actionCounts, ["memory.search", "message.submit", "current_message.read", "notification.ack", "receipts.read", "audit_log.read"]);
+    appendBadge(summaryLine, summary.allCredentialsHidden === false ? "credential exposure review" : "credentials hidden", summary.allCredentialsHidden === false ? "warn" : "good");
+    appendBadge(summaryLine, summary.allPayloadsHidden === false ? "payload exposure review" : "payloads hidden", summary.allPayloadsHidden === false ? "warn" : "good");
+    node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No audit events returned."));
       appendFilterSummary(node, payload && payload.filters);
@@ -833,11 +841,21 @@
     clear(node);
     var items = (payload && payload.items) || [];
     appendFilterSummary(node, payload && payload.filters);
+    var summary = (payload && payload.operatorSummary) || {};
+    var statusCounts = summary.statusCounts || (payload && payload.statusCounts) || {};
+    var summaryLine = el("div", "filter-summary review-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Reviews"));
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " visible", items.length ? "warn" : "neutral");
+    appendCountBadges(summaryLine, "Status", statusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(summaryLine, "Firewall", summary.firewallDecisionCounts, ["accepted", "quarantine_for_review"]);
+    if (summary.detectedThreatCount !== undefined) {
+      appendBadge(summaryLine, summary.detectedThreatCount + " threats", summary.detectedThreatCount ? "warn" : "good");
+    }
+    node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No review queue items matched this status."));
       return;
     }
-    var statusCounts = (payload && payload.statusCounts) || {};
     var countText = items.length + " review item(s).";
     if (statusCounts.pending !== undefined || statusCounts.quarantined !== undefined || statusCounts.promoted !== undefined || statusCounts.rejected !== undefined) {
       countText += " " + (statusCounts.pending || 0) + " pending, " + (statusCounts.quarantined || 0) + " quarantined, " + (statusCounts.promoted || 0) + " promoted, " + (statusCounts.rejected || 0) + " rejected.";

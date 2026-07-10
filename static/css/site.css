@@ -551,7 +551,9 @@ pre {
 
 .memory-search-summary,
 .inbox-summary,
-.receipt-summary {
+.receipt-summary,
+.audit-summary,
+.review-summary {
   margin-top: 4px;
 }
 

@@ -177,6 +177,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".memory-search-summary", css)
         self.assertIn(".inbox-summary", css)
         self.assertIn(".receipt-summary", css)
+        self.assertIn(".audit-summary", css)
+        self.assertIn(".review-summary", css)
         self.assertIn(".console-nav", css)
         self.assertIn(".console-debug-toggle", css)
         self.assertIn(".debug-json-hidden .debug-json", css)
@@ -285,6 +287,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
         self.assertIn("statusCounts", js)
+        self.assertIn("payload.operatorSummary", js)
+        self.assertIn("summary.firewallDecisionCounts", js)
+        self.assertIn("summary.detectedThreatCount", js)
+        self.assertIn("review-summary", js)
         self.assertIn("appendFilterSummary(node, payload && payload.filters)", js)
         self.assertIn("detectedThreats", js)
         self.assertIn("threats ", js)
@@ -338,6 +344,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("params.action", js)
         self.assertIn("params.limit", js)
         self.assertIn("detailsSummary", js)
+        self.assertIn("payload.operatorSummary", js)
+        self.assertIn("summary.actionCounts", js)
+        self.assertIn("summary.allCredentialsHidden", js)
+        self.assertIn("summary.allPayloadsHidden", js)
+        self.assertIn("audit-summary", js)
         self.assertIn(".concat(detailSummary)", js)
         self.assertIn('selectedLimit === "50" ? "" : selectedLimit', js)
         self.assertIn("data-console-clear-audit-filter", js)
@@ -680,6 +691,24 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("memoryendpoints.audit_log.v1", audit["schemaVersion"])
         self.assertEqual({}, audit["filters"])
         self.assertTrue(audit["valuesRedacted"])
+        self.assertFalse(audit["rawCredentialExposed"])
+        self.assertFalse(audit["rawPayloadExposed"])
+        audit_summary = audit["operatorSummary"]
+        self.assertEqual("memoryendpoints.audit_log_operator_summary.v1", audit_summary["schemaVersion"])
+        self.assertEqual(audit["count"], audit_summary["count"])
+        self.assertEqual({}, audit_summary["filters"])
+        self.assertGreaterEqual(audit_summary["actionCounts"]["memory.search"], 1)
+        self.assertGreaterEqual(audit_summary["actionCounts"]["current_message.read"], 1)
+        self.assertGreaterEqual(audit_summary["actionCounts"]["receipts.read"], 1)
+        self.assertGreaterEqual(audit_summary["actionCounts"]["audit_log.read"], 1)
+        self.assertEqual(audit_summary["count"], audit_summary["redactedCount"])
+        self.assertEqual(0, audit_summary["rawCredentialExposedCount"])
+        self.assertEqual(0, audit_summary["rawPayloadExposedCount"])
+        self.assertTrue(audit_summary["allCredentialsHidden"])
+        self.assertTrue(audit_summary["allPayloadsHidden"])
+        self.assertTrue(audit_summary["valuesRedacted"])
+        self.assertFalse(audit_summary["rawCredentialExposed"])
+        self.assertFalse(audit_summary["rawPayloadExposed"])
         audit_text = json.dumps(audit)
         self.assertNotIn(token, audit_text)
         self.assertNotIn("apiKeySecret", audit_text)
@@ -736,6 +765,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         filtered_audit = json.loads(text)
         self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_audit["filters"])
+        filtered_summary = filtered_audit["operatorSummary"]
+        self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_summary["filters"])
+        self.assertEqual(filtered_audit["count"], filtered_summary["actionCounts"]["memory.search"])
+        self.assertEqual(filtered_audit["count"], filtered_summary["redactedCount"])
+        self.assertTrue(filtered_summary["allCredentialsHidden"])
+        self.assertTrue(filtered_summary["allPayloadsHidden"])
         self.assertTrue(filtered_audit["items"])
         self.assertTrue(all(item["action"] == "memory.search" for item in filtered_audit["items"]))
         filtered_summaries = [summary for item in filtered_audit["items"] for summary in item["detailsSummary"]]
@@ -913,9 +948,35 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual({"status": "quarantined"}, queue["filters"])
         self.assertEqual(1, queue["statusCounts"]["quarantined"])
         self.assertEqual(0, queue["statusCounts"]["pending"])
+        review_summary = queue["operatorSummary"]
+        self.assertEqual("memoryendpoints.review_queue_operator_summary.v1", review_summary["schemaVersion"])
+        self.assertEqual(1, review_summary["count"])
+        self.assertEqual({"status": "quarantined"}, review_summary["filters"])
+        self.assertEqual(1, review_summary["statusCounts"]["quarantined"])
+        self.assertEqual(1, review_summary["visibleStatusCounts"]["quarantined"])
+        self.assertEqual(1, review_summary["firewallDecisionCounts"]["quarantine_for_review"])
+        self.assertEqual(1, review_summary["itemsWithDetectedThreats"])
+        self.assertGreater(review_summary["detectedThreatCount"], 0)
+        self.assertGreater(review_summary["highestRiskScore"], 0)
+        self.assertEqual("/api/matm/review-queue/decide", review_summary["promotionRoute"])
+        self.assertTrue(review_summary["valuesRedacted"])
+        self.assertFalse(review_summary["rawCredentialExposed"])
+        self.assertFalse(review_summary["rawPayloadExposed"])
         review_id = queue["items"][0]["reviewId"]
         self.assertEqual(event["eventId"], queue["items"][0]["memoryEventId"])
         self.assertTrue(queue["items"][0]["detectedThreats"])
+
+        status, _headers, text = call_app(
+            "/api/matm/audit-log",
+            headers=auth,
+            query="workspace_id=%s&action=review_queue.read&limit=5" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        review_audit = json.loads(text)
+        review_summaries = [summary for item in review_audit["items"] for summary in item["detailsSummary"]]
+        self.assertIn("reviews quarantined 1", review_summaries)
+        self.assertIn("firewall quarantine_for_review 1", review_summaries)
+        self.assertTrue(any(summary.startswith("threats ") for summary in review_summaries))
 
         decide_headers = dict(auth)
         decide_headers["HTTP_IDEMPOTENCY_KEY"] = "review-decision-1"
@@ -996,6 +1057,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(1, queue["statusCounts"]["pending"])
         self.assertEqual(0, queue["statusCounts"]["quarantined"])
         self.assertTrue(queue["valuesRedacted"])
+        review_summary = queue["operatorSummary"]
+        self.assertEqual("memoryendpoints.review_queue_operator_summary.v1", review_summary["schemaVersion"])
+        self.assertEqual(1, review_summary["count"])
+        self.assertEqual({"status": "pending"}, review_summary["filters"])
+        self.assertEqual(1, review_summary["statusCounts"]["pending"])
+        self.assertEqual(1, review_summary["visibleStatusCounts"]["pending"])
+        self.assertEqual(1, review_summary["firewallDecisionCounts"]["accepted"])
+        self.assertEqual(0, review_summary["itemsWithDetectedThreats"])
+        self.assertEqual(0, review_summary["detectedThreatCount"])
+        self.assertTrue(review_summary["valuesRedacted"])
         review_id = queue["items"][0]["reviewId"]
 
         status, _headers, text = call_app(
