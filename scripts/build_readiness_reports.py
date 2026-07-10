@@ -331,7 +331,7 @@ def build_enterprise_gap_matrix():
                 connection_status(deploy_connection_ftps, deploy_connection_ftp),
                 str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
             ),
-            "Rerun package, dry-run, FTPS deploy, Passenger restart, and live route/latest-code verification after each source change." if latest_deployed else "Refresh hosting credential/server access outside the repo, then rerun package, dry-run deploy, no-upload connection check, live deploy, Passenger restart, and live route verification.",
+            "Rerun package, dry-run, FTPS deploy, Passenger restart, and live route/latest-code verification after each source change." if latest_deployed else "Run or rerun the live deploy for the current package, then rerun live route/latest-code verification. Refresh hosting credentials only if the no-upload connection check fails.",
         ),
         "| MultiAgentMemory.com live publish | %s | %s |" % (
             "Verified through FileZilla-backed explicit FTPS publish and live static-site verification" if multiagentmemory_verified else "Blocked by hosting login rejection before upload; no-upload connection checks show `%s`" % connection_status(multiagentmemory_connection_ftps, multiagentmemory_connection_ftp),
@@ -587,13 +587,20 @@ def build_final_markdown(local_report):
     ]
     blocked_lines = []
     if not latest_deployed:
+        deploy_blocker = (deploy.get("claimBoundary") or {}).get("blocker")
+        latest_detail = (
+            deploy_blocker
+            or "live source SHA match is `%s`; expected `%s`, observed `%s`" % (
+                str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
+                live_latest_code.get("expectedSourceSha"),
+                live_latest_code.get("observedSourceSha"),
+            )
+        )
         blocked_lines.append(
-            "- Latest-code live deployment: blocked or not verified. The recorded upload attempt failed at `%s` with `%s`; uploaded count was `%s`; connection checks `%s`; live source SHA match is `%s`." % (
-                (deploy.get("liveAttempt") or {}).get("failedPhase"),
-                (deploy.get("liveAttempt") or {}).get("errorType"),
+            "- Latest-code live deployment: blocked or not verified. %s; last recorded upload count was `%s`; connection checks `%s`." % (
+                latest_detail,
                 (deploy.get("liveAttempt") or {}).get("uploadedCount"),
                 connection_status(deploy_connection_ftps, deploy_connection_ftp),
-                str(bool(live_latest_code.get("sourceShaMatchesExpected"))).lower(),
             )
         )
     if not multiagentmemory_verified:
