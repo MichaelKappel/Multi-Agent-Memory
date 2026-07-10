@@ -115,8 +115,8 @@ def main(argv=None):
     steps.append({"name": "verify_hierarchy", "ok": hierarchy_ok, "status": status})
 
     agents = {
-        "MemoryEndpoints-Backend-Agent": "MemoryEndpoints Backend Agent",
         "human-verifier-agent": "Human-Side Verification Agent",
+        "codex-agent": "Codex Coordination Agent",
         "swarm-observer-agent": "Swarm Observer Agent",
     }
     for agent_id, display_name in agents.items():
@@ -185,8 +185,8 @@ def main(argv=None):
             "name": "broadcast_to_swarm",
             "body": {
                 "workspaceId": workspace_id,
-                "senderAgentId": "MemoryEndpoints-Backend-Agent",
-                "safeSummary": "Broadcast from MemoryEndpoints Backend Agent: the human verification workspace is ready; check company, workspace, project, memory, inbox, receipts, and audit from the console.",
+                "senderAgentId": "codex-agent",
+                "safeSummary": "Broadcast from Codex Agent: the human verification workspace is ready; check company, workspace, project, memory, inbox, receipts, and audit from the console.",
                 "responseRequired": False,
             },
         },
@@ -194,19 +194,19 @@ def main(argv=None):
             "name": "target_human_verifier",
             "body": {
                 "workspaceId": workspace_id,
-                "senderAgentId": "MemoryEndpoints-Backend-Agent",
+                "senderAgentId": "codex-agent",
                 "targetAgentId": "human-verifier-agent",
-                "safeSummary": "Human verifier: use the saved key in /console, inspect the hierarchy and memory, then send a targeted response to MemoryEndpoints-Backend-Agent.",
+                "safeSummary": "Human verifier: use the saved key in /console, inspect the hierarchy and memory, then send a targeted response to codex-agent.",
                 "responseRequired": True,
             },
         },
         {
-            "name": "target_backend_agent",
+            "name": "target_codex_agent",
             "body": {
                 "workspaceId": workspace_id,
                 "senderAgentId": "human-verifier-agent",
-                "targetAgentId": "MemoryEndpoints-Backend-Agent",
-                "safeSummary": "Targeted verification message to MemoryEndpoints-Backend-Agent proving a particular-agent lane is available.",
+                "targetAgentId": "codex-agent",
+                "safeSummary": "Targeted verification message to codex-agent proving a particular-agent lane is available.",
                 "responseRequired": True,
             },
         },
@@ -267,16 +267,16 @@ def main(argv=None):
         "workspaceId": workspace_id,
         "projectId": project_id,
         "humanAgentId": "human-verifier-agent",
-        "backendAgentId": "MemoryEndpoints-Backend-Agent",
+        "codexAgentId": "codex-agent",
         "swarmObserverAgentId": "swarm-observer-agent",
         "instructions": [
             "Open consoleUrl.",
             "Paste apiKeySecret into Workspace key.",
             "Load workspace and verify accountId, companyId, workspaceId, and projectId.",
             "Search for verification memory.",
-            "Refresh inbox for human-verifier-agent and MemoryEndpoints-Backend-Agent.",
+            "Refresh inbox for human-verifier-agent and codex-agent.",
             "Send a broadcast message by leaving Target agent blank.",
-            "Send a targeted message to MemoryEndpoints-Backend-Agent.",
+            "Send a targeted message to codex-agent.",
         ],
     }
     secret_out = Path(args.secret_out)

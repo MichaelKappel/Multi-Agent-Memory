@@ -134,6 +134,23 @@ Firewall behavior:
 - The response includes a public-safe `event.firewall` summary with decision, risk score, detected threats, and redaction status.
 - Raw private payloads are not stored.
 
+Successful responses also include readback confirmation fields:
+
+- `persisted=true`
+- `visibleInSearch=true`
+- `visibleInReviewQueue=true`
+- `visibleInAuditLog=true`
+- `canonicalMemoryEventId`
+- `reviewId`
+- `memoryQueryUrl`
+- `reviewQueueUrl`
+- `auditLogUrl`
+- `confirmation`
+
+If a submitted memory event cannot be confirmed in hosted search or the review
+queue and audit log after write, the route returns a safe
+`memory_not_persisted` failure instead of an optimistic success row.
+
 ### GET `/api/matm/search`
 
 Searches hosted workspace memory. Files under `docs/long-term-memory` are source-controlled artifacts and migration seeds, not the protected workspace search source.

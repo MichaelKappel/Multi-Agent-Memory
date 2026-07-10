@@ -49,6 +49,7 @@
   };
   var agentLanes = [
     { agentId: "human-verifier-agent", label: "Human" },
+    { agentId: "codex-agent", label: "Codex" },
     { agentId: "MemoryEndpoints-Backend-Agent", label: "Backend" },
     { agentId: "swarm-observer-agent", label: "Observer" },
   ];
@@ -772,6 +773,7 @@
     var event = (payload && payload.event) || {};
     var operatorSummary = (payload && payload.operatorSummary) || {};
     var submission = (payload && payload.submission) || {};
+    var confirmation = (payload && payload.confirmation) || {};
     var memoryId = operatorSummary.memoryEventId || submission.memoryEventId || event.eventId || "";
     if (!memoryId) {
       node.appendChild(el("p", "empty-state", "Saved memory confirmations will appear here."));
@@ -786,6 +788,10 @@
     appendBadge(summaryLine, operatorSummary.memoryType || submission.memoryType || event.memoryType || "memory", "neutral");
     appendBadge(summaryLine, reviewStatus, reviewStatus === "quarantined" ? "warn" : "good");
     appendBadge(summaryLine, firewallDecision, firewallDecision === "quarantine_for_review" ? "warn" : "good");
+    appendBadge(summaryLine, payload.persisted || confirmation.persisted ? "readback confirmed" : "readback pending", payload.persisted || confirmation.persisted ? "good" : "warn");
+    appendBadge(summaryLine, payload.visibleInSearch || confirmation.visibleInSearch ? "search visible" : "search pending", payload.visibleInSearch || confirmation.visibleInSearch ? "good" : "warn");
+    appendBadge(summaryLine, payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "review visible" : "review pending", payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "good" : "warn");
+    appendBadge(summaryLine, payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "audit visible" : "audit pending", payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "good" : "warn");
     appendBadge(
       summaryLine,
       operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
@@ -804,12 +810,17 @@
         { text: operatorSummary.memoryType || submission.memoryType || event.memoryType || "memory", kind: "neutral" },
         { text: reviewStatus, kind: reviewStatus === "quarantined" ? "warn" : "good" },
         { text: firewallDecision, kind: firewallDecision === "quarantine_for_review" ? "warn" : "good" },
+        { text: payload.persisted || confirmation.persisted ? "readback confirmed" : "readback pending", kind: payload.persisted || confirmation.persisted ? "good" : "warn" },
+        { text: payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "audit visible" : "audit pending", kind: payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "good" : "warn" },
         { text: operatorSummary.valuesRedacted || submission.valuesRedacted ? "redacted" : "", kind: "good" },
         { text: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "warn" : "good" },
       ],
       [
         "memory " + shortId(memoryId),
         "review " + shortId(operatorSummary.reviewId || submission.reviewId || event.reviewId),
+        "search " + (payload.visibleInSearch || confirmation.visibleInSearch ? "visible" : "pending"),
+        "review queue " + (payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "visible" : "pending"),
+        "audit " + (payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "visible" : "pending"),
         "actor " + (operatorSummary.actorAgentId || event.actorAgentId || "unknown"),
         event.createdAt || "",
       ]

@@ -150,10 +150,13 @@ def _memory_submission_confirmation(store, workspace_id, event):
     visible_in_search = any(item.get("eventId") == event.get("eventId") for item in search_items)
     review_items = store.review_queue(workspace_id, "")
     visible_in_review_queue = any(item.get("memoryEventId") == event.get("eventId") for item in review_items)
+    audit_items = store.audit_log(workspace_id, 50, "memory.submit")
+    visible_in_audit_log = any(item.get("target") == event.get("eventId") for item in audit_items)
     return {
-        "persisted": bool(event.get("eventId") and (visible_in_search or visible_in_review_queue)),
+        "persisted": bool(event.get("eventId") and (visible_in_search or visible_in_review_queue) and visible_in_audit_log),
         "visibleInSearch": visible_in_search,
         "visibleInReviewQueue": visible_in_review_queue,
+        "visibleInAuditLog": visible_in_audit_log,
         "canonicalMemoryEventId": event.get("eventId"),
         "reviewId": event.get("reviewId"),
         "memoryQueryUrl": _protected_query_url(
@@ -168,6 +171,10 @@ def _memory_submission_confirmation(store, workspace_id, event):
         "reviewQueueUrl": _protected_query_url(
             "/api/matm/review-queue",
             {"status": event.get("reviewStatus") or "pending"},
+        ),
+        "auditLogUrl": _protected_query_url(
+            "/api/matm/audit-log",
+            {"action": "memory.submit", "limit": "50"},
         ),
         "valuesRedacted": True,
     }
@@ -1672,6 +1679,7 @@ Remaining blocker</textarea>
     <div class="agent-shortcuts" data-console-message-targets aria-label="Message target shortcuts">
       <button class="button compact" type="button" data-console-target-agent="">Broadcast</button>
       <button class="button compact" type="button" data-console-target-agent="human-verifier-agent">Human</button>
+      <button class="button compact" type="button" data-console-target-agent="codex-agent">Codex</button>
       <button class="button compact" type="button" data-console-target-agent="MemoryEndpoints-Backend-Agent">Backend</button>
       <button class="button compact" type="button" data-console-target-agent="swarm-observer-agent">Observer</button>
     </div>
@@ -1694,6 +1702,7 @@ Remaining blocker</textarea>
     </form>
     <div class="agent-shortcuts" data-console-inbox-lanes aria-label="Inbox lane shortcuts">
       <button class="button compact" type="button" data-console-inbox-agent="human-verifier-agent">Human inbox</button>
+      <button class="button compact" type="button" data-console-inbox-agent="codex-agent">Codex inbox</button>
       <button class="button compact" type="button" data-console-inbox-agent="MemoryEndpoints-Backend-Agent">Backend inbox</button>
       <button class="button compact" type="button" data-console-inbox-agent="swarm-observer-agent">Observer inbox</button>
     </div>
@@ -2195,11 +2204,24 @@ def route_protected(environ, start_response, path):
             body.get("scopeId") or body.get("scope_id"),
         )
         submission = _memory_submission_metadata(event)
+        confirmation = _memory_submission_confirmation(store, workspace_id, event)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Memory was not persisted", "The memory event could not be confirmed in search, the review queue, and audit log after write.", "memory_not_persisted")
         payload = {
             "ok": True,
             "event": event,
             "submission": submission,
             "operatorSummary": _memory_submission_operator_summary(event),
+            "persisted": confirmation["persisted"],
+            "visibleInSearch": confirmation["visibleInSearch"],
+            "visibleInReviewQueue": confirmation["visibleInReviewQueue"],
+            "visibleInAuditLog": confirmation["visibleInAuditLog"],
+            "canonicalMemoryEventId": confirmation["canonicalMemoryEventId"],
+            "reviewId": confirmation["reviewId"],
+            "memoryQueryUrl": confirmation["memoryQueryUrl"],
+            "reviewQueueUrl": confirmation["reviewQueueUrl"],
+            "auditLogUrl": confirmation["auditLogUrl"],
+            "confirmation": confirmation,
             "valuesRedacted": True,
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
@@ -2548,7 +2570,7 @@ def route_protected(environ, start_response, path):
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
         if not confirmation["persisted"]:
-            return problem(start_response, "500 Internal Server Error", "Promoted memory was not persisted", "The promoted memory event could not be confirmed in search or the review queue after write.", "promoted_memory_not_persisted")
+            return problem(start_response, "500 Internal Server Error", "Promoted memory was not persisted", "The promoted memory event could not be confirmed in search, the review queue, and audit log after write.", "promoted_memory_not_persisted")
         payload = {
             "ok": True,
             "sourceMeetingMessage": message,
@@ -2558,10 +2580,12 @@ def route_protected(environ, start_response, path):
             "persisted": confirmation["persisted"],
             "visibleInSearch": confirmation["visibleInSearch"],
             "visibleInReviewQueue": confirmation["visibleInReviewQueue"],
+            "visibleInAuditLog": confirmation["visibleInAuditLog"],
             "canonicalMemoryEventId": confirmation["canonicalMemoryEventId"],
             "reviewId": confirmation["reviewId"],
             "memoryQueryUrl": confirmation["memoryQueryUrl"],
             "reviewQueueUrl": confirmation["reviewQueueUrl"],
+            "auditLogUrl": confirmation["auditLogUrl"],
             "confirmation": confirmation,
             "operatorSummary": _meeting_memory_promotion_operator_summary(message, room, event, promoted_by_agent_id),
             "valuesRedacted": True,

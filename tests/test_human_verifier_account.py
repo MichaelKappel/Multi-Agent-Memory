@@ -12,8 +12,8 @@ class HumanVerifierAccountScriptTests(unittest.TestCase):
         self.assertIn("Company/account boundary verification seeded", text)
         self.assertIn("company/account boundary is visible to the human verifier", text)
         self.assertIn('"verification", "company", "account", "boundary"', text)
-        self.assertIn('"backendAgentId": "MemoryEndpoints-Backend-Agent"', text)
-        self.assertIn("target_backend_agent", text)
+        self.assertIn('"codexAgentId": "codex-agent"', text)
+        self.assertIn("target_codex_agent", text)
 
 
 if __name__ == "__main__":
