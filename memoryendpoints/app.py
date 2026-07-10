@@ -401,6 +401,48 @@ def _long_term_memory_operator_summary(items, query_text, filters):
     }
 
 
+def _long_term_review_operator_summary(visible_reviews, all_reviews, memory_items):
+    visible_reviews = visible_reviews or []
+    all_reviews = all_reviews or []
+    memory_by_id = {item.get("eventId"): item for item in (memory_items or []) if item.get("eventId")}
+
+    def source_for(review):
+        event = memory_by_id.get(review.get("memoryEventId")) or {}
+        source = event.get("source") or ""
+        return source if source.startswith(LONG_TERM_MEMORY_SOURCE_PREFIX) else ""
+
+    all_long_term = [(review, source_for(review)) for review in all_reviews]
+    all_long_term = [(review, source) for review, source in all_long_term if source]
+    visible_ids = {review.get("reviewId") for review in visible_reviews if review.get("reviewId")}
+    visible_long_term = [(review, source) for review, source in all_long_term if review.get("reviewId") in visible_ids]
+    if not all_long_term:
+        return None
+    source_paths = sorted({source for _review, source in all_long_term})
+    status_counts = _count_by([review for review, _source in all_long_term], "status", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0})
+    visible_status_counts = _count_by([review for review, _source in visible_long_term], "status", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0})
+    actionable_count = (status_counts.get("pending") or 0) + (status_counts.get("quarantined") or 0)
+    all_promoted = bool(all_long_term) and status_counts.get("promoted") == len(all_long_term)
+    status = "promoted" if all_promoted else ("action_required" if actionable_count else "reviewed")
+    return {
+        "schemaVersion": "memoryendpoints.long_term_memory_review_operator_summary.v1",
+        "status": status,
+        "count": len(source_paths),
+        "visibleCount": len(visible_long_term),
+        "recordCount": len(all_long_term),
+        "visibleRecordCount": len(visible_long_term),
+        "duplicateRecordCount": max(0, len(all_long_term) - len(source_paths)),
+        "sourcePathCount": len(source_paths),
+        "sourcePathSamples": source_paths[:8],
+        "statusCounts": status_counts,
+        "visibleStatusCounts": visible_status_counts,
+        "actionableCount": actionable_count,
+        "allPromoted": all_promoted,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _memory_search_operator_summary(items, query_text, filters):
     items = items or []
     summary = {
@@ -633,11 +675,11 @@ def _audit_log_operator_summary(items, filters):
     }
 
 
-def _review_queue_operator_summary(items, all_items, filters, status_counts):
+def _review_queue_operator_summary(items, all_items, filters, status_counts, memory_items=None):
     items = items or []
     threat_count = sum(len(item.get("detectedThreats") or []) for item in items)
     risk_scores = [item.get("riskScore") or 0 for item in items]
-    return {
+    summary = {
         "schemaVersion": "memoryendpoints.review_queue_operator_summary.v1",
         "count": len(items),
         "filters": dict(filters or {}),
@@ -653,6 +695,10 @@ def _review_queue_operator_summary(items, all_items, filters, status_counts):
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
     }
+    long_term_reviews = _long_term_review_operator_summary(items, all_items, memory_items or [])
+    if long_term_reviews:
+        summary["longTermMemoryReviews"] = long_term_reviews
+    return summary
 
 
 def _review_decision_operator_summary(review):
@@ -1823,9 +1869,10 @@ def route_protected(environ, start_response, path):
         status_filter = query.get("status") or ""
         items = store.review_queue(workspace_id, status_filter)
         all_review_items = store.review_queue(workspace_id, "")
+        memory_items = store.search_memory(workspace_id, "", {})
         status_counts = _review_status_counts(all_review_items)
         filters = {"status": status_filter} if status_filter else {}
-        operator_summary = _review_queue_operator_summary(items, all_review_items, filters, status_counts)
+        operator_summary = _review_queue_operator_summary(items, all_review_items, filters, status_counts, memory_items)
         _audit_read(
             store,
             workspace_id,
@@ -1839,6 +1886,7 @@ def route_protected(environ, start_response, path):
                 "reviewStatusCounts": status_counts,
                 "firewallDecisionCounts": operator_summary["firewallDecisionCounts"],
                 "detectedThreatCount": operator_summary["detectedThreatCount"],
+                "longTermMemoryReviews": operator_summary.get("longTermMemoryReviews"),
             },
         )
         return json_response(

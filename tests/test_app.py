@@ -341,6 +341,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".receipt-summary", css)
         self.assertIn(".audit-summary", css)
         self.assertIn(".review-summary", css)
+        self.assertIn(".long-term-review-summary", css)
         self.assertIn(".console-nav", css)
         self.assertIn(".console-debug-toggle", css)
         self.assertIn(".debug-json-hidden .debug-json", css)
@@ -515,6 +516,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Decision recorded without exposing the raw review note.", js)
         self.assertIn("payload hidden", js)
         self.assertIn("review note hidden", js)
+        self.assertIn("renderLongTermMemoryReviewSummary", js)
+        self.assertIn("summary.longTermMemoryReviews", js)
+        self.assertIn("long-term-review-summary", js)
+        self.assertIn("Long-term reviews", js)
+        self.assertIn("actionable", js)
         self.assertIn("meeting_room.create", js)
 
     def test_console_js_renders_all_agent_lane_overview(self):
@@ -2262,6 +2268,96 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(3, migration["promotionStateCounts"]["review_pending"])
         self.assertIn("docs/long-term-memory/system-targets.md", migration["sourcePathSamples"])
         self.assertNotIn(token, json.dumps(migration))
+
+    def test_review_queue_summarizes_long_term_memory_reviews(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Long Term Review Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        for body in [
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "procedure",
+                "title": "System Targets",
+                "summary": "Canonical long-term memory review one.",
+                "tags": ["long-term-memory-migration"],
+                "source": "docs/long-term-memory/system-targets.md",
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "procedure",
+                "title": "System Targets Duplicate",
+                "summary": "Canonical long-term memory duplicate review.",
+                "tags": ["long-term-memory-migration"],
+                "source": "docs/long-term-memory/system-targets.md",
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "workspace",
+                "scopeId": workspace_id,
+                "memoryType": "status",
+                "title": "Unrelated Review",
+                "summary": "Ordinary review item that should not count as long-term memory.",
+                "tags": ["coordination"],
+                "source": "api",
+            },
+        ]:
+            status, _headers, _text = call_app(
+                "/api/matm/memory-events/submit",
+                method="POST",
+                headers=auth,
+                body=body,
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/review-queue",
+            headers=auth,
+            query="workspace_id=%s&status=pending" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        summary = payload["operatorSummary"]["longTermMemoryReviews"]
+
+        self.assertEqual("memoryendpoints.long_term_memory_review_operator_summary.v1", summary["schemaVersion"])
+        self.assertEqual("action_required", summary["status"])
+        self.assertEqual(1, summary["count"])
+        self.assertEqual(1, summary["sourcePathCount"])
+        self.assertEqual(2, summary["recordCount"])
+        self.assertEqual(2, summary["visibleRecordCount"])
+        self.assertEqual(1, summary["duplicateRecordCount"])
+        self.assertEqual(2, summary["actionableCount"])
+        self.assertFalse(summary["allPromoted"])
+        self.assertEqual(2, summary["statusCounts"]["pending"])
+        self.assertEqual(2, summary["visibleStatusCounts"]["pending"])
+        self.assertIn("docs/long-term-memory/system-targets.md", summary["sourcePathSamples"])
+        self.assertTrue(summary["valuesRedacted"])
+        self.assertFalse(summary["rawCredentialExposed"])
+        self.assertFalse(summary["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/audit-log",
+            headers=auth,
+            query="workspace_id=%s&action=review_queue.read&limit=5" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        audit = json.loads(text)
+        details = [detail for item in audit["items"] for detail in item["detailsSummary"]]
+        self.assertIn("long-term reviews 1 sources / 2 actionable / 1 duplicates", details)
 
     def test_idempotency_replay_and_conflict(self):
         status, _headers, text = call_app(
