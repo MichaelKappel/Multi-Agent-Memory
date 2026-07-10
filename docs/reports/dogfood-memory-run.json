@@ -1,8 +1,8 @@
 {
-  "auditLogCount": 10,
+  "auditLogCount": 14,
   "auditTrailReadbackVerified": true,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-10T02:57:17Z",
+  "generatedAt": "2026-07-10T04:22:39Z",
   "latestDogfoodContractVerified": true,
   "liveAuditTrailReadbackVerified": true,
   "liveCoreDogfoodVerified": true,
@@ -21,15 +21,18 @@
   "requiredStepFailureCount": 0,
   "runs": [
     {
-      "auditLogCount": 10,
+      "auditLogCount": 14,
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-10T02:56:55Z",
+      "generatedAt": "2026-07-10T04:22:02Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": true,
       "liveDogfoodVerified": true,
       "localDogfoodVerified": false,
+      "meetingMessageCount": 1,
+      "meetingReadVerified": true,
+      "meetingRoomCount": 3,
       "mode": "live_http",
       "ok": true,
       "oneTimeKeyReturned": true,
@@ -55,6 +58,7 @@
             "idempotencySupported",
             "keyId",
             "ok",
+            "operatorSummary",
             "projectId",
             "rawKeyStoredByServer",
             "showKeyOnce",
@@ -70,7 +74,11 @@
           "ok": true,
           "payloadShape": [
             "agent",
-            "ok"
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -80,7 +88,12 @@
           "ok": true,
           "payloadShape": [
             "event",
-            "ok"
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "submission",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -94,7 +107,11 @@
             "filters",
             "items",
             "memorySource",
-            "ok"
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -104,12 +121,83 @@
           "ok": true,
           "payloadShape": [
             "count",
+            "filters",
             "items",
             "ok",
+            "operatorSummary",
             "promotionRoute",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "statusCounts",
             "valuesRedacted"
           ],
           "required": false
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_meeting_rooms",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "schemaVersion",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "post_meeting_message",
+          "ok": true,
+          "payloadShape": [
+            "message",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "room",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_meeting_messages",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "readState",
+            "room",
+            "schemaVersion",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "mark_meeting_room_read",
+          "ok": true,
+          "payloadShape": [
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "readState",
+            "room",
+            "valuesRedacted"
+          ],
+          "required": true
         },
         {
           "httpStatus": "202 Accepted",
@@ -117,9 +205,13 @@
           "ok": true,
           "payloadShape": [
             "delivery",
+            "deliveryCounts",
             "message",
             "notification",
             "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
             "valuesRedacted"
           ],
           "required": true
@@ -134,6 +226,9 @@
             "filters",
             "items",
             "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
             "responseStates",
             "unreadCount",
             "valuesRedacted"
@@ -146,7 +241,11 @@
           "ok": true,
           "payloadShape": [
             "ok",
-            "receipt"
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "receipt",
+            "valuesRedacted"
           ],
           "required": true
         },
@@ -159,6 +258,9 @@
             "filters",
             "items",
             "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
             "valuesRedacted"
           ],
           "required": true
@@ -172,6 +274,7 @@
             "filters",
             "items",
             "ok",
+            "operatorSummary",
             "rawCredentialExposed",
             "rawPayloadExposed",
             "schemaVersion",
@@ -189,6 +292,9 @@
             "filters",
             "items",
             "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
             "responseStates",
             "unreadCount",
             "valuesRedacted"
@@ -198,7 +304,7 @@
       ],
       "target": "https://memoryendpoints.com",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:846d519eb8765ab2cd3d118339c47febc090415e64dc1be878a18b85ef923dca"
+      "workspaceIdHash": "sha256:ba49e1381e912323bd57a7591aa55deb28471ac0d312591ddb6377d6bd727ef0"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -217,6 +323,7 @@
         "idempotencySupported",
         "keyId",
         "ok",
+        "operatorSummary",
         "projectId",
         "rawKeyStoredByServer",
         "showKeyOnce",
@@ -232,7 +339,11 @@
       "ok": true,
       "payloadShape": [
         "agent",
-        "ok"
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -242,7 +353,12 @@
       "ok": true,
       "payloadShape": [
         "event",
-        "ok"
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "submission",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -256,7 +372,11 @@
         "filters",
         "items",
         "memorySource",
-        "ok"
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -266,12 +386,83 @@
       "ok": true,
       "payloadShape": [
         "count",
+        "filters",
         "items",
         "ok",
+        "operatorSummary",
         "promotionRoute",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "statusCounts",
         "valuesRedacted"
       ],
       "required": false
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_meeting_rooms",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "post_meeting_message",
+      "ok": true,
+      "payloadShape": [
+        "message",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "room",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_meeting_messages",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "readState",
+        "room",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "mark_meeting_room_read",
+      "ok": true,
+      "payloadShape": [
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "readState",
+        "room",
+        "valuesRedacted"
+      ],
+      "required": true
     },
     {
       "httpStatus": "202 Accepted",
@@ -279,9 +470,13 @@
       "ok": true,
       "payloadShape": [
         "delivery",
+        "deliveryCounts",
         "message",
         "notification",
         "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
         "valuesRedacted"
       ],
       "required": true
@@ -296,6 +491,9 @@
         "filters",
         "items",
         "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
         "responseStates",
         "unreadCount",
         "valuesRedacted"
@@ -308,7 +506,11 @@
       "ok": true,
       "payloadShape": [
         "ok",
-        "receipt"
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "receipt",
+        "valuesRedacted"
       ],
       "required": true
     },
@@ -321,6 +523,9 @@
         "filters",
         "items",
         "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
         "valuesRedacted"
       ],
       "required": true
@@ -334,6 +539,7 @@
         "filters",
         "items",
         "ok",
+        "operatorSummary",
         "rawCredentialExposed",
         "rawPayloadExposed",
         "schemaVersion",
@@ -351,6 +557,9 @@
         "filters",
         "items",
         "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
         "responseStates",
         "unreadCount",
         "valuesRedacted"
@@ -359,5 +568,5 @@
     }
   ],
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:846d519eb8765ab2cd3d118339c47febc090415e64dc1be878a18b85ef923dca"
+  "workspaceIdHash": "sha256:ba49e1381e912323bd57a7591aa55deb28471ac0d312591ddb6377d6bd727ef0"
 }

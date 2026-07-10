@@ -1,151 +1,55 @@
 {
-  "schemaVersion": "memoryendpoints.live_console_ui_smoke.v19",
+  "schemaVersion": "memoryendpoints.live_console_ui_smoke.v27",
   "baseUrl": "https://memoryendpoints.com/console",
-  "sourceSha": "f3e4ab0f8a1fdb49b9a9a082f7c94e0b9d3f597e",
-  "sourceShaShort": "f3e4ab0f8a1f",
-  "transport": "http_html_static_assets_protected_api_and_headless_browser_verified_layout",
-  "htmlStatus": {
-    "home": 200,
-    "console": 200,
-    "multiAgentMemory": 200
-  },
-  "assetStatus": {
-    "siteCss": 200,
-    "siteJs": 200
-  },
-  "htmlMarkers": {
-    "homeConsoleLink": true,
-    "homeMultiAgentMemoryLink": true,
-    "consoleWorkflowNav": true,
-    "sessionSummaryPanel": true,
-    "acknowledgementSummaryPanel": true,
-    "receiptsFilterForm": true,
-    "clearReceiptsFilterButton": true,
-    "reviewDecisionSummaryPanel": true,
-    "auditFilterForm": true,
-    "clearSearchFiltersButton": true,
-    "multiAgentMemoryHasGithubLink": true,
-    "multiAgentMemoryHasMemoryEndpointsLink": true
-  },
-  "assetMarkers": {
-    "sessionSummaryStyled": true,
-    "sessionSummaryRenderer": true,
-    "deliveryMetadataRenderer": true,
-    "acknowledgementSummaryStyled": true,
-    "acknowledgementSummaryRenderer": true,
-    "acknowledgementPayloadHiddenText": true,
-    "receiptFilterHandler": true,
-    "receiptFilterClearHandler": true,
-    "boundaryChainStyled": true,
-    "boundaryRenderer": true,
-    "memoryFilterHandler": true,
-    "auditFilterHandler": true,
-    "laneOverviewRenderer": true
-  },
+  "sourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
+  "sourceShaShort": "8b438977eb24",
+  "transport": "in_app_browser_console_ui_meeting_rooms_with_protected_api_readback",
   "protectedReadbacks": {
-    "versionOk": true,
     "sourceShaMatchesExpected": true,
     "mysqlActive": true,
-    "workspaceSummaryOk": true,
-    "hierarchyVisible": true,
-    "payloadSafetyChecksPass": true,
-    "allCheckedItemsRedacted": true,
-    "rawCredentialsStored": false
+    "workspaceOk": true,
+    "meetingRoomCount": 3,
+    "meetingScopes": {
+      "company": 1,
+      "project": 1,
+      "workspace": 1
+    },
+    "meetingMessageCount": 4,
+    "companyEntryRoom": true,
+    "routeRequiresWorkspaceKey": true,
+    "valuesRedacted": true,
+    "rawCredentialsStored": false,
+    "versionBackendRouteOk": true,
+    "configuredStoreBackend": "mysql",
+    "storeBackend": "mysql"
   },
   "browserVerified": {
-    "loadedConsoleSummaryCardCount": 6,
+    "title": "Console | MemoryEndpoints.com",
+    "url": "https://memoryendpoints.com/console#meeting-rooms",
+    "debugTogglePresent": true,
+    "debugJsonHiddenDefault": true,
     "sessionStatusStripVisible": true,
-    "sessionItemCount": 4,
-    "sessionActionCount": 3,
-    "sessionShowsProduction": true,
-    "sessionShowsBoundaryReady": true,
-    "sessionShowsKeyPrivate": true,
-    "sessionShowsAgent": true,
     "boundaryChainVisible": true,
-    "boundaryStepCount": 4,
-    "boundaryCopyButtons": 8,
-    "consoleWorkflowNavLinks": 5,
-    "targetShortcutButtons": 4,
-    "inboxLaneButtons": 3,
-    "hasAcknowledgementSummaryPanel": true,
-    "hasReceiptsFilter": true,
-    "deliveryMetadataVisible": true,
-    "deliveryUi": {
-      "messageDeliveryHasTargeted": true,
-      "messageDeliveryHasResponseDisposition": true,
-      "inboxHasDeliveryCounts": true,
-      "inboxDeliveryCounts": {
-        "broadcast": 0,
-        "targeted": 1
-      },
-      "inboxFirstDeliveryType": "targeted",
-      "inboxValuesRedacted": true
-    },
-    "memoryFilterSummaryAppears": true,
-    "memoryFilterSummaryText": "FiltersactorAgentId: human-verifier-agentpromotionState: promotedscope: workspace",
-    "memoryClearFiltersClearsFields": true,
-    "memoryClearActualValues": {
-      "scope": "",
-      "memoryType": "",
-      "reviewStatus": "",
-      "promotionState": "",
-      "tag": "",
-      "actorAgentId": "",
-      "noFilterSummary": true
-    },
-    "auditFilterSummaryAppears": true,
-    "auditFilterSummaryText": "Filtersaction: memory.searchlimit: 25",
-    "auditClearFiltersClearsFields": true,
-    "auditClearActualValues": {
-      "action": "",
-      "limit": "50",
-      "noFilterSummary": true
-    },
-    "receiptFilterSummaryAppears": true,
-    "receiptFilterSummaryText": "FiltersconsumerAgentId: human-verifier-agent",
-    "receiptClearFilterClearsSelection": true,
-    "receiptFilterAfterClear": {
-      "selectedConsumer": "",
-      "hasReceiptsList": true
-    },
-    "temporarySmokeAgent": "ui-smoke-agent-redacted",
-    "visibleNotificationsBeforeAck": 1,
-    "acknowledgementSummaryVisible": true,
-    "acknowledgementSummaryRowCount": 1,
-    "acknowledgementPayloadHidden": true,
-    "acknowledgementPayloadExposed": false,
-    "acknowledgementCopyButtons": 2,
+    "sessionActionsIncludeMeetings": true,
+    "meetingSectionPresent": true,
+    "meetingControlsPresent": true,
+    "meetingRoomsVisible": true,
+    "meetingScopesVisible": true,
+    "companyMeetingRoomVisible": true,
+    "workspaceMeetingRoomVisible": true,
+    "projectMeetingRoomVisible": true,
+    "meetingMessagePostedThroughUi": true,
+    "meetingRoomReadThroughUi": true,
+    "rawCredentialsVisibleInUi": false,
     "liveConsoleDesktopOverflow": false,
-    "memoryEndpointsHomeMobileOverflow": false,
     "memoryEndpointsConsoleMobileOverflow": false,
     "multiAgentMemoryMobileOverflow": false,
-    "mobileOverflowDetails": {
-      "home": {
-        "overflow": false,
-        "scrollWidth": 390,
-        "clientWidth": 390,
-        "offenders": []
-      },
-      "console": {
-        "overflow": false,
-        "scrollWidth": 390,
-        "clientWidth": 390,
-        "offenders": []
-      },
-      "multiAgentMemory": {
-        "overflow": false,
-        "scrollWidth": 390,
-        "clientWidth": 390,
-        "offenders": []
-      }
-    }
+    "multiAgentMemoryLinksPresent": true,
+    "multiAgentMemoryDetailedContentPresent": true,
+    "browserConsoleErrorCount": 0
   },
-  "pageErrors": [],
-  "ignoredConsoleResourceErrors": [
-    "Failed to load resource: the server responded with a status of 404 ()"
-  ],
-  "ok": true,
   "valuesRedacted": true,
   "rawCredentialsStored": false,
-  "failures": []
+  "failures": [],
+  "ok": true
 }

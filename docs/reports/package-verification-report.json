@@ -1,11 +1,12 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "cd9f82fcee860f48cd370824e08c21a47753021f",
-    "sourceShaShort": "cd9f82fcee86",
+    "sourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
+    "sourceShaShort": "8b438977eb24",
     "valuesRedacted": true
   },
-  "checkOnly": true,
+  "bytes": 197987,
+  "checkOnly": false,
   "excludedDirs": [
     ".git",
     ".github",
@@ -51,5 +52,6 @@
   "thirdPartyRuntimeDependencies": true,
   "thirdPartyRuntimeDependencyNames": [
     "PyMySQL"
-  ]
+  ],
+  "written": true
 }

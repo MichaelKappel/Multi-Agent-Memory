@@ -5,7 +5,7 @@
   "mysqlBackendVerified": true,
   "ok": true,
   "schemaVersion": "memoryendpoints.mysql_backend_verifier.v1",
-  "sourceSha": "f3e4ab0f8a1fdb49b9a9a082f7c94e0b9d3f597e",
+  "sourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
   "storeBackend": "mysql",
   "storeBackendVerified": true,
   "valuesRedacted": true
