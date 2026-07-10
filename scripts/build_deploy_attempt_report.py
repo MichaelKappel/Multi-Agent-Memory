@@ -83,6 +83,16 @@ def freshness_blocker(freshness):
     return "; ".join(blockers) if blockers else None
 
 
+def live_latest_code_blocker(report):
+    if not report:
+        return "live latest-code verification report is missing"
+    if report.get("sourceShaMatchesExpected"):
+        return None
+    expected = report.get("expectedSourceSha") or "unknown"
+    observed = report.get("observedSourceSha") or report.get("sourceSha") or "unknown"
+    return "live source SHA does not match expected current source SHA; expected %s, observed %s" % (expected, observed)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run-report", default="deploy-dry-run-latest.json")
@@ -96,12 +106,19 @@ def main(argv=None):
     connection_ftps = load("deploy-connection-check-latest.json")
     connection_ftp = load("deploy-connection-check-ftp-latest.json")
     dogfood = load("dogfood-memory-run.json") or {}
+    live_latest_code = load("live-latest-code-verification.json") or {}
     live_status = live.get("status")
     live_uploaded = live.get("uploadedCount", 0)
-    latest_live = live_status == "uploaded" and live_uploaded > 0
     freshness = build_freshness(dry, package)
     dry_run_stale_blocker = freshness_blocker(freshness)
+    live_latest_blocker = live_latest_code_blocker(live_latest_code)
     connection_gate = connection_blocker([connection_ftps, connection_ftp])
+    latest_live = bool(
+        live_status == "uploaded"
+        and live_uploaded > 0
+        and not dry_run_stale_blocker
+        and not live_latest_blocker
+    )
     report = {
         "schemaVersion": "memoryendpoints.deploy_attempt.v1",
         "generatedAt": "2026-07-09",
@@ -129,6 +146,12 @@ def main(argv=None):
             "safeNoOp": live.get("safeNoOp", live_uploaded == 0),
             "valuesRedacted": True,
         },
+        "liveLatestCode": {
+            "expectedSourceSha": live_latest_code.get("expectedSourceSha"),
+            "observedSourceSha": live_latest_code.get("observedSourceSha"),
+            "sourceShaMatchesExpected": bool(live_latest_code.get("sourceShaMatchesExpected")),
+            "valuesRedacted": True,
+        },
         "connectionChecks": [
             item for item in (connection_item(connection_ftps), connection_item(connection_ftp)) if item
         ],
@@ -145,6 +168,7 @@ def main(argv=None):
             "localDogfoodVerified": bool(dogfood.get("localDogfoodVerified")),
             "blocker": None if latest_live else (
                 dry_run_stale_blocker
+                or live_latest_blocker
                 or connection_gate
                 or "FTPS login rejected before upload; credential or server access must be refreshed outside the repository."
             ),

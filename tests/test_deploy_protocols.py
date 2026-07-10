@@ -179,6 +179,20 @@ Password: multi-secret
         self.assertIn("planned upload count", blocker)
         self.assertIn("source SHA", blocker)
 
+    def test_deploy_attempt_requires_live_latest_code_match(self):
+        self.assertIsNone(
+            build_deploy_attempt_report.live_latest_code_blocker(
+                {"expectedSourceSha": "abc123", "observedSourceSha": "abc123", "sourceShaMatchesExpected": True}
+            )
+        )
+
+        blocker = build_deploy_attempt_report.live_latest_code_blocker(
+            {"expectedSourceSha": "abc123", "observedSourceSha": "old456", "sourceShaMatchesExpected": False}
+        )
+        self.assertIn("live source SHA", blocker)
+        self.assertIn("abc123", blocker)
+        self.assertIn("old456", blocker)
+
 
 if __name__ == "__main__":
     unittest.main()
