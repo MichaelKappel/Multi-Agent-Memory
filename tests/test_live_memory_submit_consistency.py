@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest import mock
 
 from scripts import verify_live_memory_submit_consistency as verifier
 
@@ -74,6 +75,45 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
         self.assertNotIn("raw-token-value", text)
         self.assertFalse(report["rawCredentialValuesStored"])
         self.assertFalse(report["rawWorkspaceIdStored"])
+
+    def test_run_probe_polls_until_durable_readback_matches(self):
+        search_attempt = {"count": 0}
+
+        def fake_submit(*_args, **_kwargs):
+            return 201, submit_payload("mem-lag", "review-lag"), {}
+
+        def fake_protected_get(_base_url, _token, _workspace_id, path, _params):
+            if path == "/api/matm/search":
+                search_attempt["count"] += 1
+                matches = [{"eventId": "mem-lag"}] if search_attempt["count"] > 1 else []
+                return 200, {"items": matches, "filters": {"eventId": "mem-lag"}, "valuesRedacted": True}, {}
+            if path == "/api/matm/review-queue":
+                matches = [{"memoryEventId": "mem-lag"}] if search_attempt["count"] > 1 else []
+                return 200, {"items": matches, "statusCounts": {"pending": len(matches)}, "valuesRedacted": True}, {}
+            if path == "/api/matm/audit-log":
+                matches = [{"target": "mem-lag"}] if search_attempt["count"] > 1 else []
+                return 200, {"items": matches, "valuesRedacted": True}, {}
+            raise AssertionError(path)
+
+        with mock.patch.object(verifier, "request_json", side_effect=fake_submit):
+            with mock.patch.object(verifier, "protected_get", side_effect=fake_protected_get):
+                with mock.patch.object(verifier.time, "sleep"):
+                    check = verifier.run_probe(
+                        "https://memoryendpoints.com",
+                        "token",
+                        "workspace",
+                        "agent",
+                        "project",
+                        "run",
+                        1,
+                        0,
+                        3,
+                    )
+
+        self.assertTrue(check["ok"])
+        self.assertEqual(2, check["readbackAttemptsUsed"])
+        self.assertEqual(3, check["readbackAttemptCount"])
+        self.assertEqual({"exactSearchCount": 1, "reviewQueueMatchCount": 1, "auditMatchCount": 1}, check["durableReadback"])
 
 
 if __name__ == "__main__":

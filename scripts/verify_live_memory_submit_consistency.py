@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
 DEFAULT_REPORT = ROOT / "docs" / "reports" / "live-memory-submit-consistency.json"
 REQUEST_TIMEOUT_SECONDS = 12
+READBACK_ATTEMPTS = 10
 
 
 def sha256_text(value):
@@ -163,7 +164,17 @@ def protected_get(base_url, token, workspace_id, path, params):
     return request_json(base_url, path, token=token, query=urlencode(params))
 
 
-def run_probe(base_url, token, workspace_id, actor_agent_id, scope_id, run_tag, probe_index, delay_seconds):
+def run_probe(
+    base_url,
+    token,
+    workspace_id,
+    actor_agent_id,
+    scope_id,
+    run_tag,
+    probe_index,
+    delay_seconds,
+    readback_attempts,
+):
     tag = "submit-consistency-" + run_tag
     body = {
         "workspaceId": workspace_id,
@@ -185,30 +196,39 @@ def run_probe(base_url, token, workspace_id, actor_agent_id, scope_id, run_tag, 
         body=body,
     )
     event_id = event_id_from_submit(submit_payload)
-    time.sleep(max(0.0, delay_seconds))
-    search_status, search_payload, _search_headers = protected_get(
-        base_url,
-        token,
-        workspace_id,
-        "/api/matm/search",
-        {"q": "", "event_id": event_id},
-    )
-    review_status, review_payload, _review_headers = protected_get(
-        base_url,
-        token,
-        workspace_id,
-        "/api/matm/review-queue",
-        {"status": "", "tag": tag},
-    )
-    audit_status, audit_payload, _audit_headers = protected_get(
-        base_url,
-        token,
-        workspace_id,
-        "/api/matm/audit-log",
-        {"action": "memory.submit", "limit": "200"},
-    )
-    check = evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload)
+    attempts = max(1, int(readback_attempts))
+    search_status = review_status = audit_status = 0
+    search_payload = review_payload = audit_payload = {}
+    check = {}
+    for attempt in range(attempts):
+        time.sleep(max(0.0, delay_seconds))
+        search_status, search_payload, _search_headers = protected_get(
+            base_url,
+            token,
+            workspace_id,
+            "/api/matm/search",
+            {"q": "", "event_id": event_id},
+        )
+        review_status, review_payload, _review_headers = protected_get(
+            base_url,
+            token,
+            workspace_id,
+            "/api/matm/review-queue",
+            {"status": "", "tag": tag},
+        )
+        audit_status, audit_payload, _audit_headers = protected_get(
+            base_url,
+            token,
+            workspace_id,
+            "/api/matm/audit-log",
+            {"action": "memory.submit", "limit": "200"},
+        )
+        check = evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload)
+        check["readbackAttemptsUsed"] = attempt + 1
+        if check["ok"]:
+            break
     check["probeIndex"] = probe_index
+    check["readbackAttemptCount"] = attempts
     check["readStatuses"] = {
         "search": search_status,
         "reviewQueue": review_status,
@@ -253,6 +273,7 @@ def main(argv=None):
     parser.add_argument("--json-out", default=str(DEFAULT_REPORT))
     parser.add_argument("--probes", type=int, default=1)
     parser.add_argument("--delay", type=float, default=2.0)
+    parser.add_argument("--readback-attempts", type=int, default=READBACK_ATTEMPTS)
     parser.add_argument("--agent-id", default="")
     args = parser.parse_args(argv)
 
@@ -268,9 +289,19 @@ def main(argv=None):
     source_sha = ""
     if version_status == 200:
         source_sha = (version_payload.get("build") or {}).get("sourceSha") or ""
-    run_tag = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(4)
+    run_tag = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(4)
     probes = [
-        run_probe(base_url, token, workspace_id, actor_agent_id, scope_id, run_tag, index + 1, args.delay)
+        run_probe(
+            base_url,
+            token,
+            workspace_id,
+            actor_agent_id,
+            scope_id,
+            run_tag,
+            index + 1,
+            args.delay,
+            args.readback_attempts,
+        )
         for index in range(max(1, args.probes))
     ]
     report = build_report(base_url, source_sha, workspace_id, token, probes)
