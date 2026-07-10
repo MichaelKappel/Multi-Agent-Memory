@@ -117,6 +117,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-audit-list", text)
         self.assertIn("Debug JSON", text)
 
+    def test_console_css_keeps_mobile_nav_and_memory_rows_readable(self):
+        css = (Path(__file__).resolve().parents[1] / "static" / "css" / "site.css").read_text(encoding="utf-8")
+
+        self.assertIn('nav a[href*="multiagentmemory"]', css)
+        self.assertIn(".summary-meta", css)
+        self.assertIn("overflow-wrap: anywhere", css)
+        self.assertIn(".row-meta span", css)
+
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")
         self.assertEqual("200 OK", status)

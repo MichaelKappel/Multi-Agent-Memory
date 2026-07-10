@@ -19,6 +19,7 @@ body {
   color: var(--ink);
   background: var(--bg);
   line-height: 1.5;
+  overflow-wrap: break-word;
 }
 
 .topbar {
@@ -256,6 +257,7 @@ pre {
 .summary-card {
   padding: 14px;
   display: grid;
+  align-content: start;
   gap: 8px;
   min-height: 132px;
 }
@@ -276,13 +278,19 @@ pre {
 }
 
 .summary-card strong {
+  display: block;
   font-size: 1.04rem;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .summary-meta {
+  border-top: 1px solid var(--line);
+  display: block;
   font-family: Consolas, "Liberation Mono", monospace;
   font-size: 0.84rem;
+  overflow-wrap: anywhere;
+  padding-top: 8px;
 }
 
 .badge-line {
@@ -295,6 +303,7 @@ pre {
 .status-badge {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   min-height: 24px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -352,10 +361,12 @@ pre {
   margin: 0;
   font-size: 1rem;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .result-summary {
   margin: 8px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .row-meta {
@@ -364,6 +375,10 @@ pre {
   gap: 8px 14px;
   margin-top: 10px;
   font-size: 0.84rem;
+}
+
+.row-meta span {
+  overflow-wrap: anywhere;
 }
 
 .row-actions {
@@ -431,7 +446,12 @@ footer {
 
   nav a {
     text-align: center;
+    overflow-wrap: anywhere;
     padding: 7px 8px;
+  }
+
+  nav a[href*="multiagentmemory"] {
+    grid-column: 1 / -1;
   }
 
   .result-row-top {

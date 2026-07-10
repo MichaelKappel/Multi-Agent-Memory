@@ -24,6 +24,16 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn(".uai/", text)
         self.assertIn("/api/matm/memory-events/submit", text)
 
+    def test_mobile_tables_have_labels_and_fixed_hero_type(self):
+        css = (SITE_ROOT / "static" / "site.css").read_text(encoding="utf-8")
+        home = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+        guide = (SITE_ROOT / "docs" / "how-it-works.html").read_text(encoding="utf-8")
+        self.assertIn("content: attr(data-label)", css)
+        self.assertIn("@media (max-width: 760px)", css)
+        self.assertNotIn("font-size: clamp", css)
+        self.assertIn('data-label="Surface"', home)
+        self.assertIn('data-label="Layer"', guide)
+
     def test_ai_manifest_exposes_repo_and_endpoint(self):
         manifest = json.loads((SITE_ROOT / "ai-manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(GITHUB_REPO, manifest["sourceRepository"])
