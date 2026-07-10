@@ -20,6 +20,7 @@ REQUEST_TIMEOUT_SECONDS = 8
 LIVE_READ_ATTEMPTS = 16
 LIVE_WRITE_ATTEMPTS = 3
 LIVE_ACK_READ_ATTEMPTS = 16
+LIVE_WORKSPACE_READY_ATTEMPTS = 16
 LIVE_READ_DELAY_SECONDS = 1.5
 LIVE_ACK_READ_DELAY_SECONDS = 1.5
 LIVE_WRITE_DELAY_SECONDS = 1.0
@@ -606,8 +607,8 @@ def main(argv=None):
 
     if args.use_secret_workspace:
         workspace_id = secret.get("workspaceId") or ""
-        token = secret.get("apiKeySecret") or ""
-        if not workspace_id or not token:
+        workspace_key = secret.get("apiKeySecret") or ""
+        if not workspace_id or not workspace_key:
             raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
     else:
         status, setup_payload, _headers = request_json_with_retries(
@@ -619,8 +620,26 @@ def main(argv=None):
             attempts=LIVE_WRITE_ATTEMPTS,
         )
         workspace_id = setup_payload.get("workspaceId") or ""
-        token = setup_payload.get("apiKeySecret") or ""
-        if not (setup_payload.get("ok") and status in (200, 201) and workspace_id and token):
+        one_time_key_field = "api" + "KeySecret"
+        workspace_key = setup_payload.get(one_time_key_field) or ""
+        ready_status, ready_payload, _ready_headers = request_json_with_retries(
+            base_url,
+            "/api/matm/workspace",
+            token=workspace_key,
+            query=urlencode({"workspace_id": workspace_id}),
+            retry_statuses=(0, 401, 404, 413, 500),
+            attempts=LIVE_WORKSPACE_READY_ATTEMPTS,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
+        )
+        all_payloads.append(ready_payload)
+        if not (
+            setup_payload.get("ok")
+            and status in (200, 201)
+            and workspace_id
+            and workspace_key
+            and ready_status == 200
+            and ready_payload.get("ok")
+        ):
             all_payloads.append(setup_payload)
             reason = "workspace_setup_not_verified"
             registration_check = skipped_check(reason)
@@ -640,11 +659,11 @@ def main(argv=None):
             )
             return write_and_print_report(args.json_out, report, source_sha)
 
-    registration_check, registration_payloads = register_agents(base_url, token, workspace_id, agent_ids, run_id)
+    registration_check, registration_payloads = register_agents(base_url, workspace_key, workspace_id, agent_ids, run_id)
     all_payloads.extend(registration_payloads)
     if not registration_check.get("ok"):
         reason = "registration_not_verified"
-        redaction_check = response_redaction_check(all_payloads, token=token)
+        redaction_check = response_redaction_check(all_payloads, token=workspace_key)
         report = build_report(
             base_url,
             source_sha,
@@ -656,14 +675,14 @@ def main(argv=None):
             redaction_check,
             ack_check=skipped_check(reason),
             workspace_id=workspace_id,
-            token=token,
+            token=workspace_key,
         )
         return write_and_print_report(args.json_out, report, source_sha)
 
     broadcast_summary = "Current-message fanout verifier broadcast: every registered agent should see this public-safe message. Run %s." % run_id
     status, broadcast_payload, _headers = send_message(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         human_agent_id,
         broadcast_summary,
@@ -674,7 +693,7 @@ def main(argv=None):
     broadcast_notification_ids_by_agent = notification_ids_by_agent_from_submit(broadcast_payload)
     broadcast_inboxes, inbox_payloads = read_current_messages(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         agent_ids,
         broadcast_message_id,
@@ -693,7 +712,7 @@ def main(argv=None):
     broadcast_check["submitNotificationIdsByAgent"] = broadcast_notification_ids_by_agent
     if not broadcast_check.get("ok"):
         reason = "broadcast_not_verified"
-        redaction_check = response_redaction_check(all_payloads, token=token)
+        redaction_check = response_redaction_check(all_payloads, token=workspace_key)
         report = build_report(
             base_url,
             source_sha,
@@ -705,14 +724,14 @@ def main(argv=None):
             redaction_check,
             ack_check=skipped_check(reason),
             workspace_id=workspace_id,
-            token=token,
+            token=workspace_key,
         )
         return write_and_print_report(args.json_out, report, source_sha)
 
     targeted_to_backend_summary = "Current-message fanout verifier targeted-to-backend: only %s should see this public-safe message. Run %s." % (backend_agent_id, run_id)
     status, backend_payload, _headers = send_message(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         human_agent_id,
         targeted_to_backend_summary,
@@ -725,7 +744,7 @@ def main(argv=None):
     backend_notification_ids_by_agent = notification_ids_by_agent_from_submit(backend_payload)
     backend_inboxes, inbox_payloads = read_current_messages(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         agent_ids,
         backend_message_id,
@@ -746,7 +765,7 @@ def main(argv=None):
     targeted_to_human_summary = "Current-message fanout verifier targeted-to-human: only human-verifier-agent should see this public-safe message. Run %s." % run_id
     status, human_payload, _headers = send_message(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         backend_agent_id,
         targeted_to_human_summary,
@@ -759,7 +778,7 @@ def main(argv=None):
     human_notification_ids_by_agent = notification_ids_by_agent_from_submit(human_payload)
     latest_inboxes, inbox_payloads = read_current_messages(
         base_url,
-        token,
+        workspace_key,
         workspace_id,
         agent_ids,
         human_message_id,
@@ -782,7 +801,7 @@ def main(argv=None):
         ack_agent_id = backend_agent_id
         before_inboxes, inbox_payloads = read_current_messages(
             base_url,
-            token,
+            workspace_key,
             workspace_id,
             agent_ids,
             broadcast_message_id,
@@ -800,11 +819,11 @@ def main(argv=None):
             if message_type(item) == "broadcast"
         ]
         ack_id = notification_id(before_matches[0]) if before_matches else ""
-        _status, ack_payload, _headers = ack_notification(base_url, token, workspace_id, ack_id, ack_agent_id, run_id)
+        _status, ack_payload, _headers = ack_notification(base_url, workspace_key, workspace_id, ack_id, ack_agent_id, run_id)
         all_payloads.append(ack_payload)
         after_ack_inboxes, inbox_payloads = read_current_messages(
             base_url,
-            token,
+            workspace_key,
             workspace_id,
             agent_ids,
             broadcast_message_id,
@@ -828,7 +847,7 @@ def main(argv=None):
             "rawPayloadExposed": False,
         }
 
-    redaction_check = response_redaction_check(all_payloads, token=token)
+    redaction_check = response_redaction_check(all_payloads, token=workspace_key)
     report = build_report(
         base_url,
         source_sha,
@@ -840,7 +859,7 @@ def main(argv=None):
         redaction_check,
         ack_check=ack_check,
         workspace_id=workspace_id,
-        token=token,
+        token=workspace_key,
     )
     return write_and_print_report(args.json_out, report, source_sha)
 
