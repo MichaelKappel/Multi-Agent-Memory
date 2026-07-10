@@ -573,6 +573,15 @@
     node.appendChild(row);
   }
 
+  function inboxAgentFromPayload(payload, fallback) {
+    var operatorSummary = (payload && payload.operatorSummary) || {};
+    var filters = (payload && payload.filters) || {};
+    var first = payload && payload.items && payload.items.length ? payload.items[0] : {};
+    var delivery = first.delivery || {};
+    var notification = first.notification || {};
+    return operatorSummary.agentId || filters.agentId || delivery.inboxAgentId || notification.targetAgentId || fallback || state.agentId || "selected agent";
+  }
+
   function renderInboxSummary(payload, agentId) {
     var node = pick("[data-console-inbox-list]");
     if (!node) {
@@ -581,7 +590,7 @@
     clear(node);
     var items = (payload && payload.items) || [];
     var operatorSummary = (payload && payload.operatorSummary) || {};
-    var lane = agentId || state.agentId || "selected agent";
+    var lane = inboxAgentFromPayload(payload, agentId || state.agentId);
     appendFilterSummary(node, payload && payload.filters);
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
@@ -690,7 +699,7 @@
       { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
     ]);
     node.appendChild(summaryLine);
-    node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; current inbox refreshed."));
+    node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; " + refreshedLane + " inbox refreshed."));
     node.appendChild(row);
   }
 
@@ -1356,15 +1365,17 @@
     var qs = query({workspace_id: state.workspaceId, agent_id: requestedAgent});
     return api("/api/matm/current-message?" + qs).then(function (payload) {
       if (requestSeq !== state.inboxRequestSeq) {
-        return payload;
+        return null;
       }
+      var resolvedAgent = inboxAgentFromPayload(payload, requestedAgent);
+      setInboxAgent(resolvedAgent);
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
       state.visibleNotificationIds = ((payload && payload.items) || []).map(function (item) {
         return item.notification && item.notification.notificationId;
       }).filter(Boolean);
       render("[data-console-inbox-output]", payload);
-      renderInboxSummary(payload, requestedAgent);
+      renderInboxSummary(payload, resolvedAgent);
       return payload;
     });
   }
@@ -1447,8 +1458,13 @@
       return Promise.reject(new Error("Load workspace before refreshing inbox lanes."));
     }
     setInboxAgent(agentId);
-    return refreshInbox(agentId).then(function () {
-      setStatus((label || agentId) + " refreshed.", false);
+    return refreshInbox(agentId).then(function (payload) {
+      if (!payload) {
+        return null;
+      }
+      var resolvedAgent = inboxAgentFromPayload(payload, agentId);
+      setStatus((label || resolvedAgent + " inbox") + " refreshed.", false);
+      return payload;
     });
   }
 
@@ -1685,11 +1701,19 @@
         body: body,
       })
         .then(function (payload) {
-          renderMessageDelivery(payload, refreshedLane);
           setStatus("Message accepted; refreshing " + refreshedLane + " inbox.", false);
-          return refreshInbox(refreshedLane).then(refreshLaneOverview).then(function () { return payload; });
+          return refreshInbox(refreshedLane).then(function (inboxPayload) {
+            var actualLane = inboxAgentFromPayload(inboxPayload, refreshedLane);
+            renderMessageDelivery(payload, actualLane);
+            return refreshLaneOverview().then(function () {
+              return {deliveryPayload: payload, refreshedLane: actualLane};
+            });
+          });
         })
-        .then(function () { setStatus(target ? "Targeted message sent; " + target + " inbox refreshed." : "Broadcast message sent; current inbox refreshed.", false); })
+        .then(function (result) {
+          var actualLane = (result && result.refreshedLane) || refreshedLane;
+          setStatus(target ? "Targeted message sent; " + actualLane + " inbox refreshed." : "Broadcast message sent; " + actualLane + " inbox refreshed.", false);
+        })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }

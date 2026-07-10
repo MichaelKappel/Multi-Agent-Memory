@@ -7,7 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -96,16 +96,67 @@ def ok_status(status):
     return str(status).startswith(("200", "201", "202"))
 
 
-def step(report, name, status, payload=None, required=True):
+def step(report, name, status, payload=None, required=True, verified=None):
+    http_ok = ok_status(status)
+    ok = http_ok if verified is None else http_ok and bool(verified)
+    item = {
+        "name": name,
+        "httpStatus": status,
+        "ok": ok,
+        "required": required,
+        "payloadShape": sorted((payload or {}).keys()),
+    }
+    if verified is not None:
+        item["contractVerified"] = bool(verified)
     report["steps"].append(
-        {
-            "name": name,
-            "httpStatus": status,
-            "ok": ok_status(status),
-            "required": required,
-            "payloadShape": sorted((payload or {}).keys()),
-        }
+        item
     )
+
+
+def canonical_path_query(url):
+    parsed = urlparse(url or "")
+    path = parsed.path or ""
+    query = parsed.query or ""
+    if not path and url:
+        if "?" in url:
+            path, query = url.split("?", 1)
+        else:
+            path = url
+    if path and not path.startswith("/"):
+        path = "/" + path
+    return path, query
+
+
+def call_canonical_url(transport, url, headers):
+    path, query = canonical_path_query(url)
+    if not path:
+        return "500 Missing Canonical URL", {"ok": False, "error": "missing_canonical_url", "valuesRedacted": True}
+    return transport.call(path, headers=headers, query=query)
+
+
+def contains_memory_event(payload, event_id):
+    if not event_id:
+        return False
+    return any(item.get("eventId") == event_id for item in payload.get("items") or [])
+
+
+def contains_meeting_message(payload, message_id):
+    if not message_id:
+        return False
+    return any(item.get("meetingMessageId") == message_id for item in payload.get("items") or [])
+
+
+def contains_current_message(payload, message_id, notification_id):
+    if not message_id and not notification_id:
+        return False
+    for item in payload.get("items") or []:
+        message = item.get("message") or {}
+        notification = item.get("notification") or {}
+        if message_id and message.get("messageId") == message_id:
+            return True
+        if notification_id and notification.get("notificationId") == notification_id:
+            return True
+    return False
 
 
 def append_progress(report):
@@ -206,13 +257,15 @@ def run_sequence(transport, label, base_url=None):
             },
         )
         step(report, "submit_memory", status, memory)
+        memory_event_id = (memory.get("event") or {}).get("eventId", "")
 
         status, search = transport.call(
             "/api/matm/search",
             headers=auth,
             query=urlencode({"workspace_id": workspace_id, "q": "dogfood"}),
         )
-        step(report, "search_memory", status, search)
+        memory_readback_verified = contains_memory_event(search, memory_event_id)
+        step(report, "search_memory", status, search, verified=memory_readback_verified)
 
         status, queue = transport.call(
             "/api/matm/review-queue",
@@ -243,14 +296,12 @@ def run_sequence(transport, label, base_url=None):
             },
         )
         step(report, "post_meeting_message", status, meeting_post)
-        meeting_message_id = (meeting_post.get("message") or {}).get("meetingMessageId", "")
+        meeting_message_id = meeting_post.get("messageId") or (meeting_post.get("message") or {}).get("meetingMessageId", "")
+        canonical_room_id = meeting_post.get("canonicalRoomId") or meeting_room_id
 
-        status, meeting_messages = transport.call(
-            "/api/matm/meeting-messages",
-            headers=auth,
-            query=urlencode({"workspace_id": workspace_id, "room_id": meeting_room_id, "agent_id": "memoryendpoints-followup-agent"}),
-        )
-        step(report, "read_meeting_messages", status, meeting_messages)
+        status, meeting_messages = call_canonical_url(transport, meeting_post.get("transcriptQueryUrl"), auth)
+        meeting_readback_verified = contains_meeting_message(meeting_messages, meeting_message_id)
+        step(report, "read_meeting_messages", status, meeting_messages, verified=meeting_readback_verified)
 
         status, meeting_read = transport.call(
             "/api/matm/meeting-rooms/read",
@@ -258,12 +309,16 @@ def run_sequence(transport, label, base_url=None):
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-read-" + run_tag),
             body={
                 "workspaceId": workspace_id,
-                "roomId": meeting_room_id,
-                "agentId": "memoryendpoints-followup-agent",
+                "roomId": canonical_room_id,
+                "agentId": "memoryendpoints-dogfood-agent",
                 "lastMeetingMessageId": meeting_message_id,
             },
         )
-        step(report, "mark_meeting_room_read", status, meeting_read)
+        meeting_read_verified = bool(
+            meeting_read.get("ok")
+            and (meeting_read.get("readState") or {}).get("lastMeetingMessageId") == meeting_message_id
+        )
+        step(report, "mark_meeting_room_read", status, meeting_read, verified=meeting_read_verified)
 
         status, message = transport.call(
             "/api/matm/agent-messages",
@@ -278,14 +333,12 @@ def run_sequence(transport, label, base_url=None):
             },
         )
         step(report, "create_current_message", status, message)
-        notification_id = (message.get("notification") or {}).get("notificationId", "")
+        message_id = message.get("messageId") or (message.get("message") or {}).get("messageId", "")
+        notification_id = message.get("notificationId") or (message.get("notification") or {}).get("notificationId", "")
 
-        status, current = transport.call(
-            "/api/matm/current-message",
-            headers=auth,
-            query=urlencode({"workspace_id": workspace_id, "agent_id": "memoryendpoints-followup-agent"}),
-        )
-        step(report, "read_current_message", status, current)
+        status, current = call_canonical_url(transport, message.get("inboxQueryUrl"), auth)
+        current_readback_verified = contains_current_message(current, message_id, notification_id)
+        step(report, "read_current_message", status, current, verified=current_readback_verified)
 
         status, ack = transport.call(
             "/api/matm/notifications/ack",
@@ -298,7 +351,12 @@ def run_sequence(transport, label, base_url=None):
                 "status": "read",
             },
         )
-        step(report, "acknowledge_notification", status, ack)
+        ack_verified = bool(
+            ack.get("ok")
+            and (ack.get("receipt") or {}).get("notificationId") == notification_id
+            and (ack.get("receipt") or {}).get("consumerAgentId") == "memoryendpoints-followup-agent"
+        )
+        step(report, "acknowledge_notification", status, ack, verified=ack_verified)
 
         status, receipts = transport.call(
             "/api/matm/receipts",
@@ -314,12 +372,9 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "read_audit_log", status, audit_log)
 
-        status, post_ack_current = transport.call(
-            "/api/matm/current-message",
-            headers=auth,
-            query=urlencode({"workspace_id": workspace_id, "agent_id": "memoryendpoints-followup-agent"}),
-        )
-        step(report, "read_current_message_after_ack", status, post_ack_current)
+        status, post_ack_current = call_canonical_url(transport, message.get("inboxQueryUrl"), auth)
+        post_ack_verified = not contains_current_message(post_ack_current, message_id, notification_id)
+        step(report, "read_current_message_after_ack", status, post_ack_current, verified=post_ack_verified)
 
         required_ok = all(item["ok"] for item in report["steps"] if item["required"])
         core_required_ok = all(
@@ -335,11 +390,16 @@ def run_sequence(transport, label, base_url=None):
         report["liveDogfoodVerified"] = transport.mode == "live_http" and required_ok
         report["workspaceIdHash"] = "sha256:" + hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()
         report["oneTimeKeyReturned"] = bool(token)
+        report["memoryReadbackVerified"] = memory_readback_verified
         report["searchReadbackCount"] = search.get("count", 0)
         report["meetingRoomCount"] = meeting_rooms.get("count", 0)
         report["meetingMessageCount"] = meeting_messages.get("count", 0)
-        report["meetingReadVerified"] = bool(meeting_read.get("ok") and meeting_read.get("valuesRedacted"))
+        report["meetingMessageReadbackVerified"] = meeting_readback_verified
+        report["meetingReadVerified"] = meeting_read_verified
         report["currentMessageUnreadCount"] = current.get("unreadCount", 0)
+        report["currentMessageReadbackVerified"] = current_readback_verified
+        report["currentMessageAckVerified"] = ack_verified
+        report["currentMessagePostAckVerified"] = post_ack_verified
         report["postAckUnreadCount"] = post_ack_current.get("unreadCount", 0)
         report["receiptCount"] = receipts.get("count", 0)
         report["auditLogCount"] = audit_log.get("count", 0)
@@ -395,8 +455,14 @@ def combine_reports(runs):
     )
     for key in (
         "steps",
+        "memoryReadbackVerified",
         "searchReadbackCount",
+        "meetingMessageReadbackVerified",
+        "meetingReadVerified",
         "currentMessageUnreadCount",
+        "currentMessageReadbackVerified",
+        "currentMessageAckVerified",
+        "currentMessagePostAckVerified",
         "postAckUnreadCount",
         "receiptCount",
         "auditLogCount",

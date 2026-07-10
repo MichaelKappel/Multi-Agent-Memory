@@ -4,6 +4,44 @@ from scripts import dogfood_memoryendpoints
 
 
 class DogfoodReportTests(unittest.TestCase):
+    def test_canonical_url_helpers_parse_relative_and_absolute_urls(self):
+        self.assertEqual(
+            ("/api/matm/current-message", "agent_id=agent-b"),
+            dogfood_memoryendpoints.canonical_path_query("/api/matm/current-message?agent_id=agent-b"),
+        )
+        self.assertEqual(
+            ("/api/matm/meeting-messages", "room_id=room-1"),
+            dogfood_memoryendpoints.canonical_path_query("https://memoryendpoints.com/api/matm/meeting-messages?room_id=room-1"),
+        )
+
+    def test_contract_verified_step_requires_http_and_readback_evidence(self):
+        report = {"steps": []}
+        dogfood_memoryendpoints.step(report, "read_current_message", "200 OK", {"items": []}, verified=False)
+
+        self.assertFalse(report["steps"][0]["ok"])
+        self.assertFalse(report["steps"][0]["contractVerified"])
+
+    def test_readback_helpers_match_returned_ids(self):
+        self.assertTrue(
+            dogfood_memoryendpoints.contains_memory_event(
+                {"items": [{"eventId": "mem-1"}]},
+                "mem-1",
+            )
+        )
+        self.assertTrue(
+            dogfood_memoryendpoints.contains_meeting_message(
+                {"items": [{"meetingMessageId": "meetmsg-1"}]},
+                "meetmsg-1",
+            )
+        )
+        self.assertTrue(
+            dogfood_memoryendpoints.contains_current_message(
+                {"items": [{"message": {"messageId": "msg-1"}, "notification": {"notificationId": "note-1"}}]},
+                "msg-1",
+                "note-1",
+            )
+        )
+
     def test_combined_report_preserves_audit_readback_evidence(self):
         report = dogfood_memoryendpoints.combine_reports(
             [
