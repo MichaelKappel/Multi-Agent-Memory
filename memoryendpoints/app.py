@@ -75,6 +75,41 @@ def _meeting_post_confirmation(store, workspace_id, room, message):
     }
 
 
+def _memory_submission_confirmation(store, workspace_id, event):
+    event = event or {}
+    search_query = event.get("title") or event.get("summary") or event.get("eventId") or ""
+    filters = {
+        "scope": event.get("scope") or "",
+        "scopeId": event.get("scopeId") or "",
+        "memoryType": event.get("memoryType") or "",
+    }
+    search_items = store.search_memory(workspace_id, search_query, filters)
+    visible_in_search = any(item.get("eventId") == event.get("eventId") for item in search_items)
+    review_items = store.review_queue(workspace_id, "")
+    visible_in_review_queue = any(item.get("memoryEventId") == event.get("eventId") for item in review_items)
+    return {
+        "persisted": bool(event.get("eventId") and (visible_in_search or visible_in_review_queue)),
+        "visibleInSearch": visible_in_search,
+        "visibleInReviewQueue": visible_in_review_queue,
+        "canonicalMemoryEventId": event.get("eventId"),
+        "reviewId": event.get("reviewId"),
+        "memoryQueryUrl": _protected_query_url(
+            "/api/matm/search",
+            {
+                "q": search_query,
+                "scope": event.get("scope"),
+                "scope_id": event.get("scopeId"),
+                "memory_type": event.get("memoryType"),
+            },
+        ),
+        "reviewQueueUrl": _protected_query_url(
+            "/api/matm/review-queue",
+            {"status": event.get("reviewStatus") or "pending"},
+        ),
+        "valuesRedacted": True,
+    }
+
+
 def _current_message_confirmation(store, workspace_id, message, note):
     message = message or {}
     note = note or {}
@@ -479,6 +514,30 @@ def _meeting_post_operator_summary(room, message):
     }
 
 
+def _meeting_memory_promotion_operator_summary(message, room, event, promoted_by_agent_id):
+    message = message or {}
+    room = room or {}
+    event = event or {}
+    return {
+        "schemaVersion": "memoryendpoints.meeting_memory_promotion_operator_summary.v1",
+        "meetingMessageId": message.get("meetingMessageId") or "",
+        "roomId": message.get("roomId") or room.get("roomId") or "",
+        "sourceSenderAgentId": message.get("senderAgentId") or "",
+        "promotedByAgentId": promoted_by_agent_id or "",
+        "memoryEventId": event.get("eventId") or "",
+        "reviewId": event.get("reviewId") or "",
+        "scope": event.get("scope") or message.get("scope") or room.get("scope") or "",
+        "scopeId": event.get("scopeId") or message.get("scopeId") or room.get("scopeId") or "",
+        "memoryType": event.get("memoryType") or "",
+        "firewallDecision": (event.get("firewall") or {}).get("decision") or "",
+        "reviewStatus": event.get("reviewStatus") or "",
+        "promotionState": event.get("promotionState") or "",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _meeting_read_operator_summary(read_state, room):
     read_state = read_state or {}
     room = room or {}
@@ -785,7 +844,15 @@ $meetingBody = @{
   safeSummary = "Public-safe goal-room status: agent registered, listed rooms, created a goal room, and is ready for connector work."
 } | ConvertTo-Json
 $post = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages" -Headers $headers -ContentType "application/json" -Body $meetingBody
-Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($post.transcriptQueryUrl)" -Headers $headers</code></pre>
+$transcript = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($post.transcriptQueryUrl)" -Headers $headers
+$promoteBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  meetingMessageId = $post.messageId
+  promotedByAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  memoryType = "evidence"
+  tags = @("meeting-message", "coordination", "dogfood")
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages/promote" -Headers $headers -ContentType "application/json" -Body $promoteBody</code></pre>
   <h2>Memory Save And Search</h2>
   <pre><code>$memoryBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
@@ -868,10 +935,21 @@ def route_console(start_response):
       <a href="#message-lanes">Messages</a>
       <a href="#receipts-audit">Receipts/Audit</a>
     </nav>
-    <label class="console-debug-toggle">
-      <input type="checkbox" data-console-debug-toggle>
-      Show debug JSON
-    </label>
+    <div class="console-utility-actions">
+      <div class="console-view-switcher" role="group" aria-label="Workflow focus" data-console-view-switcher>
+        <button type="button" data-console-workflow-view="all" aria-pressed="true">All</button>
+        <button type="button" data-console-workflow-view="workspace" aria-pressed="false">Workspace</button>
+        <button type="button" data-console-workflow-view="memory" aria-pressed="false">Memory</button>
+        <button type="button" data-console-workflow-view="reviews" aria-pressed="false">Reviews</button>
+        <button type="button" data-console-workflow-view="meetings" aria-pressed="false">Meetings</button>
+        <button type="button" data-console-workflow-view="messages" aria-pressed="false">Messages</button>
+        <button type="button" data-console-workflow-view="evidence" aria-pressed="false">Evidence</button>
+      </div>
+      <label class="console-debug-toggle">
+        <input type="checkbox" data-console-debug-toggle>
+        Show debug JSON
+      </label>
+    </div>
   </div>
   <form class="console-grid console-auth-grid" data-console-auth>
     <label>Workspace key
@@ -889,7 +967,7 @@ def route_console(start_response):
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>
   </div>
-  <section class="console-panel" id="workspace-overview">
+  <section class="console-panel" id="workspace-overview" data-console-workflow-target="workspace">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Boundary</span>
@@ -905,7 +983,7 @@ def route_console(start_response):
       <pre data-console-workspace>{}</pre>
     </details>
   </section>
-  <section class="console-panel" id="memory-workflow">
+  <section class="console-panel" id="memory-workflow" data-console-workflow-target="memory">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Hosted memory</span>
@@ -996,7 +1074,7 @@ def route_console(start_response):
       <pre data-console-memory-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel" id="review-queue">
+  <section class="console-panel" id="review-queue" data-console-workflow-target="reviews">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Promotion</span>
@@ -1050,7 +1128,7 @@ def route_console(start_response):
       <pre data-console-review-decision-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel" id="meeting-rooms">
+  <section class="console-panel" id="meeting-rooms" data-console-workflow-target="meetings">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Coordination</span>
@@ -1121,6 +1199,9 @@ def route_console(start_response):
     <div class="console-results meeting-post-summary" data-console-meeting-post-summary>
       <p class="empty-state">Meeting post confirmations will appear here.</p>
     </div>
+    <div class="console-results meeting-promotion-summary" data-console-meeting-promote-summary>
+      <p class="empty-state">Transcript-to-memory confirmations will appear here.</p>
+    </div>
     <div class="console-results meeting-message-list" data-console-meeting-messages-list>
       <p class="empty-state">Select a room to read its transcript.</p>
     </div>
@@ -1129,7 +1210,7 @@ def route_console(start_response):
       <pre data-console-meeting-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel" id="message-lanes">
+  <section class="console-panel" id="message-lanes" data-console-workflow-target="messages">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Current message lane</span>
@@ -1192,7 +1273,7 @@ def route_console(start_response):
       <pre data-console-inbox-output>{}</pre>
     </details>
   </section>
-  <section class="console-panel" id="receipts-audit">
+  <section class="console-panel" id="receipts-audit" data-console-workflow-target="evidence">
     <div class="section-heading">
       <div>
         <span class="section-kicker">Evidence</span>
@@ -1786,6 +1867,79 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             },
         )
+    if path == "/api/matm/meeting-messages/promote" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-promote", body)
+        if replay:
+            return replay
+        meeting_message_id = body.get("meetingMessageId") or body.get("meeting_message_id")
+        promoted_by_agent_id = body.get("promotedByAgentId") or body.get("promoted_by_agent_id") or body.get("actorAgentId") or body.get("actor_agent_id")
+        if not meeting_message_id:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting message id required", "Meeting memory promotion requires meetingMessageId.", "meeting_message_id_required")
+        if not promoted_by_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Promoting agent id required", "Meeting memory promotion requires promotedByAgentId or actorAgentId.", "promoted_by_agent_id_required")
+        message, room = store.meeting_message(workspace_id, meeting_message_id)
+        if not message:
+            return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this workspace.", "meeting_message_not_found")
+        summary = body.get("summary") or message.get("safeSummary") or ""
+        if not summary.strip():
+            return problem(start_response, "422 Unprocessable Entity", "Summary required", "Meeting memory promotion requires a public-safe summary.", "summary_required")
+        if len(summary) > 4000:
+            return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Promoted meeting memory summaries must be at most 4000 characters.", "summary_too_long")
+        tags = body.get("tags") or []
+        if isinstance(tags, str):
+            tags = [item.strip() for item in tags.split(",") if item.strip()]
+        elif not isinstance(tags, list):
+            tags = []
+        source_sender = message.get("senderAgentId") or "unknown"
+        promoted_tags = list(tags)
+        for tag in (
+            "meeting-message",
+            "meeting-scope:%s" % (message.get("scope") or room.get("scope") or "workspace"),
+            "meeting-sender:%s" % source_sender,
+        ):
+            if tag not in promoted_tags:
+                promoted_tags.append(tag)
+        source = body.get("source") or "memoryendpoints://matm/meeting-messages/%s" % meeting_message_id
+        if not store.has_quota_for(workspace_id, {"meetingMessageId": meeting_message_id, "summary": summary, "tags": promoted_tags, "source": source}):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this promoted memory event.", "quota_exceeded")
+        event = store.submit_memory(
+            workspace_id,
+            promoted_by_agent_id,
+            body.get("scope") or message.get("scope") or room.get("scope"),
+            body.get("title") or "Meeting memory: %s" % (room.get("name") or room.get("label") or message.get("roomId") or "room"),
+            summary,
+            promoted_tags,
+            source,
+            body.get("memoryType") or body.get("memory_type") or "evidence",
+            body.get("subject") or "meeting-message:%s" % meeting_message_id,
+            body.get("confidence") or 0.8,
+            body.get("scopeId") or body.get("scope_id") or message.get("scopeId") or room.get("scopeId"),
+        )
+        submission = _memory_submission_metadata(event)
+        confirmation = _memory_submission_confirmation(store, workspace_id, event)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Promoted memory was not persisted", "The promoted memory event could not be confirmed in search or the review queue after write.", "promoted_memory_not_persisted")
+        payload = {
+            "ok": True,
+            "sourceMeetingMessage": message,
+            "room": room,
+            "event": event,
+            "submission": submission,
+            "persisted": confirmation["persisted"],
+            "visibleInSearch": confirmation["visibleInSearch"],
+            "visibleInReviewQueue": confirmation["visibleInReviewQueue"],
+            "canonicalMemoryEventId": confirmation["canonicalMemoryEventId"],
+            "reviewId": confirmation["reviewId"],
+            "memoryQueryUrl": confirmation["memoryQueryUrl"],
+            "reviewQueueUrl": confirmation["reviewQueueUrl"],
+            "confirmation": confirmation,
+            "operatorSummary": _meeting_memory_promotion_operator_summary(message, room, event, promoted_by_agent_id),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "meeting-message-promote", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-rooms" and method == "POST":
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-create", body)
         if replay:

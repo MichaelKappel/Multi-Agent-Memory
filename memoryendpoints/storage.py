@@ -527,6 +527,17 @@ class FileStore(object):
         read_state = self._meeting_read_state(data, workspace_id, room_id, agent_id) or {}
         return dict(room), messages, read_state
 
+    def meeting_message(self, workspace_id, meeting_message_id):
+        data = self._load()
+        meeting_message_id = str(meeting_message_id or "").strip()
+        if not meeting_message_id:
+            return None, None
+        for message in data.get("meetingMessages", []):
+            if message.get("workspaceId") == workspace_id and message.get("meetingMessageId") == meeting_message_id:
+                room = data.get("meetingRooms", {}).get(message.get("roomId")) or {}
+                return dict(message), dict(room)
+        return None, None
+
     def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
         data = self._load()
         self._ensure_default_meeting_rooms(data, workspace_id)
@@ -986,9 +997,15 @@ class FileStore(object):
                 continue
             haystack = " ".join(
                 [
+                    event.get("eventId", ""),
+                    event.get("reviewId", ""),
+                    event.get("actorAgentId", ""),
+                    event.get("subject", ""),
                     event.get("title", ""),
                     event.get("summary", ""),
                     " ".join(event.get("tags", [])),
+                    event.get("source", ""),
+                    event.get("memoryType", ""),
                     event.get("scope", ""),
                     event.get("scopeId", ""),
                 ]
@@ -1940,6 +1957,33 @@ class SQLiteStore(FileStore):
                         ).fetchone()
                     )
                 return room, messages, read_state
+
+    def meeting_message(self, workspace_id, meeting_message_id):
+        meeting_message_id = str(meeting_message_id or "").strip()
+        if not meeting_message_id:
+            return None, None
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT * FROM matm_meeting_messages
+                    WHERE workspace_id = ? AND meeting_message_id = ?
+                    """,
+                    (workspace_id, meeting_message_id),
+                ).fetchone()
+                message = self._meeting_message_from_row(row)
+                if not message:
+                    return None, None
+                room = self._room_from_row(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_rooms
+                        WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                        """,
+                        (workspace_id, message["roomId"]),
+                    ).fetchone()
+                )
+                return message, room or {}
 
     def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
         safe_summary = redact_text(safe_summary)

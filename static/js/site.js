@@ -23,10 +23,12 @@
     visibleNotificationIds: [],
     firstReviewId: "",
     debugJson: false,
+    workflowView: "all",
     workspaceOperatorSummary: null,
     agentRegistrationSummary: null,
     selectedMeetingRoomId: "",
     latestMeetingMessageId: "",
+    latestMeetingMessageSummary: "",
     inboxRequestSeq: 0,
     memoryCount: null,
     memoryScopeCounts: null,
@@ -48,6 +50,23 @@
     { agentId: "swarm-observer-agent", label: "Observer" },
   ];
   var longTermMemoryTag = "long-term-memory-migration";
+  var workflowLabels = {
+    all: "All",
+    workspace: "Workspace",
+    memory: "Memory",
+    reviews: "Reviews",
+    meetings: "Meetings",
+    messages: "Messages",
+    evidence: "Evidence",
+  };
+  var workflowViewByHash = {
+    "#workspace-overview": "workspace",
+    "#memory-workflow": "memory",
+    "#review-queue": "reviews",
+    "#meeting-rooms": "meetings",
+    "#message-lanes": "messages",
+    "#receipts-audit": "evidence",
+  };
 
   function pick(selector) {
     return consoleRoot.querySelector(selector);
@@ -78,6 +97,38 @@
     var toggle = pick("[data-console-debug-toggle]");
     if (toggle) {
       toggle.checked = state.debugJson;
+    }
+  }
+
+  function workflowPanel(view) {
+    var panels = consoleRoot.querySelectorAll("[data-console-workflow-target]");
+    for (var i = 0; i < panels.length; i += 1) {
+      if (panels[i].getAttribute("data-console-workflow-target") === view) {
+        return panels[i];
+      }
+    }
+    return null;
+  }
+
+  function setWorkflowView(view, shouldScroll) {
+    var resolved = workflowLabels[view] ? view : "all";
+    var panels = consoleRoot.querySelectorAll("[data-console-workflow-target]");
+    state.workflowView = resolved;
+    consoleRoot.setAttribute("data-console-active-workflow", resolved);
+    Array.prototype.forEach.call(panels, function (panel) {
+      var target = panel.getAttribute("data-console-workflow-target");
+      panel.hidden = resolved !== "all" && target !== resolved;
+    });
+    Array.prototype.forEach.call(consoleRoot.querySelectorAll("[data-console-workflow-view]"), function (button) {
+      var active = button.getAttribute("data-console-workflow-view") === resolved;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (shouldScroll && resolved !== "all") {
+      var panel = workflowPanel(resolved);
+      if (panel && panel.scrollIntoView) {
+        panel.scrollIntoView({block: "start"});
+      }
     }
   }
 
@@ -1047,6 +1098,7 @@
       setMeetingRoom(room.roomId);
     }
     state.latestMeetingMessageId = items.length ? items[items.length - 1].meetingMessageId : "";
+    state.latestMeetingMessageSummary = items.length ? (items[items.length - 1].safeSummary || "") : "";
     var summaryLine = el("div", "filter-summary meeting-messages-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
     appendBadge(summaryLine, roomTitle(room), "neutral");
@@ -1078,8 +1130,62 @@
         { label: "Copy meeting message id", copyLabel: "Meeting message id", value: message.meetingMessageId },
         { label: "Copy room id", copyLabel: "Meeting room id", value: message.roomId || room.roomId },
       ]);
+      var promoteActions = el("div", "row-actions");
+      var promoteButton = el("button", "button compact", "Save as memory");
+      promoteButton.type = "button";
+      promoteButton.addEventListener("click", function () {
+        promoteMeetingMessage(message).catch(function (error) { setStatus(error.message, true); });
+      });
+      promoteActions.appendChild(promoteButton);
+      row.appendChild(promoteActions);
       node.appendChild(row);
     });
+  }
+
+  function renderMeetingPromotion(payload) {
+    var node = pick("[data-console-meeting-promote-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var event = (payload && payload.event) || {};
+    var message = (payload && payload.sourceMeetingMessage) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    if (!event.eventId) {
+      node.appendChild(el("p", "empty-state", "Transcript-to-memory confirmations will appear here."));
+      return;
+    }
+    var summaryLine = el("div", "filter-summary meeting-promotion-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Meeting memory"));
+    appendBadge(summaryLine, summary.scope || event.scope || "workspace", "neutral");
+    appendBadge(summaryLine, summary.memoryType || event.memoryType || "evidence", "neutral");
+    appendBadge(summaryLine, payload.visibleInReviewQueue ? "review visible" : "review check", payload.visibleInReviewQueue ? "good" : "warn");
+    appendBadge(summaryLine, summary.firewallDecision || "accepted", summary.firewallDecision === "quarantine_for_review" ? "warn" : "good");
+    appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    var row = resultRow(
+      "Meeting saved as memory",
+      event.summary || message.safeSummary || "Meeting transcript message was promoted into hosted memory.",
+      [
+        { text: summary.scope || event.scope || "workspace", kind: "neutral" },
+        { text: summary.memoryType || event.memoryType || "evidence", kind: "neutral" },
+        { text: summary.reviewStatus || event.reviewStatus || "pending", kind: (summary.reviewStatus || event.reviewStatus) === "quarantined" ? "warn" : "good" },
+        { text: event.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "memory " + shortId(event.eventId),
+        "review " + shortId(summary.reviewId || event.reviewId),
+        "meeting " + shortId(summary.meetingMessageId || message.meetingMessageId),
+        "promoted by " + (summary.promotedByAgentId || state.agentId),
+        "source sender " + (summary.sourceSenderAgentId || message.senderAgentId || "unknown"),
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy memory id", copyLabel: "Memory id", value: event.eventId },
+      { label: "Copy review id", copyLabel: "Review id", value: summary.reviewId || event.reviewId },
+      { label: "Copy meeting message id", copyLabel: "Meeting message id", value: summary.meetingMessageId || message.meetingMessageId },
+    ]);
+    node.appendChild(summaryLine);
+    node.appendChild(row);
   }
 
   function renderMeetingPost(payload) {
@@ -1682,6 +1788,41 @@
     });
   }
 
+  function promoteMeetingMessage(message) {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before saving meeting messages as memory."));
+    }
+    var meetingMessageId = message && message.meetingMessageId;
+    if (!meetingMessageId) {
+      return Promise.reject(new Error("Select a meeting message before saving it as memory."));
+    }
+    return api("/api/matm/meeting-messages/promote", {
+      method: "POST",
+      headers: {"Idempotency-Key": "console-meeting-promote-" + meetingMessageId + "-" + Date.now()},
+      body: {
+        workspaceId: state.workspaceId,
+        meetingMessageId: meetingMessageId,
+        promotedByAgentId: state.agentId,
+        memoryType: "evidence",
+        title: "Meeting evidence: " + shortId(meetingMessageId),
+        tags: ["meeting-message", "dogfood", "coordination"],
+      },
+    })
+      .then(function (payload) {
+        render("[data-console-memory-output]", payload);
+        renderMeetingPromotion(payload);
+        return refreshMemory(message.safeSummary || "meeting-message").then(function () {
+          return refreshReviewQueue("pending").then(function () {
+            return payload;
+          });
+        });
+      })
+      .then(function (payload) {
+        setStatus("Meeting message saved as hosted memory.", false);
+        return payload;
+      });
+  }
+
   function setInboxAgent(agentId) {
     if (!agentId) {
       return;
@@ -1761,6 +1902,7 @@
   var authForm = pick("[data-console-auth]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
+  setWorkflowView("all", false);
   updateSurfaceBadge();
   renderOperatorMetrics();
   if (debugToggle) {
@@ -1769,6 +1911,21 @@
       setStatus(debugToggle.checked ? "Debug JSON visible." : "Operator view active.", false);
     });
   }
+
+  Array.prototype.forEach.call(consoleRoot.querySelectorAll("[data-console-workflow-view]"), function (button) {
+    button.addEventListener("click", function () {
+      setWorkflowView(button.getAttribute("data-console-workflow-view") || "all", true);
+    });
+  });
+
+  Array.prototype.forEach.call(consoleRoot.querySelectorAll(".console-nav a[href^='#']"), function (link) {
+    link.addEventListener("click", function () {
+      var view = workflowViewByHash[link.getAttribute("href") || ""];
+      if (view) {
+        setWorkflowView(view, false);
+      }
+    });
+  });
 
   if (authForm) {
     authForm.addEventListener("submit", function (event) {

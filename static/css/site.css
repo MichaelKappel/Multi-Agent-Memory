@@ -233,6 +233,7 @@ pre {
 .console-nav {
   display: flex;
   flex-wrap: wrap;
+  flex: 1 1 420px;
   gap: 8px;
   min-width: 0;
 }
@@ -263,6 +264,49 @@ pre {
 
 .console-debug-toggle input {
   width: auto;
+}
+
+.console-utility-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.console-view-switcher {
+  display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.console-view-switcher button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  padding: 6px 10px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.console-view-switcher button:last-child {
+  border-right: 0;
+}
+
+.console-view-switcher button.is-active,
+.console-view-switcher button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
 }
 
 .console-grid {
@@ -327,6 +371,10 @@ pre {
   margin-top: 20px;
   padding-top: 18px;
   border-top: 1px solid var(--line);
+}
+
+.console-panel[hidden] {
+  display: none;
 }
 
 .section-heading {
@@ -568,7 +616,8 @@ pre {
 .review-decision-summary,
 .memory-submit-summary,
 .meeting-room-create-summary,
-.meeting-post-summary {
+.meeting-post-summary,
+.meeting-promotion-summary {
   margin: 8px 0 14px;
 }
 
@@ -578,6 +627,7 @@ pre {
 
 .message-delivery .delivery-row,
 .meeting-room-create-summary .result-row,
+.meeting-promotion-summary .result-row,
 .memory-submit-summary .submission-row {
   border-left: 4px solid var(--accent);
 }
@@ -666,7 +716,8 @@ pre {
 .audit-summary,
 .review-summary,
 .meeting-rooms-summary,
-.meeting-messages-summary {
+.meeting-messages-summary,
+.meeting-promotion-operator-summary {
   margin-top: 4px;
 }
 
@@ -762,6 +813,7 @@ footer {
   .console-utility-bar {
     align-items: center;
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     margin: 10px 0 12px;
     padding: 7px 0;
@@ -773,6 +825,15 @@ footer {
     overflow-x: auto;
     margin-top: 0;
     width: 100%;
+  }
+
+  .console-utility-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .console-view-switcher {
+    flex: 1 1 auto;
   }
 
   .console-nav a {

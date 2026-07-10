@@ -40,6 +40,32 @@ def git_head_sha():
     return None
 
 
+def source_dirty_paths(status_lines=None):
+    if status_lines is None:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+        )
+        if completed.returncode != 0:
+            return ["<git status unavailable>"]
+        status_lines = completed.stdout.splitlines()
+    dirty = []
+    for line in status_lines:
+        if not line:
+            continue
+        path = line[3:] if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1]
+        path = path.strip().strip('"').replace("\\", "/")
+        if path and not path.startswith("docs/reports/"):
+            dirty.append(path)
+    return dirty
+
+
 def nested_get(data, path):
     current = data or {}
     for key in path:
@@ -166,12 +192,36 @@ def dogfood_gap_state(dogfood):
     )
 
 
+def dogfood_memory_loop_summary(dogfood, local_dogfood=None):
+    dogfood = dogfood or {}
+    local_dogfood = local_dogfood or {}
+    promotion = bool(dogfood.get("meetingMemoryPromotionVerified"))
+    readback = bool(dogfood.get("meetingMemoryReadbackVerified"))
+    source_readback = bool(dogfood.get("meetingMemorySourceReadbackVerified"))
+    if promotion and readback and source_readback:
+        return "Meeting-room coordination is dogfooded into hosted memory and verified by memory id plus source meeting-message id readback."
+    local_promotion = bool(local_dogfood.get("meetingMemoryPromotionVerified"))
+    local_readback = bool(local_dogfood.get("meetingMemoryReadbackVerified"))
+    local_source_readback = bool(local_dogfood.get("meetingMemorySourceReadbackVerified"))
+    if local_promotion and local_readback and local_source_readback:
+        return "Meeting-room coordination is verified in local WSGI dogfood as hosted memory with memory id plus source meeting-message id readback; live dogfood must be rerun after deployment to prove the same loop in production."
+    missing = []
+    if not promotion:
+        missing.append("meeting-message promotion")
+    if not readback:
+        missing.append("promoted-memory readback")
+    if not source_readback:
+        missing.append("source-id readback")
+    return "Meeting-room coordination memory loop is incomplete: %s." % ", ".join(missing)
+
+
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
     live_routes = load_json("live-route-verification.json")
     uai = load_json("uai-memory-audit.json")
     dogfood = load_json("dogfood-memory-run.json")
+    local_dogfood = load_json("dogfood-memory-run-local.json")
     package = load_json("package-verification-report.json")
     secret = load_json("secret-scan-report.json")
     boundary = load_json("repository-boundary-audit.json")
@@ -181,6 +231,7 @@ def build_local_report():
     deploy_attempt = load_json("deploy-attempt-20260709.json")
     deploy_dry_run = load_json("deploy-dry-run-latest.json")
     head_sha = git_head_sha()
+    dirty_source_paths = source_dirty_paths()
     ci_not_required = github_ci_not_required()
     local_route_report_current = report_matches_head(
         local_routes,
@@ -238,6 +289,9 @@ def build_local_report():
         "reportFreshness": {
             "model": REPORT_FRESHNESS_MODEL,
             "postCommitNoWriteVerificationRequired": True,
+            "sourceWorktreeDirty": bool(dirty_source_paths),
+            "sourceDirtyPathCount": len(dirty_source_paths),
+            "sourceDirtyPathSamples": dirty_source_paths[:20],
             "localRouteReportCurrent": local_route_report_current,
             "localRouteReportSha": report_sha(local_routes, [("gitHeadAtVerification",), ("expectedSourceSha",), ("observedSourceSha",)]),
             "localRouteCommandEvidenceCurrent": wsgi_check_current,
@@ -260,6 +314,9 @@ def build_local_report():
         "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
+        "meetingMemoryPromotionVerified": bool((dogfood and dogfood.get("meetingMemoryPromotionVerified")) or (local_dogfood and local_dogfood.get("meetingMemoryPromotionVerified"))),
+        "meetingMemoryReadbackVerified": bool((dogfood and dogfood.get("meetingMemoryReadbackVerified")) or (local_dogfood and local_dogfood.get("meetingMemoryReadbackVerified"))),
+        "meetingMemorySourceReadbackVerified": bool((dogfood and dogfood.get("meetingMemorySourceReadbackVerified")) or (local_dogfood and local_dogfood.get("meetingMemorySourceReadbackVerified"))),
         "repositoryBoundaryOk": bool((boundary and boundary.get("ok")) or repository_boundary_check_current),
         "multiAgentMemoryStaticSiteVerified": bool(static_site and static_site.get("ok")),
         "multiAgentMemoryStaticPublicLeakHitCount": leak_hit_count(static_site),
@@ -278,6 +335,7 @@ def build_local_report():
 
 def build_enterprise_gap_matrix():
     dogfood = load_json("dogfood-memory-run.json") or {}
+    local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
@@ -290,18 +348,20 @@ def build_enterprise_gap_matrix():
     multiagentmemory_connection_ftp = load_json("multiagentmemory-deploy-connection-check-ftp-latest.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
+    memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     head_sha = git_head_sha()
+    dirty_source_paths = source_dirty_paths()
     ci_not_required = github_ci_not_required()
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
     latest_deployed = latest_code_live_deployed(deploy, live_latest_code)
     mysql_verified = bool(live_mysql_backend.get("ok"))
-    tracked_live_gates_verified = bool(latest_deployed and dogfood.get("liveDogfoodVerified") and mysql_verified and multiagentmemory_verified)
+    tracked_live_gates_verified = bool(latest_deployed and dogfood.get("liveDogfoodVerified") and mysql_verified and multiagentmemory_verified and not dirty_source_paths)
     claim_boundary = (
         "Tracked live deployment, live dogfood, live MySQL/MariaDB, and companion-site gates are verified for this evidence snapshot. Rerun these checks after any source or deployment change before making a new completion claim."
         if tracked_live_gates_verified
-        else "The repository is improved, but completion is blocked until the remaining tracked live deployment, dogfood, MySQL/MariaDB, or companion-site gates are verified."
+        else "The repository is improved, but completion is blocked until the remaining tracked source cleanliness, live deployment, dogfood, MySQL/MariaDB, or companion-site gates are verified."
     )
     lines = [
         "# Enterprise MATM Gap Matrix",
@@ -315,7 +375,8 @@ def build_enterprise_gap_matrix():
         "| `.uai` startup memory | Improved locally | Active `.uai/*.uai` files are typed, date-free, public-safe, update-route aware, and audited by `scripts/audit_uai_memory.py`. |",
         "| `.uai` totem invariant | Implemented locally | `.uai/totem.uai` says local `.uai` stays active always and hosted MATM never replaces startup continuity. |",
         "| Protected MATM workflows | Implemented locally | `tests/test_app.py` covers free account, one-time key hash persistence, registration, memory submit/search, firewall redaction, review queue, current message, ack, receipts, audit log, idempotency, and safe no-op errors. |",
-        "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, ack, receipts, and protected audit-log readback. |",
+        "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, meeting-message promotion to hosted memory, source-id memory readback, ack, receipts, and protected audit-log readback. |",
+        "| Hosted coordination memory loop | %s | `%s` |" % ("Verified locally" if (dogfood.get("meetingMemorySourceReadbackVerified") or local_dogfood.get("meetingMemorySourceReadbackVerified")) else "Not fully verified", memory_loop_summary),
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
         "| Live dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified full live contract" if dogfood.get("liveDogfoodVerified") else ("Verified current deployed core surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified")),
         "| MultiAgentMemory.com live companion site | %s | `docs/reports/multiagentmemory-deploy-live-attempt-latest.json` and `docs/reports/multiagentmemory-live-site-verification.json`. |" % ("Verified" if multiagentmemory_verified else "Not verified"),
@@ -338,6 +399,10 @@ def build_enterprise_gap_matrix():
             "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
         ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
+        "| Source worktree cleanliness | %s | %s |" % (
+            "Clean for source paths" if not dirty_source_paths else "Dirty source paths remain",
+            "Commit or otherwise resolve source changes, then rerun no-write verification." if dirty_source_paths else "No source path changes outside generated reports are pending.",
+        ),
         "| Relational production database | %s | Configure real MySQL/MariaDB credentials outside Git, deploy, then rerun `scripts/verify_mysql_backend.py` until `/api/version` reports `storeBackendVerified: true`. |" % ("Verified live MySQL/MariaDB" if mysql_verified else "Blocked; live runtime is not verified on MySQL/MariaDB"),
         "| GitHub Actions CI | %s | %s |" % (
             "Not required by human direction; workflow retained in repository" if ci_not_required else "`%s` for current observed SHA `%s`; %s" % (
@@ -363,6 +428,7 @@ def build_enterprise_gap_matrix():
 
 def build_current_implementation_audit():
     dogfood = load_json("dogfood-memory-run.json") or {}
+    local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
@@ -372,6 +438,7 @@ def build_current_implementation_audit():
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     ci_not_required = github_ci_not_required()
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
+    memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
@@ -415,7 +482,8 @@ def build_current_implementation_audit():
         "- File storage and stdlib SQLite relational tables support the implemented MATM workflows.",
         "- MySQL/MariaDB runtime support exists, but production completion requires live backend verification.",
         "- Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.",
-        "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.",
+        "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, meeting-room coordination, meeting-message promotion to hosted memory, source-id memory readback, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.",
+        "- %s" % memory_loop_summary,
         "",
         "## Remaining Boundaries",
         "",
@@ -433,11 +501,14 @@ def build_current_implementation_audit():
 
 def build_final_verification_alias():
     dogfood = load_json("dogfood-memory-run.json") or {}
+    local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     multiagentmemory_live_site = load_json("multiagentmemory-live-site-verification.json") or {}
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
+    memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
+    dirty_source_paths = source_dirty_paths()
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
     mysql_verified = bool(live_mysql_backend.get("ok"))
     ci_not_required = github_ci_not_required()
@@ -462,6 +533,8 @@ def build_final_verification_alias():
         ),
         "- %s" % live_dogfood_state,
         "- %s" % live_dogfood_needed,
+        "- Hosted coordination memory loop: %s" % memory_loop_summary,
+        "- Source worktree cleanliness: `%s`." % ("clean" if not dirty_source_paths else "dirty"),
         "- Live MySQL/MariaDB backend verification: `%s`." % str(mysql_verified).lower(),
         "- MultiAgentMemory.com live companion verification currently reports `%s` failures." % multiagentmemory_live_site.get("failureCount"),
         "- GitHub Actions is not required by human direction." if ci_not_required else "- GitHub Actions remains an external CI gate.",
@@ -489,10 +562,12 @@ def build_final_markdown(local_report):
     package = load_json("package-verification-report.json") or {}
     secret = load_json("secret-scan-report.json") or {}
     dogfood = load_json("dogfood-memory-run.json") or {}
+    local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     github_blocker = github_blocker_text(github_ci)
     report_source_sha = git_head_sha()
+    dirty_source_paths = source_dirty_paths()
     freshness = (local_report or {}).get("reportFreshness") or {}
     enterprise_summary = enterprise.get("summary") or {}
 
@@ -503,6 +578,7 @@ def build_final_markdown(local_report):
         latest_deployed = latest_code_live_deployed(deploy, live_latest_code)
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
+    memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     mysql_verified = bool(
         live_mysql_backend.get("ok")
         or (enterprise_current and enterprise_summary.get("liveMysqlBackendVerified"))
@@ -512,7 +588,7 @@ def build_final_markdown(local_report):
     )
     ci_not_required = github_ci_not_required()
     enterprise_blockers = enterprise.get("blockers") if enterprise_current else []
-    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and not enterprise_blockers)
+    completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and not enterprise_blockers and not dirty_source_paths)
     status_line = "Status: complete for this evidence snapshot. `completionClaimAllowed` is `true`." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
     lines = [
         "# Final Readiness Report",
@@ -532,6 +608,10 @@ def build_final_markdown(local_report):
             str(bool(freshness.get("packageReportCurrent"))).lower(),
             str(bool((local_report or {}).get("externalSignals", {}).get("githubCiRequired"))).lower(),
             (report_source_sha or "unknown")[:12],
+        ),
+        "- Source worktree cleanliness: `%s`; dirty source path count `%s`." % (
+            "clean" if not dirty_source_paths else "dirty",
+            len(dirty_source_paths),
         ),
         "- Current-command evidence at report generation: local route command `%s`, local route evidence `%s`, package command `%s`, package evidence `%s`." % (
             str(bool(freshness.get("localRouteCommandEvidenceCurrent"))).lower(),
@@ -559,6 +639,7 @@ def build_final_markdown(local_report):
             str(live_core_dogfood).lower(),
             str(live_dogfood).lower(),
         ),
+        "- Hosted coordination memory loop: %s" % memory_loop_summary,
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
         "- Deploy dry-run: status `%s`, planned files `%s`, safe no-op `%s`, matches package `%s`." % (
             deploy_dry_run.get("status"),
@@ -621,6 +702,10 @@ def build_final_markdown(local_report):
             if live_core_dogfood
             else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
         )
+    if dirty_source_paths:
+        blocked_lines.append(
+            "- Source worktree: blocked for completion because source paths have uncommitted changes; examples: `%s`." % "`, `".join(dirty_source_paths[:8])
+        )
     if not mysql_verified:
         blocked_lines.append(
             "- Live MySQL/MariaDB backend: blocked. `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified: true`; file storage is not acceptable for production completion."
@@ -647,7 +732,7 @@ def build_final_markdown(local_report):
             claim_boundary,
             "",
             "```json",
-            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "githubCiGateDecision": (github_ci_gate or {}).get("decision"), "githubCiRequired": not ci_not_required, "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "liveMysqlBackendVerified": mysql_verified, "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "valuesRedacted": True}, indent=2, sort_keys=True),
+            json.dumps({"completionClaimAllowed": completion_allowed, "githubCiConclusion": github_ci.get("conclusion"), "githubCiGateDecision": (github_ci_gate or {}).get("decision"), "githubCiRequired": not ci_not_required, "latestCodeLiveDeployed": latest_deployed, "liveCoreDogfoodVerified": live_core_dogfood, "liveDogfoodVerified": live_dogfood, "liveMysqlBackendVerified": mysql_verified, "meetingMemoryPromotionVerified": bool(dogfood.get("meetingMemoryPromotionVerified")), "meetingMemoryReadbackVerified": bool(dogfood.get("meetingMemoryReadbackVerified")), "meetingMemorySourceReadbackVerified": bool(dogfood.get("meetingMemorySourceReadbackVerified")), "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded", "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")), "reportSourceSha": report_source_sha, "sourceDirtyPathCount": len(dirty_source_paths), "sourceWorktreeDirty": bool(dirty_source_paths), "valuesRedacted": True}, indent=2, sort_keys=True),
             "```",
         ]
     )

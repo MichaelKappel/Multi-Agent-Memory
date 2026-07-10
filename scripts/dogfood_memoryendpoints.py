@@ -303,6 +303,46 @@ def run_sequence(transport, label, base_url=None):
         meeting_readback_verified = contains_meeting_message(meeting_messages, meeting_message_id)
         step(report, "read_meeting_messages", status, meeting_messages, verified=meeting_readback_verified)
 
+        status, meeting_promotion = transport.call(
+            "/api/matm/meeting-messages/promote",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-memory-promote-" + run_tag),
+            body={
+                "workspaceId": workspace_id,
+                "meetingMessageId": meeting_message_id,
+                "promotedByAgentId": "memoryendpoints-dogfood-agent",
+                "memoryType": "evidence",
+                "title": "%s meeting transcript evidence" % label.title(),
+                "tags": ["dogfood", label, "meeting-message"],
+            },
+        )
+        meeting_memory_event_id = (meeting_promotion.get("event") or {}).get("eventId", "")
+        meeting_promotion_verified = bool(
+            meeting_promotion.get("persisted")
+            and meeting_promotion.get("visibleInReviewQueue")
+            and meeting_promotion.get("canonicalMemoryEventId") == meeting_memory_event_id
+        )
+        step(report, "promote_meeting_message_to_memory", status, meeting_promotion, verified=meeting_promotion_verified)
+
+        status, meeting_memory_search = call_canonical_url(transport, meeting_promotion.get("memoryQueryUrl"), auth)
+        meeting_memory_readback_verified = contains_memory_event(meeting_memory_search, meeting_memory_event_id)
+        step(report, "read_promoted_meeting_memory", status, meeting_memory_search, verified=meeting_memory_readback_verified)
+
+        status, meeting_memory_source_search = transport.call(
+            "/api/matm/search",
+            headers=auth,
+            query=urlencode(
+                {
+                    "workspace_id": workspace_id,
+                    "q": meeting_message_id,
+                    "scope": (meeting_promotion.get("event") or {}).get("scope") or "project",
+                    "memory_type": (meeting_promotion.get("event") or {}).get("memoryType") or "evidence",
+                }
+            ),
+        )
+        meeting_memory_source_readback_verified = contains_memory_event(meeting_memory_source_search, meeting_memory_event_id)
+        step(report, "read_promoted_meeting_memory_by_source", status, meeting_memory_source_search, verified=meeting_memory_source_readback_verified)
+
         status, meeting_read = transport.call(
             "/api/matm/meeting-rooms/read",
             method="POST",
@@ -395,6 +435,9 @@ def run_sequence(transport, label, base_url=None):
         report["meetingRoomCount"] = meeting_rooms.get("count", 0)
         report["meetingMessageCount"] = meeting_messages.get("count", 0)
         report["meetingMessageReadbackVerified"] = meeting_readback_verified
+        report["meetingMemoryPromotionVerified"] = meeting_promotion_verified
+        report["meetingMemoryReadbackVerified"] = meeting_memory_readback_verified
+        report["meetingMemorySourceReadbackVerified"] = meeting_memory_source_readback_verified
         report["meetingReadVerified"] = meeting_read_verified
         report["currentMessageUnreadCount"] = current.get("unreadCount", 0)
         report["currentMessageReadbackVerified"] = current_readback_verified
@@ -458,6 +501,9 @@ def combine_reports(runs):
         "memoryReadbackVerified",
         "searchReadbackCount",
         "meetingMessageReadbackVerified",
+        "meetingMemoryPromotionVerified",
+        "meetingMemoryReadbackVerified",
+        "meetingMemorySourceReadbackVerified",
         "meetingReadVerified",
         "currentMessageUnreadCount",
         "currentMessageReadbackVerified",

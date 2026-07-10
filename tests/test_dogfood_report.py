@@ -59,6 +59,9 @@ class DogfoodReportTests(unittest.TestCase):
                     "optionalStepFailureCount": 0,
                     "auditLogCount": 3,
                     "auditTrailReadbackVerified": True,
+                    "meetingMemoryPromotionVerified": True,
+                    "meetingMemoryReadbackVerified": True,
+                    "meetingMemorySourceReadbackVerified": True,
                 }
             ]
         )
@@ -70,6 +73,9 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertTrue(report["localAuditTrailReadbackVerified"])
         self.assertEqual(3, report["auditLogCount"])
         self.assertTrue(report["auditTrailReadbackVerified"])
+        self.assertTrue(report["meetingMemoryPromotionVerified"])
+        self.assertTrue(report["meetingMemoryReadbackVerified"])
+        self.assertTrue(report["meetingMemorySourceReadbackVerified"])
         self.assertFalse(report["rawCredentialValuesStored"])
 
     def test_combined_report_distinguishes_live_core_from_latest_contract(self):

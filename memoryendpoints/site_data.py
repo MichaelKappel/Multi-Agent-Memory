@@ -37,6 +37,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/review-queue/decide", "access": "protected", "methods": ["POST"], "purpose": "Idempotent memory promotion, rejection, or quarantine decision."},
     {"route": "/api/matm/meeting-rooms", "access": "protected", "methods": ["GET", "POST"], "purpose": "Always-present company, workspace, project room discovery plus goal/task room creation."},
     {"route": "/api/matm/meeting-messages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Durable scoped meeting room transcript read and public-safe post creation."},
+    {"route": "/api/matm/meeting-messages/promote", "access": "protected", "methods": ["POST"], "purpose": "Promote a public-safe meeting transcript message into hosted workspace memory with source linkage."},
     {"route": "/api/matm/meeting-rooms/read", "access": "protected", "methods": ["POST"], "purpose": "Meeting room read cursor update for an agent."},
     {"route": "/api/matm/agent-messages", "access": "protected", "methods": ["POST"], "purpose": "Current-message creation."},
     {"route": "/api/matm/current-message", "access": "protected", "methods": ["GET"], "purpose": "Current-message lane readback."},
@@ -118,6 +119,7 @@ def capability_matrix():
             "roomListRoute": "/api/matm/meeting-rooms",
             "roomCreateRoute": "/api/matm/meeting-rooms",
             "messageRoute": "/api/matm/meeting-messages",
+            "promoteMessageRoute": "/api/matm/meeting-messages/promote",
             "readCursorRoute": "/api/matm/meeting-rooms/read",
             "defaultScopes": ["company", "workspace", "project"],
             "customScopes": ["goal", "task"],
@@ -252,6 +254,7 @@ def connector_contract():
         "memoryFlow": {
             "submitRoute": "/api/matm/memory-events/submit",
             "searchRoute": "/api/matm/search",
+            "promoteMeetingMessageRoute": "/api/matm/meeting-messages/promote",
             "reviewQueueRoute": "/api/matm/review-queue",
             "decisionRoute": "/api/matm/review-queue/decide",
             "summaryMaxCharacters": 4000,
@@ -263,6 +266,7 @@ def connector_contract():
             "publicSafeRule": "submit summaries only; do not send raw logs, source secrets, full files, or private prompt payloads",
             "updateRule": "Submit a new reviewed public-safe memory event with the same subject/source and an explicit update tag; do not overwrite history until a dedicated revision route is advertised.",
             "retrieveByScope": "Use /api/matm/search with scope, tag, actor_agent_id, memory_type, review_status, and promotion_state filters. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
+            "meetingPromotionRule": "Use POST /api/matm/meeting-messages/promote to turn a public-safe meeting transcript note into a durable memory event while preserving the source meeting message id.",
         },
         "memoryClassificationRules": [
             "Active startup memory stays local in .uai and must remain usable when MemoryEndpoints.com is unreachable.",
@@ -287,6 +291,7 @@ def connector_contract():
             "meetingRoomsRoute": "/api/matm/meeting-rooms",
             "meetingRoomCreateRoute": "/api/matm/meeting-rooms",
             "meetingMessagesRoute": "/api/matm/meeting-messages",
+            "meetingMessagePromoteRoute": "/api/matm/meeting-messages/promote",
             "meetingReadRoute": "/api/matm/meeting-rooms/read",
             "currentMessageRoute": "/api/matm/current-message",
             "sendCurrentMessageRoute": "/api/matm/agent-messages",
@@ -308,7 +313,7 @@ def connector_contract():
         "recommendedConnectorUi": [
             "Settings: base URL, workspace id, agent id, masked workspace key, and a test-connection action.",
             "Memory: save public-safe summary, search hosted workspace memory, and show review status.",
-            "Meetings: list company/workspace/project/goal/task rooms, create goal or task rooms, post public-safe room notes, and mark room read.",
+            "Meetings: list company/workspace/project/goal/task rooms, create goal or task rooms, post public-safe room notes, promote durable evidence to memory, and mark room read.",
             "Inbox: read current messages for the configured agent and acknowledge notifications.",
             "Receipts/Audit: show redacted receipts and audit summaries for operator trust.",
         ],
@@ -319,7 +324,7 @@ def connector_contract():
         ],
         "responseContract": {
             "successEnvelope": ["ok", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
-            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToAgent", "canonicalRoomId", "canonicalTargetAgentId", "messageId", "notificationId", "roomQueryUrl", "transcriptQueryUrl", "inboxQueryUrl"],
+            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToAgent", "visibleInSearch", "visibleInReviewQueue", "canonicalRoomId", "canonicalTargetAgentId", "canonicalMemoryEventId", "messageId", "notificationId", "roomQueryUrl", "transcriptQueryUrl", "memoryQueryUrl", "reviewQueueUrl", "inboxQueryUrl"],
             "safeFailureEnvelope": ["ok=false", "safeNoOp=true", "valuesRedacted=true", "rawCredentialExposed=false", "rawPayloadExposed=false"],
             "operatorSummaries": "Protected API responses include compact operatorSummary objects where useful so connector UIs do not need to parse raw debug JSON.",
             "idempotency": "Protected mutation routes support Idempotency-Key except one-time setup.",

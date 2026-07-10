@@ -80,6 +80,18 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("no-write checks", build_readiness_reports.REPORT_FRESHNESS_MODEL)
         self.assertIn("current-worktree", enterprise_readiness_audit.REPORT_FRESHNESS_MODEL)
 
+    def test_source_dirty_paths_ignore_generated_reports(self):
+        dirty = build_readiness_reports.source_dirty_paths(
+            [
+                " M docs/reports/final-readiness-report.md",
+                " M memoryendpoints/app.py",
+                "?? docs/reports/local-only.json",
+                "?? scripts/new_tool.py",
+            ]
+        )
+
+        self.assertEqual(["memoryendpoints/app.py", "scripts/new_tool.py"], dirty)
+
     def test_dogfood_gap_state_distinguishes_live_core_from_full_contract(self):
         current, needed = build_readiness_reports.dogfood_gap_state(
             {"liveCoreDogfoodVerified": True, "liveDogfoodVerified": False}
@@ -96,6 +108,43 @@ class ReportFreshnessTests(unittest.TestCase):
 
         self.assertIn("Full live dogfood contract verified", current)
         self.assertIn("After each latest-code deploy", needed)
+
+    def test_dogfood_memory_loop_summary_reports_source_readback(self):
+        summary = build_readiness_reports.dogfood_memory_loop_summary(
+            {
+                "meetingMemoryPromotionVerified": True,
+                "meetingMemoryReadbackVerified": True,
+                "meetingMemorySourceReadbackVerified": True,
+            }
+        )
+
+        self.assertIn("dogfooded into hosted memory", summary)
+        self.assertIn("source meeting-message id readback", summary)
+
+    def test_dogfood_memory_loop_summary_lists_missing_checks(self):
+        summary = build_readiness_reports.dogfood_memory_loop_summary(
+            {
+                "meetingMemoryPromotionVerified": True,
+                "meetingMemoryReadbackVerified": False,
+                "meetingMemorySourceReadbackVerified": False,
+            }
+        )
+
+        self.assertIn("promoted-memory readback", summary)
+        self.assertIn("source-id readback", summary)
+
+    def test_dogfood_memory_loop_summary_distinguishes_local_proof(self):
+        summary = build_readiness_reports.dogfood_memory_loop_summary(
+            {},
+            {
+                "meetingMemoryPromotionVerified": True,
+                "meetingMemoryReadbackVerified": True,
+                "meetingMemorySourceReadbackVerified": True,
+            },
+        )
+
+        self.assertIn("local WSGI dogfood", summary)
+        self.assertIn("live dogfood must be rerun", summary)
 
 
 if __name__ == "__main__":
