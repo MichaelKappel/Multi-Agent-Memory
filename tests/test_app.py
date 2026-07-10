@@ -116,8 +116,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         self.assertIn("Workspace Overview", text)
         self.assertIn("Console workflow", text)
+        self.assertIn('class="console-shell debug-json-hidden"', text)
         self.assertIn('class="console-nav"', text)
         self.assertIn('href="#workspace-overview"', text)
+        self.assertIn("data-console-debug-toggle", text)
+        self.assertIn("Show debug JSON", text)
         self.assertIn("data-console-session-summary", text)
         self.assertIn('id="memory-workflow"', text)
         self.assertIn('id="message-lanes"', text)
@@ -172,6 +175,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".lane-overview", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
+        self.assertIn(".console-debug-toggle", css)
+        self.assertIn(".debug-json-hidden .debug-json", css)
+        self.assertIn("display: none", css)
         self.assertIn(".operator-session", css)
         self.assertIn(".session-item", css)
         self.assertIn(".session-actions", css)
@@ -184,11 +190,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
 
         self.assertIn("renderSessionSummary", js)
         self.assertIn("data-console-session-summary", js)
+        self.assertIn("workspaceOperatorSummary", js)
+        self.assertIn("operatorLevel", js)
+        self.assertIn("payload.operatorSummary", js)
         self.assertIn("window.location.hostname", js)
         self.assertIn("live site", js)
         self.assertIn("4 levels loaded", js)
         self.assertIn("not echoed", js)
         self.assertIn("Loaded workspace shortcuts", js)
+
+    def test_console_js_treats_debug_json_as_advanced_view(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("debugJson: false", js)
+        self.assertIn("setDebugJsonVisible", js)
+        self.assertIn("data-console-debug-toggle", js)
+        self.assertIn('classList.toggle("debug-json-hidden"', js)
+        self.assertIn("Operator view active.", js)
 
     def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -207,6 +225,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
         self.assertIn("renderMessageDelivery", js)
+        self.assertIn("inboxRequestSeq", js)
+        self.assertIn("requestSeq !== state.inboxRequestSeq", js)
+        self.assertIn("Refreshing \" + target + \" inbox after delivery.", js)
+        self.assertIn("Sending targeted message to \" + target", js)
+        self.assertIn("Message accepted; refreshing \" + refreshedLane", js)
         self.assertIn("Targeted message delivered", js)
         self.assertIn("Broadcast delivered", js)
         self.assertIn("Broadcast message sent; current inbox refreshed.", js)
@@ -391,7 +414,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             query="workspace_id=%s" % workspace_id,
         )
         self.assertEqual("200 OK", status)
-        workspace = json.loads(text)["workspace"]
+        workspace_payload = json.loads(text)
+        workspace = workspace_payload["workspace"]
+        operator_summary = workspace_payload["operatorSummary"]
         self.assertEqual(account_id, workspace["accountId"])
         self.assertEqual(company_id, workspace["companyId"])
         self.assertEqual(project_id, workspace["primaryProjectId"])
@@ -399,6 +424,24 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("Test Project", workspace["projects"][0]["label"])
         self.assertEqual(200 * 1024 * 1024, workspace["storageLimitBytes"])
         self.assertFalse(workspace["rawKeyStoredByServer"])
+        self.assertEqual("memoryendpoints.workspace_operator_summary.v1", operator_summary["schemaVersion"])
+        self.assertTrue(operator_summary["hierarchyReady"])
+        self.assertEqual(["account", "company", "workspace", "project"], [item["level"] for item in operator_summary["hierarchy"]])
+        self.assertEqual(account_id, operator_summary["hierarchy"][0]["id"])
+        self.assertEqual(company_id, operator_summary["hierarchy"][1]["id"])
+        self.assertEqual(workspace_id, operator_summary["hierarchy"][2]["id"])
+        self.assertEqual(project_id, operator_summary["hierarchy"][3]["id"])
+        self.assertEqual(200 * 1024 * 1024, operator_summary["storage"]["limitBytes"])
+        self.assertFalse(operator_summary["privacy"]["workspaceKeyEchoed"])
+        self.assertFalse(operator_summary["privacy"]["rawKeyStoredByServer"])
+        self.assertTrue(operator_summary["privacy"]["valuesRedacted"])
+        self.assertFalse(operator_summary["privacy"]["rawCredentialExposed"])
+        self.assertFalse(operator_summary["privacy"]["rawPayloadExposed"])
+        self.assertTrue(operator_summary["copySafeIds"])
+        self.assertTrue(workspace_payload["valuesRedacted"])
+        self.assertFalse(workspace_payload["rawCredentialExposed"])
+        self.assertFalse(workspace_payload["rawPayloadExposed"])
+        self.assertNotIn(token, json.dumps(operator_summary))
 
         self.assertTrue(token.startswith("me_live_"))
         store_path = Path(os.environ["MEMORYENDPOINTS_STORE_PATH"])
@@ -600,6 +643,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             for summary in item["detailsSummary"]
         ]
         self.assertIn("delivery 0 broadcast / 1 targeted", current_message_summaries)
+        workspace_read_summaries = [
+            summary
+            for item in audit["items"]
+            if item["action"] == "workspace.read"
+            for summary in item["detailsSummary"]
+        ]
+        self.assertIn("hierarchy ready", workspace_read_summaries)
 
         status, _headers, text = call_app(
             "/api/matm/audit-log",

@@ -198,6 +198,65 @@ def _review_status_counts(items):
     return counts
 
 
+def _workspace_operator_summary(workspace):
+    workspace = workspace or {}
+    accounts = workspace.get("accounts") or []
+    account = accounts[0] if accounts else {}
+    company = workspace.get("company") or {}
+    projects = workspace.get("projects") or []
+    project = projects[0] if projects else {}
+    hierarchy = [
+        {
+            "level": "account",
+            "id": account.get("accountId") or workspace.get("accountId") or "",
+            "label": account.get("label") or workspace.get("accountId") or "",
+            "status": account.get("status") or "active",
+            "role": account.get("role") or "owner",
+        },
+        {
+            "level": "company",
+            "id": company.get("companyId") or workspace.get("companyId") or "",
+            "label": company.get("label") or workspace.get("companyId") or "",
+            "status": company.get("status") or "active",
+        },
+        {
+            "level": "workspace",
+            "id": workspace.get("workspaceId") or "",
+            "label": workspace.get("label") or workspace.get("workspaceId") or "",
+            "status": workspace.get("status") or "active",
+            "plan": workspace.get("plan") or "",
+        },
+        {
+            "level": "project",
+            "id": project.get("projectId") or workspace.get("primaryProjectId") or "",
+            "label": project.get("label") or workspace.get("primaryProjectId") or "",
+            "status": project.get("status") or "active",
+        },
+    ]
+    return {
+        "schemaVersion": "memoryendpoints.workspace_operator_summary.v1",
+        "hierarchy": hierarchy,
+        "hierarchyReady": all(item.get("id") for item in hierarchy),
+        "storage": {
+            "limitBytes": workspace.get("storageLimitBytes") or 0,
+            "usedBytes": workspace.get("storageUsedBytes") or 0,
+            "remainingBytes": workspace.get("storageRemainingBytes") or 0,
+            "quotaExceeded": bool(workspace.get("quotaExceeded")),
+        },
+        "privacy": {
+            "workspaceKeyEchoed": False,
+            "rawKeyStoredByServer": bool(workspace.get("rawKeyStoredByServer")),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        },
+        "copySafeIds": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def route_home(start_response):
     body = """
 <section class="hero">
@@ -266,7 +325,7 @@ def route_agent_setup(start_response):
 
 def route_console(start_response):
     body = """
-<section class="console-shell" data-matm-console>
+<section class="console-shell debug-json-hidden" data-matm-console>
   <h1>Human Verification Console</h1>
   <p>Enter a workspace key returned by the setup route. The key is used only in this browser session and is never printed back by this console.</p>
   <nav class="console-nav" aria-label="Console workflow">
@@ -276,6 +335,10 @@ def route_console(start_response):
     <a href="#message-lanes">Messages</a>
     <a href="#receipts-audit">Receipts/Audit</a>
   </nav>
+  <label class="console-debug-toggle">
+    <input type="checkbox" data-console-debug-toggle>
+    Show debug JSON
+  </label>
   <form class="console-grid" data-console-auth>
     <label>Workspace key
       <input type="password" name="workspaceKey" autocomplete="off" placeholder="me_live_..." required>
@@ -844,8 +907,26 @@ def route_protected(environ, start_response, path):
     idem = _idempotency_key(environ)
     if path == "/api/matm/workspace" and method == "GET":
         status = store.workspace_status(workspace_id)
-        _audit_read(store, workspace_id, auth, "workspace.read", path, {"found": bool(status)})
-        return json_response(start_response, {"ok": True, "workspace": status})
+        operator_summary = _workspace_operator_summary(status)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "workspace.read",
+            path,
+            {"found": bool(status), "hierarchyReady": operator_summary["hierarchyReady"]},
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "workspace": status,
+                "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
     if path == "/api/matm/audit-log" and method == "GET":
         requested_limit = query.get("limit") or ""
         audit_filters = {

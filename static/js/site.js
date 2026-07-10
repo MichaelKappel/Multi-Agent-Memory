@@ -22,6 +22,9 @@
     firstNotificationId: "",
     visibleNotificationIds: [],
     firstReviewId: "",
+    debugJson: false,
+    workspaceOperatorSummary: null,
+    inboxRequestSeq: 0,
   };
   var agentLanes = [
     { agentId: "human-verifier-agent", label: "Human" },
@@ -49,6 +52,15 @@
     var node = pick(selector);
     if (node) {
       node.textContent = pretty(value);
+    }
+  }
+
+  function setDebugJsonVisible(visible) {
+    state.debugJson = Boolean(visible);
+    consoleRoot.classList.toggle("debug-json-hidden", !state.debugJson);
+    var toggle = pick("[data-console-debug-toggle]");
+    if (toggle) {
+      toggle.checked = state.debugJson;
     }
   }
 
@@ -121,6 +133,16 @@
       summary.appendChild(el("span", "status-badge neutral", key + ": " + active[key]));
     });
     parent.appendChild(summary);
+  }
+
+  function operatorLevel(operatorSummary, level) {
+    var hierarchy = (operatorSummary && operatorSummary.hierarchy) || [];
+    for (var i = 0; i < hierarchy.length; i += 1) {
+      if (hierarchy[i].level === level) {
+        return hierarchy[i];
+      }
+    }
+    return {};
   }
 
   function memoryScopeGroups(items) {
@@ -200,7 +222,7 @@
     return item;
   }
 
-  function renderSessionSummary(workspace) {
+  function renderSessionSummary(workspace, operatorSummary) {
     var node = pick("[data-console-session-summary]");
     if (!node) {
       return;
@@ -212,14 +234,18 @@
     }
     var hostname = window.location.hostname || "";
     var isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-    var account = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
-    var company = workspace.company || {};
-    var project = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
-    var hierarchyReady = Boolean(
-      (account.accountId || workspace.accountId) &&
-      (company.companyId || workspace.companyId) &&
+    var accountRaw = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
+    var companyRaw = workspace.company || {};
+    var projectRaw = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
+    var account = operatorLevel(operatorSummary, "account");
+    var company = operatorLevel(operatorSummary, "company");
+    var project = operatorLevel(operatorSummary, "project");
+    var privacy = (operatorSummary && operatorSummary.privacy) || {};
+    var hierarchyReady = operatorSummary && operatorSummary.hierarchyReady !== undefined ? operatorSummary.hierarchyReady : Boolean(
+      (account.id || accountRaw.accountId || workspace.accountId) &&
+      (company.id || companyRaw.companyId || workspace.companyId) &&
       workspace.workspaceId &&
-      (project.projectId || workspace.primaryProjectId)
+      (project.id || projectRaw.projectId || workspace.primaryProjectId)
     );
     node.appendChild(sessionItem("Surface", isLocal ? "local site" : "live site", window.location.origin || hostname, [
       { text: isLocal ? "local" : "production", kind: isLocal ? "neutral" : "good" },
@@ -227,8 +253,8 @@
     node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
       { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
     ]));
-    node.appendChild(sessionItem("Key", workspace.rawKeyStoredByServer ? "review key handling" : "not echoed", "browser session only", [
-      { text: workspace.rawKeyStoredByServer ? "review" : "private", kind: workspace.rawKeyStoredByServer ? "warn" : "good" },
+    node.appendChild(sessionItem("Key", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review key handling" : "not echoed", "browser session only", [
+      { text: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review" : "private", kind: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "warn" : "good" },
     ]));
     node.appendChild(sessionItem("Agent", state.agentId, "current inbox lane", [
       { text: "active", kind: "good" },
@@ -268,11 +294,18 @@
     return step;
   }
 
-  function renderWorkspaceBoundaryChain(workspace, account, company, project) {
+  function renderWorkspaceBoundaryChain(workspace, account, company, project, operatorSummary) {
     var chain = el("div", "boundary-chain");
     chain.appendChild(el("div", "result-count", "Boundary chain: account -> company -> workspace -> project"));
     var steps = el("div", "boundary-steps");
-    [
+    var hierarchy = operatorSummary && operatorSummary.hierarchy && operatorSummary.hierarchy.length ? operatorSummary.hierarchy.map(function (item) {
+      return {
+        label: item.level.charAt(0).toUpperCase() + item.level.slice(1),
+        value: item.id,
+        status: item.status || "active",
+        copyLabel: item.level.charAt(0).toUpperCase() + item.level.slice(1) + " id",
+      };
+    }) : [
       {
         label: "Account",
         value: account.accountId || workspace.accountId,
@@ -297,14 +330,15 @@
         status: project.status || "active",
         copyLabel: "Project id",
       },
-    ].forEach(function (item) {
+    ];
+    hierarchy.forEach(function (item) {
       steps.appendChild(boundaryStep(item.label, item.value, item.status, item.copyLabel));
     });
     chain.appendChild(steps);
     return chain;
   }
 
-  function renderWorkspaceSummary(workspace) {
+  function renderWorkspaceSummary(workspace, operatorSummary) {
     var node = pick("[data-console-workspace-summary]");
     if (!node) {
       return;
@@ -314,40 +348,46 @@
       node.appendChild(el("p", "empty-state", "Workspace details will appear after the key is accepted."));
       return;
     }
-    var account = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
-    var company = workspace.company || {};
-    var project = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
-    node.appendChild(renderWorkspaceBoundaryChain(workspace, account, company, project));
-    appendCopyActions(node.appendChild(summaryCard("Account", account.label || workspace.accountId, shortId(account.accountId || workspace.accountId), [
-      { text: account.role || "owner", kind: "neutral" },
-      { text: account.status || "active", kind: "good" },
+    var accountRaw = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
+    var companyRaw = workspace.company || {};
+    var projectRaw = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
+    var account = operatorLevel(operatorSummary, "account");
+    var company = operatorLevel(operatorSummary, "company");
+    var workspaceLevel = operatorLevel(operatorSummary, "workspace");
+    var project = operatorLevel(operatorSummary, "project");
+    var storage = (operatorSummary && operatorSummary.storage) || {};
+    var privacy = (operatorSummary && operatorSummary.privacy) || {};
+    node.appendChild(renderWorkspaceBoundaryChain(workspace, accountRaw, companyRaw, projectRaw, operatorSummary));
+    appendCopyActions(node.appendChild(summaryCard("Account", account.label || accountRaw.label || workspace.accountId, shortId(account.id || accountRaw.accountId || workspace.accountId), [
+      { text: account.role || accountRaw.role || "owner", kind: "neutral" },
+      { text: account.status || accountRaw.status || "active", kind: "good" },
     ])), [
-      { label: "Copy account id", copyLabel: "Account id", value: account.accountId || workspace.accountId },
+      { label: "Copy account id", copyLabel: "Account id", value: account.id || accountRaw.accountId || workspace.accountId },
     ]);
-    appendCopyActions(node.appendChild(summaryCard("Company", company.label || workspace.companyId, shortId(company.companyId || workspace.companyId), [
-      { text: company.status || "active", kind: "good" },
+    appendCopyActions(node.appendChild(summaryCard("Company", company.label || companyRaw.label || workspace.companyId, shortId(company.id || companyRaw.companyId || workspace.companyId), [
+      { text: company.status || companyRaw.status || "active", kind: "good" },
     ])), [
-      { label: "Copy company id", copyLabel: "Company id", value: company.companyId || workspace.companyId },
+      { label: "Copy company id", copyLabel: "Company id", value: company.id || companyRaw.companyId || workspace.companyId },
     ]);
-    appendCopyActions(node.appendChild(summaryCard("Workspace", workspace.label || workspace.workspaceId, shortId(workspace.workspaceId), [
-      { text: workspace.plan || "plan unknown", kind: "neutral" },
-      { text: workspace.status || "active", kind: "good" },
+    appendCopyActions(node.appendChild(summaryCard("Workspace", workspaceLevel.label || workspace.label || workspace.workspaceId, shortId(workspaceLevel.id || workspace.workspaceId), [
+      { text: workspaceLevel.plan || workspace.plan || "plan unknown", kind: "neutral" },
+      { text: workspaceLevel.status || workspace.status || "active", kind: "good" },
     ])), [
-      { label: "Copy workspace id", copyLabel: "Workspace id", value: workspace.workspaceId },
+      { label: "Copy workspace id", copyLabel: "Workspace id", value: workspaceLevel.id || workspace.workspaceId },
     ]);
-    appendCopyActions(node.appendChild(summaryCard("Project", project.label || workspace.primaryProjectId, shortId(project.projectId || workspace.primaryProjectId), [
-      { text: project.status || "active", kind: "good" },
+    appendCopyActions(node.appendChild(summaryCard("Project", project.label || projectRaw.label || workspace.primaryProjectId, shortId(project.id || projectRaw.projectId || workspace.primaryProjectId), [
+      { text: project.status || projectRaw.status || "active", kind: "good" },
     ])), [
-      { label: "Copy project id", copyLabel: "Project id", value: project.projectId || workspace.primaryProjectId },
+      { label: "Copy project id", copyLabel: "Project id", value: project.id || projectRaw.projectId || workspace.primaryProjectId },
     ]);
     node.appendChild(summaryCard(
       "Storage",
-      formatBytes(workspace.storageUsedBytes) + " used",
-      formatBytes(workspace.storageRemainingBytes) + " remaining",
-      [{ text: workspace.quotaExceeded ? "quota exceeded" : "within quota", kind: workspace.quotaExceeded ? "warn" : "good" }]
+      formatBytes(storage.usedBytes !== undefined ? storage.usedBytes : workspace.storageUsedBytes) + " used",
+      formatBytes(storage.remainingBytes !== undefined ? storage.remainingBytes : workspace.storageRemainingBytes) + " remaining",
+      [{ text: (storage.quotaExceeded || workspace.quotaExceeded) ? "quota exceeded" : "within quota", kind: (storage.quotaExceeded || workspace.quotaExceeded) ? "warn" : "good" }]
     ));
-    node.appendChild(summaryCard("Redaction", workspace.rawKeyStoredByServer ? "Check key handling" : "Key not stored raw", "Values are public-safe", [
-      { text: workspace.rawKeyStoredByServer ? "review" : "pass", kind: workspace.rawKeyStoredByServer ? "warn" : "good" },
+    node.appendChild(summaryCard("Redaction", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "Check key handling" : "Key not stored raw", "Values are public-safe", [
+      { text: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review" : "pass", kind: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "warn" : "good" },
     ]));
   }
 
@@ -881,9 +921,10 @@
       state.companyId = workspace.companyId || state.companyId;
       state.projectId = workspace.primaryProjectId || state.projectId;
       state.workspace = workspace;
+      state.workspaceOperatorSummary = payload.operatorSummary || null;
       render("[data-console-workspace]", workspace);
-      renderSessionSummary(workspace);
-      renderWorkspaceSummary(workspace);
+      renderSessionSummary(workspace, state.workspaceOperatorSummary);
+      renderWorkspaceSummary(workspace, state.workspaceOperatorSummary);
       setStatus("Workspace loaded. Key remains session-local.", false);
       return workspace;
     });
@@ -929,8 +970,12 @@
 
   function refreshInbox(agentId) {
     var requestedAgent = agentId || state.agentId;
+    var requestSeq = state.inboxRequestSeq += 1;
     var qs = query({workspace_id: state.workspaceId, agent_id: requestedAgent});
     return api("/api/matm/current-message?" + qs).then(function (payload) {
+      if (requestSeq !== state.inboxRequestSeq) {
+        return payload;
+      }
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
       state.visibleNotificationIds = ((payload && payload.items) || []).map(function (item) {
@@ -981,7 +1026,7 @@
     if (form && form.elements.agentId) {
       form.elements.agentId.value = agentId;
     }
-    renderSessionSummary(state.workspace);
+    renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
   }
 
   function openInboxLane(agentId, label) {
@@ -1044,6 +1089,15 @@
   }
 
   var authForm = pick("[data-console-auth]");
+  var debugToggle = pick("[data-console-debug-toggle]");
+  setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
+  if (debugToggle) {
+    debugToggle.addEventListener("change", function () {
+      setDebugJsonVisible(debugToggle.checked);
+      setStatus(debugToggle.checked ? "Debug JSON visible." : "Operator view active.", false);
+    });
+  }
+
   if (authForm) {
     authForm.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -1128,6 +1182,7 @@
     messageForm.addEventListener("submit", function (event) {
       event.preventDefault();
       var target = messageForm.elements.targetAgentId.value.trim();
+      var refreshedLane = target || state.agentId;
       var body = {
         workspaceId: state.workspaceId,
         senderAgentId: messageForm.elements.senderAgentId.value.trim(),
@@ -1136,20 +1191,19 @@
       };
       if (target) {
         body.targetAgentId = target;
+        setInboxAgent(target);
+        renderEmpty("[data-console-inbox-list]", "Refreshing " + target + " inbox after delivery.");
       }
+      setStatus(target ? "Sending targeted message to " + target + "." : "Sending broadcast message.", false);
       api("/api/matm/agent-messages", {
         method: "POST",
         headers: {"Idempotency-Key": "console-message-" + Date.now()},
         body: body,
       })
         .then(function (payload) {
-          if (target) {
-            setInboxAgent(target);
-            renderMessageDelivery(payload, target);
-            return refreshInbox(target).then(refreshLaneOverview).then(function () { return payload; });
-          }
-          renderMessageDelivery(payload, state.agentId);
-          return refreshInbox(state.agentId).then(refreshLaneOverview).then(function () { return payload; });
+          renderMessageDelivery(payload, refreshedLane);
+          setStatus("Message accepted; refreshing " + refreshedLane + " inbox.", false);
+          return refreshInbox(refreshedLane).then(refreshLaneOverview).then(function () { return payload; });
         })
         .then(function () { setStatus(target ? "Targeted message sent; " + target + " inbox refreshed." : "Broadcast message sent; current inbox refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });

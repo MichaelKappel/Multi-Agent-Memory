@@ -66,6 +66,8 @@ def _audit_detail_summary(details):
         items.append("status %s" % safe.get("statusFilter"))
     if safe.get("actionFilter"):
         items.append("action %s" % safe.get("actionFilter"))
+    if safe.get("hierarchyReady") is not None:
+        items.append("hierarchy ready" if safe.get("hierarchyReady") else "hierarchy incomplete")
     filter_keys = safe.get("filterKeys")
     if isinstance(filter_keys, list) and filter_keys:
         items.append("filters %s" % ", ".join(str(item) for item in filter_keys[:4]))
