@@ -209,6 +209,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Broadcast delivered", js)
         self.assertIn("Broadcast message sent; current inbox refreshed.", js)
         self.assertIn('target + " inbox refreshed."', js)
+        self.assertIn("payload.delivery", js)
+        self.assertIn("deliveryCounts", js)
+        self.assertIn("delivery.responseDisposition", js)
+        self.assertIn("delivery.messageType", js)
         self.assertIn("appendCopyActions(row", js)
 
     def test_console_js_exposes_copy_safe_row_ids(self):
@@ -459,7 +463,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("202 Accepted", status)
-        note = json.loads(text)["notification"]
+        message_payload = json.loads(text)
+        note = message_payload["notification"]
+        self.assertEqual("targeted", message_payload["delivery"]["messageType"])
+        self.assertEqual("agent-b", message_payload["delivery"]["targetAgentId"])
+        self.assertTrue(message_payload["delivery"]["valuesRedacted"])
 
         status, _headers, text = call_app(
             "/api/matm/agent-inbox",
@@ -467,7 +475,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             query="workspace_id=%s&agent_id=agent-b" % workspace_id,
         )
         self.assertEqual("200 OK", status)
-        self.assertEqual(1, json.loads(text)["unreadCount"])
+        inbox = json.loads(text)
+        self.assertEqual(1, inbox["unreadCount"])
+        self.assertEqual({"agentId": "agent-b"}, inbox["filters"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, inbox["deliveryCounts"])
+        self.assertEqual("targeted", inbox["items"][0]["delivery"]["messageType"])
 
         status, _headers, text = call_app(
             "/api/matm/current-message",
@@ -478,6 +490,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         current = json.loads(text)
         self.assertTrue(current["currentMessageLane"])
         self.assertEqual(["required_response", "viewed_acknowledgement"], current["responseStates"])
+        self.assertEqual({"agentId": "agent-b"}, current["filters"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, current["deliveryCounts"])
+        self.assertTrue(current["valuesRedacted"])
 
         status, _headers, text = call_app(
             "/api/matm/notifications/ack",
@@ -580,7 +595,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             )
             self.assertEqual("201 Created", status)
 
-        status, _headers, _text = call_app(
+        status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
             headers=auth,
@@ -592,8 +607,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("202 Accepted", status)
+        broadcast_payload = json.loads(text)
+        self.assertEqual("broadcast", broadcast_payload["delivery"]["messageType"])
+        self.assertTrue(broadcast_payload["delivery"]["broadcast"])
 
-        status, _headers, _text = call_app(
+        status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
             headers=auth,
@@ -606,6 +624,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("202 Accepted", status)
+        targeted_payload = json.loads(text)
+        self.assertEqual("targeted", targeted_payload["delivery"]["messageType"])
+        self.assertFalse(targeted_payload["delivery"]["broadcast"])
+        self.assertEqual("codex-agent", targeted_payload["delivery"]["targetAgentId"])
 
         status, _headers, text = call_app(
             "/api/matm/current-message",
@@ -615,9 +637,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         codex = json.loads(text)
         self.assertEqual(2, codex["unreadCount"])
+        self.assertEqual({"agentId": "codex-agent"}, codex["filters"])
+        self.assertEqual({"broadcast": 1, "targeted": 1}, codex["deliveryCounts"])
         codex_summaries = {item["message"]["safeSummary"] for item in codex["items"]}
         self.assertIn("Broadcast to every active agent in the swarm.", codex_summaries)
         self.assertIn("Targeted message for Codex only.", codex_summaries)
+        self.assertEqual({"broadcast", "targeted"}, {item["delivery"]["messageType"] for item in codex["items"]})
 
         status, _headers, text = call_app(
             "/api/matm/current-message",
@@ -627,7 +652,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         observer = json.loads(text)
         self.assertEqual(1, observer["unreadCount"])
+        self.assertEqual({"broadcast": 1, "targeted": 0}, observer["deliveryCounts"])
         self.assertEqual("Broadcast to every active agent in the swarm.", observer["items"][0]["message"]["safeSummary"])
+        self.assertEqual("broadcast", observer["items"][0]["delivery"]["messageType"])
 
     def test_memory_firewall_review_queue_and_promotion(self):
         status, _headers, text = call_app(

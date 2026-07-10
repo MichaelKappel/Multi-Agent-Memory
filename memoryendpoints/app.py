@@ -154,6 +154,25 @@ def escape_html(value):
     )
 
 
+def _delivery_metadata(message, notification=None, inbox_agent_id=""):
+    message = message or {}
+    notification = notification or {}
+    target_agent_id = message.get("targetAgentId") or notification.get("targetAgentId") or ""
+    message_type = "targeted" if target_agent_id else "broadcast"
+    response_disposition = notification.get("responseDisposition") or (
+        "required_response" if message.get("responseRequired") else "viewed_acknowledgement"
+    )
+    return {
+        "messageType": message_type,
+        "broadcast": not bool(target_agent_id),
+        "targetAgentId": target_agent_id,
+        "inboxAgentId": inbox_agent_id or "",
+        "responseDisposition": response_disposition,
+        "valuesRedacted": True,
+        "rawPayloadExposed": False,
+    }
+
+
 def route_home(start_response):
     body = """
 <section class="hero">
@@ -936,19 +955,45 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Safe summary too long", "Current-message safe summaries must be at most 1000 characters.", "safe_summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this current message.", "quota_exceeded")
+        target_agent_id = body.get("targetAgentId") or body.get("target_agent_id")
         message, note = store.submit_message(
             workspace_id,
             body.get("senderAgentId") or body.get("sender_agent_id"),
-            body.get("targetAgentId") or body.get("target_agent_id"),
+            target_agent_id,
             safe_summary,
             body.get("responseRequired") or body.get("response_required"),
         )
-        payload = {"ok": True, "message": message, "notification": note}
+        payload = {
+            "ok": True,
+            "message": message,
+            "notification": note,
+            "delivery": _delivery_metadata(message, note),
+            "valuesRedacted": True,
+        }
         store.record_idempotency(workspace_id, idem, "message-submit", body, payload, "202 Accepted")
         return json_response(start_response, payload, "202 Accepted")
     if path in ("/api/matm/agent-inbox", "/api/matm/current-message") and method == "GET":
-        items = store.inbox(workspace_id, query.get("agent_id") or query.get("agentId"))
-        _audit_read(store, workspace_id, auth, "current_message.read" if path == "/api/matm/current-message" else "agent_inbox.read", path, {"unreadCount": len(items)})
+        agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        raw_items = store.inbox(workspace_id, agent_filter)
+        items = []
+        delivery_counts = {"broadcast": 0, "targeted": 0}
+        for item in raw_items:
+            message = item.get("message") or {}
+            notification = item.get("notification") or {}
+            delivery = _delivery_metadata(message, notification, agent_filter)
+            delivery_counts[delivery["messageType"]] += 1
+            enriched = dict(item)
+            enriched["delivery"] = delivery
+            items.append(enriched)
+        filters = {"agentId": agent_filter} if agent_filter else {}
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "current_message.read" if path == "/api/matm/current-message" else "agent_inbox.read",
+            path,
+            {"unreadCount": len(items), "filters": filters, "deliveryCounts": delivery_counts},
+        )
         return json_response(
             start_response,
             {
@@ -957,6 +1002,9 @@ def route_protected(environ, start_response, path):
                 "items": items,
                 "unreadCount": len(items),
                 "responseStates": ["required_response", "viewed_acknowledgement"],
+                "filters": filters,
+                "deliveryCounts": delivery_counts,
+                "valuesRedacted": True,
             },
         )
     if path == "/api/matm/notifications/ack" and method == "POST":

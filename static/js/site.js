@@ -439,20 +439,29 @@
     clear(node);
     var items = (payload && payload.items) || [];
     var lane = agentId || state.agentId || "selected agent";
+    appendFilterSummary(node, payload && payload.filters);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No unread messages for " + lane + "."));
       return;
     }
-    node.appendChild(el("div", "result-count", (payload.unreadCount || items.length) + " unread message(s) for " + lane + "."));
+    var deliveryCounts = (payload && payload.deliveryCounts) || {};
+    var countText = (payload.unreadCount || items.length) + " unread message(s) for " + lane + ".";
+    if (deliveryCounts.broadcast !== undefined || deliveryCounts.targeted !== undefined) {
+      countText += " " + (deliveryCounts.broadcast || 0) + " broadcast, " + (deliveryCounts.targeted || 0) + " targeted.";
+    }
+    node.appendChild(el("div", "result-count", countText));
     items.forEach(function (item) {
       var message = item.message || {};
       var notification = item.notification || {};
-      var target = message.targetAgentId || notification.targetAgentId;
+      var delivery = item.delivery || {};
+      var target = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
+      var messageType = delivery.messageType || (target ? "targeted" : "broadcast");
+      var isTargeted = messageType === "targeted";
       var row = resultRow(
-        target ? "Targeted message" : "Broadcast message",
+        isTargeted ? "Targeted message" : "Broadcast message",
         message.safeSummary,
         [
-          { text: target ? "targeted" : "broadcast", kind: target ? "neutral" : "good" },
+          { text: messageType, kind: isTargeted ? "neutral" : "good" },
           { text: notification.status || "unread", kind: notification.status === "read" ? "good" : "warn" },
           { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
           { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
@@ -460,6 +469,8 @@
         [
           "from " + (message.senderAgentId || "unknown"),
           "to " + (target || "all agents"),
+          "delivery " + messageType,
+          "response " + (delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement"),
           "message " + shortId(message.messageId),
           "notification " + shortId(notification.notificationId),
           message.createdAt || "",
@@ -481,19 +492,24 @@
     clear(node);
     var message = (payload && payload.message) || {};
     var notification = (payload && payload.notification) || {};
-    var target = message.targetAgentId || notification.targetAgentId || "";
+    var delivery = (payload && payload.delivery) || {};
+    var target = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
+    var messageType = delivery.messageType || (target ? "targeted" : "broadcast");
+    var isTargeted = messageType === "targeted";
     var refreshedLane = refreshedAgentId || target || state.agentId;
     var row = resultRow(
-      target ? "Targeted message delivered" : "Broadcast delivered",
+      isTargeted ? "Targeted message delivered" : "Broadcast delivered",
       message.safeSummary || "The message was accepted by the current-message lane.",
       [
-        { text: target ? "targeted" : "broadcast", kind: target ? "neutral" : "good" },
+        { text: messageType, kind: isTargeted ? "neutral" : "good" },
         { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
         { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
       ],
       [
         "from " + (message.senderAgentId || "unknown"),
         "to " + (target || "all agents"),
+        "delivery " + messageType,
+        "response " + (delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement"),
         "message " + shortId(message.messageId),
         "notification " + shortId(notification.notificationId),
         "refreshed " + refreshedLane + " inbox",
