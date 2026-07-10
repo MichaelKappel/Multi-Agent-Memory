@@ -1021,18 +1021,29 @@ footer {
   }
 
   .console-view-switcher {
-    flex: 1 1 auto;
+    display: grid;
+    flex: 1 1 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow-x: visible;
+    width: 100%;
+  }
+
+  .console-view-switcher button {
+    border-bottom: 1px solid var(--line);
+    border-right: 0;
+    white-space: normal;
   }
 
   .command-bar-actions {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: flex-start;
-    overflow-x: auto;
+    overflow-x: visible;
   }
 
   .command-bar-actions .button {
-    flex: 0 0 auto;
-    white-space: nowrap;
+    flex: 1 1 calc(50% - 8px);
+    min-width: min(100%, 9rem);
+    white-space: normal;
   }
 
   .console-nav a {
