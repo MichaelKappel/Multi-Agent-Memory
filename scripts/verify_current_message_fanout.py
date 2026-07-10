@@ -17,10 +17,10 @@ DEFAULT_HUMAN_AGENT_ID = "human-verifier-agent"
 DEFAULT_BACKEND_AGENT_ID = "MemoryEndpoints-Backend-Agent"
 DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
 REQUEST_TIMEOUT_SECONDS = 8
-LIVE_READ_ATTEMPTS = 3
+LIVE_READ_ATTEMPTS = 16
 LIVE_WRITE_ATTEMPTS = 3
 LIVE_ACK_READ_ATTEMPTS = 16
-LIVE_READ_DELAY_SECONDS = 0.5
+LIVE_READ_DELAY_SECONDS = 1.5
 LIVE_ACK_READ_DELAY_SECONDS = 1.5
 LIVE_WRITE_DELAY_SECONDS = 1.0
 
@@ -585,17 +585,14 @@ def main(argv=None):
     parser.add_argument("--backend-agent-id", default="")
     parser.add_argument("--observer-agent-id", default=DEFAULT_OBSERVER_AGENT_ID)
     parser.add_argument("--ack-isolation", action="store_true")
+    parser.add_argument("--use-secret-workspace", action="store_true")
     args = parser.parse_args(argv)
 
     base_url = args.base_url.rstrip("/")
     secret = read_json(args.secret)
-    workspace_id = secret.get("workspaceId") or ""
-    token = secret.get("apiKeySecret") or ""
     human_agent_id = args.human_agent_id or agent_id_from_secret(secret)
     backend_agent_id = args.backend_agent_id or named_agent_id_from_secret(secret, ("backendAgentId",), DEFAULT_BACKEND_AGENT_ID)
     agent_ids = unique_agents(human_agent_id, backend_agent_id, args.observer_agent_id)
-    if not workspace_id or not token:
-        raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
     if not agent_ids:
         raise RuntimeError("protected verification requires at least one agent id")
 
@@ -606,6 +603,42 @@ def main(argv=None):
     all_payloads.append(version)
     if status == 200:
         source_sha = (version.get("build") or {}).get("sourceSha")
+
+    if args.use_secret_workspace:
+        workspace_id = secret.get("workspaceId") or ""
+        token = secret.get("apiKeySecret") or ""
+        if not workspace_id or not token:
+            raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
+    else:
+        status, setup_payload, _headers = request_json_with_retries(
+            base_url,
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Current-message fanout verifier %s" % run_id},
+            retry_statuses=(0, 500),
+            attempts=LIVE_WRITE_ATTEMPTS,
+        )
+        workspace_id = setup_payload.get("workspaceId") or ""
+        token = setup_payload.get("apiKeySecret") or ""
+        if not (setup_payload.get("ok") and status in (200, 201) and workspace_id and token):
+            all_payloads.append(setup_payload)
+            reason = "workspace_setup_not_verified"
+            registration_check = skipped_check(reason)
+            redaction_check = response_redaction_check(all_payloads, token="")
+            report = build_report(
+                base_url,
+                source_sha,
+                agent_ids,
+                registration_check,
+                skipped_check(reason),
+                skipped_check(reason, backend_agent_id),
+                skipped_check(reason, human_agent_id),
+                redaction_check,
+                ack_check=skipped_check(reason),
+                workspace_id="",
+                token="",
+            )
+            return write_and_print_report(args.json_out, report, source_sha)
 
     registration_check, registration_payloads = register_agents(base_url, token, workspace_id, agent_ids, run_id)
     all_payloads.extend(registration_payloads)
