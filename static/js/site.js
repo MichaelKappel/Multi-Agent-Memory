@@ -225,18 +225,19 @@
     });
   }
 
-  function renderInboxSummary(payload) {
+  function renderInboxSummary(payload, agentId) {
     var node = pick("[data-console-inbox-list]");
     if (!node) {
       return;
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    var lane = agentId || state.agentId || "selected agent";
     if (!items.length) {
-      node.appendChild(el("p", "empty-state", "No unread messages for this agent."));
+      node.appendChild(el("p", "empty-state", "No unread messages for " + lane + "."));
       return;
     }
-    node.appendChild(el("div", "result-count", (payload.unreadCount || items.length) + " unread message(s)."));
+    node.appendChild(el("div", "result-count", (payload.unreadCount || items.length) + " unread message(s) for " + lane + "."));
     items.forEach(function (item) {
       var message = item.message || {};
       var notification = item.notification || {};
@@ -468,14 +469,26 @@
   }
 
   function refreshInbox(agentId) {
-    var qs = query({workspace_id: state.workspaceId, agent_id: agentId || state.agentId});
+    var requestedAgent = agentId || state.agentId;
+    var qs = query({workspace_id: state.workspaceId, agent_id: requestedAgent});
     return api("/api/matm/current-message?" + qs).then(function (payload) {
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
       render("[data-console-inbox-output]", payload);
-      renderInboxSummary(payload);
+      renderInboxSummary(payload, requestedAgent);
       return payload;
     });
+  }
+
+  function setInboxAgent(agentId) {
+    if (!agentId) {
+      return;
+    }
+    state.agentId = agentId;
+    var form = pick("[data-console-inbox]");
+    if (form && form.elements.agentId) {
+      form.elements.agentId.value = agentId;
+    }
   }
 
   function refreshReceipts() {
@@ -590,9 +603,26 @@
         headers: {"Idempotency-Key": "console-message-" + Date.now()},
         body: body,
       })
-        .then(function () { return refreshInbox(state.agentId); })
-        .then(function () { setStatus(target ? "Targeted message sent." : "Broadcast message sent.", false); })
+        .then(function () {
+          if (target) {
+            setInboxAgent(target);
+            return refreshInbox(target);
+          }
+          return refreshInbox(state.agentId);
+        })
+        .then(function () { setStatus(target ? "Targeted message sent; target inbox refreshed." : "Broadcast message sent.", false); })
         .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var targetButtons = consoleRoot.querySelectorAll("[data-console-target-agent]");
+  if (targetButtons.length && messageForm) {
+    Array.prototype.forEach.call(targetButtons, function (button) {
+      button.addEventListener("click", function () {
+        var target = button.getAttribute("data-console-target-agent") || "";
+        messageForm.elements.targetAgentId.value = target;
+        setStatus(target ? button.textContent + " selected as target." : "Broadcast selected.", false);
+      });
     });
   }
 
@@ -641,8 +671,25 @@
   if (inboxForm) {
     inboxForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      state.agentId = inboxForm.elements.agentId.value.trim() || state.agentId;
+      setInboxAgent(inboxForm.elements.agentId.value.trim() || state.agentId);
       refreshInbox(state.agentId).catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var inboxLaneButtons = consoleRoot.querySelectorAll("[data-console-inbox-agent]");
+  if (inboxLaneButtons.length) {
+    Array.prototype.forEach.call(inboxLaneButtons, function (button) {
+      button.addEventListener("click", function () {
+        var agentId = button.getAttribute("data-console-inbox-agent") || "";
+        if (!state.key || !state.workspaceId) {
+          setStatus("Load workspace before refreshing inbox lanes.", true);
+          return;
+        }
+        setInboxAgent(agentId);
+        refreshInbox(agentId)
+          .then(function () { setStatus(button.textContent + " refreshed.", false); })
+          .catch(function (error) { setStatus(error.message, true); });
+      });
     });
   }
 

@@ -113,6 +113,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-inbox-list", text)
+        self.assertIn("data-console-message-targets", text)
+        self.assertIn('data-console-target-agent="codex-agent"', text)
+        self.assertIn("data-console-inbox-lanes", text)
+        self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
         self.assertIn("data-console-receipts-list", text)
         self.assertIn("data-console-audit-list", text)
         self.assertIn("Debug JSON", text)
@@ -125,6 +129,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".summary-meta", css)
         self.assertIn("overflow-wrap: anywhere", css)
         self.assertIn(".row-meta span", css)
+        self.assertIn(".agent-shortcuts", css)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")

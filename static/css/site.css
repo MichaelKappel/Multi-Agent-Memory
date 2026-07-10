@@ -388,6 +388,14 @@ pre {
   margin-top: 12px;
 }
 
+.agent-shortcuts {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 16px;
+}
+
 .debug-json {
   margin-top: 12px;
 }

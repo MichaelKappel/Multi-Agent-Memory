@@ -373,6 +373,12 @@ def route_console(start_response):
       </label>
       <button class="button primary" type="submit">Send message</button>
     </form>
+    <div class="agent-shortcuts" data-console-message-targets aria-label="Message target shortcuts">
+      <button class="button compact" type="button" data-console-target-agent="">Broadcast</button>
+      <button class="button compact" type="button" data-console-target-agent="human-verifier-agent">Human</button>
+      <button class="button compact" type="button" data-console-target-agent="codex-agent">Codex</button>
+      <button class="button compact" type="button" data-console-target-agent="swarm-observer-agent">Observer</button>
+    </div>
     <form class="console-grid" data-console-inbox>
       <label>Inbox agent
         <input name="agentId" value="human-verifier-agent" required>
@@ -380,6 +386,11 @@ def route_console(start_response):
       <button class="button" type="submit">Refresh inbox</button>
       <button class="button" type="button" data-console-ack>Mark first unread read</button>
     </form>
+    <div class="agent-shortcuts" data-console-inbox-lanes aria-label="Inbox lane shortcuts">
+      <button class="button compact" type="button" data-console-inbox-agent="human-verifier-agent">Human inbox</button>
+      <button class="button compact" type="button" data-console-inbox-agent="codex-agent">Codex inbox</button>
+      <button class="button compact" type="button" data-console-inbox-agent="swarm-observer-agent">Observer inbox</button>
+    </div>
     <div class="console-results" data-console-inbox-list>
       <p class="empty-state">Inbox messages will appear as broadcast or targeted rows.</p>
     </div>
