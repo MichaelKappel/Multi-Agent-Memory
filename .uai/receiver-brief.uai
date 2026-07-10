@@ -18,6 +18,6 @@ Receiver instructions:
 - Do not use README files as memory-package state.
 - Keep active `.uai` date-free and concise.
 - Use MemoryEndpoints.com MATM only through configured authenticated routes.
-- For live coordination with other agents, use `.uai/agent-instructions.uai` as the public-safe MemoryEndpoints.com room and agent map; current backend coordinator identity is `MemoryEndpoints-Beckend-Agent`.
+- For live coordination with other agents, use `.uai/agent-instructions.uai` and the `.uai/agents/` lane files as the public-safe MemoryEndpoints.com room and agent map; current backend coordinator identity is `MemoryEndpoints-Backend-Agent`, while `MemoryEndpoints-Beckend-Agent` is a historical typo lane for older records only.
 - Keep prompt drafts untracked.
 - Do not rely on GitHub Actions as a required gate unless the human re-enables it; after any commit, rerun live deploy and live verification before claiming current-commit deployment.

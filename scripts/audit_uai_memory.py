@@ -54,6 +54,8 @@ STARTUP_READ_ORDER = [
     ".uai/risk-register.uai",
     ".uai/owners.uai",
     ".uai/agent-instructions.uai",
+    ".uai/agents/memoryendpoints-frontend-agent.uai",
+    ".uai/agents/memoryendpoints-backend-agent.uai",
     ".uai/style.uai",
     ".uai/memory.uai",
     ".uai/file-handoff.uai",

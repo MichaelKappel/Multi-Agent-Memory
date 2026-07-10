@@ -25,6 +25,8 @@ class UaiAuditContractTests(unittest.TestCase):
         self.assertIn(".uai/totem.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertIn(".uai/taboo.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertIn(".uai/talisman.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertIn(".uai/agents/memoryendpoints-frontend-agent.uai", audit_uai_memory.STARTUP_READ_ORDER)
+        self.assertIn(".uai/agents/memoryendpoints-backend-agent.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertNotIn(".uai/short-term-memory.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertNotIn(".uai/current-state.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertNotIn(".uai/short-term-memory.uai", audit_uai_memory.manifest_read_order())

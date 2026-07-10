@@ -15,6 +15,9 @@ Maintenance rules:
 - The `.uai/` folder is the active startup memory suite.
 - Every `.uai/*.uai` file listed in `.uai/startup-packet.uai` is active memory.
 - Active `.uai` files are date-free active operational records; chronology belongs in durable reports, archives, CI logs, deployment logs, or MATM records.
+- Core `.uai` files are not a multi-agent scratchpad. In simultaneous work, exactly one agent may edit a core `.uai` file at a time, and that agent must first post a public-safe coordination note in the MemoryEndpoints project-wide meeting room naming the file, purpose, intended scope, and expected verification. Other agents must use MemoryEndpoints meeting rooms, current messages, or their own non-source-controlled local notes until the shared `.uai` edit is complete.
+- Agent-owned lane files under `.uai/agents/` are active startup memory for role identity, ownership, collision rules, and current pointers. They are not turn-by-turn work logs.
+- Do not write turn-by-turn status into shared `.uai` files while another agent is active. Use hosted MATM meeting messages for working coordination, current messages for required attention, and durable reports for evidence. Shared `.uai` edits should be concise policy, routing, or state corrections that future cold-start agents must load.
 - Do not create files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent anywhere under `.uai`; these names are forbidden under any purpose or interpretation even while public UAIX wizard guidance catches up.
 - Keep facts distributed by responsibility: constraints, identity, context, progress, operations, testing, decisions, owners, risks, handoff state, and durable pointers each have their own typed files.
 - Keep README files out of the memory package and active intake buckets. README files may document the repository for humans but must not be the `.uai` setup.

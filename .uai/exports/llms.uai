@@ -15,6 +15,7 @@ Summary:
 - MemoryEndpoints.com is the MATM endpoint product.
 - MultiAgentMemory.com is the companion documentation site.
 - Active `.uai` memory remains local, date-free, typed, and always active.
+- Agent-owned `.uai/agents/` lanes identify role ownership; MemoryEndpoints meeting rooms carry working coordination.
 - MemoryEndpoints.com protected routes provide durable MATM updates only when authenticated.
 - Active file handoff uses Content and Improvement buckets only.
 - Completion claims require local and live evidence.

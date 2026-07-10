@@ -15,9 +15,10 @@ File routing:
 - Maintenance and anchors: memory-maintenance, identity, world-context, totem, taboo, talisman.
 - Startup and receiver: startup-packet, system-profile, receiver-brief, index, context.
 - Project state: constraints, overview, stack, architecture, coding-standards, operations, test-plan, decisions, progress.
-- Governance: risk-register, owners, agent-instructions, style.
+- Governance: risk-register, owners, agent-instructions, agent lane files, style.
 - Handoff and durable memory: file-handoff, intake-outcome-ledger, long-term-memory, long-term-pointer-ledger.
 - Continuation: next-actions, next-recursive-prompt, open-questions.
+- Agent-owned lanes: `.uai/agents/memoryendpoints-frontend-agent.uai` and `.uai/agents/memoryendpoints-backend-agent.uai` define role ownership and collision rules. They are active startup memory, but working status belongs in MemoryEndpoints meeting rooms.
 
 Non-files:
 - README files are human docs, not active memory state.

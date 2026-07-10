@@ -40,17 +40,19 @@ Read order:
 20. .uai/risk-register.uai
 21. .uai/owners.uai
 22. .uai/agent-instructions.uai
-23. .uai/style.uai
-24. .uai/memory.uai
-25. .uai/file-handoff.uai
-26. .uai/intake-outcome-ledger.uai
-27. .uai/handoff-brief.uai
-28. .uai/long-term-memory.uai
-29. .uai/long-term-pointer-ledger.uai
-30. .uai/next-actions.uai
-31. .uai/next-recursive-prompt.uai
-32. .uai/open-questions.uai
-33. .uai/progress.uai
+23. .uai/agents/memoryendpoints-frontend-agent.uai
+24. .uai/agents/memoryendpoints-backend-agent.uai
+25. .uai/style.uai
+26. .uai/memory.uai
+27. .uai/file-handoff.uai
+28. .uai/intake-outcome-ledger.uai
+29. .uai/handoff-brief.uai
+30. .uai/long-term-memory.uai
+31. .uai/long-term-pointer-ledger.uai
+32. .uai/next-actions.uai
+33. .uai/next-recursive-prompt.uai
+34. .uai/open-questions.uai
+35. .uai/progress.uai
 
 Target:
 Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.

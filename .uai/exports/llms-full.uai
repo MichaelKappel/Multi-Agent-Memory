@@ -31,5 +31,6 @@ Durable evidence roots:
 
 Boundary:
 - Active `.uai` is not retired by durable memory.
+- Agent-owned `.uai/agents/` lanes identify role ownership; MemoryEndpoints meeting rooms carry working coordination.
 - README.md is human documentation only.
 - Credential material is never memory.
