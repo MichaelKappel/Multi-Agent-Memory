@@ -446,8 +446,20 @@
     });
   }
 
+  function memorySearchFilters(searchTerm) {
+    var filters = {workspace_id: state.workspaceId, q: searchTerm || ""};
+    var form = pick("[data-console-search]");
+    if (form) {
+      filters.scope = form.elements.scope ? form.elements.scope.value : "";
+      filters.memory_type = form.elements.memoryType ? form.elements.memoryType.value : "";
+      filters.review_status = form.elements.reviewStatus ? form.elements.reviewStatus.value : "";
+      filters.tag = form.elements.tag ? form.elements.tag.value.trim() : "";
+    }
+    return filters;
+  }
+
   function refreshMemory(searchTerm) {
-    var qs = query({workspace_id: state.workspaceId, q: searchTerm || ""});
+    var qs = query(memorySearchFilters(searchTerm));
     return api("/api/matm/search?" + qs).then(function (payload) {
       render("[data-console-memory-output]", payload);
       renderMemorySummary(payload);

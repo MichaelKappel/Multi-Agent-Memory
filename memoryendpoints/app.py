@@ -263,6 +263,36 @@ def route_console(start_response):
       <label class="wide">Search memory
         <input name="query" value="verification">
       </label>
+      <label>Scope filter
+        <select name="scope">
+          <option value="">all scopes</option>
+          <option value="company">company</option>
+          <option value="workspace">workspace</option>
+          <option value="project">project</option>
+        </select>
+      </label>
+      <label>Memory type
+        <select name="memoryType">
+          <option value="">all types</option>
+          <option value="decision">decision</option>
+          <option value="status">status</option>
+          <option value="procedure">procedure</option>
+          <option value="risk">risk</option>
+          <option value="evidence">evidence</option>
+          <option value="handoff">handoff</option>
+          <option value="note">note</option>
+        </select>
+      </label>
+      <label>Review status
+        <select name="reviewStatus">
+          <option value="">all review states</option>
+          <option value="pending">pending</option>
+          <option value="promoted">promoted</option>
+        </select>
+      </label>
+      <label>Tag filter
+        <input name="tag" placeholder="long-term-memory-migration">
+      </label>
       <button class="button" type="submit">Search</button>
     </form>
     <div class="console-results" data-console-memory-list>
@@ -770,8 +800,18 @@ def route_protected(environ, start_response, path):
         store.record_idempotency(workspace_id, idem, "review-decide", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
-        items = store.search_memory(workspace_id, query.get("q") or query.get("query"))
-        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "memorySource": "hosted_workspace_store"})
+        filters = {
+            "scope": query.get("scope") or "",
+            "scopeId": query.get("scope_id") or query.get("scopeId") or "",
+            "memoryType": query.get("memory_type") or query.get("memoryType") or "",
+            "reviewStatus": query.get("review_status") or query.get("reviewStatus") or "",
+            "promotionState": query.get("promotion_state") or query.get("promotionState") or "",
+            "tag": query.get("tag") or "",
+            "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
+        }
+        active_filters = {key: value for key, value in filters.items() if value}
+        items = store.search_memory(workspace_id, query.get("q") or query.get("query"), filters)
+        _audit_read(store, workspace_id, auth, "memory.search", path, {"memoryCount": len(items), "memorySource": "hosted_workspace_store", "filterKeys": sorted(active_filters.keys())})
         return json_response(
             start_response,
             {
@@ -780,6 +820,7 @@ def route_protected(environ, start_response, path):
                 "count": len(items),
                 "memorySource": "hosted_workspace_store",
                 "filesystemDocsIncluded": False,
+                "filters": active_filters,
             },
         )
     if path == "/api/matm/agent-messages" and method == "POST":

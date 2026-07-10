@@ -107,6 +107,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Workspace Overview", text)
         self.assertIn("data-console-workspace-summary", text)
         self.assertIn("data-console-memory-list", text)
+        self.assertIn('name="memoryType"', text)
+        self.assertIn('name="reviewStatus"', text)
+        self.assertIn('name="tag"', text)
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-inbox-list", text)
@@ -604,6 +607,80 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         item = json.loads(text)["items"][0]
         self.assertEqual("promoted", item["reviewStatus"])
         self.assertEqual("promoted", item["promotionState"])
+
+    def test_memory_search_supports_operator_filters(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Filtered Search Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        for body in [
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "agent-filter-a",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "decision",
+                "title": "Promoted project decision",
+                "summary": "Filterable hosted memory decision for promoted project search.",
+                "tags": ["filter-demo", "project-lane"],
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "agent-filter-b",
+                "scope": "workspace",
+                "scopeId": workspace_id,
+                "memoryType": "status",
+                "title": "Workspace status",
+                "summary": "Filterable hosted memory status for workspace search.",
+                "tags": ["filter-demo", "workspace-lane"],
+            },
+        ]:
+            status, _headers, _text = call_app(
+                "/api/matm/memory-events/submit",
+                method="POST",
+                headers=auth,
+                body=body,
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query=(
+                "workspace_id=%s&q=Filterable&scope=project&memory_type=decision"
+                "&review_status=pending&tag=project-lane&actor_agent_id=agent-filter-a"
+            )
+            % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertEqual(1, payload["count"])
+        self.assertEqual("Promoted project decision", payload["items"][0]["title"])
+        self.assertEqual(
+            {
+                "actorAgentId": "agent-filter-a",
+                "memoryType": "decision",
+                "reviewStatus": "pending",
+                "scope": "project",
+                "tag": "project-lane",
+            },
+            payload["filters"],
+        )
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=Filterable&scope=project&tag=workspace-lane" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual(0, json.loads(text)["count"])
 
     def test_idempotency_replay_and_conflict(self):
         status, _headers, text = call_app(

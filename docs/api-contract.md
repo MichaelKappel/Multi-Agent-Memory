@@ -109,12 +109,20 @@ Query:
 
 - `workspace_id`
 - `q`
+- `scope` optional exact filter: `company`, `workspace`, or `project`
+- `scope_id` or `scopeId` optional exact scope id filter
+- `memory_type` or `memoryType` optional exact filter
+- `review_status` or `reviewStatus` optional exact filter such as `pending` or `promoted`
+- `promotion_state` or `promotionState` optional exact filter
+- `tag` optional exact tag filter
+- `actor_agent_id` or `actorAgentId` optional exact actor filter
 
 Response includes:
 
 - `items`: API-submitted memory events
 - `memorySource`: `hosted_workspace_store`
 - `filesystemDocsIncluded`: `false`
+- `filters`: active public-safe filters applied to the hosted search
 
 Quarantined or rejected memory records are excluded from normal search results.
 

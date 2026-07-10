@@ -525,14 +525,36 @@ class FileStore(object):
         self._save(data)
         return event
 
-    def search_memory(self, workspace_id, query):
+    def search_memory(self, workspace_id, query, filters=None):
         data = self._load()
         q = (query or "").lower().strip()
+        filters = filters or {}
+        scope_filter = (filters.get("scope") or "").strip().lower()
+        scope_id_filter = (filters.get("scopeId") or filters.get("scope_id") or "").strip()
+        memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
+        review_status_filter = (filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
+        promotion_state_filter = (filters.get("promotionState") or filters.get("promotion_state") or "").strip().lower()
+        tag_filter = (filters.get("tag") or "").strip().lower()
+        actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
         items = []
         for event in data["memoryEvents"]:
             if event.get("workspaceId") != workspace_id:
                 continue
             if event.get("status") in ("rejected", "quarantined"):
+                continue
+            if scope_filter and (event.get("scope") or "").lower() != scope_filter:
+                continue
+            if scope_id_filter and event.get("scopeId") != scope_id_filter:
+                continue
+            if memory_type_filter and (event.get("memoryType") or "").lower() != memory_type_filter:
+                continue
+            if review_status_filter and (event.get("reviewStatus") or "").lower() != review_status_filter:
+                continue
+            if promotion_state_filter and (event.get("promotionState") or "").lower() != promotion_state_filter:
+                continue
+            if actor_agent_filter and (event.get("actorAgentId") or "").lower() != actor_agent_filter:
+                continue
+            if tag_filter and tag_filter not in [str(tag).lower() for tag in event.get("tags", [])]:
                 continue
             haystack = " ".join(
                 [

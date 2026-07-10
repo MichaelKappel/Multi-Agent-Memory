@@ -1,0 +1,164 @@
+{
+  "alreadyRejectedCount": 8,
+  "baseUrl": "https://memoryendpoints.com",
+  "mode": "live_apply",
+  "ok": true,
+  "rawCredentialValuesStored": false,
+  "rawWorkspaceIdStored": false,
+  "rejectedCount": 8,
+  "results": [
+    {
+      "action": "already_rejected",
+      "eventId": "mem-fbd2e00ede8041508645",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-13a47879f65740e3941a",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/api-contract-summary.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Api Contract Summary",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-2e7f4530a7ce4991a24d",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-cad473c3cc544006abef",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/architecture-notes.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Architecture Notes",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-9bfa626673714343969a",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-f1219b0369ce4799923b",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/enterprise-engineering-best-practices.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Enterprise Engineering Best Practices",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-b39e951b001843819560",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-1a7c1bf832584d8f8b6a",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/matm-architecture-strategy.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Matm Architecture Strategy",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-cb6fb90b35d546d69aa7",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-b6f8f4bc9a0c48aa98ce",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/project-charter.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Project Charter",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-608797ef1b6844bb8267",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-4462d1554575418db83e",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/release-verification-summary.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Release Verification Summary",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-297436b7087e42159daf",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-0fa6cf808c6a4859a32e",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/strategy-index.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "Strategy Index",
+      "valuesRedacted": true
+    },
+    {
+      "action": "already_rejected",
+      "eventId": "mem-5f3b82b376b24fd59710",
+      "httpStatus": null,
+      "promotionStateBefore": "rejected",
+      "rejected": true,
+      "reviewId": "review-3a5fbac5d9be4d18a030",
+      "reviewQueueStatusBefore": "rejected",
+      "reviewStatusBefore": "rejected",
+      "source": "docs/long-term-memory/system-targets.md",
+      "tags": [
+        "docs-seed",
+        "dogfood-migration"
+      ],
+      "title": "System Targets",
+      "valuesRedacted": true
+    }
+  ],
+  "reviewerAgentId": "human-verifier-agent",
+  "schemaVersion": "memoryendpoints.long_term_memory_duplicate_cleanup.v1",
+  "skippedCount": 0,
+  "targetCount": 8,
+  "targetSummaryPrefix": "Deep link: docs/long-term-memory/",
+  "targetTags": [
+    "docs-seed",
+    "dogfood-migration"
+  ],
+  "valuesRedacted": true,
+  "verification": {
+    "remainingDuplicateCount": 0,
+    "remainingDuplicates": [],
+    "valuesRedacted": true
+  },
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da",
+  "wouldRejectCount": 0
+}
