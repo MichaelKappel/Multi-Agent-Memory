@@ -228,6 +228,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-audit-filter", js)
         self.assertIn("params.action", js)
         self.assertIn("params.limit", js)
+        self.assertIn('selectedLimit === "50" ? "" : selectedLimit', js)
         self.assertIn("data-console-clear-audit-filter", js)
         self.assertIn("Audit filter cleared.", js)
 
@@ -455,11 +456,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/audit-log",
             headers=auth,
-            query="workspace_id=%s&limit=50" % workspace_id,
+            query="workspace_id=%s" % workspace_id,
         )
         self.assertEqual("200 OK", status)
         audit = json.loads(text)
         self.assertEqual("memoryendpoints.audit_log.v1", audit["schemaVersion"])
+        self.assertEqual({}, audit["filters"])
         self.assertTrue(audit["valuesRedacted"])
         audit_text = json.dumps(audit)
         self.assertNotIn(token, audit_text)

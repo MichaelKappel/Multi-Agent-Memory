@@ -782,11 +782,16 @@ def route_protected(environ, start_response, path):
         _audit_read(store, workspace_id, auth, "workspace.read", path, {"found": bool(status)})
         return json_response(start_response, {"ok": True, "workspace": status})
     if path == "/api/matm/audit-log" and method == "GET":
+        requested_limit = query.get("limit") or ""
         audit_filters = {
             "action": query.get("action") or "",
-            "limit": query.get("limit") or "50",
+            "limit": requested_limit or "50",
         }
-        active_filters = {key: value for key, value in audit_filters.items() if value}
+        active_filters = {}
+        if audit_filters["action"]:
+            active_filters["action"] = audit_filters["action"]
+        if requested_limit:
+            active_filters["limit"] = audit_filters["limit"]
         _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": audit_filters["action"], "limit": audit_filters["limit"]})
         items = store.audit_log(workspace_id, audit_filters["limit"], audit_filters["action"])
         return json_response(

@@ -717,11 +717,12 @@
   }
 
   function refreshAudit() {
-    var params = {workspace_id: state.workspaceId, limit: "50"};
+    var params = {workspace_id: state.workspaceId};
     var form = pick("[data-console-audit-filter]");
     if (form) {
+      var selectedLimit = form.elements.limit ? form.elements.limit.value : "50";
       params.action = form.elements.action ? form.elements.action.value : "";
-      params.limit = form.elements.limit ? form.elements.limit.value : "50";
+      params.limit = selectedLimit === "50" ? "" : selectedLimit;
     }
     var qs = query(params);
     return api("/api/matm/audit-log?" + qs).then(function (payload) {
