@@ -350,21 +350,26 @@ def _count_by(items, key, defaults=None):
 
 
 def _is_long_term_memory_item(item):
-    tags = item.get("tags") or []
     source = item.get("source") or ""
-    return LONG_TERM_MEMORY_TAG in tags or source.startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)
+    return source.startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)
+
+
+def _requests_long_term_memory_summary(items, query_text, filters):
+    query_value = (query_text or "").lower()
+    if filters.get("tag") == LONG_TERM_MEMORY_TAG or LONG_TERM_MEMORY_TAG in query_value:
+        return True
+    for item in items or []:
+        tags = item.get("tags") or []
+        if LONG_TERM_MEMORY_TAG in tags or _is_long_term_memory_item(item):
+            return True
+    return False
 
 
 def _long_term_memory_operator_summary(items, query_text, filters):
     items = items or []
     filters = filters or {}
     relevant_items = [item for item in items if _is_long_term_memory_item(item)]
-    requested = (
-        filters.get("tag") == LONG_TERM_MEMORY_TAG
-        or LONG_TERM_MEMORY_TAG in (query_text or "")
-        or bool(relevant_items)
-    )
-    if not requested:
+    if not _requests_long_term_memory_summary(items, query_text, filters):
         return None
     source_paths = sorted({item.get("source") for item in relevant_items if (item.get("source") or "").startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)})
     promoted_count = sum(1 for item in relevant_items if item.get("reviewStatus") == "promoted" or item.get("promotionState") == "promoted")

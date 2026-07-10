@@ -2202,6 +2202,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "tags": ["other-tag"],
                 "source": "api",
             },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "status",
+                "title": "Coordination note",
+                "summary": "Coordination note tagged long-term-memory-migration, but not a canonical migrated source file.",
+                "tags": ["long-term-memory-migration", "coordination"],
+                "source": "Codex live verification",
+            },
         ]:
             status, _headers, _text = call_app(
                 "/api/matm/memory-events/submit",
@@ -2221,6 +2232,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         migration = payload["operatorSummary"]["longTermMemoryMigration"]
 
         self.assertEqual("memoryendpoints.long_term_memory_operator_summary.v1", migration["schemaVersion"])
+        self.assertEqual(3, payload["count"])
         self.assertEqual("hosted_pending_review", migration["status"])
         self.assertEqual(2, migration["count"])
         self.assertEqual(2, migration["sourcePathCount"])
