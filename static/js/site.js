@@ -435,7 +435,19 @@
   }
 
   function refreshRuntimeVersion() {
-    return publicApi("/api/version")
+    return fetch("/api/version", {
+      method: "GET",
+      headers: {"Accept": "application/json"},
+      cache: "no-store",
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok) {
+          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    })
       .then(function (payload) {
         state.runtimeVersion = payload;
         state.runtimeVersionError = "";
