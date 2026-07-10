@@ -449,6 +449,43 @@ pre {
   grid-column: 1 / -1;
 }
 
+.console-command-bar {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.6fr);
+  gap: 10px;
+  margin: 12px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.command-bar-summary {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.command-bar-summary strong {
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.command-bar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.command-bar-actions .button {
+  min-height: 34px;
+}
+
 .session-item {
   display: grid;
   align-content: start;
@@ -780,6 +817,7 @@ footer {
   .operator-summary,
   .operator-session,
   .operator-metrics,
+  .console-command-bar,
   .boundary-steps {
     grid-template-columns: 1fr;
   }
@@ -845,6 +883,10 @@ footer {
 
   .console-view-switcher {
     flex: 1 1 auto;
+  }
+
+  .command-bar-actions {
+    justify-content: flex-start;
   }
 
   .console-nav a {

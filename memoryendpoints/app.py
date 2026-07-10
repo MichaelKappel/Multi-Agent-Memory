@@ -1321,6 +1321,21 @@ def route_console(start_response):
   <div class="operator-metrics" data-console-operator-metrics>
     <p class="empty-state">Operator status will appear after the workspace loads.</p>
   </div>
+  <div class="console-command-bar" data-console-command-bar aria-label="Loaded workspace commands">
+    <div class="command-bar-summary">
+      <span class="summary-label">Command Bar</span>
+      <strong data-console-command-title>Workspace locked</strong>
+      <span class="summary-meta" data-console-command-meta>Workspace key required.</span>
+    </div>
+    <div class="command-bar-actions">
+      <button class="button compact" type="button" data-console-command="memory">Search Verification</button>
+      <button class="button compact" type="button" data-console-command="long-term">Long-Term Memory</button>
+      <button class="button compact" type="button" data-console-command="meetings">Meetings</button>
+      <button class="button compact" type="button" data-console-command="messages">Messages</button>
+      <button class="button compact" type="button" data-console-command="receipts">Receipts</button>
+      <button class="button compact" type="button" data-console-command="audit">Audit</button>
+    </div>
+  </div>
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>
   </div>

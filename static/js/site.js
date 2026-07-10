@@ -468,6 +468,29 @@
         { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
       ]
     ));
+    renderCommandBar();
+  }
+
+  function renderCommandBar() {
+    var node = pick("[data-console-command-bar]");
+    if (!node) {
+      return;
+    }
+    var loaded = Boolean(state.workspaceId);
+    var title = pick("[data-console-command-title]");
+    var meta = pick("[data-console-command-meta]");
+    if (title) {
+      title.textContent = loaded ? "Workspace loaded" : "Workspace locked";
+    }
+    if (meta) {
+      meta.textContent = loaded
+        ? "Commands active for this workspace."
+        : "Workspace key required.";
+    }
+    Array.prototype.forEach.call(node.querySelectorAll("[data-console-command]"), function (button) {
+      button.disabled = !loaded;
+      button.setAttribute("aria-disabled", loaded ? "false" : "true");
+    });
   }
 
   function renderSessionSummary(workspace, operatorSummary) {
@@ -2236,12 +2259,73 @@
     ]).then(renderBootstrapRefreshStatus);
   }
 
+  function runConsoleCommand(action, label) {
+    if (!state.key || !state.workspaceId) {
+      setStatus("Load workspace before using operator commands.", true);
+      renderCommandBar();
+      return Promise.resolve(null);
+    }
+    var workflow = {
+      memory: "memory",
+      "long-term": "memory",
+      meetings: "meetings",
+      messages: "messages",
+      receipts: "evidence",
+      audit: "evidence",
+    }[action] || "workspace";
+    setWorkflowView(workflow, true);
+    var task;
+    if (action === "memory") {
+      if (searchForm && searchForm.elements.query && !searchForm.elements.query.value.trim()) {
+        searchForm.elements.query.value = "verification";
+      }
+      task = refreshMemory(searchForm && searchForm.elements.query ? searchForm.elements.query.value : "verification")
+        .then(function (payload) {
+          setStatus("Verification memory refreshed from the command bar.", false);
+          return payload;
+        });
+    } else if (action === "long-term") {
+      task = showHostedLongTermMemory();
+    } else if (action === "meetings") {
+      task = refreshMeetingRooms()
+        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
+        .then(function (payload) {
+          setStatus("Meeting rooms refreshed from the command bar.", false);
+          return payload;
+        });
+    } else if (action === "messages") {
+      task = refreshLaneOverview()
+        .then(function () { return refreshInbox(state.agentId); })
+        .then(function (payload) {
+          setStatus("Message lanes refreshed from the command bar.", false);
+          return payload;
+        });
+    } else if (action === "receipts") {
+      task = refreshReceipts().then(function (payload) {
+        setStatus("Receipts refreshed from the command bar.", false);
+        return payload;
+      });
+    } else if (action === "audit") {
+      task = refreshAudit().then(function (payload) {
+        setStatus("Audit refreshed from the command bar.", false);
+        return payload;
+      });
+    } else {
+      task = Promise.resolve(null);
+    }
+    return task.catch(function (error) {
+      setStatus((label || "Command") + " failed: " + error.message, true);
+      return null;
+    });
+  }
+
   var authForm = pick("[data-console-auth]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
   setWorkflowView("all", false);
   updateSurfaceBadge();
   renderOperatorMetrics();
+  renderCommandBar();
   if (debugToggle) {
     debugToggle.addEventListener("change", function () {
       setDebugJsonVisible(debugToggle.checked);
@@ -2261,6 +2345,12 @@
       if (view) {
         setWorkflowView(view, false);
       }
+    });
+  });
+
+  Array.prototype.forEach.call(consoleRoot.querySelectorAll("[data-console-command]"), function (button) {
+    button.addEventListener("click", function () {
+      runConsoleCommand(button.getAttribute("data-console-command") || "", button.textContent);
     });
   });
 
