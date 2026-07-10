@@ -420,6 +420,10 @@ pre {
   margin: 8px 0 14px;
 }
 
+.acknowledgement-summary {
+  margin: 8px 0 14px;
+}
+
 .message-delivery .delivery-row {
   border-left: 4px solid var(--accent);
 }

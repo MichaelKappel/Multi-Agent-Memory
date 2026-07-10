@@ -425,6 +425,9 @@ def route_console(start_response):
       <button class="button compact" type="button" data-console-inbox-agent="codex-agent">Codex inbox</button>
       <button class="button compact" type="button" data-console-inbox-agent="swarm-observer-agent">Observer inbox</button>
     </div>
+    <div class="console-results acknowledgement-summary" data-console-ack-summary>
+      <p class="empty-state">Acknowledgement receipts will appear after messages are marked read.</p>
+    </div>
     <div class="console-results" data-console-inbox-list>
       <p class="empty-state">Inbox messages will appear as broadcast or targeted rows.</p>
     </div>
@@ -435,9 +438,18 @@ def route_console(start_response):
   </section>
   <section class="console-panel" id="receipts-audit">
     <h2>Receipts And Audit</h2>
-    <div class="actions">
+    <form class="console-grid" data-console-receipts-filter>
+      <label>Receipt consumer
+        <select name="consumerAgentId">
+          <option value="">current inbox agent</option>
+          <option value="human-verifier-agent">human-verifier-agent</option>
+          <option value="codex-agent">codex-agent</option>
+          <option value="swarm-observer-agent">swarm-observer-agent</option>
+        </select>
+      </label>
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
-    </div>
+      <button class="button" type="button" data-console-clear-receipts-filter>Clear receipt filter</button>
+    </form>
     <form class="console-grid" data-console-audit-filter>
       <label>Audit action
         <select name="action">

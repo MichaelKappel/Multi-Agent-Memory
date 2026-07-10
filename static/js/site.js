@@ -524,6 +524,50 @@
     });
   }
 
+  function renderAcknowledgementSummary(payload) {
+    var node = pick("[data-console-ack-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var receipts = [];
+    if (payload && payload.receipt) {
+      receipts.push(payload.receipt);
+    }
+    if (payload && payload.receipts) {
+      receipts = receipts.concat(payload.receipts);
+    }
+    if (!receipts.length) {
+      node.appendChild(el("p", "empty-state", "Acknowledgement receipts will appear after messages are marked read."));
+      return;
+    }
+    if (receipts.length > 1) {
+      node.appendChild(el("div", "result-count", receipts.length + " acknowledgement receipt(s) recorded."));
+    }
+    receipts.forEach(function (receipt) {
+      var row = resultRow(
+        "Acknowledgement recorded",
+        "Receipt confirms the message was marked read without exposing raw private payloads.",
+        [
+          { text: receipt.status || "read", kind: "good" },
+          { text: receipt.valuesRedacted ? "redacted" : "", kind: "good" },
+          { text: receipt.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: receipt.rawPayloadExposed ? "warn" : "good" },
+        ],
+        [
+          "consumer " + (receipt.consumerAgentId || "unknown"),
+          "receipt " + shortId(receipt.receiptId),
+          "notification " + shortId(receipt.notificationId),
+          receipt.createdAt || "",
+        ]
+      );
+      appendCopyActions(row, [
+        { label: "Copy receipt id", copyLabel: "Receipt id", value: receipt.receiptId },
+        { label: "Copy notification id", copyLabel: "Notification id", value: receipt.notificationId },
+      ]);
+      node.appendChild(row);
+    });
+  }
+
   function renderAuditSummary(payload) {
     var node = pick("[data-console-audit-list]");
     if (!node) {
@@ -1062,6 +1106,10 @@
         return;
       }
       ackNotification(state.firstNotificationId, "")
+        .then(function (payload) {
+          renderAcknowledgementSummary(payload);
+          return payload;
+        })
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
         .then(refreshLaneOverview)
@@ -1079,12 +1127,23 @@
         return;
       }
       var chain = Promise.resolve();
+      var ackPayloads = [];
       notificationIds.forEach(function (notificationId) {
         chain = chain.then(function () {
-          return ackNotification(notificationId, "-visible");
+          return ackNotification(notificationId, "-visible").then(function (payload) {
+            ackPayloads.push(payload);
+            return payload;
+          });
         });
       });
       chain
+        .then(function () {
+          renderAcknowledgementSummary({
+            receipts: ackPayloads.map(function (payload) {
+              return payload.receipt;
+            }).filter(Boolean),
+          });
+        })
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
         .then(refreshLaneOverview)

@@ -140,6 +140,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-inbox-lanes", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
         self.assertIn("data-console-ack-visible", text)
+        self.assertIn("data-console-ack-summary", text)
         self.assertIn("data-console-receipts-list", text)
         self.assertIn("data-console-audit-filter", text)
         self.assertIn("data-console-clear-audit-filter", text)
@@ -162,6 +163,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
         self.assertIn(".review-decision-summary", css)
+        self.assertIn(".acknowledgement-summary", css)
         self.assertIn(".lane-overview", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
@@ -174,7 +176,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
 
         self.assertIn("visibleNotificationIds", js)
         self.assertIn("data-console-ack-visible", js)
+        self.assertIn("data-console-ack-summary", js)
         self.assertIn("ackNotification(notificationId", js)
+        self.assertIn("renderAcknowledgementSummary", js)
+        self.assertIn("Acknowledgement recorded", js)
+        self.assertIn("payload hidden", js)
         self.assertIn(".then(refreshLaneOverview)", js)
         self.assertIn("visible notification(s) acknowledged", js)
 
