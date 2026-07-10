@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import json
 import secrets
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -94,6 +95,21 @@ def message_type(item):
 
 def notification_id(item):
     return ((item or {}).get("notification") or {}).get("notificationId") or ""
+
+
+def notification_ids_by_agent_from_submit(payload):
+    mapping = {}
+    for note in (payload or {}).get("notifications") or []:
+        agent_id = (note or {}).get("targetAgentId") or ""
+        note_id = (note or {}).get("notificationId") or ""
+        if agent_id and note_id:
+            mapping[agent_id] = note_id
+    notification = (payload or {}).get("notification") or {}
+    agent_id = notification.get("targetAgentId") or (((payload or {}).get("delivery") or {}).get("targetAgentId") or "")
+    note_id = notification.get("notificationId") or (payload or {}).get("notificationId") or ""
+    if agent_id and note_id and agent_id not in mapping:
+        mapping[agent_id] = note_id
+    return mapping
 
 
 def items_for_summary(payload, safe_summary):
@@ -365,13 +381,16 @@ def send_message(base_url, token, workspace_id, sender_agent_id, safe_summary, r
     )
 
 
-def read_current_messages(base_url, token, workspace_id, agent_ids, message_id=""):
+def read_current_messages_once(base_url, token, workspace_id, agent_ids, message_id="", notification_ids_by_agent=None):
+    notification_ids_by_agent = notification_ids_by_agent or {}
     payloads = {}
     all_payloads = []
     for agent_id in agent_ids:
         query = {"workspace_id": workspace_id, "agent_id": agent_id}
         if message_id:
             query["message_id"] = message_id
+        if notification_ids_by_agent.get(agent_id):
+            query["notification_id"] = notification_ids_by_agent[agent_id]
         status, payload, _headers = request_json(
             base_url,
             "/api/matm/current-message",
@@ -389,6 +408,45 @@ def read_current_messages(base_url, token, workspace_id, agent_ids, message_id="
         payloads[agent_id] = payload
         all_payloads.append(payload)
     return payloads, all_payloads
+
+
+def read_current_messages(
+    base_url,
+    token,
+    workspace_id,
+    agent_ids,
+    message_id="",
+    notification_ids_by_agent=None,
+    expected_summary="",
+    expected_agents=None,
+    attempts=1,
+    delay_seconds=1.0,
+):
+    expected_agents = list(expected_agents or [])
+    attempts = max(1, int(attempts or 1))
+    last_payloads, last_all_payloads = {}, []
+    for attempt in range(attempts):
+        last_payloads, last_all_payloads = read_current_messages_once(
+            base_url,
+            token,
+            workspace_id,
+            agent_ids,
+            message_id,
+            notification_ids_by_agent=notification_ids_by_agent,
+        )
+        if expected_summary and expected_agents:
+            visible_agents = [
+                agent_id
+                for agent_id in expected_agents
+                if items_for_summary(last_payloads.get(agent_id), expected_summary)
+            ]
+            if set(expected_agents).issubset(set(visible_agents)):
+                return last_payloads, last_all_payloads
+        else:
+            return last_payloads, last_all_payloads
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_payloads, last_all_payloads
 
 
 def ack_notification(base_url, token, workspace_id, notification_id_value, consumer_agent_id, run_id):
@@ -453,7 +511,19 @@ def main(argv=None):
     )
     all_payloads.append(broadcast_payload)
     broadcast_message_id = broadcast_payload.get("messageId") or ((broadcast_payload.get("message") or {}).get("messageId") or "")
-    broadcast_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
+    broadcast_notification_ids_by_agent = notification_ids_by_agent_from_submit(broadcast_payload)
+    broadcast_inboxes, inbox_payloads = read_current_messages(
+        base_url,
+        token,
+        workspace_id,
+        agent_ids,
+        broadcast_message_id,
+        notification_ids_by_agent=broadcast_notification_ids_by_agent,
+        expected_summary=broadcast_summary,
+        expected_agents=agent_ids,
+        attempts=8,
+        delay_seconds=1.5,
+    )
     all_payloads.extend(inbox_payloads)
     broadcast_check = broadcast_fanout_check(broadcast_inboxes, broadcast_summary, agent_ids)
     broadcast_check["submitStatus"] = status
@@ -472,7 +542,19 @@ def main(argv=None):
     )
     all_payloads.append(codex_payload)
     codex_message_id = codex_payload.get("messageId") or ((codex_payload.get("message") or {}).get("messageId") or "")
-    codex_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, codex_message_id)
+    codex_notification_ids_by_agent = notification_ids_by_agent_from_submit(codex_payload)
+    codex_inboxes, inbox_payloads = read_current_messages(
+        base_url,
+        token,
+        workspace_id,
+        agent_ids,
+        codex_message_id,
+        notification_ids_by_agent=codex_notification_ids_by_agent,
+        expected_summary=targeted_to_codex_summary,
+        expected_agents=[args.codex_agent_id],
+        attempts=4,
+        delay_seconds=1.0,
+    )
     all_payloads.extend(inbox_payloads)
     targeted_to_codex_check = targeted_delivery_check(codex_inboxes, targeted_to_codex_summary, args.codex_agent_id, agent_ids)
     targeted_to_codex_check["submitStatus"] = status
@@ -491,7 +573,19 @@ def main(argv=None):
     )
     all_payloads.append(human_payload)
     human_message_id = human_payload.get("messageId") or ((human_payload.get("message") or {}).get("messageId") or "")
-    latest_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, human_message_id)
+    human_notification_ids_by_agent = notification_ids_by_agent_from_submit(human_payload)
+    latest_inboxes, inbox_payloads = read_current_messages(
+        base_url,
+        token,
+        workspace_id,
+        agent_ids,
+        human_message_id,
+        notification_ids_by_agent=human_notification_ids_by_agent,
+        expected_summary=targeted_to_human_summary,
+        expected_agents=[human_agent_id],
+        attempts=4,
+        delay_seconds=1.0,
+    )
     all_payloads.extend(inbox_payloads)
     targeted_to_human_check = targeted_delivery_check(latest_inboxes, targeted_to_human_summary, human_agent_id, agent_ids)
     targeted_to_human_check["submitStatus"] = status
@@ -500,7 +594,18 @@ def main(argv=None):
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
     if args.ack_isolation:
         ack_agent_id = args.codex_agent_id
-        before_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
+        before_inboxes, inbox_payloads = read_current_messages(
+            base_url,
+            token,
+            workspace_id,
+            agent_ids,
+            broadcast_message_id,
+            notification_ids_by_agent=broadcast_notification_ids_by_agent,
+            expected_summary=broadcast_summary,
+            expected_agents=[ack_agent_id],
+            attempts=4,
+            delay_seconds=1.0,
+        )
         all_payloads.extend(inbox_payloads)
         before_payload = before_inboxes.get(ack_agent_id) or {}
         before_matches = [
@@ -511,7 +616,18 @@ def main(argv=None):
         ack_id = notification_id(before_matches[0]) if before_matches else ""
         _status, ack_payload, _headers = ack_notification(base_url, token, workspace_id, ack_id, ack_agent_id, run_id)
         all_payloads.append(ack_payload)
-        after_ack_inboxes, inbox_payloads = read_current_messages(base_url, token, workspace_id, agent_ids, broadcast_message_id)
+        after_ack_inboxes, inbox_payloads = read_current_messages(
+            base_url,
+            token,
+            workspace_id,
+            agent_ids,
+            broadcast_message_id,
+            notification_ids_by_agent=broadcast_notification_ids_by_agent,
+            expected_summary=broadcast_summary,
+            expected_agents=[agent_id for agent_id in agent_ids if agent_id != ack_agent_id],
+            attempts=4,
+            delay_seconds=1.0,
+        )
         all_payloads.extend(inbox_payloads)
         ack_check = acknowledgement_isolation_check(before_payload, after_ack_inboxes, broadcast_summary, ack_agent_id, agent_ids)
         ack_check["submitAccepted"] = bool(ack_payload.get("ok"))

@@ -218,6 +218,80 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertTrue(check["rawCredentialEchoed"])
         self.assertTrue(check["apiKeySecretFieldEchoed"])
 
+    def test_read_current_messages_polls_until_expected_summary_is_visible(self):
+        calls = []
+        original_request_json = fanout.request_json
+
+        def fake_request_json(*_args, **_kwargs):
+            calls.append(_kwargs.get("query"))
+            if len(calls) == 1:
+                return 200, inbox(), {}
+            return 200, inbox(message_item("broadcast summary", "broadcast", "note-agent"), broadcast=1), {}
+
+        try:
+            fanout.request_json = fake_request_json
+            payloads, all_payloads = fanout.read_current_messages(
+                "https://memoryendpoints.com",
+                "token",
+                "workspace-id",
+                ["agent-a"],
+                "msg-a",
+                expected_summary="broadcast summary",
+                expected_agents=["agent-a"],
+                attempts=2,
+                delay_seconds=0,
+            )
+        finally:
+            fanout.request_json = original_request_json
+
+        self.assertEqual(2, len(calls))
+        self.assertEqual(1, len(all_payloads))
+        self.assertEqual("broadcast summary", payloads["agent-a"]["items"][0]["message"]["safeSummary"])
+
+    def test_read_current_messages_filters_by_agent_notification_id(self):
+        calls = []
+        original_request_json = fanout.request_json
+
+        def fake_request_json(*_args, **_kwargs):
+            calls.append(_kwargs.get("query"))
+            return 200, inbox(message_item("broadcast summary", "broadcast", "note-agent"), broadcast=1), {}
+
+        try:
+            fanout.request_json = fake_request_json
+            fanout.read_current_messages(
+                "https://memoryendpoints.com",
+                "token",
+                "workspace-id",
+                ["agent-a"],
+                "msg-a",
+                notification_ids_by_agent={"agent-a": "note-agent"},
+                expected_summary="broadcast summary",
+                expected_agents=["agent-a"],
+                attempts=1,
+                delay_seconds=0,
+            )
+        finally:
+            fanout.request_json = original_request_json
+
+        self.assertIn("notification_id=note-agent", calls[0])
+        self.assertIn("message_id=msg-a", calls[0])
+
+    def test_notification_ids_by_agent_from_submit_reads_broadcast_notifications(self):
+        payload = {
+            "notifications": [
+                {"targetAgentId": "human-verifier-agent", "notificationId": "note-human"},
+                {"targetAgentId": "codex-agent", "notificationId": "note-codex"},
+            ]
+        }
+
+        self.assertEqual(
+            {
+                "human-verifier-agent": "note-human",
+                "codex-agent": "note-codex",
+            },
+            fanout.notification_ids_by_agent_from_submit(payload),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

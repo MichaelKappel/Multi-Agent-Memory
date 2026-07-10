@@ -1,6 +1,21 @@
 import unittest
+from urllib.parse import parse_qs
 
 from scripts import dogfood_memoryendpoints
+
+
+class FakeTransport(object):
+    mode = "live_http"
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def call(self, path, method="GET", body=None, headers=None, query=""):
+        self.calls.append({"path": path, "query": query, "method": method})
+        if self.responses:
+            return self.responses.pop(0)
+        return "200 OK", {"ok": True, "items": [], "valuesRedacted": True}
 
 
 class DogfoodReportTests(unittest.TestCase):
@@ -41,6 +56,53 @@ class DogfoodReportTests(unittest.TestCase):
                 "note-1",
             )
         )
+
+    def test_current_message_query_includes_exact_readback_filters(self):
+        query = dogfood_memoryendpoints.current_message_query("ws-1", "agent-b", "msg-1", "note-1")
+        parsed = parse_qs(query)
+
+        self.assertEqual(["ws-1"], parsed["workspace_id"])
+        self.assertEqual(["agent-b"], parsed["agent_id"])
+        self.assertEqual(["msg-1"], parsed["message_id"])
+        self.assertEqual(["note-1"], parsed["notification_id"])
+
+    def test_read_current_message_until_polls_until_exact_notification_visible(self):
+        transport = FakeTransport(
+            [
+                ("200 OK", {"ok": True, "items": [], "valuesRedacted": True}),
+                (
+                    "200 OK",
+                    {
+                        "ok": True,
+                        "items": [
+                            {
+                                "message": {"messageId": "msg-1"},
+                                "notification": {"notificationId": "note-1"},
+                            }
+                        ],
+                        "valuesRedacted": True,
+                    },
+                ),
+            ]
+        )
+
+        status, payload = dogfood_memoryendpoints.read_current_message_until(
+            transport,
+            {"HTTP_AUTHORIZATION": "Bearer hidden"},
+            "ws-1",
+            "agent-b",
+            "msg-1",
+            "note-1",
+            expected_visible=True,
+            attempts=3,
+            delay_seconds=0,
+        )
+
+        self.assertEqual("200 OK", status)
+        self.assertTrue(dogfood_memoryendpoints.contains_current_message(payload, "msg-1", "note-1"))
+        self.assertEqual(2, len(transport.calls))
+        self.assertEqual("/api/matm/current-message", transport.calls[0]["path"])
+        self.assertEqual(["note-1"], parse_qs(transport.calls[0]["query"])["notification_id"])
 
     def test_combined_report_preserves_audit_readback_evidence(self):
         report = dogfood_memoryendpoints.combine_reports(

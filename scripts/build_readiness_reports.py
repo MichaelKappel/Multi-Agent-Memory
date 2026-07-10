@@ -19,11 +19,15 @@ def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def report_date():
+    return utc_now()[:10]
+
+
 def load_json(name):
     path = REPORTS / name
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def git_head_sha():
@@ -322,6 +326,71 @@ def current_message_contract_evidence(fanout, connector_contract):
     }
 
 
+def hosted_long_term_memory_evidence(migration, promotion, duplicate_cleanup):
+    migration = migration or {}
+    promotion = promotion or {}
+    duplicate_cleanup = duplicate_cleanup or {}
+    readback = migration.get("searchReadback") or {}
+    promotion_verification = promotion.get("verification") or {}
+    duplicate_verification = duplicate_cleanup.get("verification") or {}
+    source_paths_verified = bool(
+        migration.get("ok")
+        and readback.get("allExpectedSourcesFound")
+        and readback.get("matchedSourcePathCount") == readback.get("expectedSourcePathCount")
+        and not readback.get("missingSourcePaths")
+        and not readback.get("unexpectedHostedSourcePaths")
+    )
+    hosted_store_verified = bool(
+        readback.get("memorySource") == "hosted_workspace_store"
+        and readback.get("filesystemDocsIncluded") is False
+    )
+    promoted_count = (readback.get("currentReviewStatusCounts") or {}).get("promoted")
+    promoted_state_count = (readback.get("currentPromotionStateCounts") or {}).get("promoted")
+    current_promoted = bool(
+        readback.get("currentAllPromoted")
+        and promoted_count == readback.get("expectedSourcePathCount")
+        and promoted_state_count == readback.get("expectedSourcePathCount")
+        and promotion.get("ok")
+        and promotion_verification.get("allPromoted")
+    )
+    duplicate_cleanup_verified = bool(
+        duplicate_cleanup.get("ok")
+        and duplicate_verification.get("remainingDuplicateCount") == 0
+    )
+    redacted = bool(
+        not migration.get("rawCredentialValuesStored")
+        and not migration.get("rawWorkspaceIdStored")
+        and not promotion.get("rawCredentialValuesStored")
+        and not promotion.get("rawWorkspaceIdStored")
+        and not duplicate_cleanup.get("rawCredentialValuesStored")
+        and not duplicate_cleanup.get("rawWorkspaceIdStored")
+    )
+    verified = bool(source_paths_verified and hosted_store_verified and current_promoted and duplicate_cleanup_verified and redacted)
+    if verified:
+        state = "Hosted long-term memory is promoted and searchable from MemoryEndpoints storage; filesystem docs are excluded and duplicate seed copies are rejected."
+        needed = "Rerun migration, promotion, duplicate-cleanup, and protected search readback after any long-term-memory source change."
+    else:
+        state = "Hosted long-term memory migration is not fully proven."
+        needed = "Rerun `scripts/migrate_long_term_memory_to_memoryendpoints.py --apply`, `scripts/promote_long_term_memory_reviews.py --apply`, and `scripts/cleanup_duplicate_long_term_memory.py --apply`, then verify protected search readback."
+    return {
+        "verified": verified,
+        "sourcePathsVerified": source_paths_verified,
+        "hostedStoreVerified": hosted_store_verified,
+        "currentAllPromoted": current_promoted,
+        "duplicateCleanupVerified": duplicate_cleanup_verified,
+        "expectedSourcePathCount": readback.get("expectedSourcePathCount"),
+        "matchedSourcePathCount": readback.get("matchedSourcePathCount"),
+        "currentReviewStatusCounts": readback.get("currentReviewStatusCounts") or {},
+        "currentPromotionStateCounts": readback.get("currentPromotionStateCounts") or {},
+        "memorySource": readback.get("memorySource"),
+        "filesystemDocsIncluded": readback.get("filesystemDocsIncluded"),
+        "remainingDuplicateCount": duplicate_verification.get("remainingDuplicateCount"),
+        "state": state,
+        "needed": needed,
+        "valuesRedacted": True,
+    }
+
+
 def build_local_report():
     enterprise = load_json("enterprise-readiness-audit.json")
     local_routes = load_json("local-route-verification.json")
@@ -464,6 +533,9 @@ def build_enterprise_gap_matrix():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    long_term_migration = load_json("long-term-memory-migration.json") or {}
+    long_term_promotion = load_json("long-term-memory-promotion.json") or {}
+    long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
@@ -478,6 +550,7 @@ def build_enterprise_gap_matrix():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     head_sha = git_head_sha()
     dirty_source_paths = source_dirty_paths()
     ci_not_required = github_ci_not_required()
@@ -495,7 +568,7 @@ def build_enterprise_gap_matrix():
     lines = [
         "# Enterprise MATM Gap Matrix",
         "",
-        "Generated: 2026-07-09",
+        "Generated: %s" % report_date(),
         "",
         "## Current Verified Improvements",
         "",
@@ -506,6 +579,7 @@ def build_enterprise_gap_matrix():
         "| Protected MATM workflows | Implemented locally | `tests/test_app.py` covers free account, one-time key hash persistence, registration, memory submit/search, firewall redaction, review queue, current message, ack, receipts, audit log, idempotency, and safe no-op errors. |",
         "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, meeting-message promotion to hosted memory, source-id memory readback, ack, receipts, and protected audit-log readback. |",
         "| Hosted coordination memory loop | %s | `%s` |" % ("Verified locally" if (dogfood.get("meetingMemorySourceReadbackVerified") or local_dogfood.get("meetingMemorySourceReadbackVerified")) else "Not fully verified", memory_loop_summary),
+        "| Hosted long-term memory migration | %s | `%s` |" % ("Verified" if long_term_memory["verified"] else "Not fully verified", long_term_memory["state"]),
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
         "| Live dogfood | %s | `docs/reports/dogfood-memory-run.json` distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`. |" % ("Verified full live contract" if dogfood.get("liveDogfoodVerified") else ("Verified current deployed core surface" if dogfood.get("liveCoreDogfoodVerified") else "Not verified")),
         "| Current-message fanout and acknowledgement isolation | %s | `docs/reports/current-message-fanout-verification.json` verifies runtime behavior; `docs/reports/live-connector-contract-verification.json` verifies public discovery contract fields. |" % ("Verified runtime and discovery" if current_message_contract["contractVerified"] else ("Runtime verified, discovery pending" if current_message_contract["behaviorVerified"] else "Not fully verified")),
@@ -529,6 +603,7 @@ def build_enterprise_gap_matrix():
             "Rerun static dry-run, publish, and live static-site verification after companion source changes." if multiagentmemory_verified else "Refresh hosting access, publish `sites/multiagentmemory.com/`, then rerun live static-site verification.",
         ),
         "| Live dogfooding | %s | %s |" % (live_dogfood_state, live_dogfood_needed),
+        "| Hosted long-term memory | %s | %s |" % (long_term_memory["state"], long_term_memory["needed"]),
         "| Current-message fanout discovery contract | %s | %s |" % (current_message_contract["state"], current_message_contract["needed"]),
         "| Source worktree cleanliness | %s | %s |" % (
             "Clean for source paths" if not dirty_source_paths else "Dirty source paths remain",
@@ -562,6 +637,9 @@ def build_current_implementation_audit():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    long_term_migration = load_json("long-term-memory-migration.json") or {}
+    long_term_promotion = load_json("long-term-memory-promotion.json") or {}
+    long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
@@ -573,6 +651,7 @@ def build_current_implementation_audit():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     multiagentmemory_verified = bool(
         multiagentmemory_live.get("status") == "uploaded" and multiagentmemory_live_site.get("ok")
     )
@@ -581,7 +660,7 @@ def build_current_implementation_audit():
     lines = [
         "# Current Implementation Audit",
         "",
-        "Generated: 2026-07-09",
+        "Generated: %s" % report_date(),
         "",
         "## Scope",
         "",
@@ -610,6 +689,14 @@ def build_current_implementation_audit():
             str(current_message_contract["ackIsolationVerified"]).lower(),
             str(current_message_contract["discoveryVerified"]).lower(),
         ),
+        "- Hosted long-term memory verifier reports `%s`, matched source paths `%s/%s`, current promoted records `%s`, filesystem docs included `%s`, and remaining duplicate seeds `%s`." % (
+            str(long_term_memory["verified"]).lower(),
+            long_term_memory["matchedSourcePathCount"],
+            long_term_memory["expectedSourcePathCount"],
+            long_term_memory["currentReviewStatusCounts"].get("promoted"),
+            str(long_term_memory["filesystemDocsIncluded"]).lower(),
+            long_term_memory["remainingDuplicateCount"],
+        ),
         "- No-upload deployment connection checks for explicit FTPS and plain FTP report `%s`; no files are uploaded." % connection_status(deploy_connection_ftps, deploy_connection_ftp),
         "",
         "## Implemented Locally",
@@ -624,6 +711,7 @@ def build_current_implementation_audit():
         "- Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.",
         "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, meeting-room coordination, meeting-message promotion to hosted memory, source-id memory readback, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.",
         "- %s" % memory_loop_summary,
+        "- %s" % long_term_memory["state"],
         "",
         "## Remaining Boundaries",
         "",
@@ -646,6 +734,9 @@ def build_final_verification_alias():
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    long_term_migration = load_json("long-term-memory-migration.json") or {}
+    long_term_promotion = load_json("long-term-memory-promotion.json") or {}
+    long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
     live_routes = load_json("live-route-verification.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
@@ -653,6 +744,7 @@ def build_final_verification_alias():
     live_dogfood_state, live_dogfood_needed = dogfood_gap_state(dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     dirty_source_paths = source_dirty_paths()
     latest_deployed = bool(live_latest_code.get("sourceShaMatchesExpected"))
     mysql_verified = bool(live_mysql_backend.get("ok"))
@@ -660,7 +752,7 @@ def build_final_verification_alias():
     lines = [
         "# Final Verification Report",
         "",
-        "Date: 2026-07-09",
+        "Date: %s" % report_date(),
         "",
         "Status: superseded by `docs/reports/final-readiness-report.md`.",
         "",
@@ -681,6 +773,7 @@ def build_final_verification_alias():
         "- %s" % current_message_contract["state"],
         "- %s" % current_message_contract["needed"],
         "- Hosted coordination memory loop: %s" % memory_loop_summary,
+        "- Hosted long-term memory: %s" % long_term_memory["state"],
         "- Source worktree cleanliness: `%s`." % ("clean" if not dirty_source_paths else "dirty"),
         "- Live MySQL/MariaDB backend verification: `%s`." % str(mysql_verified).lower(),
         "- MultiAgentMemory.com live companion verification currently reports `%s` failures." % multiagentmemory_live_site.get("failureCount"),
@@ -712,6 +805,9 @@ def build_final_markdown(local_report):
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
+    long_term_migration = load_json("long-term-memory-migration.json") or {}
+    long_term_promotion = load_json("long-term-memory-promotion.json") or {}
+    long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
     github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     github_blocker = github_blocker_text(github_ci)
@@ -730,6 +826,7 @@ def build_final_markdown(local_report):
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
+    long_term_memory = hosted_long_term_memory_evidence(long_term_migration, long_term_promotion, long_term_duplicate_cleanup)
     mysql_verified = bool(
         live_mysql_backend.get("ok")
         or (enterprise_current and enterprise_summary.get("liveMysqlBackendVerified"))
@@ -749,7 +846,7 @@ def build_final_markdown(local_report):
     lines = [
         "# Final Readiness Report",
         "",
-        "Date: 2026-07-09",
+        "Date: %s" % report_date(),
         "",
         status_line,
         "",
@@ -800,6 +897,14 @@ def build_final_markdown(local_report):
             str(current_message_contract["discoveryVerified"]).lower(),
             str(current_message_contract["uniqueRecipientNotificationIds"]).lower(),
             str(current_message_contract["ackIsolationVerified"]).lower(),
+        ),
+        "- Hosted long-term memory migration: `%s`; matched source paths `%s/%s`, promoted records `%s`, filesystem docs included `%s`, remaining duplicate seeds `%s`." % (
+            "pass" if long_term_memory["verified"] else "not pass",
+            long_term_memory["matchedSourcePathCount"],
+            long_term_memory["expectedSourcePathCount"],
+            long_term_memory["currentReviewStatusCounts"].get("promoted"),
+            str(long_term_memory["filesystemDocsIncluded"]).lower(),
+            long_term_memory["remainingDuplicateCount"],
         ),
         "- Hosted coordination memory loop: %s" % memory_loop_summary,
         "- Package verification: status `%s`, %s planned files, excludes local runtime state and secrets." % (package.get("status"), package.get("fileCount")),
@@ -866,6 +971,8 @@ def build_final_markdown(local_report):
         )
     if not current_message_contract["contractVerified"]:
         blocked_lines.append("- Current-message fanout contract: %s %s" % (current_message_contract["state"], current_message_contract["needed"]))
+    if not long_term_memory["verified"]:
+        blocked_lines.append("- Hosted long-term memory: %s %s" % (long_term_memory["state"], long_term_memory["needed"]))
     if not local_report.get("ok"):
         blocked_lines.append(
             "- Local verification report: blocked until local checks pass; failing checks: `%s`."
@@ -904,6 +1011,10 @@ def build_final_markdown(local_report):
         "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
         "liveCurrentMessageDiscoveryContractVerified": current_message_contract["discoveryVerified"],
         "liveCurrentMessageContractVerified": current_message_contract["contractVerified"],
+        "hostedLongTermMemoryVerified": long_term_memory["verified"],
+        "hostedLongTermMemorySourcePathsVerified": long_term_memory["sourcePathsVerified"],
+        "hostedLongTermMemoryCurrentAllPromoted": long_term_memory["currentAllPromoted"],
+        "hostedLongTermMemoryDuplicateCleanupVerified": long_term_memory["duplicateCleanupVerified"],
         "liveMysqlBackendVerified": mysql_verified,
         "multiAgentMemoryLiveDeployed": multiagentmemory_live.get("status") == "uploaded",
         "multiAgentMemoryLiveSiteVerified": bool(multiagentmemory_live_site.get("ok")),

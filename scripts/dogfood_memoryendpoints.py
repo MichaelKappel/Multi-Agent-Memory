@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
@@ -157,6 +158,33 @@ def contains_current_message(payload, message_id, notification_id):
         if notification_id and notification.get("notificationId") == notification_id:
             return True
     return False
+
+
+def current_message_query(workspace_id, agent_id, message_id="", notification_id=""):
+    query = {"workspace_id": workspace_id, "agent_id": agent_id}
+    if message_id:
+        query["message_id"] = message_id
+    if notification_id:
+        query["notification_id"] = notification_id
+    return urlencode(query)
+
+
+def read_current_message_until(transport, headers, workspace_id, agent_id, message_id, notification_id, expected_visible=True, attempts=1, delay_seconds=1.0):
+    attempts = max(1, int(attempts or 1))
+    last_status = "500 Missing Current Message Read"
+    last_payload = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_status, last_payload = transport.call(
+            "/api/matm/current-message",
+            headers=headers,
+            query=current_message_query(workspace_id, agent_id, message_id, notification_id),
+        )
+        visible = contains_current_message(last_payload, message_id, notification_id)
+        if visible == bool(expected_visible):
+            return last_status, last_payload
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload
 
 
 def append_progress(report):
@@ -376,7 +404,17 @@ def run_sequence(transport, label, base_url=None):
         message_id = message.get("messageId") or (message.get("message") or {}).get("messageId", "")
         notification_id = message.get("notificationId") or (message.get("notification") or {}).get("notificationId", "")
 
-        status, current = call_canonical_url(transport, message.get("inboxQueryUrl"), auth)
+        status, current = read_current_message_until(
+            transport,
+            auth,
+            workspace_id,
+            "memoryendpoints-followup-agent",
+            message_id,
+            notification_id,
+            expected_visible=True,
+            attempts=6 if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
+        )
         current_readback_verified = contains_current_message(current, message_id, notification_id)
         step(report, "read_current_message", status, current, verified=current_readback_verified)
 
@@ -412,7 +450,17 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "read_audit_log", status, audit_log)
 
-        status, post_ack_current = call_canonical_url(transport, message.get("inboxQueryUrl"), auth)
+        status, post_ack_current = read_current_message_until(
+            transport,
+            auth,
+            workspace_id,
+            "memoryendpoints-followup-agent",
+            message_id,
+            notification_id,
+            expected_visible=False,
+            attempts=6 if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
+        )
         post_ack_verified = not contains_current_message(post_ack_current, message_id, notification_id)
         step(report, "read_current_message_after_ack", status, post_ack_current, verified=post_ack_verified)
 

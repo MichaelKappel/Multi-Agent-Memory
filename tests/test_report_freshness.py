@@ -255,6 +255,84 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertTrue(evidence["contractVerified"])
         self.assertIn("Full live current-message", evidence["state"])
 
+    def test_hosted_long_term_memory_evidence_requires_promoted_hosted_records(self):
+        evidence = build_readiness_reports.hosted_long_term_memory_evidence(
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "searchReadback": {
+                    "allExpectedSourcesFound": True,
+                    "expectedSourcePathCount": 2,
+                    "matchedSourcePathCount": 2,
+                    "missingSourcePaths": [],
+                    "unexpectedHostedSourcePaths": [],
+                    "memorySource": "hosted_workspace_store",
+                    "filesystemDocsIncluded": False,
+                    "currentAllPromoted": True,
+                    "currentReviewStatusCounts": {"promoted": 2},
+                    "currentPromotionStateCounts": {"promoted": 2},
+                },
+            },
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "verification": {"allPromoted": True},
+            },
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "verification": {"remainingDuplicateCount": 0},
+            },
+        )
+
+        self.assertTrue(evidence["verified"])
+        self.assertTrue(evidence["sourcePathsVerified"])
+        self.assertTrue(evidence["hostedStoreVerified"])
+        self.assertTrue(evidence["currentAllPromoted"])
+        self.assertTrue(evidence["duplicateCleanupVerified"])
+        self.assertIn("Hosted long-term memory is promoted", evidence["state"])
+
+    def test_hosted_long_term_memory_evidence_rejects_filesystem_or_pending_records(self):
+        evidence = build_readiness_reports.hosted_long_term_memory_evidence(
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "searchReadback": {
+                    "allExpectedSourcesFound": True,
+                    "expectedSourcePathCount": 2,
+                    "matchedSourcePathCount": 2,
+                    "missingSourcePaths": [],
+                    "unexpectedHostedSourcePaths": [],
+                    "memorySource": "filesystem_docs",
+                    "filesystemDocsIncluded": True,
+                    "currentAllPromoted": False,
+                    "currentReviewStatusCounts": {"pending": 2},
+                    "currentPromotionStateCounts": {"review_pending": 2},
+                },
+            },
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "verification": {"allPromoted": False},
+            },
+            {
+                "ok": True,
+                "rawCredentialValuesStored": False,
+                "rawWorkspaceIdStored": False,
+                "verification": {"remainingDuplicateCount": 0},
+            },
+        )
+
+        self.assertFalse(evidence["verified"])
+        self.assertFalse(evidence["hostedStoreVerified"])
+        self.assertFalse(evidence["currentAllPromoted"])
+        self.assertIn("not fully proven", evidence["state"])
+
 
 if __name__ == "__main__":
     unittest.main()
