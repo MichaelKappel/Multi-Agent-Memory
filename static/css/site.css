@@ -723,7 +723,9 @@ footer {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 
   h1 {
@@ -741,20 +743,33 @@ footer {
   }
 
   .operator-guardrails {
+    flex-wrap: nowrap;
     justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .console-hero {
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .console-hero p:not(.eyebrow) {
+    display: none !important;
   }
 
   .console-utility-bar {
-    align-items: stretch;
-    display: grid;
+    align-items: center;
+    display: flex;
     gap: 8px;
+    margin: 10px 0 12px;
+    padding: 7px 0;
   }
 
   .console-nav {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin-top: 12px;
+    margin-top: 0;
     width: 100%;
   }
 
@@ -766,20 +781,23 @@ footer {
   }
 
   nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
     gap: 8px;
+    overflow-x: auto;
     width: 100%;
   }
 
   nav a {
+    flex: 0 0 auto;
     text-align: center;
     overflow-wrap: anywhere;
     padding: 7px 8px;
+    white-space: nowrap;
   }
 
   nav a[href*="multiagentmemory"] {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .session-actions {
