@@ -109,6 +109,20 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertIn("Full live dogfood contract verified", current)
         self.assertIn("After each latest-code deploy", needed)
 
+    def test_local_dogfood_verified_accepts_dedicated_local_report(self):
+        self.assertTrue(
+            build_readiness_reports.local_dogfood_verified(
+                {"mode": "live_http", "localDogfoodVerified": False, "liveDogfoodVerified": True},
+                {"mode": "local_wsgi", "localDogfoodVerified": True},
+            )
+        )
+        self.assertFalse(
+            build_readiness_reports.local_dogfood_verified(
+                {"mode": "live_http", "localDogfoodVerified": False},
+                {"mode": "local_wsgi", "localDogfoodVerified": False},
+            )
+        )
+
     def test_dogfood_memory_loop_summary_reports_source_readback(self):
         summary = build_readiness_reports.dogfood_memory_loop_summary(
             {

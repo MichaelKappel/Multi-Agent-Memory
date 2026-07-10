@@ -196,6 +196,12 @@ def dogfood_gap_state(dogfood):
     )
 
 
+def local_dogfood_verified(dogfood, local_dogfood=None):
+    dogfood = dogfood or {}
+    local_dogfood = local_dogfood or {}
+    return bool(dogfood.get("localDogfoodVerified") or local_dogfood.get("localDogfoodVerified"))
+
+
 MEMORY_LOOP_CHECKS = (
     ("meetingMemoryPromotionVerified", "meeting-message promotion"),
     ("meetingMemoryReadbackVerified", "promoted-memory readback"),
@@ -437,10 +443,7 @@ def build_local_report():
         and deploy_dry_run.get("status") == "ready"
         and deploy_dry_run.get("safeNoOp") is True
     )
-    local_dogfood_verified = bool(
-        (dogfood and dogfood.get("localDogfoodVerified"))
-        or (local_dogfood and local_dogfood.get("localDogfoodVerified"))
-    )
+    local_dogfood_ok = local_dogfood_verified(dogfood, local_dogfood)
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
@@ -450,7 +453,7 @@ def build_local_report():
             "status": status(bool(uai and uai.get("ok"))),
             "evidence": ["docs/reports/uai-memory-audit.json", ".uai/memory-maintenance.uai", ".uai/startup-packet.uai", ".uai/totem.uai"],
         },
-        {"id": "local_dogfood", "status": status(local_dogfood_verified), "evidence": ["docs/reports/dogfood-memory-run.json", "docs/reports/dogfood-memory-run-local.json"]},
+        {"id": "local_dogfood", "status": status(local_dogfood_ok), "evidence": ["docs/reports/dogfood-memory-run.json", "docs/reports/dogfood-memory-run-local.json"]},
         {"id": "package_check", "status": status(package_evidence_current), "evidence": ["docs/reports/package-verification-report.json", "docs/reports/enterprise-readiness-audit.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool((boundary and boundary.get("ok")) or repository_boundary_check_current)), "evidence": ["docs/reports/repository-boundary-audit.json", "scripts/audit_repository_boundary.py", "sites/multiagentmemory.com/"]},
@@ -495,7 +498,7 @@ def build_local_report():
         "localUaiStaysActiveAlways": bool(uai and uai.get("localUaiStaysActiveAlways")),
         "dateFreeHotMemory": bool(uai and uai.get("dateFreeHotMemory")),
         "noForbiddenActiveMemoryFilename": bool(uai and uai.get("noForbiddenActiveMemoryFilename")),
-        "localDogfoodVerified": local_dogfood_verified,
+        "localDogfoodVerified": local_dogfood_ok,
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
         "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
@@ -823,6 +826,7 @@ def build_final_markdown(local_report):
         latest_deployed = latest_code_live_deployed(deploy, live_latest_code)
     live_dogfood = bool(dogfood.get("liveDogfoodVerified"))
     live_core_dogfood = bool(dogfood.get("liveCoreDogfoodVerified"))
+    local_dogfood_ok = local_dogfood_verified(dogfood, local_dogfood)
     memory_loop_summary = dogfood_memory_loop_summary(dogfood, local_dogfood)
     memory_loop_evidence = dogfood_memory_loop_evidence(dogfood, local_dogfood)
     current_message_contract = current_message_contract_evidence(fanout, connector_contract)
@@ -888,7 +892,7 @@ def build_final_markdown(local_report):
         ),
         "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and forbidden active-memory filenames are absent.",
         "- Local dogfooding: %s through WSGI; live core dogfooding on current deployed API: %s; latest live dogfood contract: %s." % (
-            str(bool(dogfood.get("localDogfoodVerified"))).lower(),
+            str(local_dogfood_ok).lower(),
             str(live_core_dogfood).lower(),
             str(live_dogfood).lower(),
         ),
@@ -1006,6 +1010,7 @@ def build_final_markdown(local_report):
         "githubCiGateDecision": (github_ci_gate or {}).get("decision"),
         "githubCiRequired": not ci_not_required,
         "latestCodeLiveDeployed": latest_deployed,
+        "localDogfoodVerified": local_dogfood_ok,
         "liveCoreDogfoodVerified": live_core_dogfood,
         "liveDogfoodVerified": live_dogfood,
         "liveCurrentMessageFanoutBehaviorVerified": current_message_contract["behaviorVerified"],
