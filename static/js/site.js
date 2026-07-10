@@ -513,37 +513,56 @@
     }
     clear(node);
     var event = (payload && payload.event) || {};
+    var operatorSummary = (payload && payload.operatorSummary) || {};
     var submission = (payload && payload.submission) || {};
-    var memoryId = submission.memoryEventId || event.eventId || "";
+    var memoryId = operatorSummary.memoryEventId || submission.memoryEventId || event.eventId || "";
     if (!memoryId) {
       node.appendChild(el("p", "empty-state", "Saved memory confirmations will appear here."));
       return;
     }
     var firewall = event.firewall || {};
-    var firewallDecision = submission.firewallDecision || firewall.decision || "accepted";
+    var firewallDecision = operatorSummary.firewallDecision || submission.firewallDecision || firewall.decision || "accepted";
+    var reviewStatus = operatorSummary.reviewStatus || submission.reviewStatus || event.reviewStatus || "pending";
+    var summaryLine = el("div", "filter-summary memory-submit-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Saved memory"));
+    appendBadge(summaryLine, operatorSummary.scope || submission.scope || event.scope || "workspace", "neutral");
+    appendBadge(summaryLine, operatorSummary.memoryType || submission.memoryType || event.memoryType || "memory", "neutral");
+    appendBadge(summaryLine, reviewStatus, reviewStatus === "quarantined" ? "warn" : "good");
+    appendBadge(summaryLine, firewallDecision, firewallDecision === "quarantine_for_review" ? "warn" : "good");
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
+      operatorSummary.rawPayloadExposed ? "warn" : "good"
+    );
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawCredentialExposed ? "credential exposure review" : "credentials hidden",
+      operatorSummary.rawCredentialExposed ? "warn" : "good"
+    );
     var row = resultRow(
       "Memory saved",
       event.summary || "Memory event recorded without exposing raw private payloads.",
       [
-        { text: submission.scope || event.scope || "workspace", kind: "neutral" },
-        { text: submission.memoryType || event.memoryType || "memory", kind: "neutral" },
-        { text: submission.reviewStatus || event.reviewStatus || "pending", kind: (submission.reviewStatus || event.reviewStatus) === "quarantined" ? "warn" : "good" },
+        { text: operatorSummary.scope || submission.scope || event.scope || "workspace", kind: "neutral" },
+        { text: operatorSummary.memoryType || submission.memoryType || event.memoryType || "memory", kind: "neutral" },
+        { text: reviewStatus, kind: reviewStatus === "quarantined" ? "warn" : "good" },
         { text: firewallDecision, kind: firewallDecision === "quarantine_for_review" ? "warn" : "good" },
-        { text: submission.valuesRedacted ? "redacted" : "", kind: "good" },
-        { text: submission.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: submission.rawPayloadExposed ? "warn" : "good" },
+        { text: operatorSummary.valuesRedacted || submission.valuesRedacted ? "redacted" : "", kind: "good" },
+        { text: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "warn" : "good" },
       ],
       [
         "memory " + shortId(memoryId),
-        "review " + shortId(submission.reviewId || event.reviewId),
-        "actor " + (event.actorAgentId || "unknown"),
+        "review " + shortId(operatorSummary.reviewId || submission.reviewId || event.reviewId),
+        "actor " + (operatorSummary.actorAgentId || event.actorAgentId || "unknown"),
         event.createdAt || "",
       ]
     );
     row.className += " submission-row";
     appendCopyActions(row, [
       { label: "Copy memory id", copyLabel: "Memory id", value: memoryId },
-      { label: "Copy review id", copyLabel: "Review id", value: submission.reviewId || event.reviewId },
+      { label: "Copy review id", copyLabel: "Review id", value: operatorSummary.reviewId || submission.reviewId || event.reviewId },
     ]);
+    node.appendChild(summaryLine);
     node.appendChild(row);
   }
 
@@ -616,24 +635,43 @@
     clear(node);
     var message = (payload && payload.message) || {};
     var notification = (payload && payload.notification) || {};
+    var operatorSummary = (payload && payload.operatorSummary) || {};
     var delivery = (payload && payload.delivery) || {};
-    var target = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
-    var messageType = delivery.messageType || (target ? "targeted" : "broadcast");
+    var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
+    var responseCounts = operatorSummary.responseDispositionCounts || {};
+    var target = operatorSummary.targetAgentId || delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
+    var messageType = operatorSummary.messageType || delivery.messageType || (target ? "targeted" : "broadcast");
+    var responseDisposition = operatorSummary.responseDisposition || delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement";
     var isTargeted = messageType === "targeted";
     var refreshedLane = refreshedAgentId || target || state.agentId;
+    var summaryLine = el("div", "filter-summary delivery-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Delivery"));
+    appendBadge(summaryLine, messageType, isTargeted ? "neutral" : "good");
+    appendCountBadges(summaryLine, "Counts", deliveryCounts, ["broadcast", "targeted"]);
+    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
+      operatorSummary.rawPayloadExposed ? "warn" : "good"
+    );
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawCredentialExposed ? "credential exposure review" : "credentials hidden",
+      operatorSummary.rawCredentialExposed ? "warn" : "good"
+    );
     var row = resultRow(
       isTargeted ? "Targeted message delivered" : "Broadcast delivered",
       message.safeSummary || "The message was accepted by the current-message lane.",
       [
         { text: messageType, kind: isTargeted ? "neutral" : "good" },
         { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
-        { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
+        { text: operatorSummary.valuesRedacted || message.valuesRedacted ? "redacted" : "", kind: "good" },
       ],
       [
         "from " + (message.senderAgentId || "unknown"),
         "to " + (target || "all agents"),
         "delivery " + messageType,
-        "response " + (delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement"),
+        "response " + responseDisposition,
         "message " + shortId(message.messageId),
         "notification " + shortId(notification.notificationId),
         "refreshed " + refreshedLane + " inbox",
@@ -644,6 +682,7 @@
       { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
       { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
     ]);
+    node.appendChild(summaryLine);
     node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; current inbox refreshed."));
     node.appendChild(row);
   }
@@ -750,6 +789,13 @@
       return;
     }
     clear(node);
+    var summaries = [];
+    if (payload && payload.operatorSummary) {
+      summaries.push(payload.operatorSummary);
+    }
+    if (payload && payload.operatorSummaries) {
+      summaries = summaries.concat(payload.operatorSummaries);
+    }
     var receipts = [];
     if (payload && payload.receipt) {
       receipts.push(payload.receipt);
@@ -761,9 +807,46 @@
       node.appendChild(el("p", "empty-state", "Acknowledgement receipts will appear after messages are marked read."));
       return;
     }
-    if (receipts.length > 1) {
-      node.appendChild(el("div", "result-count", receipts.length + " acknowledgement receipt(s) recorded."));
+    var statusCounts = {};
+    var rawPayloadExposedCount = 0;
+    var allPayloadsHidden = true;
+    var rawCredentialExposed = false;
+    if (summaries.length) {
+      summaries.forEach(function (summary) {
+        Object.keys((summary && summary.statusCounts) || {}).forEach(function (status) {
+          statusCounts[status] = (statusCounts[status] || 0) + summary.statusCounts[status];
+        });
+        if (summary && summary.rawPayloadExposedCount) {
+          rawPayloadExposedCount += summary.rawPayloadExposedCount;
+          allPayloadsHidden = false;
+        }
+        if (summary && summary.allPayloadsHidden === false) {
+          allPayloadsHidden = false;
+        }
+        if (summary && summary.rawCredentialExposed) {
+          rawCredentialExposed = true;
+        }
+      });
+    } else {
+      receipts.forEach(function (receipt) {
+        var status = receipt.status || "read";
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+        if (receipt.rawPayloadExposed) {
+          rawPayloadExposedCount += 1;
+          allPayloadsHidden = false;
+        }
+        if (receipt.rawCredentialExposed) {
+          rawCredentialExposed = true;
+        }
+      });
     }
+    var summaryLine = el("div", "filter-summary ack-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Acknowledgement"));
+    appendBadge(summaryLine, receipts.length + " recorded", "good");
+    appendCountBadges(summaryLine, "Status", statusCounts, ["read"]);
+    appendBadge(summaryLine, allPayloadsHidden ? "payloads hidden" : "payload exposure review", allPayloadsHidden ? "good" : "warn");
+    appendBadge(summaryLine, rawCredentialExposed ? "credential exposure review" : "credentials hidden", rawCredentialExposed ? "warn" : "good");
+    node.appendChild(summaryLine);
     receipts.forEach(function (receipt) {
       var row = resultRow(
         "Acknowledgement recorded",
@@ -1421,6 +1504,9 @@
           renderAcknowledgementSummary({
             receipts: ackPayloads.map(function (payload) {
               return payload.receipt;
+            }).filter(Boolean),
+            operatorSummaries: ackPayloads.map(function (payload) {
+              return payload.operatorSummary;
             }).filter(Boolean),
           });
         })

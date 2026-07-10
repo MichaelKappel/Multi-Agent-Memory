@@ -173,6 +173,31 @@ def _delivery_metadata(message, notification=None, inbox_agent_id=""):
     }
 
 
+def _message_delivery_operator_summary(delivery, delivery_counts):
+    delivery = delivery or {}
+    delivery_counts = dict(delivery_counts or {})
+    message_type = delivery.get("messageType") or ("targeted" if delivery.get("targetAgentId") else "broadcast")
+    broadcast = delivery.get("broadcast")
+    if broadcast is None:
+        broadcast = message_type == "broadcast"
+    response_disposition = delivery.get("responseDisposition") or "viewed_acknowledgement"
+    response_counts = {"required_response": 0, "viewed_acknowledgement": 0}
+    response_counts[response_disposition] = response_counts.get(response_disposition, 0) + 1
+    return {
+        "schemaVersion": "memoryendpoints.message_delivery_operator_summary.v1",
+        "messageType": message_type,
+        "broadcast": bool(broadcast),
+        "targetAgentId": delivery.get("targetAgentId") or "",
+        "inboxAgentId": delivery.get("inboxAgentId") or delivery.get("targetAgentId") or "",
+        "responseDisposition": response_disposition,
+        "deliveryCounts": delivery_counts,
+        "responseDispositionCounts": response_counts,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _memory_submission_metadata(event):
     event = event or {}
     firewall = event.get("firewall") or {}
@@ -188,6 +213,22 @@ def _memory_submission_metadata(event):
         "valuesRedacted": True,
         "rawPayloadExposed": False,
     }
+
+
+def _memory_submission_operator_summary(event):
+    event = event or {}
+    summary = _memory_submission_metadata(event)
+    summary.update(
+        {
+            "schemaVersion": "memoryendpoints.memory_submission_operator_summary.v1",
+            "actorAgentId": event.get("actorAgentId") or "",
+            "scopeId": event.get("scopeId") or "",
+            "subject": redact_text(event.get("subject") or ""),
+            "tagCount": len(event.get("tags") or []),
+            "rawCredentialExposed": False,
+        }
+    )
+    return summary
 
 
 def _review_status_counts(items):
@@ -257,6 +298,26 @@ def _receipts_operator_summary(items, filters):
         "consumerAgentCounts": consumer_counts,
         "rawPayloadExposedCount": raw_payload_exposed_count,
         "allPayloadsHidden": raw_payload_exposed_count == 0,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _acknowledgement_operator_summary(receipt):
+    receipt = receipt or {}
+    status = receipt.get("status") or "read"
+    raw_payload_exposed = bool(receipt.get("rawPayloadExposed"))
+    return {
+        "schemaVersion": "memoryendpoints.acknowledgement_operator_summary.v1",
+        "count": 1 if receipt else 0,
+        "receiptId": receipt.get("receiptId") or "",
+        "notificationId": receipt.get("notificationId") or "",
+        "consumerAgentId": receipt.get("consumerAgentId") or "",
+        "status": status,
+        "statusCounts": {status: 1} if receipt else {},
+        "rawPayloadExposedCount": 1 if raw_payload_exposed else 0,
+        "allPayloadsHidden": not raw_payload_exposed,
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
@@ -1101,7 +1162,16 @@ def route_protected(environ, start_response, path):
             body.get("confidence"),
             body.get("scopeId") or body.get("scope_id"),
         )
-        payload = {"ok": True, "event": event, "submission": _memory_submission_metadata(event)}
+        submission = _memory_submission_metadata(event)
+        payload = {
+            "ok": True,
+            "event": event,
+            "submission": submission,
+            "operatorSummary": _memory_submission_operator_summary(event),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
         store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":
@@ -1224,12 +1294,22 @@ def route_protected(environ, start_response, path):
             safe_summary,
             body.get("responseRequired") or body.get("response_required"),
         )
+        delivery = _delivery_metadata(message, note)
+        delivery_counts = {
+            "broadcast": 1 if delivery["messageType"] == "broadcast" else 0,
+            "targeted": 1 if delivery["messageType"] == "targeted" else 0,
+        }
+        operator_summary = _message_delivery_operator_summary(delivery, delivery_counts)
         payload = {
             "ok": True,
             "message": message,
             "notification": note,
-            "delivery": _delivery_metadata(message, note),
+            "delivery": delivery,
+            "deliveryCounts": delivery_counts,
+            "operatorSummary": operator_summary,
             "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
         }
         store.record_idempotency(workspace_id, idem, "message-submit", body, payload, "202 Accepted")
         return json_response(start_response, payload, "202 Accepted")
@@ -1284,7 +1364,14 @@ def route_protected(environ, start_response, path):
         receipt = store.ack(workspace_id, body.get("notificationId") or body.get("notification_id"), body.get("consumerAgentId") or body.get("consumer_agent_id"), body.get("status") or "read")
         if not receipt:
             return problem(start_response, "404 Not Found", "Notification not found", "No matching notification exists for this workspace.", "notification_not_found")
-        payload = {"ok": True, "receipt": receipt}
+        payload = {
+            "ok": True,
+            "receipt": receipt,
+            "operatorSummary": _acknowledgement_operator_summary(receipt),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
         store.record_idempotency(workspace_id, idem, "notification-ack", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/receipts" and method == "GET":

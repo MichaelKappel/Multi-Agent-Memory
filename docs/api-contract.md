@@ -178,6 +178,11 @@ The response disposition is one of:
 - `required_response`
 - `viewed_acknowledgement`
 
+The response includes `delivery`, `deliveryCounts`, and a redacted
+`operatorSummary` with delivery type, broadcast/targeted counts,
+response-disposition counts, and explicit no-raw-credential/no-raw-payload
+flags for operator UI use.
+
 ### GET `/api/matm/current-message`
 
 Reads the current-message lane for the target agent. This route is the agent-facing current work lane and returns unread current messages with response-state vocabulary.
@@ -205,6 +210,10 @@ Required:
 - `workspaceId`
 - `notificationId`
 - `consumerAgentId`
+
+The response includes the redacted `receipt` and an `operatorSummary` with
+receipt count, status counts, hidden-payload status, and explicit
+no-raw-credential/no-raw-payload flags for operator UI use.
 
 ### GET `/api/matm/receipts`
 
