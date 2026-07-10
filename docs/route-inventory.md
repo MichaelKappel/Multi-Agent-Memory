@@ -9,6 +9,7 @@ Operator deployment is not exposed as a public web route.
 Required public evidence routes:
 
 - `/api/matm/live-capability-matrix`
+- `/api/matm/connector-contract`
 - `/api/matm/route-inventory`
 - `/api/matm/readiness-result`
 - `/ai-manifest.json`

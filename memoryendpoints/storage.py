@@ -1489,6 +1489,69 @@ class SQLiteStore(FileStore):
     def _memory_revision_id(self, memory_id, revision_number):
         return "rev-" + _hash("%s:%s" % (memory_id, revision_number))[:20]
 
+    def check_idempotency(self, workspace_id, key, operation, body):
+        if not key:
+            return None
+        record_key = "%s:%s:%s" % (workspace_id, operation, key)
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                    (record_key,),
+                ).fetchone()
+        if not row:
+            return None
+        if not isinstance(row, dict) and hasattr(row, "keys"):
+            row = {key: row[key] for key in row.keys()}
+        if row.get("body_hash") != _canonical_hash(body):
+            return {
+                "ok": False,
+                "status": "idempotency_conflict",
+                "safeNoOp": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+                "idempotencyKeyExposed": False,
+                "error": {
+                    "code": "idempotency_conflict",
+                    "title": "Idempotency conflict",
+                    "detail": "The same idempotency key was reused with a different request body.",
+                    "safeNoOp": True,
+                    "valuesRedacted": True,
+                },
+            }
+        replay = dict(self._json_load(row.get("response_json"), {}) or {})
+        replay["idempotentReplay"] = True
+        replay["idempotencyKeyExposed"] = False
+        replay["_httpStatus"] = row.get("http_status") or "200 OK"
+        return replay
+
+    def record_idempotency(self, workspace_id, key, operation, body, response, http_status="200 OK"):
+        if not key:
+            return
+        record_key = "%s:%s:%s" % (workspace_id, operation, key)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT OR REPLACE INTO matm_idempotency (
+                          record_key, workspace_id, operation, body_hash, response_json,
+                          http_status, created_at, idempotency_key_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record_key,
+                            workspace_id,
+                            operation,
+                            _canonical_hash(body),
+                            json.dumps(response, sort_keys=True, separators=(",", ":")),
+                            http_status,
+                            utc_now(),
+                            self._int_bool(False),
+                        ),
+                    )
+
     def _load(self):
         with _LOCK:
             with self._open_connection() as connection:
@@ -2251,6 +2314,8 @@ class _DbCursor(object):
     def _normalize_row(self, row):
         if isinstance(row, dict):
             return {key: self._normalize_value(value) for key, value in row.items()}
+        if hasattr(row, "keys"):
+            return {key: self._normalize_value(row[key]) for key in row.keys()}
         return row
 
     def __iter__(self):

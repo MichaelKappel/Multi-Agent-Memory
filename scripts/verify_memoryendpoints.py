@@ -23,6 +23,7 @@ ROUTES = [
     "/transparency",
     "/api/version",
     "/api/matm/live-capability-matrix",
+    "/api/matm/connector-contract",
     "/api/matm/route-inventory",
     "/api/matm/readiness-result",
     "/api/matm/redacted-example-receipts",

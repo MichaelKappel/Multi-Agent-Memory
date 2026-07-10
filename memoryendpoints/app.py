@@ -3,7 +3,7 @@ import hmac
 import json
 import os
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from . import __version__
 from .build import build_provenance
@@ -11,7 +11,7 @@ from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, R
 from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
-from .site_data import PUBLIC_ROUTES, capability_matrix, manifest, readiness_result, route_inventory
+from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, readiness_result, route_inventory
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 
 
@@ -45,6 +45,54 @@ def _token(environ):
 
 def _idempotency_key(environ):
     return environ.get("HTTP_IDEMPOTENCY_KEY", "").strip()
+
+
+def _protected_query_url(route, params):
+    active = {}
+    for key, value in (params or {}).items():
+        if value is not None and value != "":
+            active[key] = value
+    return route + ("?" + urlencode(active) if active else "")
+
+
+def _meeting_post_confirmation(store, workspace_id, room, message):
+    room = room or {}
+    message = message or {}
+    room_id = room.get("roomId") or message.get("roomId")
+    sender_agent_id = message.get("senderAgentId") or ""
+    _room, messages, _read_state = store.meeting_messages(workspace_id, room_id, sender_agent_id, 200)
+    visible = any(item.get("meetingMessageId") == message.get("meetingMessageId") for item in messages)
+    return {
+        "persisted": visible,
+        "visibleToSender": visible,
+        "canonicalRoomId": room_id,
+        "messageId": message.get("meetingMessageId"),
+        "transcriptQueryUrl": _protected_query_url(
+            "/api/matm/meeting-messages",
+            {"room_id": room_id, "agent_id": sender_agent_id},
+        ),
+        "valuesRedacted": True,
+    }
+
+
+def _current_message_confirmation(store, workspace_id, message, note):
+    message = message or {}
+    note = note or {}
+    target_agent_id = message.get("targetAgentId") or message.get("senderAgentId") or ""
+    inbox_items = store.inbox(workspace_id, target_agent_id)
+    visible = any((item.get("notification") or {}).get("notificationId") == note.get("notificationId") for item in inbox_items)
+    return {
+        "persisted": visible,
+        "visibleToTarget": visible,
+        "canonicalTargetAgentId": message.get("targetAgentId") or "",
+        "messageId": message.get("messageId"),
+        "notificationId": note.get("notificationId"),
+        "inboxQueryUrl": _protected_query_url(
+            "/api/matm/current-message",
+            {"agent_id": target_agent_id},
+        ),
+        "valuesRedacted": True,
+    }
 
 
 def _admin_diagnostics_path():
@@ -589,6 +637,7 @@ def route_home(start_response):
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/console">Open human console</a>
+      <a class="button" href="/api/matm/connector-contract">Connector contract</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
       <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
@@ -596,6 +645,7 @@ def route_home(start_response):
   <aside class="home-status" aria-label="Operational entry points">
     <h2>Operational Surface</h2>
     <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
+    <a href="/api/matm/connector-contract"><strong>Connector contract</strong><span>settings, routes, redaction, routing</span></a>
     <a href="/api/matm/readiness-result"><strong>Readiness</strong><span>deployment and capability evidence</span></a>
     <a href="/memory-lifecycle"><strong>Memory lifecycle</strong><span>review, promotion, acknowledgement</span></a>
     <a href="/transparency"><strong>Transparency</strong><span>claims, redaction, unsupported areas</span></a>
@@ -622,6 +672,7 @@ def route_docs(start_response):
   <ul>
     <li><code>/llms.txt</code> and <code>/llms-full.txt</code> summarize public agent guidance.</li>
     <li><code>/ai-manifest.json</code> exposes route inventory and support boundaries.</li>
+    <li><code>/api/matm/connector-contract</code> gives optional connectors one stable setup, API, UI, and routing contract.</li>
     <li><code>/api/matm/readiness-result</code> exposes current local readiness and deployment blockers.</li>
     <li><code>/.well-known/mcp.json</code> and <code>/mcp/resources</code> expose resource discovery.</li>
   </ul>
@@ -1043,6 +1094,8 @@ def route_public_json(path, start_response):
         )
     if path == "/api/matm/live-capability-matrix":
         return json_response(start_response, {"ok": True, "data": capability_matrix()})
+    if path == "/api/matm/connector-contract":
+        return json_response(start_response, {"ok": True, "data": connector_contract()})
     if path == "/api/matm/route-inventory":
         return json_response(start_response, {"ok": True, "data": route_inventory()})
     if path == "/api/matm/readiness-result":
@@ -1073,7 +1126,15 @@ def route_public_json(path, start_response):
             {
                 "schemaVersion": "memoryendpoints.ai_agent.v1",
                 "name": SITE_NAME,
-                "capabilities": ["matm_memory", "current_message_inbox", "redacted_receipts", "workspace_quota", "readiness_evidence"],
+                "capabilities": [
+                    "matm_memory",
+                    "meeting_rooms",
+                    "current_message_inbox",
+                    "redacted_receipts",
+                    "workspace_quota",
+                    "connector_contract",
+                    "readiness_evidence",
+                ],
                 "manifest": "%s/ai-manifest.json" % SITE_URL,
                 "companionDocumentation": COMPANION_DOCS_URL,
                 "sourceRepository": GITHUB_REPO_URL,
@@ -1097,6 +1158,12 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints Capability Matrix",
                 "mimeType": "application/json",
                 "route": "/api/matm/live-capability-matrix",
+            },
+            {
+                "uri": "memoryendpoints://matm/connector-contract",
+                "name": "MemoryEndpoints Connector Contract",
+                "mimeType": "application/json",
+                "route": "/api/matm/connector-contract",
             },
             {
                 "uri": "memoryendpoints://matm/redacted-example-receipts",
@@ -1572,10 +1639,19 @@ def route_protected(environ, start_response, path):
         message, room = store.submit_meeting_message(workspace_id, room_id, sender_agent_id, safe_summary)
         if not message:
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        confirmation = _meeting_post_confirmation(store, workspace_id, room, message)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Meeting message was not persisted", "The meeting message could not be confirmed in the room transcript after write.", "meeting_message_not_persisted")
         payload = {
             "ok": True,
             "room": room,
             "message": message,
+            "persisted": confirmation["persisted"],
+            "visibleToSender": confirmation["visibleToSender"],
+            "canonicalRoomId": confirmation["canonicalRoomId"],
+            "messageId": confirmation["messageId"],
+            "transcriptQueryUrl": confirmation["transcriptQueryUrl"],
+            "confirmation": confirmation,
             "operatorSummary": _meeting_post_operator_summary(room, message),
             "valuesRedacted": True,
             "rawCredentialExposed": False,
@@ -1637,6 +1713,9 @@ def route_protected(environ, start_response, path):
             "broadcast": 1 if delivery["messageType"] == "broadcast" else 0,
             "targeted": 1 if delivery["messageType"] == "targeted" else 0,
         }
+        confirmation = _current_message_confirmation(store, workspace_id, message, note)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Current message was not persisted", "The current message could not be confirmed in the recipient inbox after write.", "current_message_not_persisted")
         operator_summary = _message_delivery_operator_summary(delivery, delivery_counts)
         payload = {
             "ok": True,
@@ -1644,6 +1723,13 @@ def route_protected(environ, start_response, path):
             "notification": note,
             "delivery": delivery,
             "deliveryCounts": delivery_counts,
+            "persisted": confirmation["persisted"],
+            "visibleToTarget": confirmation["visibleToTarget"],
+            "canonicalTargetAgentId": confirmation["canonicalTargetAgentId"],
+            "messageId": confirmation["messageId"],
+            "notificationId": confirmation["notificationId"],
+            "inboxQueryUrl": confirmation["inboxQueryUrl"],
+            "confirmation": confirmation,
             "operatorSummary": operator_summary,
             "valuesRedacted": True,
             "rawCredentialExposed": False,
