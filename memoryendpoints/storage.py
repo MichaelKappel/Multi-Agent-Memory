@@ -2048,6 +2048,53 @@ class SQLiteStore(FileStore):
             usage += self._sum_workspace_rows(connection, table, workspace_id)
         return usage
 
+    def audit_log(self, workspace_id, limit=50, action=None):
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        action_filter = (action or "").strip()
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if action_filter:
+            clauses.append("action = ?")
+            params.append(action_filter)
+        params.append(limit_value)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_audit_log
+                        WHERE %s
+                        ORDER BY created_at DESC, audit_id DESC
+                        LIMIT ?
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        rows.reverse()
+        items = []
+        for row in rows:
+            details = self._json_load(row["details_json"], {})
+            items.append(
+                {
+                    "auditId": row["audit_id"],
+                    "workspaceId": row["workspace_id"],
+                    "action": row["action"],
+                    "actor": redact_text(row["actor"] or ""),
+                    "target": redact_text(row["target"] or ""),
+                    "details": _public_value(details),
+                    "detailsSummary": _audit_detail_summary(details),
+                    "createdAt": row["created_at"],
+                    "valuesRedacted": self._bool(row["values_redacted"]),
+                    "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+                    "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                }
+            )
+        return items
+
     def workspace_status(self, workspace_id):
         with _LOCK:
             with self._open_connection() as connection:

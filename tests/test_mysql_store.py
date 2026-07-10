@@ -50,6 +50,43 @@ class MySQLStoreTests(unittest.TestCase):
         self.assertGreater(status["storageUsedBytes"], 0)
         self.assertFalse(status["rawKeyStoredByServer"])
 
+    def test_sql_memory_confirmation_uses_direct_audit_log(self):
+        from memoryendpoints.app import _memory_submission_confirmation
+        from memoryendpoints.storage import SQLiteStore
+
+        class DirectConfirmationStore(SQLiteStore):
+            def _load(self):
+                raise AssertionError("memory confirmation must use direct SQL queries")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = DirectConfirmationStore(Path(tmp) / "matm.sqlite")
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+                "SQL Confirmation Workspace",
+                "SQL Confirmation Company",
+                "SQL Confirmation Project",
+            )
+            event = store.submit_memory(
+                workspace_id,
+                "sql-confirmation-agent",
+                "workspace",
+                "SQL confirmation memory",
+                "SQL confirmation memory must be visible in search, review queue, and audit log.",
+                ["sql-confirmation"],
+                "tests/test_mysql_store.py",
+                "status",
+                "SQL confirmation",
+                0.9,
+            )
+
+            confirmation = _memory_submission_confirmation(store, workspace_id, event)
+            audit_items = store.audit_log(workspace_id, 50, "memory.submit")
+
+        self.assertTrue(confirmation["persisted"])
+        self.assertTrue(confirmation["visibleInSearch"])
+        self.assertTrue(confirmation["visibleInReviewQueue"])
+        self.assertTrue(confirmation["visibleInAuditLog"])
+        self.assertTrue(any(item["target"] == event["eventId"] for item in audit_items))
+
 
 if __name__ == "__main__":
     unittest.main()
