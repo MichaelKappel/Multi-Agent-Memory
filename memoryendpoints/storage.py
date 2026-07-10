@@ -2441,6 +2441,10 @@ class SQLiteStore(FileStore):
             "matm_meeting_messages",
             "matm_meeting_reads",
             "matm_routing_decisions",
+            "matm_sync_devices",
+            "matm_sync_heads",
+            "matm_sync_revisions",
+            "matm_sync_receipts",
             "matm_idempotency",
             "matm_outbox_events",
             "matm_storage_ledger",
@@ -2614,6 +2618,12 @@ class SQLiteStore(FileStore):
         with _LOCK:
             with self._open_connection() as connection:
                 return self._workspace_usage_bytes_sql(connection, workspace_id)
+
+    def record_audit(self, workspace_id, action, actor, target, details=None):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._record_audit_sql(connection, workspace_id, action, actor, target, details)
 
     def has_quota_for(self, workspace_id, candidate):
         for attempt in range(len(SQL_READ_AFTER_WRITE_RETRY_DELAYS) + 1):

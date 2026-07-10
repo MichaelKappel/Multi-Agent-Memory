@@ -257,6 +257,57 @@ def _sync_operator_summary(action, payload=None):
     }
 
 
+def _sync_mutation_confirmation(store, workspace_id, payload):
+    receipt = payload.get("receipt") or {}
+    revision = payload.get("revision") or {}
+    receipt_id = receipt.get("receiptId") or ""
+    revision_id = revision.get("syncRevisionId") or ""
+    logical_memory_id = receipt.get("logicalMemoryId") or revision.get("logicalMemoryId") or ""
+    try:
+        visible_receipt = store.sync_receipt(workspace_id, receipt_id=receipt_id) if receipt_id else None
+        changes = {"items": [], "count": 0, "indexedThroughSequence": 0}
+        revision_visible_in_changes = True
+        if revision_id:
+            after_sequence = max(0, int(payload.get("serverSequence") or revision.get("serverSequence") or 0) - 1)
+            changes = store.sync_changes(workspace_id, after_sequence, 50, logical_memory_id)
+            revision_visible_in_changes = any(item.get("syncRevisionId") == revision_id for item in changes.get("items") or [])
+        heads = []
+        head_visible = True
+        if payload.get("status") == "applied" and revision_id:
+            heads = store.sync_heads(workspace_id, logical_memory_id)
+            head_visible = any(item.get("headRevisionId") == revision_id for item in heads)
+        persisted = bool(visible_receipt and revision_visible_in_changes and head_visible)
+        return {
+            "schemaVersion": "memoryendpoints.sync_mutation_confirmation.v1",
+            "persisted": persisted,
+            "receiptVisible": bool(visible_receipt),
+            "revisionVisibleInChanges": bool(revision_visible_in_changes),
+            "headVisible": bool(head_visible),
+            "changesCount": changes.get("count", 0),
+            "headsCount": len(heads),
+            "receiptId": receipt_id,
+            "revisionId": revision_id,
+            "logicalMemoryId": logical_memory_id,
+            "indexedThroughSequence": changes.get("indexedThroughSequence", 0),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    except Exception as exc:
+        return {
+            "schemaVersion": "memoryendpoints.sync_mutation_confirmation.v1",
+            "persisted": False,
+            "receiptVisible": False,
+            "revisionVisibleInChanges": False,
+            "headVisible": False,
+            "errorFingerprint": _diagnostic_fingerprint(str(exc)),
+            "errorType": exc.__class__.__name__,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+
 def _sync_query_url(route, workspace_id, params=None):
     active = {"workspace_id": workspace_id}
     active.update(params or {})
@@ -2341,6 +2392,10 @@ def route_protected(environ, start_response, path):
         payload["changesQueryUrl"] = _sync_query_url("/api/matm/sync/changes", workspace_id, {"after_sequence": max(0, int(payload.get("serverSequence") or 0) - 1)})
         payload["headsQueryUrl"] = _sync_query_url("/api/matm/sync/heads", workspace_id, {"logical_memory_id": (payload.get("receipt") or {}).get("logicalMemoryId")})
         payload["capabilityRoute"] = "/api/matm/sync/capabilities"
+        confirmation = _sync_mutation_confirmation(store, workspace_id, payload)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Sync mutation was not persisted", "The sync mutation could not be confirmed in receipt, changes, and head readback after write.", "sync_mutation_not_persisted")
+        payload["confirmation"] = confirmation
         store.record_idempotency(workspace_id, idem, "sync-mutation", body, payload, http_status)
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/sync/receipts" and method == "GET":

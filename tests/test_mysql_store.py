@@ -87,6 +87,52 @@ class MySQLStoreTests(unittest.TestCase):
         self.assertTrue(confirmation["visibleInAuditLog"])
         self.assertTrue(any(item["target"] == event["eventId"] for item in audit_items))
 
+    def test_sql_record_audit_does_not_rebuild_store_or_drop_sync_rows(self):
+        from memoryendpoints.storage import SQLiteStore
+
+        class DirectAuditStore(SQLiteStore):
+            def _save(self, data):
+                raise AssertionError("record_audit must use direct SQL insert, not full-store rebuild")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = DirectAuditStore(Path(tmp) / "matm.sqlite")
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+                "SQL Sync Audit Workspace",
+                "SQL Sync Audit Company",
+                "SQL Sync Audit Project",
+            )
+            device = store.register_sync_device(workspace_id, "sync-audit-agent", "device-a", "Agent workstation")
+            applied, _http_status = store.submit_sync_mutation(
+                workspace_id,
+                "sync-audit-agent",
+                {
+                    "logicalMemoryId": "logical-audit",
+                    "deviceId": "device-a",
+                    "deviceEpoch": device["authorityEpoch"],
+                    "operation": "upsert",
+                    "title": "Sync audit memory",
+                    "summary": "Public-safe sync mutation must survive read-audit writes.",
+                },
+                idempotency_key="sync-audit-idempotency",
+            )
+
+            store.record_audit(
+                workspace_id,
+                "sync.changes.read",
+                "workspace-key",
+                "/api/matm/sync/changes",
+                {"count": 1},
+            )
+            receipt = store.sync_receipt(workspace_id, idempotency_key="sync-audit-idempotency")
+            changes = store.sync_changes(workspace_id, after_sequence=0, logical_memory_id="logical-audit")
+            heads = store.sync_heads(workspace_id, "logical-audit")
+
+        self.assertTrue(applied["persisted"])
+        self.assertEqual(applied["receipt"]["receiptId"], receipt["receiptId"])
+        self.assertEqual(1, changes["count"])
+        self.assertEqual(applied["revision"]["syncRevisionId"], changes["items"][0]["syncRevisionId"])
+        self.assertEqual(applied["revision"]["syncRevisionId"], heads[0]["headRevisionId"])
+
 
 if __name__ == "__main__":
     unittest.main()
