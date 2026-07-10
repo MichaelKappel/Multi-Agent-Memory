@@ -305,10 +305,14 @@ def run_sequence(transport, label, base_url=None):
         step(report, "submit_memory", status, memory)
         memory_event_id = (memory.get("event") or {}).get("eventId", "")
 
-        status, search = transport.call(
-            "/api/matm/search",
-            headers=auth,
+        status, search = read_memory_until(
+            transport,
+            auth,
+            memory_event_id,
+            path="/api/matm/search",
             query=urlencode({"workspace_id": workspace_id, "q": "dogfood"}),
+            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
+            delay_seconds=1.0,
         )
         memory_readback_verified = contains_memory_event(search, memory_event_id)
         step(report, "search_memory", status, search, verified=memory_readback_verified)
