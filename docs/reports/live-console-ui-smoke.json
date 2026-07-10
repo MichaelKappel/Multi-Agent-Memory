@@ -1,43 +1,59 @@
-{
-  "assetMarkers": {
-    "memorySearchFilters": true,
-    "memoryTypeQuery": true,
-    "reviewStatusQuery": true,
-    "rowActions": true,
-    "tagQuery": true
-  },
-  "assetStatus": {
-    "siteCss": 200,
-    "siteJs": 200
-  },
-  "baseUrl": "https://memoryendpoints.com/console",
-  "htmlMarkers": {
-    "consoleResults": true,
-    "debugJson": true,
-    "memoryTypeFilter": true,
-    "operatorSummary": true,
-    "reviewQueue": true,
-    "reviewStatusFilter": true,
-    "tagFilter": true,
-    "workspaceOverview": true
-  },
-  "htmlStatus": 200,
-  "ok": true,
-  "protectedReadbacks": {
-    "filesystemDocsIncluded": false,
-    "filteredHostedMemorySearchCount": 8,
-    "filteredHostedMemorySearchOk": true,
-    "filters": {
-      "reviewStatus": "promoted",
-      "tag": "long-term-memory-migration"
-    },
-    "matchedPromotedCount": 8,
-    "memorySource": "hosted_workspace_store",
-    "valuesRedacted": true
-  },
-  "rawCredentialsStored": false,
-  "schemaVersion": "memoryendpoints.live_console_ui_smoke.v3",
-  "sourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
-  "transport": "http_html_static_assets_and_protected_api",
-  "valuesRedacted": true
+﻿{
+    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v4",
+    "baseUrl":  "https://memoryendpoints.com/console",
+    "sourceSha":  "8de34487e51cfad92bf183d15c8452b5c0704fd4",
+    "transport":  "http_html_static_assets_protected_api_and_browser_verified_layout",
+    "htmlStatus":  200,
+    "assetStatus":  {
+                        "siteCss":  200,
+                        "siteJs":  200
+                    },
+    "htmlMarkers":  {
+                        "workspaceOverview":  true,
+                        "operatorSummary":  true,
+                        "consoleResults":  true,
+                        "memoryTypeFilter":  true,
+                        "reviewStatusFilter":  true,
+                        "tagFilter":  true,
+                        "reviewQueue":  true,
+                        "stylesheetCacheBusted":  true,
+                        "debugJson":  true
+                    },
+    "assetMarkers":  {
+                         "mobileCompanionNavFullWidth":  true,
+                         "summaryMetaBlock":  true,
+                         "rowMetaWrap":  true,
+                         "memorySearchFilters":  true,
+                         "memoryTypeQuery":  true,
+                         "reviewStatusQuery":  true,
+                         "tagQuery":  true
+                     },
+    "protectedReadbacks":  {
+                               "promotedLongTermOk":  true,
+                               "promotedLongTermCount":  8,
+                               "promotedFilters":  {
+                                                       "reviewStatus":  "promoted",
+                                                       "tag":  "long-term-memory-migration"
+                                                   },
+                               "boundaryMemoryOk":  true,
+                               "boundaryMemoryCount":  1,
+                               "boundaryMemoryVisible":  true,
+                               "pendingReviewOk":  true,
+                               "pendingReviewCount":  5,
+                               "humanVerifierInboxOk":  true,
+                               "humanVerifierUnreadCount":  7,
+                               "memorySource":  "hosted_workspace_store",
+                               "filesystemDocsIncluded":  false,
+                               "allCheckedItemsRedacted":  true
+                           },
+    "browserVerified":  {
+                            "multiAgentMemoryMobileOverflow":  false,
+                            "memoryEndpointsConsoleMobileOverflow":  false,
+                            "loadedConsoleSummaryCardCount":  6,
+                            "loadedConsoleHostedMemoryCount":  9,
+                            "loadedConsolePendingReviewCount":  5
+                        },
+    "ok":  true,
+    "valuesRedacted":  true,
+    "rawCredentialsStored":  false
 }

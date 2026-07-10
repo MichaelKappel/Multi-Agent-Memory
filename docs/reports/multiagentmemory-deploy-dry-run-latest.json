@@ -17,7 +17,7 @@
   "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
-  "remoteDirSource": "filezilla_login_root",
+  "remoteDirSource": "argument_or_handoff",
   "safeNoOp": true,
   "schemaVersion": "static_site.ftp_deploy.v1",
   "signals": {

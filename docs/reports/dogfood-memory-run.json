@@ -2,7 +2,7 @@
   "auditLogCount": 10,
   "auditTrailReadbackVerified": true,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-10T00:35:22Z",
+  "generatedAt": "2026-07-10T00:54:12Z",
   "latestDogfoodContractVerified": true,
   "liveAuditTrailReadbackVerified": true,
   "liveCoreDogfoodVerified": true,
@@ -25,7 +25,7 @@
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-10T00:35:14Z",
+      "generatedAt": "2026-07-10T00:54:04Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": false,
       "liveDogfoodVerified": false,
@@ -188,14 +188,14 @@
       ],
       "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:e1c5c45035684468dec0cb7c0dcb2ac47335685382092f8b53472f17a05bef2b"
+      "workspaceIdHash": "sha256:d95ffd01c34d0c3929ba3e104c7c7f3e6e0bf22867c4f27249d43e5d37899141"
     },
     {
       "auditLogCount": 10,
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-10T00:35:14Z",
+      "generatedAt": "2026-07-10T00:54:04Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": true,
       "liveDogfoodVerified": true,
@@ -358,7 +358,7 @@
       ],
       "target": "https://memoryendpoints.com",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:d7d9dbad3f3ccc4b4ed96252bf55dbfb6bcf770bb7c8b2f10a3a9d09657c6dff"
+      "workspaceIdHash": "sha256:ffade4764ff6b367c366087ff54b64f7e811f289c6eb9b02a0125e79a1142410"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -509,5 +509,5 @@
     }
   ],
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:d7d9dbad3f3ccc4b4ed96252bf55dbfb6bcf770bb7c8b2f10a3a9d09657c6dff"
+  "workspaceIdHash": "sha256:ffade4764ff6b367c366087ff54b64f7e811f289c6eb9b02a0125e79a1142410"
 }

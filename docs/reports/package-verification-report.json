@@ -1,8 +1,8 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
-    "sourceShaShort": "0282c8619408",
+    "sourceSha": "8de34487e51cfad92bf183d15c8452b5c0704fd4",
+    "sourceShaShort": "8de34487e51c",
     "valuesRedacted": true
   },
   "checkOnly": true,
@@ -42,7 +42,7 @@
   ],
   "excludesLocalRuntimeState": true,
   "excludesSecrets": true,
-  "fileCount": 83,
+  "fileCount": 91,
   "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
   "productionDatabaseBackend": "mysql_or_mariadb_required",
   "reportScope": "point_in_time_snapshot",
