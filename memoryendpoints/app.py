@@ -1483,7 +1483,7 @@ def route_console(start_response):
         </select>
       </label>
       <label>Actor filter
-        <input name="actorAgentId" placeholder="codex-agent">
+        <input name="actorAgentId" placeholder="MemoryEndpoints-Backend-Agent">
       </label>
       <button class="button" type="submit">Refresh reviews</button>
       <button class="button" type="button" data-console-long-term-reviews>Long-term reviews</button>
@@ -1605,7 +1605,7 @@ Remaining blocker</textarea>
         <textarea name="nextAction" rows="2" required>Open the destination room, follow the connector contract, and post implementation evidence.</textarea>
       </label>
       <label class="wide">Support plan
-        <textarea name="supportPlan" rows="2" required>Codex coordinator will review architecture, verify API/UI dogfood evidence, and route blockers into focused goal or task rooms.</textarea>
+        <textarea name="supportPlan" rows="2" required>MemoryEndpoints coordinator will review architecture, verify API/UI dogfood evidence, and route blockers into focused goal or task rooms.</textarea>
       </label>
       <button class="button primary" type="submit">Create routing decision</button>
       <button class="button" type="button" data-console-refresh-routing-decisions>Refresh routing</button>
@@ -1661,7 +1661,7 @@ Remaining blocker</textarea>
         <input name="targetAgentId" placeholder="blank means every agent">
       </label>
       <label class="wide">Safe summary
-        <textarea name="safeSummary" rows="3" required>Hello Codex swarm: please confirm this workspace memory and message lane are readable from the human console.</textarea>
+        <textarea name="safeSummary" rows="3" required>Hello MemoryEndpoints agents: please confirm this workspace memory and message lane are readable from the human console.</textarea>
       </label>
       <label class="checkline">
         <input type="checkbox" name="responseRequired" checked>
@@ -1672,7 +1672,7 @@ Remaining blocker</textarea>
     <div class="agent-shortcuts" data-console-message-targets aria-label="Message target shortcuts">
       <button class="button compact" type="button" data-console-target-agent="">Broadcast</button>
       <button class="button compact" type="button" data-console-target-agent="human-verifier-agent">Human</button>
-      <button class="button compact" type="button" data-console-target-agent="codex-agent">Codex</button>
+      <button class="button compact" type="button" data-console-target-agent="MemoryEndpoints-Backend-Agent">Backend</button>
       <button class="button compact" type="button" data-console-target-agent="swarm-observer-agent">Observer</button>
     </div>
     <div class="console-results message-delivery" data-console-message-delivery>
@@ -1694,7 +1694,7 @@ Remaining blocker</textarea>
     </form>
     <div class="agent-shortcuts" data-console-inbox-lanes aria-label="Inbox lane shortcuts">
       <button class="button compact" type="button" data-console-inbox-agent="human-verifier-agent">Human inbox</button>
-      <button class="button compact" type="button" data-console-inbox-agent="codex-agent">Codex inbox</button>
+      <button class="button compact" type="button" data-console-inbox-agent="MemoryEndpoints-Backend-Agent">Backend inbox</button>
       <button class="button compact" type="button" data-console-inbox-agent="swarm-observer-agent">Observer inbox</button>
     </div>
     <div class="console-results acknowledgement-summary" data-console-ack-summary>
@@ -1721,7 +1721,7 @@ Remaining blocker</textarea>
         <select name="consumerAgentId">
           <option value="">current inbox agent</option>
           <option value="human-verifier-agent">human-verifier-agent</option>
-          <option value="codex-agent">codex-agent</option>
+          <option value="MemoryEndpoints-Backend-Agent">MemoryEndpoints-Backend-Agent</option>
           <option value="swarm-observer-agent">swarm-observer-agent</option>
         </select>
       </label>

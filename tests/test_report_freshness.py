@@ -205,7 +205,7 @@ class ReportFreshnessTests(unittest.TestCase):
                 },
                 "messageTypesVerified": {
                     "broadcast": True,
-                    "targetedToCodex": True,
+                    "targetedToBackend": True,
                     "targetedToHuman": True,
                 },
                 "rawCredentialValuesStored": False,
@@ -244,7 +244,7 @@ class ReportFreshnessTests(unittest.TestCase):
                 "acknowledgementIsolation": {"ok": True},
                 "messageTypesVerified": {
                     "broadcast": True,
-                    "targetedToCodex": True,
+                    "targetedToBackend": True,
                     "targetedToHuman": True,
                 },
                 "rawCredentialValuesStored": False,

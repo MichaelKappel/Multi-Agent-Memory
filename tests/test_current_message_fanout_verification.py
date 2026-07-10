@@ -25,11 +25,11 @@ def message_item(summary, message_type, notification_id):
 
 class CurrentMessageFanoutVerificationTests(unittest.TestCase):
     def test_broadcast_fanout_check_requires_all_agents_to_read_broadcast(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "broadcast run 1"
         payloads = {
             "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-human"), broadcast=1),
-            "codex-agent": inbox(message_item(summary, "broadcast", "note-codex"), broadcast=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "broadcast", "note-backend"), broadcast=1),
             "swarm-observer-agent": inbox(),
         }
 
@@ -37,7 +37,7 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
 
         self.assertFalse(check["ok"])
         self.assertEqual(["swarm-observer-agent"], check["missingAgents"])
-        self.assertEqual(["human-verifier-agent", "codex-agent"], check["visibleAgents"])
+        self.assertEqual(["human-verifier-agent", "MemoryEndpoints-Backend-Agent"], check["visibleAgents"])
         self.assertEqual(3, check["expectedRecipientCount"])
         self.assertEqual(2, check["visibleRecipientCount"])
         self.assertFalse(check["uniqueRecipientNotificationIds"])
@@ -47,11 +47,11 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertFalse(check["rawPayloadExposed"])
 
     def test_broadcast_fanout_check_requires_per_recipient_notification_ids(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "broadcast shared notification"
         payloads = {
             "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
-            "codex-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
             "swarm-observer-agent": inbox(message_item(summary, "broadcast", "note-shared"), broadcast=1),
         }
 
@@ -66,11 +66,11 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertEqual(3, check["visibleRecipientCount"])
 
     def test_broadcast_fanout_check_accepts_per_recipient_notification_ids(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "broadcast unique notifications"
         payloads = {
             "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-human"), broadcast=1),
-            "codex-agent": inbox(message_item(summary, "broadcast", "note-codex"), broadcast=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "broadcast", "note-backend"), broadcast=1),
             "swarm-observer-agent": inbox(message_item(summary, "broadcast", "note-observer"), broadcast=1),
         }
 
@@ -82,77 +82,77 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         self.assertEqual(
             {
                 "human-verifier-agent": "note-human",
-                "codex-agent": "note-codex",
+                "MemoryEndpoints-Backend-Agent": "note-backend",
                 "swarm-observer-agent": "note-observer",
             },
             check["primaryNotificationIdsByAgent"],
         )
 
     def test_broadcast_fanout_check_rejects_wrong_message_type(self):
-        agents = ["human-verifier-agent", "codex-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent"]
         summary = "broadcast run 2"
         payloads = {
             "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-human"), broadcast=1),
-            "codex-agent": inbox(message_item(summary, "targeted", "note-codex"), targeted=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "targeted", "note-backend"), targeted=1),
         }
 
         check = fanout.broadcast_fanout_check(payloads, summary, agents)
 
         self.assertFalse(check["ok"])
-        self.assertEqual(["codex-agent"], check["wrongTypeAgents"])
+        self.assertEqual(["MemoryEndpoints-Backend-Agent"], check["wrongTypeAgents"])
         self.assertEqual([], check["missingAgents"])
 
     def test_targeted_delivery_check_distinguishes_targeted_from_broadcast(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "targeted run 1"
         payloads = {
             "human-verifier-agent": inbox(),
-            "codex-agent": inbox(message_item(summary, "targeted", "note-codex"), targeted=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "targeted", "note-backend"), targeted=1),
             "swarm-observer-agent": inbox(),
         }
 
-        check = fanout.targeted_delivery_check(payloads, summary, "codex-agent", agents)
+        check = fanout.targeted_delivery_check(payloads, summary, "MemoryEndpoints-Backend-Agent", agents)
 
         self.assertTrue(check["ok"])
         self.assertTrue(check["visibleToTarget"])
-        self.assertEqual(["codex-agent"], check["visibleAgents"])
+        self.assertEqual(["MemoryEndpoints-Backend-Agent"], check["visibleAgents"])
         self.assertEqual([], check["unexpectedAgents"])
-        self.assertEqual({"codex-agent": ["note-codex"]}, check["notificationIdsByAgent"])
+        self.assertEqual({"MemoryEndpoints-Backend-Agent": ["note-backend"]}, check["notificationIdsByAgent"])
 
     def test_targeted_delivery_check_rejects_non_target_visibility(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "targeted run 2"
         payloads = {
             "human-verifier-agent": inbox(message_item(summary, "targeted", "note-human"), targeted=1),
-            "codex-agent": inbox(message_item(summary, "targeted", "note-codex"), targeted=1),
+            "MemoryEndpoints-Backend-Agent": inbox(message_item(summary, "targeted", "note-backend"), targeted=1),
             "swarm-observer-agent": inbox(),
         }
 
-        check = fanout.targeted_delivery_check(payloads, summary, "codex-agent", agents)
+        check = fanout.targeted_delivery_check(payloads, summary, "MemoryEndpoints-Backend-Agent", agents)
 
         self.assertFalse(check["ok"])
         self.assertEqual(["human-verifier-agent"], check["unexpectedAgents"])
         self.assertTrue(check["visibleToTarget"])
 
     def test_acknowledgement_isolation_keeps_broadcast_visible_to_other_agents(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         summary = "broadcast ack run"
-        before = inbox(message_item(summary, "broadcast", "note-codex"), broadcast=1)
+        before = inbox(message_item(summary, "broadcast", "note-backend"), broadcast=1)
         after = {
             "human-verifier-agent": inbox(message_item(summary, "broadcast", "note-human"), broadcast=1),
-            "codex-agent": inbox(),
+            "MemoryEndpoints-Backend-Agent": inbox(),
             "swarm-observer-agent": inbox(message_item(summary, "broadcast", "note-observer"), broadcast=1),
         }
 
-        check = fanout.acknowledgement_isolation_check(before, after, summary, "codex-agent", agents)
+        check = fanout.acknowledgement_isolation_check(before, after, summary, "MemoryEndpoints-Backend-Agent", agents)
 
         self.assertTrue(check["ok"])
-        self.assertEqual("note-codex", check["ackNotificationId"])
-        self.assertNotIn("codex-agent", check["visibleAfterAckAgents"])
+        self.assertEqual("note-backend", check["ackNotificationId"])
+        self.assertNotIn("MemoryEndpoints-Backend-Agent", check["visibleAfterAckAgents"])
         self.assertEqual(["human-verifier-agent", "swarm-observer-agent"], check["expectedRemainingAgents"])
 
     def test_build_report_is_secret_safe_and_sets_overall_status(self):
-        agents = ["human-verifier-agent", "codex-agent", "swarm-observer-agent"]
+        agents = ["human-verifier-agent", "MemoryEndpoints-Backend-Agent", "swarm-observer-agent"]
         registration = {"ok": True, "items": [], "valuesRedacted": True}
         broadcast = {
             "ok": True,
@@ -160,7 +160,7 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        targeted_codex = {
+        targeted_backend = {
             "ok": True,
             "valuesRedacted": True,
             "rawCredentialExposed": False,
@@ -184,7 +184,7 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
             agents,
             registration,
             broadcast,
-            targeted_codex,
+            targeted_backend,
             targeted_human,
             redaction,
             workspace_id="ws-private-value",
@@ -194,6 +194,7 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertTrue(report["messageTypesVerified"]["broadcast"])
+        self.assertTrue(report["messageTypesVerified"]["targetedToBackend"])
         self.assertIn("sha256:", report["workspaceIdHash"])
         self.assertNotIn("ws-private-value", text)
         self.assertNotIn("token-fixture", text)
@@ -280,14 +281,14 @@ class CurrentMessageFanoutVerificationTests(unittest.TestCase):
         payload = {
             "notifications": [
                 {"targetAgentId": "human-verifier-agent", "notificationId": "note-human"},
-                {"targetAgentId": "codex-agent", "notificationId": "note-codex"},
+                {"targetAgentId": "MemoryEndpoints-Backend-Agent", "notificationId": "note-backend"},
             ]
         }
 
         self.assertEqual(
             {
                 "human-verifier-agent": "note-human",
-                "codex-agent": "note-codex",
+                "MemoryEndpoints-Backend-Agent": "note-backend",
             },
             fanout.notification_ids_by_agent_from_submit(payload),
         )

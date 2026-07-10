@@ -438,8 +438,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-message-delivery", text)
         self.assertIn("data-console-refresh-lanes", text)
         self.assertIn("data-console-lane-overview", text)
-        self.assertIn('data-console-target-agent="codex-agent"', text)
+        self.assertIn('data-console-target-agent="MemoryEndpoints-Backend-Agent"', text)
         self.assertIn("data-console-inbox-lanes", text)
+        self.assertIn('data-console-inbox-agent="MemoryEndpoints-Backend-Agent"', text)
+        self.assertNotIn("Codex inbox", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
         self.assertIn("data-console-ack-visible", text)
         self.assertIn("data-console-ack-summary", text)
@@ -733,7 +735,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
 
         self.assertIn("agentLanes", js)
         self.assertIn("human-verifier-agent", js)
-        self.assertIn("codex-agent", js)
+        self.assertIn("MemoryEndpoints-Backend-Agent", js)
         self.assertIn("swarm-observer-agent", js)
         self.assertIn("renderLaneOverview", js)
         self.assertIn("refreshLaneOverview", js)
@@ -1946,7 +1948,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "specificGoal": "Build the optional hosted memory connector and post public-safe implementation evidence.",
                     "expectedEvidence": ["routes exercised", "tests run", "redaction result", "remaining blocker"],
                     "nextAction": "Open the goal room and post connector implementation evidence.",
-                    "supportPlan": "Codex will review architecture, API/UI dogfood evidence, and blockers.",
+                    "supportPlan": "MemoryEndpoints coordinator will review architecture, API/UI dogfood evidence, and blockers.",
                 }
                 routing_headers = dict(auth, HTTP_IDEMPOTENCY_KEY="routing-decision-proof-%s" % backend)
                 status, _headers, text = call_app(
@@ -2055,7 +2057,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         workspace_id = setup["workspaceId"]
         auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
 
-        for agent_id in ("codex-agent", "human-verifier-agent", "observer-agent"):
+        for agent_id in ("MemoryEndpoints-Backend-Agent", "human-verifier-agent", "observer-agent"):
             status, _headers, _text = call_app(
                 "/api/matm/agents/register",
                 method="POST",
@@ -2070,7 +2072,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             body={
                 "workspaceId": workspace_id,
-                "senderAgentId": "codex-agent",
+                "senderAgentId": "MemoryEndpoints-Backend-Agent",
                 "safeSummary": "Broadcast to every active agent in the swarm.",
                 "responseRequired": False,
             },
@@ -2086,11 +2088,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(3, broadcast_payload["expectedRecipientCount"])
         self.assertEqual(3, broadcast_payload["visibleRecipientCount"])
         self.assertEqual(
-            {"codex-agent", "human-verifier-agent", "observer-agent"},
+            {"MemoryEndpoints-Backend-Agent", "human-verifier-agent", "observer-agent"},
             set(broadcast_payload["visibleToAgents"]),
         )
         self.assertEqual(
-            {"codex-agent", "human-verifier-agent", "observer-agent"},
+            {"MemoryEndpoints-Backend-Agent", "human-verifier-agent", "observer-agent"},
             {item["targetAgentId"] for item in broadcast_payload["notifications"]},
         )
         broadcast_summary = broadcast_payload["operatorSummary"]
@@ -2112,8 +2114,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": "human-verifier-agent",
-                "targetAgentId": "codex-agent",
-                "safeSummary": "Targeted message for Codex only.",
+                "targetAgentId": "MemoryEndpoints-Backend-Agent",
+                "safeSummary": "Targeted message for Backend only.",
                 "responseRequired": True,
             },
         )
@@ -2121,13 +2123,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         targeted_payload = json.loads(text)
         self.assertEqual("targeted", targeted_payload["delivery"]["messageType"])
         self.assertFalse(targeted_payload["delivery"]["broadcast"])
-        self.assertEqual("codex-agent", targeted_payload["delivery"]["targetAgentId"])
+        self.assertEqual("MemoryEndpoints-Backend-Agent", targeted_payload["delivery"]["targetAgentId"])
         self.assertEqual({"broadcast": 0, "targeted": 1}, targeted_payload["deliveryCounts"])
         targeted_summary = targeted_payload["operatorSummary"]
         self.assertEqual("memoryendpoints.message_delivery_operator_summary.v1", targeted_summary["schemaVersion"])
         self.assertEqual("targeted", targeted_summary["messageType"])
         self.assertFalse(targeted_summary["broadcast"])
-        self.assertEqual("codex-agent", targeted_summary["targetAgentId"])
+        self.assertEqual("MemoryEndpoints-Backend-Agent", targeted_summary["targetAgentId"])
         self.assertEqual("required_response", targeted_summary["responseDisposition"])
         self.assertEqual({"broadcast": 0, "targeted": 1}, targeted_summary["deliveryCounts"])
         self.assertEqual(1, targeted_summary["responseDispositionCounts"]["required_response"])
@@ -2140,7 +2142,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "/api/matm/current-message",
             headers=auth,
             query=(
-                "workspace_id=%s&agent_id=codex-agent&message_id=%s&notification_id=%s"
+                "workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent&message_id=%s&notification_id=%s"
                 % (workspace_id, targeted_payload["messageId"], targeted_payload["notificationId"])
             ),
         )
@@ -2149,7 +2151,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(1, exact_targeted["unreadCount"])
         self.assertEqual(
             {
-                "agentId": "codex-agent",
+                "agentId": "MemoryEndpoints-Backend-Agent",
                 "messageId": targeted_payload["messageId"],
                 "notificationId": targeted_payload["notificationId"],
             },
@@ -2161,38 +2163,38 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/current-message",
             headers=auth,
-            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+            query="workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id,
         )
         self.assertEqual("200 OK", status)
-        codex = json.loads(text)
-        self.assertEqual(2, codex["unreadCount"])
-        self.assertEqual({"agentId": "codex-agent"}, codex["filters"])
-        self.assertEqual({"broadcast": 1, "targeted": 1}, codex["deliveryCounts"])
-        codex_summary = codex["operatorSummary"]
-        self.assertEqual("memoryendpoints.inbox_operator_summary.v1", codex_summary["schemaVersion"])
-        self.assertEqual("codex-agent", codex_summary["agentId"])
-        self.assertEqual(2, codex_summary["unreadCount"])
-        self.assertTrue(codex_summary["currentMessageLane"])
-        self.assertEqual({"broadcast": 1, "targeted": 1}, codex_summary["deliveryCounts"])
-        self.assertEqual(1, codex_summary["responseDispositionCounts"]["required_response"])
-        self.assertEqual(1, codex_summary["responseDispositionCounts"]["viewed_acknowledgement"])
-        self.assertTrue(codex_summary["valuesRedacted"])
-        self.assertFalse(codex_summary["rawCredentialExposed"])
-        self.assertFalse(codex_summary["rawPayloadExposed"])
-        codex_summaries = {item["message"]["safeSummary"] for item in codex["items"]}
-        self.assertIn("Broadcast to every active agent in the swarm.", codex_summaries)
-        self.assertIn("Targeted message for Codex only.", codex_summaries)
-        self.assertEqual({"broadcast", "targeted"}, {item["delivery"]["messageType"] for item in codex["items"]})
+        backend = json.loads(text)
+        self.assertEqual(2, backend["unreadCount"])
+        self.assertEqual({"agentId": "MemoryEndpoints-Backend-Agent"}, backend["filters"])
+        self.assertEqual({"broadcast": 1, "targeted": 1}, backend["deliveryCounts"])
+        backend_summary = backend["operatorSummary"]
+        self.assertEqual("memoryendpoints.inbox_operator_summary.v1", backend_summary["schemaVersion"])
+        self.assertEqual("MemoryEndpoints-Backend-Agent", backend_summary["agentId"])
+        self.assertEqual(2, backend_summary["unreadCount"])
+        self.assertTrue(backend_summary["currentMessageLane"])
+        self.assertEqual({"broadcast": 1, "targeted": 1}, backend_summary["deliveryCounts"])
+        self.assertEqual(1, backend_summary["responseDispositionCounts"]["required_response"])
+        self.assertEqual(1, backend_summary["responseDispositionCounts"]["viewed_acknowledgement"])
+        self.assertTrue(backend_summary["valuesRedacted"])
+        self.assertFalse(backend_summary["rawCredentialExposed"])
+        self.assertFalse(backend_summary["rawPayloadExposed"])
+        backend_summaries = {item["message"]["safeSummary"] for item in backend["items"]}
+        self.assertIn("Broadcast to every active agent in the swarm.", backend_summaries)
+        self.assertIn("Targeted message for Backend only.", backend_summaries)
+        self.assertEqual({"broadcast", "targeted"}, {item["delivery"]["messageType"] for item in backend["items"]})
 
-        codex_broadcast = next(item for item in codex["items"] if item["delivery"]["messageType"] == "broadcast")
+        backend_broadcast = next(item for item in backend["items"] if item["delivery"]["messageType"] == "broadcast")
         status, _headers, text = call_app(
             "/api/matm/notifications/ack",
             method="POST",
             headers=auth,
             body={
                 "workspaceId": workspace_id,
-                "notificationId": codex_broadcast["notification"]["notificationId"],
-                "consumerAgentId": "codex-agent",
+                "notificationId": backend_broadcast["notification"]["notificationId"],
+                "consumerAgentId": "MemoryEndpoints-Backend-Agent",
                 "status": "read",
             },
         )
@@ -2201,13 +2203,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/current-message",
             headers=auth,
-            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+            query="workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id,
         )
         self.assertEqual("200 OK", status)
-        codex_after_ack = json.loads(text)
-        self.assertEqual(1, codex_after_ack["unreadCount"])
-        self.assertEqual({"broadcast": 0, "targeted": 1}, codex_after_ack["deliveryCounts"])
-        self.assertEqual("Targeted message for Codex only.", codex_after_ack["items"][0]["message"]["safeSummary"])
+        backend_after_ack = json.loads(text)
+        self.assertEqual(1, backend_after_ack["unreadCount"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, backend_after_ack["deliveryCounts"])
+        self.assertEqual("Targeted message for Backend only.", backend_after_ack["items"][0]["message"]["safeSummary"])
 
         status, _headers, text = call_app(
             "/api/matm/current-message",
@@ -2238,7 +2240,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         workspace_id = setup["workspaceId"]
         auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
 
-        for agent_id in ("codex-agent", "human-verifier-agent"):
+        for agent_id in ("MemoryEndpoints-Backend-Agent", "human-verifier-agent"):
             status, _headers, _text = call_app(
                 "/api/matm/agents/register",
                 method="POST",
@@ -2255,7 +2257,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 body={
                     "workspaceId": workspace_id,
                     "senderAgentId": "human-verifier-agent",
-                    "targetAgentId": "codex-agent",
+                    "targetAgentId": "MemoryEndpoints-Backend-Agent",
                     "safeSummary": summary,
                 },
             )
@@ -2264,7 +2266,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/current-message",
             headers=auth,
-            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+            query="workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id,
         )
         self.assertEqual("200 OK", status)
         inbox = json.loads(text)
@@ -2767,7 +2769,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         for body in [
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "procedure",
@@ -2778,7 +2780,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "workspace",
                 "scopeId": workspace_id,
                 "memoryType": "decision",
@@ -2789,7 +2791,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "procedure",
@@ -2800,7 +2802,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "note",
@@ -2811,14 +2813,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "status",
                 "title": "Coordination note",
                 "summary": "Coordination note tagged long-term-memory-migration, but not a canonical migrated source file.",
                 "tags": ["long-term-memory-migration", "coordination"],
-                "source": "Codex live verification",
+                "source": "Backend live verification",
             },
         ]:
             status, _headers, _text = call_app(
@@ -2881,7 +2883,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         for body in [
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "procedure",
@@ -2892,7 +2894,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "project",
                 "scopeId": project_id,
                 "memoryType": "procedure",
@@ -2903,7 +2905,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
             {
                 "workspaceId": workspace_id,
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "scope": "workspace",
                 "scopeId": workspace_id,
                 "memoryType": "status",
@@ -2954,7 +2956,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query=(
                 "workspace_id=%s&status=pending&source_prefix=docs/long-term-memory/"
-                "&tag=long-term-memory-migration&memory_type=procedure&actor_agent_id=codex-agent"
+                "&tag=long-term-memory-migration&memory_type=procedure&actor_agent_id=MemoryEndpoints-Backend-Agent"
             )
             % workspace_id,
         )
@@ -2964,7 +2966,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(2, filtered["count"])
         self.assertEqual(
             {
-                "actorAgentId": "codex-agent",
+                "actorAgentId": "MemoryEndpoints-Backend-Agent",
                 "memoryType": "procedure",
                 "sourcePrefix": "docs/long-term-memory/",
                 "status": "pending",

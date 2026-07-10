@@ -321,7 +321,7 @@ def main(argv=None):
     token = secret.get("apiKeySecret") or ""
     if not token:
         raise RuntimeError("secret file does not contain apiKeySecret")
-    actor_agent_id = args.agent_id or secret.get("codexAgentId") or "codex-agent"
+    actor_agent_id = args.agent_id or secret.get("backendAgentId") or "MemoryEndpoints-Backend-Agent"
     context = workspace_context(base_url, token, secret.get("workspaceId"))
 
     status, register = call_json(

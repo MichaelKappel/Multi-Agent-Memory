@@ -279,7 +279,7 @@ def current_message_contract_evidence(fanout, connector_contract):
         and broadcast.get("uniqueRecipientNotificationIds")
         and ack.get("ok")
         and message_types.get("broadcast")
-        and message_types.get("targetedToCodex")
+        and message_types.get("targetedToBackend")
         and message_types.get("targetedToHuman")
         and not fanout.get("rawCredentialValuesStored")
         and not fanout.get("rawWorkspaceIdStored")

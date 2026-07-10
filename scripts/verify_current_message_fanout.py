@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
 DEFAULT_REPORT = ROOT / "docs" / "reports" / "current-message-fanout-verification.json"
 DEFAULT_HUMAN_AGENT_ID = "human-verifier-agent"
-DEFAULT_CODEX_AGENT_ID = "codex-agent"
+DEFAULT_BACKEND_AGENT_ID = "MemoryEndpoints-Backend-Agent"
 DEFAULT_OBSERVER_AGENT_ID = "swarm-observer-agent"
 
 
@@ -65,6 +65,14 @@ def request_json(base_url, path, method="GET", token=None, query=None, headers=N
 
 def agent_id_from_secret(secret, fallback=DEFAULT_HUMAN_AGENT_ID):
     for key in ("humanAgentId", "agentId", "defaultAgentId"):
+        value = (secret or {}).get(key)
+        if value:
+            return str(value)
+    return fallback
+
+
+def named_agent_id_from_secret(secret, keys, fallback=""):
+    for key in keys:
         value = (secret or {}).get(key)
         if value:
             return str(value)
@@ -276,7 +284,7 @@ def build_report(
     agent_ids,
     registration_check,
     broadcast_check,
-    targeted_to_codex_check,
+    targeted_to_backend_check,
     targeted_to_human_check,
     redaction_check,
     ack_check=None,
@@ -293,13 +301,13 @@ def build_report(
         "registration": registration_check,
         "broadcast": broadcast_check,
         "targeted": {
-            "targetedToCodex": targeted_to_codex_check,
+            "targetedToBackend": targeted_to_backend_check,
             "targetedToHuman": targeted_to_human_check,
         },
         "acknowledgementIsolation": ack_check,
         "messageTypesVerified": {
             "broadcast": bool(broadcast_check.get("ok")),
-            "targetedToCodex": bool(targeted_to_codex_check.get("ok")),
+            "targetedToBackend": bool(targeted_to_backend_check.get("ok")),
             "targetedToHuman": bool(targeted_to_human_check.get("ok")),
         },
         "redaction": redaction_check,
@@ -313,7 +321,7 @@ def build_report(
     report["ok"] = bool(
         registration_check.get("ok")
         and broadcast_check.get("ok")
-        and targeted_to_codex_check.get("ok")
+        and targeted_to_backend_check.get("ok")
         and targeted_to_human_check.get("ok")
         and ack_check.get("ok")
         and redaction_check.get("valuesRedacted")
@@ -473,7 +481,7 @@ def main(argv=None):
     parser.add_argument("--secret", default=str(DEFAULT_SECRET))
     parser.add_argument("--json-out", default=str(DEFAULT_REPORT))
     parser.add_argument("--human-agent-id", default="")
-    parser.add_argument("--codex-agent-id", default=DEFAULT_CODEX_AGENT_ID)
+    parser.add_argument("--backend-agent-id", default="")
     parser.add_argument("--observer-agent-id", default=DEFAULT_OBSERVER_AGENT_ID)
     parser.add_argument("--ack-isolation", action="store_true")
     args = parser.parse_args(argv)
@@ -483,7 +491,8 @@ def main(argv=None):
     workspace_id = secret.get("workspaceId") or ""
     token = secret.get("apiKeySecret") or ""
     human_agent_id = args.human_agent_id or agent_id_from_secret(secret)
-    agent_ids = unique_agents(human_agent_id, args.codex_agent_id, args.observer_agent_id)
+    backend_agent_id = args.backend_agent_id or named_agent_id_from_secret(secret, ("backendAgentId",), DEFAULT_BACKEND_AGENT_ID)
+    agent_ids = unique_agents(human_agent_id, backend_agent_id, args.observer_agent_id)
     if not workspace_id or not token:
         raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
     if not agent_ids:
@@ -529,43 +538,43 @@ def main(argv=None):
     broadcast_check["submitStatus"] = status
     broadcast_check["submitAccepted"] = bool(broadcast_payload.get("ok") and status in (200, 202))
 
-    targeted_to_codex_summary = "Current-message fanout verifier targeted-to-Codex: only codex-agent should see this public-safe message. Run %s." % run_id
-    status, codex_payload, _headers = send_message(
+    targeted_to_backend_summary = "Current-message fanout verifier targeted-to-backend: only %s should see this public-safe message. Run %s." % (backend_agent_id, run_id)
+    status, backend_payload, _headers = send_message(
         base_url,
         token,
         workspace_id,
         human_agent_id,
-        targeted_to_codex_summary,
+        targeted_to_backend_summary,
         run_id,
-        target_agent_id=args.codex_agent_id,
+        target_agent_id=backend_agent_id,
         response_required=True,
     )
-    all_payloads.append(codex_payload)
-    codex_message_id = codex_payload.get("messageId") or ((codex_payload.get("message") or {}).get("messageId") or "")
-    codex_notification_ids_by_agent = notification_ids_by_agent_from_submit(codex_payload)
-    codex_inboxes, inbox_payloads = read_current_messages(
+    all_payloads.append(backend_payload)
+    backend_message_id = backend_payload.get("messageId") or ((backend_payload.get("message") or {}).get("messageId") or "")
+    backend_notification_ids_by_agent = notification_ids_by_agent_from_submit(backend_payload)
+    backend_inboxes, inbox_payloads = read_current_messages(
         base_url,
         token,
         workspace_id,
         agent_ids,
-        codex_message_id,
-        notification_ids_by_agent=codex_notification_ids_by_agent,
-        expected_summary=targeted_to_codex_summary,
-        expected_agents=[args.codex_agent_id],
+        backend_message_id,
+        notification_ids_by_agent=backend_notification_ids_by_agent,
+        expected_summary=targeted_to_backend_summary,
+        expected_agents=[backend_agent_id],
         attempts=4,
         delay_seconds=1.0,
     )
     all_payloads.extend(inbox_payloads)
-    targeted_to_codex_check = targeted_delivery_check(codex_inboxes, targeted_to_codex_summary, args.codex_agent_id, agent_ids)
-    targeted_to_codex_check["submitStatus"] = status
-    targeted_to_codex_check["submitAccepted"] = bool(codex_payload.get("ok") and status in (200, 202))
+    targeted_to_backend_check = targeted_delivery_check(backend_inboxes, targeted_to_backend_summary, backend_agent_id, agent_ids)
+    targeted_to_backend_check["submitStatus"] = status
+    targeted_to_backend_check["submitAccepted"] = bool(backend_payload.get("ok") and status in (200, 202))
 
     targeted_to_human_summary = "Current-message fanout verifier targeted-to-human: only human-verifier-agent should see this public-safe message. Run %s." % run_id
     status, human_payload, _headers = send_message(
         base_url,
         token,
         workspace_id,
-        args.codex_agent_id,
+        backend_agent_id,
         targeted_to_human_summary,
         run_id,
         target_agent_id=human_agent_id,
@@ -593,7 +602,7 @@ def main(argv=None):
 
     ack_check = {"skipped": True, "ok": True, "valuesRedacted": True}
     if args.ack_isolation:
-        ack_agent_id = args.codex_agent_id
+        ack_agent_id = backend_agent_id
         before_inboxes, inbox_payloads = read_current_messages(
             base_url,
             token,
@@ -639,7 +648,7 @@ def main(argv=None):
         agent_ids,
         registration_check,
         broadcast_check,
-        targeted_to_codex_check,
+        targeted_to_backend_check,
         targeted_to_human_check,
         redaction_check,
         ack_check=ack_check,

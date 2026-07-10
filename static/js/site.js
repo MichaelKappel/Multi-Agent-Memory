@@ -49,7 +49,7 @@
   };
   var agentLanes = [
     { agentId: "human-verifier-agent", label: "Human" },
-    { agentId: "codex-agent", label: "Codex" },
+    { agentId: "MemoryEndpoints-Backend-Agent", label: "Backend" },
     { agentId: "swarm-observer-agent", label: "Observer" },
   ];
   var longTermMemoryTag = "long-term-memory-migration";
