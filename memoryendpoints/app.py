@@ -16,6 +16,8 @@ from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostic
 
 
 STATIC_ROOT = ROOT / "static"
+LONG_TERM_MEMORY_TAG = "long-term-memory-migration"
+LONG_TERM_MEMORY_SOURCE_PREFIX = "docs/long-term-memory/"
 
 
 def _read_body(environ):
@@ -347,9 +349,53 @@ def _count_by(items, key, defaults=None):
     return counts
 
 
+def _is_long_term_memory_item(item):
+    tags = item.get("tags") or []
+    source = item.get("source") or ""
+    return LONG_TERM_MEMORY_TAG in tags or source.startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)
+
+
+def _long_term_memory_operator_summary(items, query_text, filters):
+    items = items or []
+    filters = filters or {}
+    relevant_items = [item for item in items if _is_long_term_memory_item(item)]
+    requested = (
+        filters.get("tag") == LONG_TERM_MEMORY_TAG
+        or LONG_TERM_MEMORY_TAG in (query_text or "")
+        or bool(relevant_items)
+    )
+    if not requested:
+        return None
+    source_paths = sorted({item.get("source") for item in relevant_items if (item.get("source") or "").startswith(LONG_TERM_MEMORY_SOURCE_PREFIX)})
+    promoted_count = sum(1 for item in relevant_items if item.get("reviewStatus") == "promoted" or item.get("promotionState") == "promoted")
+    raw_private_payload_count = sum(1 for item in relevant_items if item.get("rawPrivatePayloadStored"))
+    all_values_redacted = all(item.get("valuesRedacted") is not False for item in relevant_items)
+    status = "promoted" if relevant_items and promoted_count == len(relevant_items) else ("hosted_pending_review" if relevant_items else "not_found")
+    return {
+        "schemaVersion": "memoryendpoints.long_term_memory_operator_summary.v1",
+        "migrationTag": LONG_TERM_MEMORY_TAG,
+        "status": status,
+        "count": len(relevant_items),
+        "sourcePathCount": len(source_paths),
+        "sourcePathSamples": source_paths[:8],
+        "memorySource": "hosted_workspace_store",
+        "filesystemDocsIncluded": False,
+        "scopeCounts": _count_by(relevant_items, "scope", {"account": 0, "company": 0, "workspace": 0, "project": 0}),
+        "memoryTypeCounts": _count_by(relevant_items, "memoryType"),
+        "reviewStatusCounts": _count_by(relevant_items, "reviewStatus", {"pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "promotionStateCounts": _count_by(relevant_items, "promotionState", {"review_pending": 0, "quarantined": 0, "promoted": 0, "rejected": 0}),
+        "allPromoted": bool(relevant_items) and promoted_count == len(relevant_items),
+        "allValuesRedacted": all_values_redacted,
+        "rawPrivatePayloadStoredCount": raw_private_payload_count,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _memory_search_operator_summary(items, query_text, filters):
     items = items or []
-    return {
+    summary = {
         "schemaVersion": "memoryendpoints.memory_search_operator_summary.v1",
         "query": redact_text(query_text or ""),
         "count": len(items),
@@ -364,6 +410,10 @@ def _memory_search_operator_summary(items, query_text, filters):
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
     }
+    long_term_memory = _long_term_memory_operator_summary(items, query_text, filters)
+    if long_term_memory:
+        summary["longTermMemoryMigration"] = long_term_memory
+    return summary
 
 
 def _inbox_operator_summary(items, filters, delivery_counts, current_message_lane):

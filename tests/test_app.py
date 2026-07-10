@@ -336,6 +336,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".meeting-promotion-operator-summary", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".memory-search-summary", css)
+        self.assertIn(".long-term-memory-summary", css)
         self.assertIn(".inbox-summary", css)
         self.assertIn(".receipt-summary", css)
         self.assertIn(".audit-summary", css)
@@ -576,11 +577,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("appendFilterSummary", js)
         self.assertIn("appendCountBadges", js)
         self.assertIn("renderMemoryOperatorSummary", js)
+        self.assertIn("renderLongTermMemoryOperatorSummary", js)
         self.assertIn("payload.operatorSummary", js)
         self.assertIn("summary.scopeCounts", js)
+        self.assertIn("summary.longTermMemoryMigration", js)
         self.assertIn("summary.reviewStatusCounts", js)
         self.assertIn("summary.promotionStateCounts", js)
         self.assertIn("filesystem excluded", js)
+        self.assertIn("private payload hidden", js)
+        self.assertIn("long-term-memory-summary", js)
         self.assertIn("memoryScopeGroups", js)
         self.assertIn('"account", "company", "workspace", "project"', js)
         self.assertIn('group.scope + " memory ("', js)
@@ -595,6 +600,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-long-term-memory", js)
         self.assertIn("Load workspace before searching hosted long-term memory.", js)
         self.assertIn("Hosted long-term memory search refreshed", js)
+        self.assertIn("source path(s)", js)
 
     def test_console_js_wires_audit_log_filters(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -2148,6 +2154,87 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         self.assertEqual(0, json.loads(text)["count"])
+
+    def test_memory_search_summarizes_hosted_long_term_memory_migration(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={"label": "Long Term Memory Workspace"},
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+        token = setup["apiKeySecret"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+
+        for body in [
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "procedure",
+                "title": "System Targets",
+                "summary": "Hosted long-term memory migration source path one.",
+                "tags": ["long-term-memory-migration"],
+                "source": "docs/long-term-memory/system-targets.md",
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "workspace",
+                "scopeId": workspace_id,
+                "memoryType": "decision",
+                "title": "Architecture Notes",
+                "summary": "Hosted long-term memory migration source path two.",
+                "tags": ["long-term-memory-migration", "architecture"],
+                "source": "docs/long-term-memory/architecture-notes.md",
+            },
+            {
+                "workspaceId": workspace_id,
+                "actorAgentId": "codex-agent",
+                "scope": "project",
+                "scopeId": project_id,
+                "memoryType": "note",
+                "title": "Unrelated Memory",
+                "summary": "This hosted memory should not count in the migration summary.",
+                "tags": ["other-tag"],
+                "source": "api",
+            },
+        ]:
+            status, _headers, _text = call_app(
+                "/api/matm/memory-events/submit",
+                method="POST",
+                headers=auth,
+                body=body,
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=long-term-memory-migration&tag=long-term-memory-migration" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        migration = payload["operatorSummary"]["longTermMemoryMigration"]
+
+        self.assertEqual("memoryendpoints.long_term_memory_operator_summary.v1", migration["schemaVersion"])
+        self.assertEqual("hosted_pending_review", migration["status"])
+        self.assertEqual(2, migration["count"])
+        self.assertEqual(2, migration["sourcePathCount"])
+        self.assertEqual("hosted_workspace_store", migration["memorySource"])
+        self.assertFalse(migration["filesystemDocsIncluded"])
+        self.assertFalse(migration["allPromoted"])
+        self.assertTrue(migration["allValuesRedacted"])
+        self.assertEqual(0, migration["rawPrivatePayloadStoredCount"])
+        self.assertEqual(1, migration["scopeCounts"]["project"])
+        self.assertEqual(1, migration["scopeCounts"]["workspace"])
+        self.assertEqual(2, migration["reviewStatusCounts"]["pending"])
+        self.assertEqual(2, migration["promotionStateCounts"]["review_pending"])
+        self.assertIn("docs/long-term-memory/system-targets.md", migration["sourcePathSamples"])
+        self.assertNotIn(token, json.dumps(migration))
 
     def test_idempotency_replay_and_conflict(self):
         status, _headers, text = call_app(
