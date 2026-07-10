@@ -1489,6 +1489,7 @@
       appendBadge(summaryLine, summary.detectedThreatCount + " threats", summary.detectedThreatCount ? "warn" : "good");
     }
     node.appendChild(summaryLine);
+    renderLongTermMemoryReviewSummary(node, summary.longTermMemoryReviews);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No review queue items matched this status."));
       return;
@@ -1538,6 +1539,24 @@
       row.appendChild(actions);
       node.appendChild(row);
     });
+  }
+
+  function renderLongTermMemoryReviewSummary(parent, reviewSummary) {
+    if (!reviewSummary) {
+      return;
+    }
+    var line = el("div", "filter-summary long-term-review-summary");
+    line.appendChild(el("span", "filter-summary-label", "Long-term reviews"));
+    appendBadge(line, formatStatusText(reviewSummary.status), reviewSummary.allPromoted ? "good" : "warn");
+    appendBadge(line, (reviewSummary.count || 0) + " source paths", reviewSummary.count ? "good" : "neutral");
+    appendBadge(line, (reviewSummary.visibleRecordCount || 0) + " visible", reviewSummary.visibleRecordCount ? "warn" : "neutral");
+    appendBadge(line, (reviewSummary.recordCount || 0) + " records", reviewSummary.recordCount ? "neutral" : "good");
+    if (reviewSummary.duplicateRecordCount) {
+      appendBadge(line, reviewSummary.duplicateRecordCount + " duplicate records", "warn");
+    }
+    appendBadge(line, (reviewSummary.actionableCount || 0) + " actionable", reviewSummary.actionableCount ? "warn" : "good");
+    appendCountBadges(line, "Status", reviewSummary.statusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    parent.appendChild(line);
   }
 
   function renderReviewDecisionSummary(payload) {
