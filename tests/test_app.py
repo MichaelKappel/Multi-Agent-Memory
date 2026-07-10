@@ -117,6 +117,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('data-console-target-agent="codex-agent"', text)
         self.assertIn("data-console-inbox-lanes", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
+        self.assertIn("data-console-ack-visible", text)
         self.assertIn("data-console-receipts-list", text)
         self.assertIn("data-console-audit-list", text)
         self.assertIn("Debug JSON", text)
@@ -130,6 +131,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("overflow-wrap: anywhere", css)
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
+
+    def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("visibleNotificationIds", js)
+        self.assertIn("data-console-ack-visible", js)
+        self.assertIn("ackNotification(notificationId", js)
+        self.assertIn("visible notification(s) acknowledged", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")

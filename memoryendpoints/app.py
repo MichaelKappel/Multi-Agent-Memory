@@ -385,6 +385,7 @@ def route_console(start_response):
       </label>
       <button class="button" type="submit">Refresh inbox</button>
       <button class="button" type="button" data-console-ack>Mark first unread read</button>
+      <button class="button" type="button" data-console-ack-visible>Mark visible read</button>
     </form>
     <div class="agent-shortcuts" data-console-inbox-lanes aria-label="Inbox lane shortcuts">
       <button class="button compact" type="button" data-console-inbox-agent="human-verifier-agent">Human inbox</button>

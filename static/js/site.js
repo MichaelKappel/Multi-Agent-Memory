@@ -19,6 +19,7 @@
     projectId: "",
     agentId: "human-verifier-agent",
     firstNotificationId: "",
+    visibleNotificationIds: [],
     firstReviewId: "",
   };
 
@@ -474,6 +475,9 @@
     return api("/api/matm/current-message?" + qs).then(function (payload) {
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
+      state.visibleNotificationIds = ((payload && payload.items) || []).map(function (item) {
+        return item.notification && item.notification.notificationId;
+      }).filter(Boolean);
       render("[data-console-inbox-output]", payload);
       renderInboxSummary(payload, requestedAgent);
       return payload;
@@ -694,25 +698,51 @@
   }
 
   var ackButton = pick("[data-console-ack]");
+  function ackNotification(notificationId, idempotencySuffix) {
+    return api("/api/matm/notifications/ack", {
+      method: "POST",
+      headers: {"Idempotency-Key": "console-ack-" + notificationId + (idempotencySuffix || "")},
+      body: {
+        workspaceId: state.workspaceId,
+        notificationId: notificationId,
+        consumerAgentId: state.agentId,
+        status: "read",
+      },
+    });
+  }
+
   if (ackButton) {
     ackButton.addEventListener("click", function () {
       if (!state.firstNotificationId) {
         setStatus("No unread notification is selected.", true);
         return;
       }
-      api("/api/matm/notifications/ack", {
-        method: "POST",
-        headers: {"Idempotency-Key": "console-ack-" + state.firstNotificationId},
-        body: {
-          workspaceId: state.workspaceId,
-          notificationId: state.firstNotificationId,
-          consumerAgentId: state.agentId,
-          status: "read",
-        },
-      })
+      ackNotification(state.firstNotificationId, "")
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
         .then(function () { setStatus("Notification acknowledged and receipt refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var ackVisibleButton = pick("[data-console-ack-visible]");
+  if (ackVisibleButton) {
+    ackVisibleButton.addEventListener("click", function () {
+      var notificationIds = state.visibleNotificationIds.slice();
+      if (!notificationIds.length) {
+        setStatus("No visible unread notifications are selected.", true);
+        return;
+      }
+      var chain = Promise.resolve();
+      notificationIds.forEach(function (notificationId) {
+        chain = chain.then(function () {
+          return ackNotification(notificationId, "-visible");
+        });
+      });
+      chain
+        .then(function () { return refreshInbox(state.agentId); })
+        .then(refreshReceipts)
+        .then(function () { setStatus(notificationIds.length + " visible notification(s) acknowledged and receipts refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }
