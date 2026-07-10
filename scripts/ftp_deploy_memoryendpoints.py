@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dist" / "MemoryEndpoints.com-Production.zip"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
-from package_memoryendpoints import iter_files, write_build_info
+from package_memoryendpoints import iter_files, write_current_build_info
 from ftp_deploy_static_site import DEFAULT_FILEZILLA_SITEMANAGER, load_filezilla_site
 
 
@@ -243,7 +243,7 @@ def main(argv=None):
         if args.dry_run or args.allow_discovered_live_upload:
             remote_dir = discovered_dir
 
-    build_info = write_build_info()
+    build_info = write_current_build_info()
     planned_files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.ftp_deploy.v1",
