@@ -1,7 +1,7 @@
 ﻿{
-    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v4",
+    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v5",
     "baseUrl":  "https://memoryendpoints.com/console",
-    "sourceSha":  "8de34487e51cfad92bf183d15c8452b5c0704fd4",
+    "sourceSha":  "cd9f82fcee860f48cd370824e08c21a47753021f",
     "transport":  "http_html_static_assets_protected_api_and_browser_verified_layout",
     "htmlStatus":  200,
     "assetStatus":  {
@@ -16,6 +16,8 @@
                         "reviewStatusFilter":  true,
                         "tagFilter":  true,
                         "reviewQueue":  true,
+                        "messageTargetShortcuts":  true,
+                        "inboxLaneShortcuts":  true,
                         "stylesheetCacheBusted":  true,
                         "debugJson":  true
                     },
@@ -23,7 +25,10 @@
                          "mobileCompanionNavFullWidth":  true,
                          "summaryMetaBlock":  true,
                          "rowMetaWrap":  true,
+                         "agentShortcutsStyled":  true,
                          "memorySearchFilters":  true,
+                         "targetShortcutHandler":  true,
+                         "inboxLaneHandler":  true,
                          "memoryTypeQuery":  true,
                          "reviewStatusQuery":  true,
                          "tagQuery":  true
@@ -51,7 +56,9 @@
                             "memoryEndpointsConsoleMobileOverflow":  false,
                             "loadedConsoleSummaryCardCount":  6,
                             "loadedConsoleHostedMemoryCount":  9,
-                            "loadedConsolePendingReviewCount":  5
+                            "loadedConsolePendingReviewCount":  5,
+                            "targetShortcutButtons":  4,
+                            "inboxLaneButtons":  3
                         },
     "ok":  true,
     "valuesRedacted":  true,

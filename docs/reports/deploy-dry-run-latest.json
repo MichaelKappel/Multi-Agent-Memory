@@ -1,8 +1,8 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "478f44a5230db6bced8810634d7c8d1c521e170e",
-    "sourceShaShort": "478f44a5230d",
+    "sourceSha": "cd9f82fcee860f48cd370824e08c21a47753021f",
+    "sourceShaShort": "cd9f82fcee86",
     "valuesRedacted": true
   },
   "credentialSource": "filezilla_site_manager",
@@ -25,7 +25,7 @@
   "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
-  "remoteDirSource": "argument_or_handoff",
+  "remoteDirSource": "filezilla_login_root",
   "safeNoOp": true,
   "schemaVersion": "memoryendpoints.ftp_deploy.v1",
   "signals": {
