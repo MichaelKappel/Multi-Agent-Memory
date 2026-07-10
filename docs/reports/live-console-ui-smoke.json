@@ -1,9 +1,8 @@
 ﻿{
-    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v2",
+    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v3",
     "baseUrl":  "https://memoryendpoints.com/console",
-    "sourceSha":  "ce54017d2dd4cb3723ef7d3f2c53cfce5021c968",
+    "sourceSha":  "e8274124bbd17fc8234fdbfb788745e1813cfd4e",
     "transport":  "http_html_static_assets_and_protected_api",
-    "browserAutomation":  "blocked_by_stale_in_app_browser_session_after_reconnect",
     "htmlStatus":  200,
     "assetStatus":  {
                         "siteJs":  200,
@@ -13,27 +12,37 @@
                         "workspaceOverview":  true,
                         "operatorSummary":  true,
                         "consoleResults":  true,
+                        "memoryTypeFilter":  true,
+                        "reviewStatusFilter":  true,
+                        "tagFilter":  true,
                         "reviewQueue":  true,
                         "reviewList":  true,
                         "reviewDecision":  true,
                         "debugJson":  true
                     },
     "assetMarkers":  {
+                         "memorySearchFilters":  true,
+                         "memoryTypeQuery":  true,
+                         "reviewStatusQuery":  true,
+                         "tagQuery":  true,
                          "renderReviewSummary":  true,
-                         "rowActions":  true,
-                         "useReview":  true,
-                         "copyReviewId":  true,
-                         "clipboardGuard":  true,
-                         "compactButtons":  true,
-                         "rowActionStyles":  true
+                         "compactButtons":  true
                      },
     "protectedReadbacks":  {
-                               "hostedMemorySearchOk":  true,
-                               "hostedMemorySearchCount":  6,
+                               "promotedLongTermOk":  true,
+                               "promotedLongTermCount":  8,
+                               "promotedFilters":  {
+                                                       "reviewStatus":  "promoted",
+                                                       "tag":  "long-term-memory-migration"
+                                                   },
+                               "pendingLongTermOk":  true,
+                               "pendingLongTermCount":  0,
+                               "duplicateDocsSeedOk":  true,
+                               "duplicateDocsSeedCount":  0,
                                "memorySource":  "hosted_workspace_store",
                                "filesystemDocsIncluded":  false,
                                "reviewQueueOk":  true,
-                               "reviewQueueCount":  20,
+                               "pendingReviewCount":  4,
                                "reviewQueueValuesRedacted":  true
                            },
     "ok":  true,
