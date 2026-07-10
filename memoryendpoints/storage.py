@@ -6,6 +6,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 import threading
+import time
 import uuid
 from urllib.parse import unquote, urlparse
 
@@ -18,6 +19,10 @@ _LOCK = threading.RLock()
 
 def _id(prefix):
     return "%s-%s" % (prefix, uuid.uuid4().hex[:20])
+
+
+def _time_ordered_id(prefix):
+    return "%s-%020d-%s" % (prefix, time.time_ns(), uuid.uuid4().hex[:8])
 
 
 def _hash(value):
@@ -484,7 +489,7 @@ class FileStore(object):
             return None, None
         safe_summary = redact_text(safe_summary)
         message = {
-            "meetingMessageId": _id("meetmsg"),
+            "meetingMessageId": _time_ordered_id("meetmsg"),
             "workspaceId": workspace_id,
             "roomId": room_id,
             "scope": room.get("scope"),
@@ -1489,6 +1494,148 @@ class SQLiteStore(FileStore):
     def _memory_revision_id(self, memory_id, revision_number):
         return "rev-" + _hash("%s:%s" % (memory_id, revision_number))[:20]
 
+    def _room_from_row(self, row):
+        if not row:
+            return None
+        item = {
+            "roomId": row["room_id"],
+            "workspaceId": row["workspace_id"],
+            "scope": row["scope_type"],
+            "scopeId": row["scope_id"],
+            "label": row["label"],
+            "name": row["name"],
+            "purpose": row["purpose"],
+            "status": row["status"],
+            "defaultRoom": self._bool(row["default_room"]),
+            "alwaysAvailable": self._bool(row["always_available"]),
+            "createdAt": row["created_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+        if row["updated_at"]:
+            item["updatedAt"] = row["updated_at"]
+        return item
+
+    def _meeting_message_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "meetingMessageId": row["meeting_message_id"],
+            "workspaceId": row["workspace_id"],
+            "roomId": row["room_id"],
+            "scope": row["scope_type"],
+            "scopeId": row["scope_id"],
+            "senderAgentId": row["sender_agent_id"],
+            "safeSummary": row["safe_summary"],
+            "createdAt": row["created_at"],
+            "rawMessageBodyStored": self._bool(row["raw_message_body_stored"]),
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _meeting_read_from_row(self, row):
+        if not row:
+            return {}
+        return {
+            "meetingReadId": row["meeting_read_id"],
+            "workspaceId": row["workspace_id"],
+            "roomId": row["room_id"],
+            "agentId": row["agent_id"],
+            "lastMeetingMessageId": row["last_meeting_message_id"],
+            "lastReadAt": row["last_read_at"],
+            "readMessageCount": row["read_message_count"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _record_audit_sql(self, connection, workspace_id, action, actor, target, details=None):
+        connection.execute(
+            """
+            INSERT INTO matm_audit_log (
+              audit_id, workspace_id, action, actor, target, details_json, created_at,
+              raw_credential_exposed, raw_payload_exposed, values_redacted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _id("audit"),
+                workspace_id,
+                action,
+                actor or "system",
+                target or workspace_id,
+                self._json_dump(details or {}),
+                utc_now(),
+                self._int_bool(False),
+                self._int_bool(False),
+                self._int_bool(True),
+            ),
+        )
+
+    def _insert_outbox_sql(self, connection, workspace_id, event_type, aggregate_type, aggregate_id, payload=None):
+        connection.execute(
+            """
+            INSERT INTO matm_outbox_events (
+              outbox_event_id, workspace_id, event_type, aggregate_type, aggregate_id,
+              payload_hash, status, created_at, values_redacted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _id("outbox"),
+                workspace_id,
+                event_type,
+                aggregate_type,
+                aggregate_id,
+                _canonical_hash(payload or {}),
+                "pending",
+                utc_now(),
+                self._int_bool(True),
+            ),
+        )
+
+    def _insert_storage_ledger_sql(self, connection, workspace_id, object_type, object_id, value):
+        connection.execute(
+            """
+            INSERT INTO matm_storage_ledger (
+              ledger_id, workspace_id, object_type, object_id, bytes_delta, created_at, values_redacted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _id("ledger"),
+                workspace_id,
+                object_type,
+                object_id,
+                _json_size(value),
+                utc_now(),
+                self._int_bool(True),
+            ),
+        )
+
+    def authenticate(self, token, workspace_id=None):
+        if not token:
+            return None
+        token_hash = _hash(token)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        """
+                        SELECT * FROM matm_api_keys
+                        WHERE token_hash = ? AND revoked_at IS NULL
+                        """,
+                        (token_hash,),
+                    ).fetchone()
+                    if not row:
+                        return None
+                    if workspace_id and row["workspace_id"] != workspace_id:
+                        return None
+                    connection.execute(
+                        "UPDATE matm_api_keys SET last_used_at = ? WHERE key_id = ?",
+                        (utc_now(), row["key_id"]),
+                    )
+                    return {"workspaceId": row["workspace_id"], "keyId": row["key_id"]}
+
     def check_idempotency(self, workspace_id, key, operation, body):
         if not key:
             return None
@@ -1551,6 +1698,260 @@ class SQLiteStore(FileStore):
                             self._int_bool(False),
                         ),
                     )
+
+    def meeting_rooms(self, workspace_id, agent_id=None):
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_rooms
+                        WHERE workspace_id = ? AND status = 'active'
+                        ORDER BY
+                          CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 ELSE 99 END,
+                          name, room_id
+                        """,
+                        (workspace_id,),
+                    )
+                )
+                rooms = []
+                for row in rows:
+                    room = self._room_from_row(row)
+                    message_rows = list(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_messages
+                            WHERE workspace_id = ? AND room_id = ?
+                            ORDER BY created_at, meeting_message_id
+                            """,
+                            (workspace_id, room["roomId"]),
+                        )
+                    )
+                    read_state = {}
+                    if agent_id:
+                        read_state = self._meeting_read_from_row(
+                            connection.execute(
+                                """
+                                SELECT * FROM matm_meeting_reads
+                                WHERE workspace_id = ? AND room_id = ? AND agent_id = ?
+                                """,
+                                (workspace_id, room["roomId"], agent_id),
+                            ).fetchone()
+                        )
+                    room["messageCount"] = len(message_rows)
+                    room["lastMessageAt"] = message_rows[-1]["created_at"] if message_rows else None
+                    room["readState"] = read_state
+                    last_read_id = read_state.get("lastMeetingMessageId") or ""
+                    if not agent_id or not last_read_id:
+                        room["unreadCount"] = len(message_rows) if agent_id else 0
+                    else:
+                        seen = False
+                        unread = 0
+                        for message in message_rows:
+                            if seen:
+                                unread += 1
+                            if message["meeting_message_id"] == last_read_id:
+                                seen = True
+                        room["unreadCount"] = unread
+                    rooms.append(room)
+                return rooms
+
+    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        with _LOCK:
+            with self._open_connection() as connection:
+                room = self._room_from_row(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_rooms
+                        WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                        """,
+                        (workspace_id, room_id),
+                    ).fetchone()
+                )
+                if not room:
+                    return None, [], None
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_messages
+                        WHERE workspace_id = ? AND room_id = ?
+                        ORDER BY created_at DESC, meeting_message_id DESC
+                        LIMIT ?
+                        """,
+                        (workspace_id, room_id, limit_value),
+                    )
+                )
+                rows.reverse()
+                messages = [self._meeting_message_from_row(row) for row in rows]
+                read_state = {}
+                if agent_id:
+                    read_state = self._meeting_read_from_row(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_reads
+                            WHERE workspace_id = ? AND room_id = ? AND agent_id = ?
+                            """,
+                            (workspace_id, room_id, agent_id),
+                        ).fetchone()
+                    )
+                return room, messages, read_state
+
+    def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
+        safe_summary = redact_text(safe_summary)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    room = self._room_from_row(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_rooms
+                            WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                            """,
+                            (workspace_id, room_id),
+                        ).fetchone()
+                    )
+                    if not room:
+                        return None, None
+                    message = {
+                        "meetingMessageId": _time_ordered_id("meetmsg"),
+                        "workspaceId": workspace_id,
+                        "roomId": room_id,
+                        "scope": room.get("scope"),
+                        "scopeId": room.get("scopeId"),
+                        "senderAgentId": sender_agent_id,
+                        "safeSummary": safe_summary,
+                        "createdAt": utc_now(),
+                        "rawMessageBodyStored": False,
+                        "valuesRedacted": True,
+                        "rawPayloadExposed": False,
+                    }
+                    connection.execute(
+                        """
+                        INSERT INTO matm_meeting_messages (
+                          meeting_message_id, workspace_id, room_id, scope_type, scope_id, sender_agent_id,
+                          safe_summary, raw_message_body_stored, values_redacted, raw_payload_exposed, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message["meetingMessageId"],
+                            workspace_id,
+                            room_id,
+                            message["scope"] or "workspace",
+                            message["scopeId"] or workspace_id,
+                            sender_agent_id,
+                            safe_summary,
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            message["createdAt"],
+                        ),
+                    )
+                    self._insert_outbox_sql(connection, workspace_id, "matm.meeting_message.submitted", "meeting_message", message["meetingMessageId"], message)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "meeting_message", message["meetingMessageId"], message)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "meeting_message.submit",
+                        sender_agent_id,
+                        message["meetingMessageId"],
+                        {"roomScope": room.get("scope"), "meetingMessageCount": 1},
+                    )
+                    return message, room
+
+    def mark_meeting_room_read(self, workspace_id, room_id, agent_id, last_meeting_message_id=None):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    room = self._room_from_row(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_rooms
+                            WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                            """,
+                            (workspace_id, room_id),
+                        ).fetchone()
+                    )
+                    if not room:
+                        return None, None
+                    message_rows = list(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_messages
+                            WHERE workspace_id = ? AND room_id = ?
+                            ORDER BY created_at, meeting_message_id
+                            """,
+                            (workspace_id, room_id),
+                        )
+                    )
+                    selected = None
+                    if last_meeting_message_id:
+                        for row in message_rows:
+                            if row["meeting_message_id"] == last_meeting_message_id:
+                                selected = row
+                                break
+                        if not selected:
+                            return None, "message_not_found"
+                    elif message_rows:
+                        selected = message_rows[-1]
+                        last_meeting_message_id = selected["meeting_message_id"]
+                    read_id = self._meeting_read_id(workspace_id, room_id, agent_id)
+                    existing = connection.execute(
+                        "SELECT * FROM matm_meeting_reads WHERE meeting_read_id = ?",
+                        (read_id,),
+                    ).fetchone()
+                    created_at = existing["created_at"] if existing else utc_now()
+                    updated_at = utc_now()
+                    read_state = {
+                        "meetingReadId": read_id,
+                        "workspaceId": workspace_id,
+                        "roomId": room_id,
+                        "agentId": agent_id,
+                        "lastMeetingMessageId": last_meeting_message_id or "",
+                        "lastReadAt": selected["created_at"] if selected else updated_at,
+                        "readMessageCount": len(message_rows),
+                        "status": "read",
+                        "createdAt": created_at,
+                        "updatedAt": updated_at,
+                        "rawPayloadExposed": False,
+                        "valuesRedacted": True,
+                    }
+                    connection.execute(
+                        """
+                        INSERT OR REPLACE INTO matm_meeting_reads (
+                          meeting_read_id, workspace_id, room_id, agent_id, last_meeting_message_id,
+                          last_read_at, read_message_count, status, values_redacted, raw_payload_exposed,
+                          created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            read_id,
+                            workspace_id,
+                            room_id,
+                            agent_id,
+                            read_state["lastMeetingMessageId"],
+                            read_state["lastReadAt"],
+                            read_state["readMessageCount"],
+                            read_state["status"],
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            created_at,
+                            updated_at,
+                        ),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "meeting_room.read",
+                        agent_id,
+                        room_id,
+                        {"roomScope": room.get("scope"), "meetingMessageCount": len(message_rows), "unreadMeetingCount": 0},
+                    )
+                    return read_state, None
 
     def _load(self):
         with _LOCK:

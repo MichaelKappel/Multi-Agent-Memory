@@ -394,8 +394,7 @@
       node.appendChild(el("p", "empty-state", "Session status will appear after the workspace loads."));
       return;
     }
-    var hostname = window.location.hostname || "";
-    var isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    var surface = surfaceInfo();
     var accountRaw = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
     var companyRaw = workspace.company || {};
     var projectRaw = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};

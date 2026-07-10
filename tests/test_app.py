@@ -318,6 +318,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-surface-badge", js)
         self.assertIn("surfaceInfo", js)
         self.assertIn("metricCard", js)
+        surface_start = js.index("function surfaceInfo")
+        surface_end = js.index("function updateSurfaceBadge", surface_start)
+        surface_block = js[surface_start:surface_end]
+        self.assertIn('var hostname = window.location.hostname || "";', surface_block)
+        self.assertNotIn("var surface = surfaceInfo();", surface_block)
+        session_start = js.index("function renderSessionSummary")
+        session_end = js.index("function boundaryStep", session_start)
+        session_block = js[session_start:session_end]
+        self.assertIn("var surface = surfaceInfo();", session_block)
         self.assertIn("state.memoryCount", js)
         self.assertIn("state.messageDeliveryCounts", js)
         self.assertIn("state.receiptCount", js)
@@ -1185,6 +1194,67 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("source hosted_workspace_store", filtered_summaries)
         self.assertIn("scopes project 1", filtered_summaries)
         self.assertIn("reviews pending 1", filtered_summaries)
+
+    def test_meeting_burst_latest_window_preserves_post_order(self):
+        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "burst.sqlite3")
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={
+                "companyLabel": "Burst Company",
+                "label": "Burst Workspace",
+                "projectLabel": "Burst Project",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            headers=auth,
+            query="workspace_id=%s&agent_id=burst-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        project_room = [room for room in json.loads(text)["items"] if room["scope"] == "project"][0]
+
+        posted_ids = []
+        for index in range(5):
+            status, _headers, text = call_app(
+                "/api/matm/meeting-messages",
+                method="POST",
+                headers=auth,
+                body={
+                    "workspaceId": workspace_id,
+                    "roomId": project_room["roomId"],
+                    "senderAgentId": "burst-agent",
+                    "safeSummary": "Burst meeting message %d" % index,
+                },
+            )
+            self.assertEqual("201 Created", status)
+            payload = json.loads(text)
+            self.assertTrue(payload["persisted"])
+            self.assertTrue(payload["visibleToSender"])
+            posted_ids.append(payload["messageId"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages",
+            headers=auth,
+            query="workspace_id=%s&room_id=%s&agent_id=burst-agent&limit=3"
+            % (workspace_id, project_room["roomId"]),
+        )
+        self.assertEqual("200 OK", status)
+        transcript = json.loads(text)
+        transcript_ids = [item["meetingMessageId"] for item in transcript["items"]]
+        transcript_summaries = [item["safeSummary"] for item in transcript["items"]]
+        self.assertEqual(posted_ids[-3:], transcript_ids)
+        self.assertEqual(
+            ["Burst meeting message 2", "Burst meeting message 3", "Burst meeting message 4"],
+            transcript_summaries,
+        )
+        self.assertEqual(3, transcript["count"])
 
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(

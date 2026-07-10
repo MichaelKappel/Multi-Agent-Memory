@@ -23,7 +23,6 @@ def utc_now():
 
     return (
         datetime.datetime.now(datetime.timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
+        .isoformat(timespec="microseconds")
         .replace("+00:00", "Z")
     )
