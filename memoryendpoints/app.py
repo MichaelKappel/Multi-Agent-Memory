@@ -1431,9 +1431,9 @@ def route_console(start_response):
   <div class="operator-metrics" data-console-operator-metrics>
     <p class="empty-state">Operator status will appear after the workspace loads.</p>
   </div>
-  <section class="verifier-checklist" data-console-verifier-checklist aria-label="Verifier checklist">
+  <section class="verifier-checklist" data-console-verifier-checklist aria-label="Verifier Checklist">
     <div class="verifier-checklist-header">
-      <span class="section-kicker">Verifier checklist</span>
+      <span class="section-kicker">Verifier Checklist</span>
       <span class="status-badge neutral">waiting for workspace</span>
     </div>
     <p class="empty-state">Boundary, memory, messaging, receipts, and redaction status will appear here.</p>

@@ -462,7 +462,7 @@
     var redactionKnown = state.auditCredentialsHidden !== null && state.auditPayloadsHidden !== null && state.receiptsPayloadsHidden !== null;
     var redactionReview = state.auditCredentialsHidden === false || state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false;
     var header = el("div", "verifier-checklist-header");
-    header.appendChild(el("span", "section-kicker", "Verifier checklist"));
+    header.appendChild(el("span", "section-kicker", "Verifier Checklist"));
     appendBadge(header, state.workspaceId ? "operator status" : "waiting for workspace", state.workspaceId ? "neutral" : "neutral");
     node.appendChild(header);
     node.appendChild(checklistRow(

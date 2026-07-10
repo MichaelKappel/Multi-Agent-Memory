@@ -429,7 +429,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-surface-badge", text)
         self.assertIn("data-console-operator-metrics", text)
         self.assertIn("data-console-verifier-checklist", text)
-        self.assertIn("Verifier checklist", text)
+        self.assertIn("Verifier Checklist", text)
         self.assertIn("data-console-command-bar", text)
         self.assertIn('data-console-command="memory"', text)
         self.assertIn('data-console-command="long-term"', text)
