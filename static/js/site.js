@@ -24,6 +24,9 @@
     firstReviewId: "",
     debugJson: false,
     workspaceOperatorSummary: null,
+    agentRegistrationSummary: null,
+    selectedMeetingRoomId: "",
+    latestMeetingMessageId: "",
     inboxRequestSeq: 0,
   };
   var agentLanes = [
@@ -274,6 +277,7 @@
     var company = operatorLevel(operatorSummary, "company");
     var project = operatorLevel(operatorSummary, "project");
     var privacy = (operatorSummary && operatorSummary.privacy) || {};
+    var agentSummary = state.agentRegistrationSummary || {};
     var hierarchyReady = operatorSummary && operatorSummary.hierarchyReady !== undefined ? operatorSummary.hierarchyReady : Boolean(
       (account.id || accountRaw.accountId || workspace.accountId) &&
       (company.id || companyRaw.companyId || workspace.companyId) &&
@@ -289,13 +293,16 @@
     node.appendChild(sessionItem("Key", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review key handling" : "not echoed", "browser session only", [
       { text: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review" : "private", kind: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "warn" : "good" },
     ]));
-    node.appendChild(sessionItem("Agent", state.agentId, "current inbox lane", [
-      { text: "active", kind: "good" },
+    node.appendChild(sessionItem("Agent", agentSummary.agentId || state.agentId, agentSummary.currentMessageLaneReady ? "current inbox lane ready" : "current inbox lane", [
+      { text: agentSummary.registered ? "registered" : "active", kind: "good" },
+      { text: agentSummary.rawCredentialExposed ? "credential exposure review" : "credentials hidden", kind: agentSummary.rawCredentialExposed ? "warn" : "good" },
+      { text: agentSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden", kind: agentSummary.rawPayloadExposed ? "warn" : "good" },
     ]));
     var actions = el("nav", "session-actions");
     actions.setAttribute("aria-label", "Loaded workspace shortcuts");
     [
       { href: "#memory-workflow", label: "Memory" },
+      { href: "#meeting-rooms", label: "Meetings" },
       { href: "#message-lanes", label: "Messages" },
       { href: "#receipts-audit", label: "Receipts" },
     ].forEach(function (item) {
@@ -738,6 +745,203 @@
     });
   }
 
+  function setMeetingRoom(roomId) {
+    if (!roomId) {
+      return;
+    }
+    state.selectedMeetingRoomId = roomId;
+    var form = pick("[data-console-meeting-message]");
+    if (form && form.elements.roomId) {
+      form.elements.roomId.value = roomId;
+    }
+  }
+
+  function roomTitle(room) {
+    return room.name || room.label || (room.scope ? room.scope + " meeting" : "Meeting room");
+  }
+
+  function renderMeetingRooms(payload) {
+    var node = pick("[data-console-meeting-rooms-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var rooms = (payload && payload.items) || [];
+    var summary = (payload && payload.operatorSummary) || {};
+    var summaryLine = el("div", "filter-summary meeting-rooms-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Meeting rooms"));
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral");
+    appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project"]);
+    appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn");
+    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
+    node.appendChild(summaryLine);
+    if (!rooms.length) {
+      node.appendChild(el("p", "empty-state", "No meeting rooms returned for this workspace."));
+      return;
+    }
+    if (!state.selectedMeetingRoomId) {
+      setMeetingRoom(rooms[0].roomId);
+    }
+    rooms.forEach(function (room) {
+      var unread = room.unreadCount || 0;
+      var row = resultRow(
+        roomTitle(room),
+        room.purpose || "Scoped agent coordination room.",
+        [
+          { text: room.scope || "room", kind: "neutral" },
+          { text: unread + " unread", kind: unread ? "warn" : "good" },
+          { text: (room.messageCount || 0) + " messages", kind: room.messageCount ? "good" : "neutral" },
+          { text: room.alwaysAvailable ? "always available" : "review availability", kind: room.alwaysAvailable ? "good" : "warn" },
+        ],
+        [
+          "room " + shortId(room.roomId),
+          "scope " + (room.scopeId || "not set"),
+          room.lastMessageAt ? "latest " + room.lastMessageAt : "latest none",
+        ]
+      );
+      var actions = el("div", "row-actions");
+      var openButton = el("button", "button compact", "Open room");
+      var useButton = el("button", "button compact", "Use room");
+      var copyButton = el("button", "button compact", "Copy room id");
+      openButton.type = "button";
+      useButton.type = "button";
+      copyButton.type = "button";
+      openButton.addEventListener("click", function () {
+        setMeetingRoom(room.roomId);
+        refreshMeetingMessages(room.roomId).catch(function (error) { setStatus(error.message, true); });
+      });
+      useButton.addEventListener("click", function () {
+        setMeetingRoom(room.roomId);
+        setStatus(roomTitle(room) + " selected.", false);
+      });
+      copyButton.addEventListener("click", function () {
+        copySafeText(room.roomId, "Meeting room id");
+      });
+      actions.appendChild(openButton);
+      actions.appendChild(useButton);
+      actions.appendChild(copyButton);
+      row.appendChild(actions);
+      node.appendChild(row);
+    });
+  }
+
+  function renderMeetingMessages(payload) {
+    var node = pick("[data-console-meeting-messages-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var room = (payload && payload.room) || {};
+    var items = (payload && payload.items) || [];
+    var summary = (payload && payload.operatorSummary) || {};
+    if (room.roomId) {
+      setMeetingRoom(room.roomId);
+    }
+    state.latestMeetingMessageId = items.length ? items[items.length - 1].meetingMessageId : "";
+    var summaryLine = el("div", "filter-summary meeting-messages-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
+    appendBadge(summaryLine, roomTitle(room), "neutral");
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " messages", items.length ? "good" : "neutral");
+    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
+    appendCountBadges(summaryLine, "Senders", summary.senderAgentCounts, []);
+    node.appendChild(summaryLine);
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No meeting messages in this room yet."));
+      return;
+    }
+    items.forEach(function (message) {
+      var row = resultRow(
+        "Meeting message",
+        message.safeSummary,
+        [
+          { text: message.scope || room.scope || "room", kind: "neutral" },
+          { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
+          { text: message.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: message.rawPayloadExposed ? "warn" : "good" },
+        ],
+        [
+          "sender " + (message.senderAgentId || "unknown"),
+          "message " + shortId(message.meetingMessageId),
+          "room " + shortId(message.roomId || room.roomId),
+          message.createdAt || "",
+        ]
+      );
+      appendCopyActions(row, [
+        { label: "Copy meeting message id", copyLabel: "Meeting message id", value: message.meetingMessageId },
+        { label: "Copy room id", copyLabel: "Meeting room id", value: message.roomId || room.roomId },
+      ]);
+      node.appendChild(row);
+    });
+  }
+
+  function renderMeetingPost(payload) {
+    var node = pick("[data-console-meeting-post-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var room = (payload && payload.room) || {};
+    var message = (payload && payload.message) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    if (!message.meetingMessageId) {
+      node.appendChild(el("p", "empty-state", "Meeting post confirmations will appear here."));
+      return;
+    }
+    var summaryLine = el("div", "filter-summary meeting-post-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Meeting post"));
+    appendBadge(summaryLine, summary.scope || room.scope || "room", "neutral");
+    appendBadge(summaryLine, summary.alwaysAvailable ? "room available" : "availability review", summary.alwaysAvailable ? "good" : "warn");
+    appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    appendBadge(summaryLine, summary.rawCredentialExposed ? "credential exposure review" : "credentials hidden", summary.rawCredentialExposed ? "warn" : "good");
+    var row = resultRow(
+      "Meeting message posted",
+      message.safeSummary || "Meeting message accepted.",
+      [
+        { text: room.scope || message.scope || "room", kind: "neutral" },
+        { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "sender " + (message.senderAgentId || "unknown"),
+        "message " + shortId(message.meetingMessageId),
+        "room " + shortId(room.roomId || message.roomId),
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy meeting message id", copyLabel: "Meeting message id", value: message.meetingMessageId },
+      { label: "Copy room id", copyLabel: "Meeting room id", value: room.roomId || message.roomId },
+    ]);
+    node.appendChild(summaryLine);
+    node.appendChild(row);
+  }
+
+  function renderMeetingRead(payload) {
+    var node = pick("[data-console-meeting-post-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var readState = (payload && payload.readState) || {};
+    var room = (payload && payload.room) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    var row = resultRow(
+      "Meeting room marked read",
+      "Read cursor updated without exposing raw private payloads.",
+      [
+        { text: summary.status || readState.status || "read", kind: "good" },
+        { text: summary.valuesRedacted || readState.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "agent " + (summary.agentId || readState.agentId || state.agentId),
+        "room " + shortId(summary.roomId || readState.roomId || room.roomId),
+        "last " + shortId(summary.lastMeetingMessageId || readState.lastMeetingMessageId),
+        "read " + String(summary.readMessageCount || readState.readMessageCount || 0),
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy room id", copyLabel: "Meeting room id", value: summary.roomId || readState.roomId || room.roomId },
+    ]);
+    node.appendChild(row);
+  }
+
   function renderReceiptSummary(payload) {
     var node = pick("[data-console-receipts-list]");
     if (!node) {
@@ -993,30 +1197,52 @@
     }
     clear(node);
     var review = (payload && payload.review) || {};
-    if (!review.reviewId) {
+    var operatorSummary = (payload && payload.operatorSummary) || {};
+    var reviewId = operatorSummary.reviewId || review.reviewId || "";
+    if (!reviewId) {
       node.appendChild(el("p", "empty-state", "Review decisions will appear as operator confirmation rows."));
       return;
     }
-    var status = review.status || "recorded";
+    var status = operatorSummary.status || review.status || "recorded";
+    var summaryLine = el("div", "filter-summary review-decision-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Review decision"));
+    appendBadge(summaryLine, status, status === "promoted" ? "good" : (status === "quarantined" ? "warn" : "neutral"));
+    appendCountBadges(summaryLine, "Status", operatorSummary.statusCounts, ["promoted", "rejected", "quarantined"]);
+    appendBadge(
+      summaryLine,
+      operatorSummary.reviewNoteExposed ? "review note exposure" : "review note hidden",
+      operatorSummary.reviewNoteExposed ? "warn" : "good"
+    );
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
+      operatorSummary.rawPayloadExposed ? "warn" : "good"
+    );
+    appendBadge(
+      summaryLine,
+      operatorSummary.rawCredentialExposed ? "credential exposure review" : "credentials hidden",
+      operatorSummary.rawCredentialExposed ? "warn" : "good"
+    );
     var row = resultRow(
       "Review decision " + status,
       "Decision recorded without exposing the raw review note.",
       [
         { text: status, kind: status === "promoted" ? "good" : (status === "quarantined" ? "warn" : "neutral") },
-        { text: review.valuesRedacted ? "redacted" : "", kind: "good" },
-        { text: review.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: review.rawPayloadExposed ? "warn" : "good" },
+        { text: operatorSummary.valuesRedacted || review.valuesRedacted ? "redacted" : "", kind: "good" },
+        { text: operatorSummary.rawPayloadExposed || review.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: operatorSummary.rawPayloadExposed || review.rawPayloadExposed ? "warn" : "good" },
       ],
       [
-        "review " + shortId(review.reviewId),
-        "memory " + shortId(review.memoryEventId),
-        "reviewer " + (review.reviewerAgentId || "unknown"),
-        review.decidedAt || review.updatedAt || "",
+        "review " + shortId(reviewId),
+        "memory " + shortId(operatorSummary.memoryEventId || review.memoryEventId),
+        "reviewer " + (operatorSummary.reviewerAgentId || review.reviewerAgentId || "unknown"),
+        operatorSummary.decidedAt || review.decidedAt || review.updatedAt || "",
       ]
     );
     appendCopyActions(row, [
-      { label: "Copy review id", copyLabel: "Review id", value: review.reviewId },
-      { label: "Copy memory id", copyLabel: "Memory id", value: review.memoryEventId },
+      { label: "Copy review id", copyLabel: "Review id", value: reviewId },
+      { label: "Copy memory id", copyLabel: "Memory id", value: operatorSummary.memoryEventId || review.memoryEventId },
     ]);
+    node.appendChild(summaryLine);
     node.appendChild(row);
   }
 
@@ -1094,6 +1320,10 @@
         agentId: agentId,
         displayName: agentId,
       },
+    }).then(function (payload) {
+      state.agentRegistrationSummary = payload.operatorSummary || null;
+      renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
+      return payload;
     });
   }
 
@@ -1166,6 +1396,37 @@
     return Promise.all(checks).then(function (results) {
       renderLaneOverview(results);
       return results;
+    });
+  }
+
+  function refreshMeetingRooms() {
+    if (!state.workspaceId) {
+      renderMeetingRooms({items: [], operatorSummary: {count: 0}});
+      return Promise.resolve({items: []});
+    }
+    var qs = query({workspace_id: state.workspaceId, agent_id: state.agentId});
+    return api("/api/matm/meeting-rooms?" + qs).then(function (payload) {
+      render("[data-console-meeting-output]", payload);
+      renderMeetingRooms(payload);
+      if (!state.selectedMeetingRoomId && payload.items && payload.items.length) {
+        setMeetingRoom(payload.items[0].roomId);
+      }
+      return payload;
+    });
+  }
+
+  function refreshMeetingMessages(roomId) {
+    var selectedRoom = roomId || state.selectedMeetingRoomId;
+    if (!selectedRoom) {
+      renderMeetingMessages({items: [], room: {}, operatorSummary: {count: 0}});
+      return Promise.resolve({items: []});
+    }
+    setMeetingRoom(selectedRoom);
+    var qs = query({workspace_id: state.workspaceId, room_id: selectedRoom, agent_id: state.agentId, limit: 50});
+    return api("/api/matm/meeting-messages?" + qs).then(function (payload) {
+      render("[data-console-meeting-output]", payload);
+      renderMeetingMessages(payload);
+      return payload;
     });
   }
 
@@ -1263,6 +1524,8 @@
         .then(function () { return registerAgent(state.agentId); })
         .then(function () { return refreshMemory("verification"); })
         .then(function () { return refreshReviewQueue("pending"); })
+        .then(function () { return refreshMeetingRooms(); })
+        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
         .then(function () { return refreshInbox(state.agentId); })
         .then(function () { return refreshLaneOverview(); })
         .then(refreshReceipts)
@@ -1325,6 +1588,75 @@
       });
       refreshMemory(searchForm.elements.query.value)
         .then(function () { setStatus("Memory search filters cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var refreshMeetingRoomsButton = pick("[data-console-refresh-meeting-rooms]");
+  if (refreshMeetingRoomsButton) {
+    refreshMeetingRoomsButton.addEventListener("click", function () {
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before refreshing meeting rooms.", true);
+        return;
+      }
+      refreshMeetingRooms()
+        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
+        .then(function () { setStatus("Meeting rooms refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var meetingMessageForm = pick("[data-console-meeting-message]");
+  if (meetingMessageForm) {
+    meetingMessageForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var roomId = meetingMessageForm.elements.roomId.value.trim() || state.selectedMeetingRoomId;
+      if (!roomId) {
+        setStatus("Meeting room id is required.", true);
+        return;
+      }
+      setMeetingRoom(roomId);
+      api("/api/matm/meeting-messages", {
+        method: "POST",
+        headers: {"Idempotency-Key": "console-meeting-" + roomId + "-" + Date.now()},
+        body: {
+          workspaceId: state.workspaceId,
+          roomId: roomId,
+          senderAgentId: meetingMessageForm.elements.senderAgentId.value.trim(),
+          safeSummary: meetingMessageForm.elements.safeSummary.value.trim(),
+        },
+      })
+        .then(function (payload) {
+          renderMeetingPost(payload);
+          return refreshMeetingRooms().then(function () { return refreshMeetingMessages(roomId); });
+        })
+        .then(function () { setStatus("Meeting message posted and room refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var markMeetingReadButton = pick("[data-console-mark-meeting-read]");
+  if (markMeetingReadButton) {
+    markMeetingReadButton.addEventListener("click", function () {
+      if (!state.selectedMeetingRoomId) {
+        setStatus("Select a meeting room before marking it read.", true);
+        return;
+      }
+      api("/api/matm/meeting-rooms/read", {
+        method: "POST",
+        headers: {"Idempotency-Key": "console-meeting-read-" + state.selectedMeetingRoomId + "-" + Date.now()},
+        body: {
+          workspaceId: state.workspaceId,
+          roomId: state.selectedMeetingRoomId,
+          agentId: state.agentId,
+          lastMeetingMessageId: state.latestMeetingMessageId,
+        },
+      })
+        .then(function (payload) {
+          renderMeetingRead(payload);
+          return refreshMeetingRooms().then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); });
+        })
+        .then(function () { setStatus("Meeting room marked read.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }

@@ -62,6 +62,14 @@ def _audit_detail_summary(details):
             items.append("%s %s" % (label, safe.get(key)))
     if safe.get("memorySource"):
         items.append("source %s" % safe.get("memorySource"))
+    if safe.get("roomScope"):
+        items.append("room %s" % safe.get("roomScope"))
+    if safe.get("meetingRoomCount") not in (None, ""):
+        items.append("meeting rooms %s" % (safe.get("meetingRoomCount") or 0))
+    if safe.get("meetingMessageCount") not in (None, ""):
+        items.append("meeting messages %s" % (safe.get("meetingMessageCount") or 0))
+    if safe.get("unreadMeetingCount") not in (None, ""):
+        items.append("meeting unread %s" % (safe.get("unreadMeetingCount") or 0))
     if safe.get("statusFilter"):
         items.append("status %s" % safe.get("statusFilter"))
     if safe.get("actionFilter"):
@@ -147,6 +155,9 @@ def _blank_store():
         "messages": [],
         "notifications": [],
         "receipts": [],
+        "meetingRooms": {},
+        "meetingMessages": [],
+        "meetingReads": [],
         "outboxEvents": [],
         "storageLedger": [],
         "auditLog": [],
@@ -292,17 +303,287 @@ class FileStore(object):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
-        for key in ("memoryEvents", "reviewQueue", "messages", "notifications", "receipts", "outboxEvents", "storageLedger"):
+        for key in ("memoryEvents", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
             for item in data.get(key, []):
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
+        for room in data.get("meetingRooms", {}).values():
+            if room.get("workspaceId") == workspace_id:
+                usage += _json_size(room)
         return usage
+
+    def _meeting_room_id(self, workspace_id, scope, scope_id):
+        return "room-" + _hash("%s:%s:%s" % (workspace_id, scope, scope_id))[:20]
+
+    def _meeting_read_id(self, workspace_id, room_id, agent_id):
+        return "meetread-" + _hash("%s:%s:%s" % (workspace_id, room_id, agent_id))[:20]
+
+    def _default_meeting_room_specs(self, data, workspace_id):
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        if not workspace:
+            return []
+        company_id = workspace.get("companyId")
+        company = data.get("companies", {}).get(company_id) or {}
+        projects = [
+            project
+            for project in data.get("projects", {}).values()
+            if project.get("workspaceId") == workspace_id
+        ]
+        projects.sort(key=lambda item: item.get("createdAt") or "")
+        specs = [
+            {
+                "scope": "company",
+                "scopeId": company_id,
+                "label": "Company-wide meeting",
+                "name": "%s welcome and routing meeting" % (company.get("label") or "Company"),
+                "purpose": "Highest-level welcome room for new agents to state who they are, why they are here, what they are working on, and which workspace, project, goal, or task room they should be routed into.",
+            },
+            {
+                "scope": "workspace",
+                "scopeId": workspace_id,
+                "label": "Workspace-wide meeting",
+                "name": "%s workspace meeting" % (workspace.get("label") or "Workspace"),
+                "purpose": "Workspace operating room for active coordination, shared context, and cross-project routing after company-level intake.",
+            },
+        ]
+        for project in projects:
+            specs.append(
+                {
+                    "scope": "project",
+                    "scopeId": project.get("projectId"),
+                    "label": "Project-wide meeting",
+                    "name": "%s project meeting" % (project.get("label") or "Project"),
+                    "purpose": "Project implementation room for assigned work, decisions, blockers, and handoff after intake routing.",
+                }
+            )
+        return [spec for spec in specs if spec.get("scopeId")]
+
+    def _ensure_default_meeting_rooms(self, data, workspace_id):
+        data.setdefault("meetingRooms", {})
+        created = []
+        for spec in self._default_meeting_room_specs(data, workspace_id):
+            room_id = self._meeting_room_id(workspace_id, spec["scope"], spec["scopeId"])
+            if room_id in data["meetingRooms"]:
+                room = data["meetingRooms"][room_id]
+                room.setdefault("workspaceId", workspace_id)
+                room.setdefault("roomId", room_id)
+                room.setdefault("scope", spec["scope"])
+                room.setdefault("scopeId", spec["scopeId"])
+                room.setdefault("status", "active")
+                room.setdefault("defaultRoom", True)
+                room.setdefault("alwaysAvailable", True)
+                room.setdefault("valuesRedacted", True)
+                continue
+            room = {
+                "roomId": room_id,
+                "workspaceId": workspace_id,
+                "scope": spec["scope"],
+                "scopeId": spec["scopeId"],
+                "label": spec["label"],
+                "name": redact_text(spec["name"]),
+                "purpose": redact_text(spec["purpose"]),
+                "status": "active",
+                "defaultRoom": True,
+                "alwaysAvailable": True,
+                "createdAt": utc_now(),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            }
+            data["meetingRooms"][room_id] = room
+            created.append(room)
+        return created
+
+    def _meeting_messages_for_room(self, data, workspace_id, room_id):
+        messages = [
+            item
+            for item in data.get("meetingMessages", [])
+            if item.get("workspaceId") == workspace_id and item.get("roomId") == room_id
+        ]
+        messages.sort(key=lambda item: (item.get("createdAt") or "", item.get("meetingMessageId") or ""))
+        return messages
+
+    def _meeting_read_state(self, data, workspace_id, room_id, agent_id):
+        if not agent_id:
+            return None
+        for item in data.get("meetingReads", []):
+            if item.get("workspaceId") == workspace_id and item.get("roomId") == room_id and item.get("agentId") == agent_id:
+                return item
+        return None
+
+    def _meeting_unread_count(self, data, workspace_id, room_id, agent_id):
+        messages = self._meeting_messages_for_room(data, workspace_id, room_id)
+        read_state = self._meeting_read_state(data, workspace_id, room_id, agent_id) or {}
+        last_read_at = read_state.get("lastReadAt") or ""
+        last_read_id = read_state.get("lastMeetingMessageId") or ""
+        if not agent_id:
+            return 0
+        unread = 0
+        seen_last_id = not last_read_id
+        for message in messages:
+            if last_read_id and message.get("meetingMessageId") == last_read_id:
+                seen_last_id = True
+                continue
+            if last_read_at and (message.get("createdAt") or "") <= last_read_at:
+                continue
+            if seen_last_id or not last_read_at:
+                unread += 1
+        return unread
+
+    def meeting_rooms(self, workspace_id, agent_id=None):
+        data = self._load()
+        created = self._ensure_default_meeting_rooms(data, workspace_id)
+        if created:
+            self.audit(
+                data,
+                "meeting_rooms.ensure_defaults",
+                "system",
+                workspace_id,
+                workspace_id,
+                {"meetingRoomCount": len(created)},
+            )
+            self._save(data)
+        rooms = []
+        scope_order = {"company": 0, "workspace": 1, "project": 2}
+        for room in data.get("meetingRooms", {}).values():
+            if room.get("workspaceId") != workspace_id or room.get("status") != "active":
+                continue
+            item = dict(room)
+            messages = self._meeting_messages_for_room(data, workspace_id, room.get("roomId"))
+            item["messageCount"] = len(messages)
+            item["lastMessageAt"] = messages[-1].get("createdAt") if messages else None
+            item["unreadCount"] = self._meeting_unread_count(data, workspace_id, room.get("roomId"), agent_id)
+            item["readState"] = self._meeting_read_state(data, workspace_id, room.get("roomId"), agent_id) or {}
+            item["valuesRedacted"] = True
+            item["rawPayloadExposed"] = False
+            rooms.append(item)
+        rooms.sort(key=lambda item: (scope_order.get(item.get("scope"), 99), item.get("name") or "", item.get("roomId") or ""))
+        return rooms
+
+    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+        data = self._load()
+        created = self._ensure_default_meeting_rooms(data, workspace_id)
+        if created:
+            self._save(data)
+        room = data.get("meetingRooms", {}).get(room_id)
+        if not room or room.get("workspaceId") != workspace_id or room.get("status") != "active":
+            return None, [], None
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        messages = self._meeting_messages_for_room(data, workspace_id, room_id)[-limit_value:]
+        read_state = self._meeting_read_state(data, workspace_id, room_id, agent_id) or {}
+        return dict(room), messages, read_state
+
+    def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
+        data = self._load()
+        self._ensure_default_meeting_rooms(data, workspace_id)
+        room = data.get("meetingRooms", {}).get(room_id)
+        if not room or room.get("workspaceId") != workspace_id or room.get("status") != "active":
+            return None, None
+        safe_summary = redact_text(safe_summary)
+        message = {
+            "meetingMessageId": _id("meetmsg"),
+            "workspaceId": workspace_id,
+            "roomId": room_id,
+            "scope": room.get("scope"),
+            "scopeId": room.get("scopeId"),
+            "senderAgentId": sender_agent_id,
+            "safeSummary": safe_summary,
+            "createdAt": utc_now(),
+            "rawMessageBodyStored": False,
+            "valuesRedacted": True,
+            "rawPayloadExposed": False,
+        }
+        data.setdefault("meetingMessages", []).append(message)
+        self._append_outbox(data, workspace_id, "matm.meeting_message.submitted", "meeting_message", message["meetingMessageId"], message)
+        self._append_storage_ledger(data, workspace_id, "meeting_message", message["meetingMessageId"], message)
+        self.audit(
+            data,
+            "meeting_message.submit",
+            sender_agent_id,
+            message["meetingMessageId"],
+            workspace_id,
+            {"roomScope": room.get("scope"), "meetingMessageCount": 1},
+        )
+        self._save(data)
+        return message, dict(room)
+
+    def mark_meeting_room_read(self, workspace_id, room_id, agent_id, last_meeting_message_id=None):
+        data = self._load()
+        self._ensure_default_meeting_rooms(data, workspace_id)
+        room = data.get("meetingRooms", {}).get(room_id)
+        if not room or room.get("workspaceId") != workspace_id or room.get("status") != "active":
+            return None, None
+        messages = self._meeting_messages_for_room(data, workspace_id, room_id)
+        if last_meeting_message_id:
+            selected = None
+            for message in messages:
+                if message.get("meetingMessageId") == last_meeting_message_id:
+                    selected = message
+                    break
+            if not selected:
+                return None, "message_not_found"
+        else:
+            selected = messages[-1] if messages else None
+            last_meeting_message_id = selected.get("meetingMessageId") if selected else ""
+        read_id = self._meeting_read_id(workspace_id, room_id, agent_id)
+        read_state = None
+        for item in data.setdefault("meetingReads", []):
+            if item.get("meetingReadId") == read_id:
+                read_state = item
+                break
+        if not read_state:
+            read_state = {
+                "meetingReadId": read_id,
+                "workspaceId": workspace_id,
+                "roomId": room_id,
+                "agentId": agent_id,
+                "createdAt": utc_now(),
+                "valuesRedacted": True,
+            }
+            data["meetingReads"].append(read_state)
+        read_state.update(
+            {
+                "lastMeetingMessageId": last_meeting_message_id,
+                "lastReadAt": selected.get("createdAt") if selected else utc_now(),
+                "readMessageCount": len(messages),
+                "updatedAt": utc_now(),
+                "status": "read",
+                "rawPayloadExposed": False,
+                "valuesRedacted": True,
+            }
+        )
+        self.audit(
+            data,
+            "meeting_room.read",
+            agent_id,
+            room_id,
+            workspace_id,
+            {"roomScope": room.get("scope"), "meetingMessageCount": len(messages), "unreadMeetingCount": 0},
+        )
+        self._save(data)
+        return dict(read_state), None
 
     def workspace_status(self, workspace_id):
         data = self._load()
         workspace = data.get("workspaces", {}).get(workspace_id)
         if not workspace:
             return None
+        created_rooms = self._ensure_default_meeting_rooms(data, workspace_id)
+        if created_rooms:
+            self.audit(
+                data,
+                "meeting_rooms.ensure_defaults",
+                "system",
+                workspace_id,
+                workspace_id,
+                {"meetingRoomCount": len(created_rooms)},
+            )
+            self._save(data)
+            data = self._load()
+            workspace = data.get("workspaces", {}).get(workspace_id)
         used = self.workspace_usage_bytes(data, workspace_id)
         limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
         company_id = workspace.get("companyId")
@@ -326,6 +607,7 @@ class FileStore(object):
             if project.get("workspaceId") == workspace_id
         ]
         projects.sort(key=lambda item: item.get("createdAt") or "")
+        meeting_rooms = self.meeting_rooms(workspace_id)
         return {
             "workspaceId": workspace_id,
             "label": workspace.get("label"),
@@ -337,6 +619,7 @@ class FileStore(object):
                 "label": company.get("label") or "Free Agent Company",
                 "status": company.get("status") or "active",
             },
+            "meetingRooms": meeting_rooms,
             "accounts": account_items,
             "accountCompanyMemberships": memberships,
             "projects": projects,
@@ -464,6 +747,7 @@ class FileStore(object):
             "lastUsedAt": None,
             "revokedAt": None,
         }
+        created_rooms = self._ensure_default_meeting_rooms(data, workspace_id)
         self.audit(
             data,
             "workspace.create_free_account",
@@ -475,6 +759,7 @@ class FileStore(object):
                 "companyId": company_id,
                 "accountCompanyMembershipId": membership_id,
                 "projectId": project_id,
+                "meetingRoomCount": len(created_rooms),
             },
         )
         self._save(data)
@@ -800,6 +1085,9 @@ class SQLiteStore(FileStore):
         "matm_receipts",
         "matm_notifications",
         "matm_messages",
+        "matm_meeting_reads",
+        "matm_meeting_messages",
+        "matm_meeting_rooms",
         "matm_outbox_events",
         "matm_storage_ledger",
         "matm_audit_log",
@@ -1064,6 +1352,62 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (notification_id) REFERENCES matm_notifications (notification_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_receipts_consumer ON matm_receipts (workspace_id, consumer_agent_id);
+
+            CREATE TABLE IF NOT EXISTS matm_meeting_rooms (
+              room_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              label TEXT NOT NULL,
+              name TEXT NOT NULL,
+              purpose TEXT NOT NULL,
+              status TEXT NOT NULL,
+              default_room INTEGER NOT NULL DEFAULT 1,
+              always_available INTEGER NOT NULL DEFAULT 1,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (workspace_id, scope_type, scope_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_meeting_rooms_scope ON matm_meeting_rooms (workspace_id, scope_type, scope_id);
+
+            CREATE TABLE IF NOT EXISTS matm_meeting_messages (
+              meeting_message_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              sender_agent_id TEXT NOT NULL,
+              safe_summary TEXT NOT NULL,
+              raw_message_body_stored INTEGER NOT NULL DEFAULT 0,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_meeting_messages_room_created ON matm_meeting_messages (workspace_id, room_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_meeting_reads (
+              meeting_read_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              last_meeting_message_id TEXT,
+              last_read_at TEXT,
+              read_message_count INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL DEFAULT 'read',
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (workspace_id, room_id, agent_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_meeting_reads_agent ON matm_meeting_reads (workspace_id, agent_id);
 
             CREATE TABLE IF NOT EXISTS matm_idempotency (
               record_key TEXT PRIMARY KEY,
@@ -1330,6 +1674,60 @@ class SQLiteStore(FileStore):
                             "createdAt": row["created_at"],
                             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
                             "valuesRedacted": self._bool(row["values_redacted"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_meeting_rooms ORDER BY created_at, room_id"):
+                    data["meetingRooms"][row["room_id"]] = {
+                        "roomId": row["room_id"],
+                        "workspaceId": row["workspace_id"],
+                        "scope": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "label": row["label"],
+                        "name": row["name"],
+                        "purpose": row["purpose"],
+                        "status": row["status"],
+                        "defaultRoom": self._bool(row["default_room"]),
+                        "alwaysAvailable": self._bool(row["always_available"]),
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": self._bool(row["values_redacted"]),
+                        "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                    }
+                    if row["updated_at"]:
+                        data["meetingRooms"][row["room_id"]]["updatedAt"] = row["updated_at"]
+
+                for row in connection.execute("SELECT * FROM matm_meeting_messages ORDER BY created_at, meeting_message_id"):
+                    data["meetingMessages"].append(
+                        {
+                            "meetingMessageId": row["meeting_message_id"],
+                            "workspaceId": row["workspace_id"],
+                            "roomId": row["room_id"],
+                            "scope": row["scope_type"],
+                            "scopeId": row["scope_id"],
+                            "senderAgentId": row["sender_agent_id"],
+                            "safeSummary": row["safe_summary"],
+                            "createdAt": row["created_at"],
+                            "rawMessageBodyStored": self._bool(row["raw_message_body_stored"]),
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                        }
+                    )
+
+                for row in connection.execute("SELECT * FROM matm_meeting_reads ORDER BY updated_at, meeting_read_id"):
+                    data["meetingReads"].append(
+                        {
+                            "meetingReadId": row["meeting_read_id"],
+                            "workspaceId": row["workspace_id"],
+                            "roomId": row["room_id"],
+                            "agentId": row["agent_id"],
+                            "lastMeetingMessageId": row["last_meeting_message_id"],
+                            "lastReadAt": row["last_read_at"],
+                            "readMessageCount": row["read_message_count"],
+                            "status": row["status"],
+                            "createdAt": row["created_at"],
+                            "updatedAt": row["updated_at"],
+                            "valuesRedacted": self._bool(row["values_redacted"]),
+                            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
                         }
                     )
 
@@ -1679,6 +2077,80 @@ class SQLiteStore(FileStore):
                                 self._int_bool(receipt.get("rawPayloadExposed")),
                                 self._int_bool(receipt.get("valuesRedacted", True)),
                                 receipt.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for room in data.get("meetingRooms", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_meeting_rooms (
+                              room_id, workspace_id, scope_type, scope_id, label, name, purpose, status,
+                              default_room, always_available, values_redacted, raw_payload_exposed, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                room.get("roomId"),
+                                room.get("workspaceId"),
+                                room.get("scope") or "workspace",
+                                room.get("scopeId") or room.get("workspaceId"),
+                                room.get("label") or "Meeting room",
+                                room.get("name") or "Meeting room",
+                                room.get("purpose") or "Agent coordination meeting room.",
+                                room.get("status") or "active",
+                                self._int_bool(room.get("defaultRoom", True)),
+                                self._int_bool(room.get("alwaysAvailable", True)),
+                                self._int_bool(room.get("valuesRedacted", True)),
+                                self._int_bool(room.get("rawPayloadExposed")),
+                                room.get("createdAt") or utc_now(),
+                                room.get("updatedAt"),
+                            ),
+                        )
+
+                    for message in data.get("meetingMessages", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_meeting_messages (
+                              meeting_message_id, workspace_id, room_id, scope_type, scope_id, sender_agent_id,
+                              safe_summary, raw_message_body_stored, values_redacted, raw_payload_exposed, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                message.get("meetingMessageId"),
+                                message.get("workspaceId"),
+                                message.get("roomId"),
+                                message.get("scope") or "workspace",
+                                message.get("scopeId") or message.get("workspaceId"),
+                                message.get("senderAgentId"),
+                                message.get("safeSummary") or "",
+                                self._int_bool(message.get("rawMessageBodyStored")),
+                                self._int_bool(message.get("valuesRedacted", True)),
+                                self._int_bool(message.get("rawPayloadExposed")),
+                                message.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for read_state in data.get("meetingReads", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_meeting_reads (
+                              meeting_read_id, workspace_id, room_id, agent_id, last_meeting_message_id,
+                              last_read_at, read_message_count, status, values_redacted, raw_payload_exposed,
+                              created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                read_state.get("meetingReadId"),
+                                read_state.get("workspaceId"),
+                                read_state.get("roomId"),
+                                read_state.get("agentId"),
+                                read_state.get("lastMeetingMessageId"),
+                                read_state.get("lastReadAt"),
+                                int(read_state.get("readMessageCount") or 0),
+                                read_state.get("status") or "read",
+                                self._int_bool(read_state.get("valuesRedacted", True)),
+                                self._int_bool(read_state.get("rawPayloadExposed")),
+                                read_state.get("createdAt") or utc_now(),
+                                read_state.get("updatedAt"),
                             ),
                         )
 

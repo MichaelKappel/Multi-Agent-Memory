@@ -27,6 +27,9 @@ Current protected MATM routes:
 - `/api/matm/search`
 - `/api/matm/review-queue`
 - `/api/matm/review-queue/decide`
+- `/api/matm/meeting-rooms`
+- `/api/matm/meeting-messages`
+- `/api/matm/meeting-rooms/read`
 - `/api/matm/agent-messages`
 - `/api/matm/current-message`
 - `/api/matm/agent-inbox`

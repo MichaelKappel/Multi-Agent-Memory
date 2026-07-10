@@ -209,6 +209,62 @@ CREATE TABLE IF NOT EXISTS matm_receipts (
   CONSTRAINT fk_matm_receipts_notification FOREIGN KEY (notification_id) REFERENCES matm_notifications (notification_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_meeting_rooms (
+  room_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  label VARCHAR(255) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  purpose TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  default_room TINYINT(1) NOT NULL DEFAULT 1,
+  always_available TINYINT(1) NOT NULL DEFAULT 1,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_meeting_room_scope (workspace_id, scope_type, scope_id),
+  KEY ix_matm_meeting_rooms_scope (workspace_id, scope_type, scope_id),
+  CONSTRAINT fk_matm_meeting_rooms_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_meeting_messages (
+  meeting_message_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  sender_agent_id VARCHAR(128) NOT NULL,
+  safe_summary TEXT NOT NULL,
+  raw_message_body_stored TINYINT(1) NOT NULL DEFAULT 0,
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_matm_meeting_messages_room_created (workspace_id, room_id, created_at),
+  CONSTRAINT fk_matm_meeting_messages_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_meeting_messages_room FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_meeting_reads (
+  meeting_read_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  last_meeting_message_id VARCHAR(96) NULL,
+  last_read_at TIMESTAMP NULL,
+  read_message_count INT NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL DEFAULT 'read',
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_meeting_read_agent (workspace_id, room_id, agent_id),
+  KEY ix_matm_meeting_reads_agent (workspace_id, agent_id),
+  CONSTRAINT fk_matm_meeting_reads_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_meeting_reads_room FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_review_queue (
   review_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,

@@ -136,6 +136,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-review-decision-summary", text)
+        self.assertIn('id="meeting-rooms"', text)
+        self.assertIn("data-console-refresh-meeting-rooms", text)
+        self.assertIn("data-console-mark-meeting-read", text)
+        self.assertIn("data-console-meeting-rooms-list", text)
+        self.assertIn("data-console-meeting-message", text)
+        self.assertIn("data-console-meeting-post-summary", text)
+        self.assertIn("data-console-meeting-messages-list", text)
+        self.assertIn("data-console-meeting-output", text)
         self.assertIn("data-console-inbox-list", text)
         self.assertIn("data-console-message-targets", text)
         self.assertIn("data-console-message-delivery", text)
@@ -173,6 +181,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".review-decision-summary", css)
         self.assertIn(".acknowledgement-summary", css)
         self.assertIn(".lane-overview", css)
+        self.assertIn(".meeting-room-list", css)
+        self.assertIn(".meeting-post-summary", css)
+        self.assertIn(".meeting-rooms-summary", css)
+        self.assertIn(".meeting-messages-summary", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".memory-search-summary", css)
         self.assertIn(".inbox-summary", css)
@@ -196,12 +208,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("renderSessionSummary", js)
         self.assertIn("data-console-session-summary", js)
         self.assertIn("workspaceOperatorSummary", js)
+        self.assertIn("agentRegistrationSummary", js)
         self.assertIn("operatorLevel", js)
         self.assertIn("payload.operatorSummary", js)
         self.assertIn("window.location.hostname", js)
         self.assertIn("live site", js)
         self.assertIn("4 levels loaded", js)
         self.assertIn("not echoed", js)
+        self.assertIn("current inbox lane ready", js)
+        self.assertIn("credentials hidden", js)
+        self.assertIn("payload hidden", js)
         self.assertIn("Loaded workspace shortcuts", js)
 
     def test_console_js_treats_debug_json_as_advanced_view(self):
@@ -312,8 +328,13 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("renderReviewDecisionSummary", js)
         self.assertIn("data-console-review-decision-summary", js)
         self.assertIn("Review decision ", js)
+        self.assertIn("operatorSummary.statusCounts", js)
+        self.assertIn("operatorSummary.reviewNoteExposed", js)
+        self.assertIn("operatorSummary.rawCredentialExposed", js)
+        self.assertIn("review-decision-operator-summary", js)
         self.assertIn("Decision recorded without exposing the raw review note.", js)
         self.assertIn("payload hidden", js)
+        self.assertIn("review note hidden", js)
 
     def test_console_js_renders_all_agent_lane_overview(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -330,6 +351,27 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('" broadcast / "', js)
         self.assertIn("data-console-open-lane", js)
         self.assertIn("All inbox lanes refreshed.", js)
+
+    def test_console_js_renders_first_class_meeting_rooms(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("selectedMeetingRoomId", js)
+        self.assertIn("latestMeetingMessageId", js)
+        self.assertIn("renderMeetingRooms", js)
+        self.assertIn("renderMeetingMessages", js)
+        self.assertIn("renderMeetingPost", js)
+        self.assertIn("renderMeetingRead", js)
+        self.assertIn("/api/matm/meeting-rooms", js)
+        self.assertIn("/api/matm/meeting-messages", js)
+        self.assertIn("/api/matm/meeting-rooms/read", js)
+        self.assertIn("data-console-refresh-meeting-rooms", js)
+        self.assertIn("data-console-mark-meeting-read", js)
+        self.assertIn("data-console-meeting-message", js)
+        self.assertIn("Meeting rooms refreshed.", js)
+        self.assertIn("Meeting message posted and room refreshed.", js)
+        self.assertIn("Meeting room marked read.", js)
+        self.assertIn("Copy meeting message id", js)
+        self.assertIn("Copy room id", js)
 
     def test_console_js_sends_full_memory_search_filters(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -446,11 +488,30 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         company_id = setup["companyId"]
         workspace_id = setup["workspaceId"]
         project_id = setup["projectId"]
+        setup_summary = setup["operatorSummary"]
         self.assertTrue(setup["hierarchy"]["accountToCompanyMembership"])
         self.assertTrue(setup["hierarchy"]["companyToWorkspace"])
         self.assertTrue(setup["hierarchy"]["workspaceToProject"])
         self.assertEqual(200 * 1024 * 1024, setup["storageLimitBytes"])
         self.assertFalse(setup["checkoutRequired"])
+        self.assertEqual("memoryendpoints.free_account_setup_operator_summary.v1", setup_summary["schemaVersion"])
+        self.assertTrue(setup_summary["hierarchyReady"])
+        self.assertEqual(["account", "company", "workspace", "project"], [item["level"] for item in setup_summary["hierarchy"]])
+        self.assertEqual(account_id, setup_summary["hierarchy"][0]["id"])
+        self.assertEqual(company_id, setup_summary["hierarchy"][1]["id"])
+        self.assertEqual(workspace_id, setup_summary["hierarchy"][2]["id"])
+        self.assertEqual(project_id, setup_summary["hierarchy"][3]["id"])
+        self.assertEqual(200 * 1024 * 1024, setup_summary["storage"]["limitBytes"])
+        self.assertFalse(setup_summary["storage"]["checkoutRequired"])
+        self.assertTrue(setup_summary["keyHandling"]["oneTimeWorkspaceKeyReturned"])
+        self.assertTrue(setup_summary["keyHandling"]["saveRequired"])
+        self.assertFalse(setup_summary["keyHandling"]["rawKeyStoredByServer"])
+        self.assertFalse(setup_summary["keyHandling"]["idempotencySupported"])
+        self.assertTrue(setup_summary["valuesRedacted"])
+        self.assertFalse(setup_summary["rawCredentialExposed"])
+        self.assertFalse(setup_summary["rawPayloadExposed"])
+        self.assertNotIn(token, json.dumps(setup_summary))
+        self.assertNotIn("apiKeySecret", json.dumps(setup_summary))
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
 
         status, _headers, text = call_app(
@@ -482,7 +543,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(operator_summary["privacy"]["valuesRedacted"])
         self.assertFalse(operator_summary["privacy"]["rawCredentialExposed"])
         self.assertFalse(operator_summary["privacy"]["rawPayloadExposed"])
+        self.assertEqual(3, operator_summary["meetingRooms"]["count"])
+        self.assertEqual(1, operator_summary["meetingRooms"]["scopeCounts"]["company"])
+        self.assertEqual(1, operator_summary["meetingRooms"]["scopeCounts"]["workspace"])
+        self.assertEqual(1, operator_summary["meetingRooms"]["scopeCounts"]["project"])
+        self.assertEqual(3, operator_summary["meetingRooms"]["alwaysAvailableCount"])
+        self.assertEqual("company", operator_summary["meetingRooms"]["entryRoomScope"])
+        self.assertEqual(["company", "workspace", "project", "goal_or_task"], operator_summary["meetingRooms"]["routingOrder"])
         self.assertTrue(operator_summary["copySafeIds"])
+        self.assertEqual(3, len(workspace["meetingRooms"]))
+        self.assertEqual({"company", "workspace", "project"}, {room["scope"] for room in workspace["meetingRooms"]})
+        self.assertTrue(all(room["alwaysAvailable"] for room in workspace["meetingRooms"]))
+        company_room = [room for room in workspace["meetingRooms"] if room["scope"] == "company"][0]
+        self.assertIn("who they are", company_room["purpose"])
+        self.assertIn("why they are here", company_room["purpose"])
+        self.assertIn("what they are working on", company_room["purpose"])
+        project_room = [room for room in workspace["meetingRooms"] if room["scope"] == "project"][0]
+        self.assertEqual(project_id, project_room["scopeId"])
         self.assertTrue(workspace_payload["valuesRedacted"])
         self.assertFalse(workspace_payload["rawCredentialExposed"])
         self.assertFalse(workspace_payload["rawPayloadExposed"])
@@ -516,12 +593,139 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn("apiKeySecret", keys[0])
 
         status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            headers=auth,
+            query="workspace_id=%s&agent_id=agent-b" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        rooms_payload = json.loads(text)
+        rooms_summary = rooms_payload["operatorSummary"]
+        self.assertEqual("memoryendpoints.meeting_rooms_operator_summary.v1", rooms_summary["schemaVersion"])
+        self.assertEqual(3, rooms_payload["count"])
+        self.assertEqual(3, rooms_summary["count"])
+        self.assertEqual(1, rooms_summary["scopeCounts"]["company"])
+        self.assertEqual(1, rooms_summary["scopeCounts"]["workspace"])
+        self.assertEqual(1, rooms_summary["scopeCounts"]["project"])
+        self.assertEqual(3, rooms_summary["alwaysAvailableCount"])
+        self.assertEqual(3, rooms_summary["defaultRoomCount"])
+        self.assertEqual(0, rooms_summary["messageCount"])
+        self.assertEqual(0, rooms_summary["unreadCount"])
+        self.assertEqual("company", rooms_summary["roomFlow"]["entryRoomScope"])
+        self.assertEqual(["company", "workspace", "project", "goal_or_task"], rooms_summary["roomFlow"]["routingOrder"])
+        self.assertIn("state agent identity", rooms_summary["roomFlow"]["entryProtocol"])
+        self.assertTrue(rooms_summary["valuesRedacted"])
+        self.assertFalse(rooms_summary["rawCredentialExposed"])
+        self.assertFalse(rooms_summary["rawPayloadExposed"])
+        project_room = [room for room in rooms_payload["items"] if room["scope"] == "project"][0]
+        self.assertEqual(project_id, project_room["scopeId"])
+        self.assertTrue(project_room["roomId"].startswith("room-"))
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages",
+            headers=auth,
+            query="workspace_id=%s&room_id=%s&agent_id=agent-b" % (workspace_id, project_room["roomId"]),
+        )
+        self.assertEqual("200 OK", status)
+        empty_room_payload = json.loads(text)
+        self.assertEqual(0, empty_room_payload["count"])
+        self.assertEqual(project_room["roomId"], empty_room_payload["room"]["roomId"])
+        self.assertEqual("project", empty_room_payload["operatorSummary"]["scope"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "roomId": project_room["roomId"],
+                "senderAgentId": "agent-a",
+                "safeSummary": "Project meeting: agent-b should use this room to ask which project owns the work.",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        meeting_post = json.loads(text)
+        meeting_message = meeting_post["message"]
+        meeting_post_summary = meeting_post["operatorSummary"]
+        self.assertEqual("memoryendpoints.meeting_post_operator_summary.v1", meeting_post_summary["schemaVersion"])
+        self.assertEqual(project_room["roomId"], meeting_message["roomId"])
+        self.assertEqual("project", meeting_message["scope"])
+        self.assertEqual(project_id, meeting_message["scopeId"])
+        self.assertEqual("agent-a", meeting_message["senderAgentId"])
+        self.assertFalse(meeting_message["rawMessageBodyStored"])
+        self.assertTrue(meeting_message["valuesRedacted"])
+        self.assertFalse(meeting_message["rawPayloadExposed"])
+        self.assertTrue(meeting_post_summary["alwaysAvailable"])
+        self.assertFalse(meeting_post_summary["rawCredentialExposed"])
+        self.assertFalse(meeting_post_summary["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages",
+            headers=auth,
+            query="workspace_id=%s&room_id=%s&agent_id=agent-b" % (workspace_id, project_room["roomId"]),
+        )
+        self.assertEqual("200 OK", status)
+        room_messages = json.loads(text)
+        room_message_summary = room_messages["operatorSummary"]
+        self.assertEqual(1, room_messages["count"])
+        self.assertEqual(1, room_message_summary["count"])
+        self.assertEqual(1, room_message_summary["senderAgentCounts"]["agent-a"])
+        self.assertEqual(1, room_message_summary["unreadCount"])
+        self.assertFalse(room_message_summary["rawCredentialExposed"])
+        self.assertFalse(room_message_summary["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms/read",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "roomId": project_room["roomId"],
+                "agentId": "agent-b",
+            },
+        )
+        self.assertEqual("200 OK", status)
+        meeting_read = json.loads(text)
+        meeting_read_summary = meeting_read["operatorSummary"]
+        self.assertEqual("memoryendpoints.meeting_read_operator_summary.v1", meeting_read_summary["schemaVersion"])
+        self.assertEqual(project_room["roomId"], meeting_read_summary["roomId"])
+        self.assertEqual("agent-b", meeting_read_summary["agentId"])
+        self.assertEqual(meeting_message["meetingMessageId"], meeting_read_summary["lastMeetingMessageId"])
+        self.assertEqual(1, meeting_read_summary["readMessageCount"])
+        self.assertFalse(meeting_read_summary["rawCredentialExposed"])
+        self.assertFalse(meeting_read_summary["rawPayloadExposed"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            headers=auth,
+            query="workspace_id=%s&agent_id=agent-b" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        rooms_after_read = json.loads(text)
+        project_room_after_read = [room for room in rooms_after_read["items"] if room["roomId"] == project_room["roomId"]][0]
+        self.assertEqual(1, project_room_after_read["messageCount"])
+        self.assertEqual(0, project_room_after_read["unreadCount"])
+
+        status, _headers, text = call_app(
             "/api/matm/agents/register",
             method="POST",
             headers=auth,
             body={"workspaceId": workspace_id, "agentId": "agent-a", "displayName": "Agent A"},
         )
         self.assertEqual("201 Created", status)
+        agent_payload = json.loads(text)
+        agent_summary = agent_payload["operatorSummary"]
+        self.assertTrue(agent_payload["valuesRedacted"])
+        self.assertFalse(agent_payload["rawCredentialExposed"])
+        self.assertFalse(agent_payload["rawPayloadExposed"])
+        self.assertEqual("memoryendpoints.agent_registration_operator_summary.v1", agent_summary["schemaVersion"])
+        self.assertEqual("agent-a", agent_summary["agentId"])
+        self.assertEqual("Agent A", agent_summary["displayName"])
+        self.assertEqual("active", agent_summary["status"])
+        self.assertTrue(agent_summary["registered"])
+        self.assertTrue(agent_summary["currentMessageLaneReady"])
+        self.assertTrue(agent_summary["valuesRedacted"])
+        self.assertFalse(agent_summary["rawCredentialExposed"])
+        self.assertFalse(agent_summary["rawPayloadExposed"])
 
         status, _headers, text = call_app(
             "/api/matm/memory-events/submit",
@@ -771,6 +975,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "memory.submit",
                 "memory.search",
                 "message.submit",
+                "meeting_rooms.read",
+                "meeting_messages.read",
+                "meeting_message.submit",
+                "meeting_room.read",
                 "current_message.read",
                 "notification.ack",
                 "receipts.read",
@@ -798,6 +1006,21 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             for summary in item["detailsSummary"]
         ]
         self.assertIn("hierarchy ready", workspace_read_summaries)
+        meeting_room_summaries = [
+            summary
+            for item in audit["items"]
+            if item["action"] == "meeting_rooms.read"
+            for summary in item["detailsSummary"]
+        ]
+        self.assertIn("meeting rooms 3", meeting_room_summaries)
+        meeting_message_summaries = [
+            summary
+            for item in audit["items"]
+            if item["action"] == "meeting_messages.read"
+            for summary in item["detailsSummary"]
+        ]
+        self.assertIn("room project", meeting_message_summaries)
+        self.assertIn("meeting messages 1", meeting_message_summaries)
         receipt_read_summaries = [
             summary
             for item in audit["items"]
@@ -950,6 +1173,45 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("Broadcast to every active agent in the swarm.", observer["items"][0]["message"]["safeSummary"])
         self.assertEqual("broadcast", observer["items"][0]["delivery"]["messageType"])
 
+    def test_meeting_rooms_require_workspace_key_for_company_access(self):
+        status, _headers, text = call_app(
+            "/api/matm/agent-setup/free-account",
+            method="POST",
+            body={
+                "companyLabel": "Private Company",
+                "label": "Private Workspace",
+                "projectLabel": "Private Project",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        setup = json.loads(text)
+        workspace_id = setup["workspaceId"]
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            query="workspace_id=%s&agent_id=outside-agent" % workspace_id,
+        )
+        self.assertEqual("401 Unauthorized", status)
+        unauthenticated = json.loads(text)
+        self.assertFalse(unauthenticated["ok"])
+        self.assertTrue(unauthenticated["safeNoOp"])
+        self.assertTrue(unauthenticated["valuesRedacted"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            headers={"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]},
+            query="workspace_id=%s&agent_id=inside-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        rooms = json.loads(text)
+        company_rooms = [room for room in rooms["items"] if room["scope"] == "company"]
+        self.assertEqual(1, len(company_rooms))
+        self.assertEqual(setup["companyId"], company_rooms[0]["scopeId"])
+        self.assertTrue(company_rooms[0]["alwaysAvailable"])
+        self.assertTrue(rooms["valuesRedacted"])
+        self.assertFalse(rooms["rawCredentialExposed"])
+        self.assertFalse(rooms["rawPayloadExposed"])
+
     def test_memory_firewall_review_queue_and_promotion(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -1076,8 +1338,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             body=decide_body,
         )
         self.assertEqual("200 OK", status)
-        promoted = json.loads(text)["review"]
+        decision_payload = json.loads(text)
+        promoted = decision_payload["review"]
+        decision_summary = decision_payload["operatorSummary"]
         self.assertEqual("promoted", promoted["status"])
+        self.assertTrue(decision_payload["valuesRedacted"])
+        self.assertFalse(decision_payload["rawCredentialExposed"])
+        self.assertFalse(decision_payload["rawPayloadExposed"])
+        self.assertEqual("memoryendpoints.review_decision_operator_summary.v1", decision_summary["schemaVersion"])
+        self.assertEqual(review_id, decision_summary["reviewId"])
+        self.assertEqual(promoted["memoryEventId"], decision_summary["memoryEventId"])
+        self.assertEqual("promoted", decision_summary["status"])
+        self.assertEqual(1, decision_summary["statusCounts"]["promoted"])
+        self.assertEqual("reviewer-a", decision_summary["reviewerAgentId"])
+        self.assertTrue(decision_summary["valuesRedacted"])
+        self.assertFalse(decision_summary["reviewNoteExposed"])
+        self.assertFalse(decision_summary["rawCredentialExposed"])
+        self.assertFalse(decision_summary["rawPayloadExposed"])
         self.assertNotIn("Safe because", json.dumps(promoted))
 
         status, _headers, text = call_app(
@@ -1164,8 +1441,22 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             },
         )
         self.assertEqual("200 OK", status)
-        review = json.loads(text)["review"]
+        decision_payload = json.loads(text)
+        review = decision_payload["review"]
+        decision_summary = decision_payload["operatorSummary"]
         self.assertEqual("promoted", review["status"])
+        self.assertTrue(decision_payload["valuesRedacted"])
+        self.assertFalse(decision_payload["rawCredentialExposed"])
+        self.assertFalse(decision_payload["rawPayloadExposed"])
+        self.assertEqual("memoryendpoints.review_decision_operator_summary.v1", decision_summary["schemaVersion"])
+        self.assertEqual(review_id, decision_summary["reviewId"])
+        self.assertEqual(event["eventId"], decision_summary["memoryEventId"])
+        self.assertEqual("promoted", decision_summary["status"])
+        self.assertEqual(1, decision_summary["statusCounts"]["promoted"])
+        self.assertEqual("human-verifier-agent", decision_summary["reviewerAgentId"])
+        self.assertFalse(decision_summary["reviewNoteExposed"])
+        self.assertFalse(decision_summary["rawCredentialExposed"])
+        self.assertFalse(decision_summary["rawPayloadExposed"])
         self.assertNotIn("Public-safe review note", text)
 
         status, _headers, text = call_app(
@@ -1461,6 +1752,43 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         self.assertEqual(1, json.loads(text)["count"])
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms",
+            headers=auth,
+            query="workspace_id=%s&agent_id=sqlite-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        sqlite_rooms = json.loads(text)
+        self.assertEqual(3, sqlite_rooms["count"])
+        sqlite_project_room = [room for room in sqlite_rooms["items"] if room["scope"] == "project"][0]
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "roomId": sqlite_project_room["roomId"],
+                "senderAgentId": "sqlite-agent",
+                "safeSummary": "SQLite-backed project room persists first-class meeting messages.",
+            },
+        )
+        self.assertEqual("201 Created", status)
+        sqlite_meeting_message_id = json.loads(text)["message"]["meetingMessageId"]
+
+        status, _headers, text = call_app(
+            "/api/matm/meeting-rooms/read",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "roomId": sqlite_project_room["roomId"],
+                "agentId": "sqlite-agent",
+                "lastMeetingMessageId": sqlite_meeting_message_id,
+            },
+        )
+        self.assertEqual("200 OK", status)
         self.assertTrue(os.path.exists(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]))
 
         with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
@@ -1488,6 +1816,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "matm_messages",
                     "matm_notifications",
                     "matm_receipts",
+                    "matm_meeting_rooms",
+                    "matm_meeting_messages",
+                    "matm_meeting_reads",
                     "matm_idempotency",
                     "matm_outbox_events",
                     "matm_storage_ledger",
@@ -1501,6 +1832,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_projects").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_records").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_memory_revisions").fetchone()[0])
+            self.assertEqual(3, connection.execute("SELECT COUNT(*) FROM matm_meeting_rooms").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_meeting_messages").fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_meeting_reads").fetchone()[0])
             key_columns = {
                 row[1]
                 for row in connection.execute("PRAGMA table_info(matm_api_keys)").fetchall()

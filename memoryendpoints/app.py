@@ -198,6 +198,22 @@ def _message_delivery_operator_summary(delivery, delivery_counts):
     }
 
 
+def _agent_registration_operator_summary(agent):
+    agent = agent or {}
+    return {
+        "schemaVersion": "memoryendpoints.agent_registration_operator_summary.v1",
+        "agentId": agent.get("agentId") or "",
+        "displayName": redact_text(agent.get("displayName") or ""),
+        "status": agent.get("status") or "",
+        "registered": bool(agent.get("agentId")),
+        "currentMessageLaneReady": bool(agent.get("agentId")),
+        "registeredAt": agent.get("registeredAt") or "",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _memory_submission_metadata(event):
     event = event or {}
     firewall = event.get("firewall") or {}
@@ -324,6 +340,92 @@ def _acknowledgement_operator_summary(receipt):
     }
 
 
+def _meeting_rooms_operator_summary(rooms, filters):
+    rooms = rooms or []
+    room_flow = {
+        "entryRoomScope": "company",
+        "entryProtocol": [
+            "state agent identity",
+            "state why the agent is here",
+            "state current work or requested assignment",
+            "wait for coordinator routing to workspace, project, goal, or task room",
+        ],
+        "routingOrder": ["company", "workspace", "project", "goal_or_task"],
+        "customGoalTaskRoomsPlanned": True,
+        "valuesRedacted": True,
+    }
+    return {
+        "schemaVersion": "memoryendpoints.meeting_rooms_operator_summary.v1",
+        "count": len(rooms),
+        "filters": dict(filters or {}),
+        "scopeCounts": _count_by(rooms, "scope", {"company": 0, "workspace": 0, "project": 0}),
+        "alwaysAvailableCount": sum(1 for room in rooms if room.get("alwaysAvailable")),
+        "defaultRoomCount": sum(1 for room in rooms if room.get("defaultRoom")),
+        "messageCount": sum(int(room.get("messageCount") or 0) for room in rooms),
+        "unreadCount": sum(int(room.get("unreadCount") or 0) for room in rooms),
+        "readStateCount": sum(1 for room in rooms if room.get("readState")),
+        "roomFlow": room_flow,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _meeting_messages_operator_summary(room, messages, read_state, filters, unread_count=0):
+    room = room or {}
+    messages = messages or []
+    return {
+        "schemaVersion": "memoryendpoints.meeting_messages_operator_summary.v1",
+        "roomId": room.get("roomId") or "",
+        "scope": room.get("scope") or "",
+        "scopeId": room.get("scopeId") or "",
+        "count": len(messages),
+        "filters": dict(filters or {}),
+        "senderAgentCounts": _count_by(messages, "senderAgentId"),
+        "unreadCount": int(unread_count or 0),
+        "readStatePresent": bool(read_state),
+        "alwaysAvailable": bool(room.get("alwaysAvailable")),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _meeting_post_operator_summary(room, message):
+    room = room or {}
+    message = message or {}
+    return {
+        "schemaVersion": "memoryendpoints.meeting_post_operator_summary.v1",
+        "roomId": room.get("roomId") or "",
+        "meetingMessageId": message.get("meetingMessageId") or "",
+        "scope": room.get("scope") or message.get("scope") or "",
+        "scopeId": room.get("scopeId") or message.get("scopeId") or "",
+        "senderAgentId": message.get("senderAgentId") or "",
+        "messageCount": 1 if message else 0,
+        "alwaysAvailable": bool(room.get("alwaysAvailable")),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _meeting_read_operator_summary(read_state, room):
+    read_state = read_state or {}
+    room = room or {}
+    return {
+        "schemaVersion": "memoryendpoints.meeting_read_operator_summary.v1",
+        "roomId": room.get("roomId") or read_state.get("roomId") or "",
+        "scope": room.get("scope") or "",
+        "agentId": read_state.get("agentId") or "",
+        "lastMeetingMessageId": read_state.get("lastMeetingMessageId") or "",
+        "readMessageCount": int(read_state.get("readMessageCount") or 0),
+        "status": read_state.get("status") or "read",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _audit_log_operator_summary(items, filters):
     items = items or []
     raw_credential_exposed_count = sum(1 for item in items if item.get("rawCredentialExposed"))
@@ -366,6 +468,24 @@ def _review_queue_operator_summary(items, all_items, filters, status_counts):
     }
 
 
+def _review_decision_operator_summary(review):
+    review = review or {}
+    status = review.get("status") or "recorded"
+    return {
+        "schemaVersion": "memoryendpoints.review_decision_operator_summary.v1",
+        "reviewId": review.get("reviewId") or "",
+        "memoryEventId": review.get("memoryEventId") or "",
+        "status": status,
+        "statusCounts": {status: 1} if review else {},
+        "reviewerAgentId": review.get("reviewerAgentId") or "",
+        "decidedAt": review.get("decidedAt") or review.get("updatedAt") or "",
+        "reviewNoteExposed": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _workspace_operator_summary(workspace):
     workspace = workspace or {}
     accounts = workspace.get("accounts") or []
@@ -373,6 +493,7 @@ def _workspace_operator_summary(workspace):
     company = workspace.get("company") or {}
     projects = workspace.get("projects") or []
     project = projects[0] if projects else {}
+    meeting_rooms = workspace.get("meetingRooms") or []
     hierarchy = [
         {
             "level": "account",
@@ -418,7 +539,40 @@ def _workspace_operator_summary(workspace):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         },
+        "meetingRooms": {
+            "count": len(meeting_rooms),
+            "scopeCounts": _count_by(meeting_rooms, "scope", {"company": 0, "workspace": 0, "project": 0}),
+            "alwaysAvailableCount": sum(1 for room in meeting_rooms if room.get("alwaysAvailable")),
+            "entryRoomScope": "company",
+            "routingOrder": ["company", "workspace", "project", "goal_or_task"],
+        },
         "copySafeIds": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _free_account_setup_operator_summary(account_id, company_id, workspace_id, project_id):
+    return {
+        "schemaVersion": "memoryendpoints.free_account_setup_operator_summary.v1",
+        "hierarchy": [
+            {"level": "account", "id": account_id or "", "copySafe": True},
+            {"level": "company", "id": company_id or "", "copySafe": True},
+            {"level": "workspace", "id": workspace_id or "", "copySafe": True},
+            {"level": "project", "id": project_id or "", "copySafe": True},
+        ],
+        "hierarchyReady": all([account_id, company_id, workspace_id, project_id]),
+        "storage": {
+            "limitBytes": PUBLIC_STORAGE_BYTES,
+            "checkoutRequired": False,
+        },
+        "keyHandling": {
+            "oneTimeWorkspaceKeyReturned": True,
+            "saveRequired": True,
+            "rawKeyStoredByServer": False,
+            "idempotencySupported": False,
+        },
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
@@ -500,6 +654,7 @@ def route_console(start_response):
     <a href="#workspace-overview">Workspace</a>
     <a href="#memory-workflow">Memory</a>
     <a href="#review-queue">Reviews</a>
+    <a href="#meeting-rooms">Meetings</a>
     <a href="#message-lanes">Messages</a>
     <a href="#receipts-audit">Receipts/Audit</a>
   </nav>
@@ -658,6 +813,38 @@ def route_console(start_response):
     <details class="debug-json">
       <summary>Decision JSON</summary>
       <pre data-console-review-decision-output>{}</pre>
+    </details>
+  </section>
+  <section class="console-panel" id="meeting-rooms">
+    <h2>Meetings</h2>
+    <div class="actions lane-actions">
+      <button class="button" type="button" data-console-refresh-meeting-rooms>Refresh rooms</button>
+      <button class="button" type="button" data-console-mark-meeting-read>Mark room read</button>
+    </div>
+    <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
+      <p class="empty-state">Company, workspace, and project meeting rooms will appear after the workspace loads.</p>
+    </div>
+    <form class="console-grid" data-console-meeting-message>
+      <label>Room id
+        <input name="roomId" placeholder="select a meeting room" required>
+      </label>
+      <label>Sender agent
+        <input name="senderAgentId" value="human-verifier-agent" required>
+      </label>
+      <label class="wide">Safe meeting note
+        <textarea name="safeSummary" rows="3" required>Meeting note: please use this room for company, workspace, or project coordination instead of hidden side channels.</textarea>
+      </label>
+      <button class="button primary" type="submit">Post to room</button>
+    </form>
+    <div class="console-results meeting-post-summary" data-console-meeting-post-summary>
+      <p class="empty-state">Meeting post confirmations will appear here.</p>
+    </div>
+    <div class="console-results meeting-message-list" data-console-meeting-messages-list>
+      <p class="empty-state">Select a room to read its transcript.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Meeting JSON</summary>
+      <pre data-console-meeting-output>{}</pre>
     </details>
   </section>
   <section class="console-panel" id="message-lanes">
@@ -1039,6 +1226,7 @@ def route_setup(environ, start_response):
             "storageLimitBytes": PUBLIC_STORAGE_BYTES,
             "checkoutRequired": False,
             "idempotencySupported": False,
+            "operatorSummary": _free_account_setup_operator_summary(account_id, company_id, workspace_id, project_id),
         },
         "201 Created",
     )
@@ -1132,7 +1320,14 @@ def route_protected(environ, start_response, path):
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this record.", "quota_exceeded")
         agent = store.register_agent(workspace_id, body.get("agentId") or body.get("agent_id"), body.get("displayName") or body.get("display_name"))
-        payload = {"ok": True, "agent": agent}
+        payload = {
+            "ok": True,
+            "agent": agent,
+            "operatorSummary": _agent_registration_operator_summary(agent),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
         store.record_idempotency(workspace_id, idem, "agent-register", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/memory-events/submit" and method == "POST":
@@ -1227,7 +1422,14 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Invalid review decision", "Decision must be promote, approve, reject, or quarantine.", "invalid_review_decision")
         if error == "not_found":
             return problem(start_response, "404 Not Found", "Review item not found", "No matching review queue item exists for this workspace.", "review_item_not_found")
-        payload = {"ok": True, "review": review, "valuesRedacted": True}
+        payload = {
+            "ok": True,
+            "review": review,
+            "operatorSummary": _review_decision_operator_summary(review),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
         store.record_idempotency(workspace_id, idem, "review-decide", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
@@ -1273,6 +1475,142 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             },
         )
+    if path == "/api/matm/meeting-rooms" and method == "GET":
+        agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        filters = {"agentId": agent_filter} if agent_filter else {}
+        rooms = store.meeting_rooms(workspace_id, agent_filter)
+        operator_summary = _meeting_rooms_operator_summary(rooms, filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "meeting_rooms.read",
+            path,
+            {
+                "meetingRoomCount": len(rooms),
+                "filters": filters,
+                "scopeCounts": operator_summary["scopeCounts"],
+                "unreadMeetingCount": operator_summary["unreadCount"],
+            },
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.meeting_rooms.v1",
+                "items": rooms,
+                "count": len(rooms),
+                "filters": filters,
+                "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/meeting-messages" and method == "GET":
+        room_id = query.get("room_id") or query.get("roomId") or ""
+        agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        if not room_id:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting transcript reads require room_id.", "meeting_room_id_required")
+        room, messages, read_state = store.meeting_messages(workspace_id, room_id, agent_filter, query.get("limit") or "50")
+        if not room:
+            return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        rooms = store.meeting_rooms(workspace_id, agent_filter)
+        room_with_counts = next((item for item in rooms if item.get("roomId") == room_id), room)
+        filters = {"roomId": room_id}
+        if agent_filter:
+            filters["agentId"] = agent_filter
+        if query.get("limit"):
+            filters["limit"] = query.get("limit")
+        operator_summary = _meeting_messages_operator_summary(room_with_counts, messages, read_state, filters, room_with_counts.get("unreadCount") or 0)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "meeting_messages.read",
+            path,
+            {
+                "roomScope": room.get("scope"),
+                "meetingMessageCount": len(messages),
+                "unreadMeetingCount": operator_summary["unreadCount"],
+                "filters": filters,
+            },
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.meeting_messages.v1",
+                "room": room_with_counts,
+                "items": messages,
+                "count": len(messages),
+                "readState": read_state or {},
+                "filters": filters,
+                "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/meeting-messages" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-submit", body)
+        if replay:
+            return replay
+        room_id = body.get("roomId") or body.get("room_id")
+        sender_agent_id = body.get("senderAgentId") or body.get("sender_agent_id")
+        safe_summary = body.get("safeSummary") or body.get("safe_summary") or ""
+        if not room_id:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting posts require roomId.", "meeting_room_id_required")
+        if not sender_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Sender agent id required", "Meeting posts require senderAgentId.", "sender_agent_id_required")
+        if not safe_summary.strip():
+            return problem(start_response, "422 Unprocessable Entity", "Safe summary required", "Meeting posts require a public-safe summary.", "safe_summary_required")
+        if len(safe_summary) > 2000:
+            return problem(start_response, "422 Unprocessable Entity", "Safe summary too long", "Meeting post safe summaries must be at most 2000 characters.", "safe_summary_too_long")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this meeting message.", "quota_exceeded")
+        message, room = store.submit_meeting_message(workspace_id, room_id, sender_agent_id, safe_summary)
+        if not message:
+            return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        payload = {
+            "ok": True,
+            "room": room,
+            "message": message,
+            "operatorSummary": _meeting_post_operator_summary(room, message),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "meeting-message-submit", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
+    if path == "/api/matm/meeting-rooms/read" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-read", body)
+        if replay:
+            return replay
+        room_id = body.get("roomId") or body.get("room_id")
+        agent_id = body.get("agentId") or body.get("agent_id")
+        if not room_id:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting read cursors require roomId.", "meeting_room_id_required")
+        if not agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Meeting read cursors require agentId.", "agent_id_required")
+        read_state, error = store.mark_meeting_room_read(workspace_id, room_id, agent_id, body.get("lastMeetingMessageId") or body.get("last_meeting_message_id"))
+        if error == "message_not_found":
+            return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this room.", "meeting_message_not_found")
+        if not read_state:
+            return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        rooms = store.meeting_rooms(workspace_id, agent_id)
+        room = next((item for item in rooms if item.get("roomId") == room_id), {"roomId": room_id})
+        payload = {
+            "ok": True,
+            "room": room,
+            "readState": read_state,
+            "operatorSummary": _meeting_read_operator_summary(read_state, room),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "meeting-room-read", body, payload, "200 OK")
+        return json_response(start_response, payload)
     if path == "/api/matm/agent-messages" and method == "POST":
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "message-submit", body)
         if replay:

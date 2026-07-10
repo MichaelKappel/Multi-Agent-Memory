@@ -33,6 +33,9 @@ ROUTE_TABLE = [
     {"route": "/api/matm/search", "access": "protected", "methods": ["GET"], "purpose": "Hosted workspace memory search."},
     {"route": "/api/matm/review-queue", "access": "protected", "methods": ["GET"], "purpose": "Memory review and promotion queue readback."},
     {"route": "/api/matm/review-queue/decide", "access": "protected", "methods": ["POST"], "purpose": "Idempotent memory promotion, rejection, or quarantine decision."},
+    {"route": "/api/matm/meeting-rooms", "access": "protected", "methods": ["GET"], "purpose": "Always-present company, workspace, and project meeting room discovery."},
+    {"route": "/api/matm/meeting-messages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Durable scoped meeting room transcript read and public-safe post creation."},
+    {"route": "/api/matm/meeting-rooms/read", "access": "protected", "methods": ["POST"], "purpose": "Meeting room read cursor update for an agent."},
     {"route": "/api/matm/agent-messages", "access": "protected", "methods": ["POST"], "purpose": "Current-message creation."},
     {"route": "/api/matm/current-message", "access": "protected", "methods": ["GET"], "purpose": "Current-message lane readback."},
     {"route": "/api/matm/agent-inbox", "access": "protected", "methods": ["GET"], "purpose": "Unread inbox readback."},
@@ -107,6 +110,15 @@ def capability_matrix():
             "readRoute": "/api/matm/current-message",
             "ackRoute": "/api/matm/notifications/ack",
             "responseStates": ["required_response", "viewed_acknowledgement"],
+        },
+        "meetingRooms": {
+            "status": "live",
+            "roomListRoute": "/api/matm/meeting-rooms",
+            "messageRoute": "/api/matm/meeting-messages",
+            "readCursorRoute": "/api/matm/meeting-rooms/read",
+            "defaultScopes": ["company", "workspace", "project"],
+            "alwaysAvailable": True,
+            "firstClassStorage": ["matm_meeting_rooms", "matm_meeting_messages", "matm_meeting_reads"],
         },
         "auditTrail": {
             "status": "live",
@@ -231,6 +243,11 @@ def readiness_result():
                 "id": "review_promotion_queue",
                 "status": "pass_local",
                 "evidence": ["/api/matm/review-queue", "/api/matm/review-queue/decide", "idempotent promotion decisions"],
+            },
+            {
+                "id": "meeting_rooms",
+                "status": "pass_local",
+                "evidence": ["/api/matm/meeting-rooms", "/api/matm/meeting-messages", "/api/matm/meeting-rooms/read", "default company/workspace/project rooms"],
             },
             {
                 "id": "protected_operation_audit_trail",

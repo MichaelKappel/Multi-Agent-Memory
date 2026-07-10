@@ -19,3 +19,4 @@ Taboo rules:
 - Do not claim full completion, live deployment of latest code, live MultiAgentMemory.com readiness, live dogfood, CI pass, or MySQL runtime support without current evidence.
 - Do not copy NeuralWikis public wiki content, branding, or public claims.
 - Do not modify Totem, Taboo, or Talisman unless the human explicitly names the exact artifact and operation.
+- Do not ship jimmy-rigged one-off code, glued-on shortcuts, fake domain models, compatibility debt, or low-quality expedient patches. When a concept is part of the product domain, model it as a first-class, tested, documented system across storage, API, UI, and operations rather than hiding it behind ad hoc labels or special cases.

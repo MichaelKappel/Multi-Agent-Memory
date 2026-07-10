@@ -199,7 +199,7 @@ def run_sequence(transport, label, base_url=None):
                 "memoryType": "status",
                 "subject": "MemoryEndpoints enterprise MATM hardening",
                 "title": "%s dogfood status" % label.title(),
-                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, current-message readback, acknowledgement, receipt readback, and audit-log readback." % label.title(),
+                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, meeting-room coordination, current-message readback, acknowledgement, receipt readback, and audit-log readback." % label.title(),
                 "tags": ["dogfood", label, "matm"],
                 "confidence": 0.86,
                 "source": "scripts/dogfood_memoryendpoints.py",
@@ -220,6 +220,50 @@ def run_sequence(transport, label, base_url=None):
             query=urlencode({"workspace_id": workspace_id, "status": "pending"}),
         )
         step(report, "read_review_queue", status, queue, required=False)
+
+        status, meeting_rooms = transport.call(
+            "/api/matm/meeting-rooms",
+            headers=auth,
+            query=urlencode({"workspace_id": workspace_id, "agent_id": "memoryendpoints-followup-agent"}),
+        )
+        step(report, "read_meeting_rooms", status, meeting_rooms)
+        meeting_room_items = meeting_rooms.get("items") or []
+        project_rooms = [item for item in meeting_room_items if item.get("scope") == "project"]
+        meeting_room_id = ((project_rooms or meeting_room_items or [{}])[0]).get("roomId", "")
+
+        status, meeting_post = transport.call(
+            "/api/matm/meeting-messages",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-message-" + run_tag),
+            body={
+                "workspaceId": workspace_id,
+                "roomId": meeting_room_id,
+                "senderAgentId": "memoryendpoints-dogfood-agent",
+                "safeSummary": "Project meeting dogfood: use first-class meeting rooms for project coordination and routing.",
+            },
+        )
+        step(report, "post_meeting_message", status, meeting_post)
+        meeting_message_id = (meeting_post.get("message") or {}).get("meetingMessageId", "")
+
+        status, meeting_messages = transport.call(
+            "/api/matm/meeting-messages",
+            headers=auth,
+            query=urlencode({"workspace_id": workspace_id, "room_id": meeting_room_id, "agent_id": "memoryendpoints-followup-agent"}),
+        )
+        step(report, "read_meeting_messages", status, meeting_messages)
+
+        status, meeting_read = transport.call(
+            "/api/matm/meeting-rooms/read",
+            method="POST",
+            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-read-" + run_tag),
+            body={
+                "workspaceId": workspace_id,
+                "roomId": meeting_room_id,
+                "agentId": "memoryendpoints-followup-agent",
+                "lastMeetingMessageId": meeting_message_id,
+            },
+        )
+        step(report, "mark_meeting_room_read", status, meeting_read)
 
         status, message = transport.call(
             "/api/matm/agent-messages",
@@ -292,6 +336,9 @@ def run_sequence(transport, label, base_url=None):
         report["workspaceIdHash"] = "sha256:" + hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()
         report["oneTimeKeyReturned"] = bool(token)
         report["searchReadbackCount"] = search.get("count", 0)
+        report["meetingRoomCount"] = meeting_rooms.get("count", 0)
+        report["meetingMessageCount"] = meeting_messages.get("count", 0)
+        report["meetingReadVerified"] = bool(meeting_read.get("ok") and meeting_read.get("valuesRedacted"))
         report["currentMessageUnreadCount"] = current.get("unreadCount", 0)
         report["postAckUnreadCount"] = post_ack_current.get("unreadCount", 0)
         report["receiptCount"] = receipts.get("count", 0)

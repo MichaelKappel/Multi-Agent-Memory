@@ -467,7 +467,8 @@ pre {
 }
 
 .review-decision-summary,
-.memory-submit-summary {
+.memory-submit-summary,
+.meeting-post-summary {
   margin: 8px 0 14px;
 }
 
@@ -488,7 +489,16 @@ pre {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.meeting-room-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .lane-overview .result-count {
+  grid-column: 1 / -1;
+}
+
+.meeting-room-list > .filter-summary,
+.meeting-room-list > .empty-state {
   grid-column: 1 / -1;
 }
 
@@ -553,7 +563,9 @@ pre {
 .inbox-summary,
 .receipt-summary,
 .audit-summary,
-.review-summary {
+.review-summary,
+.meeting-rooms-summary,
+.meeting-messages-summary {
   margin-top: 4px;
 }
 
@@ -676,6 +688,15 @@ footer {
   }
 
   .lane-overview .result-count {
+    grid-column: auto;
+  }
+
+  .meeting-room-list {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-room-list > .filter-summary,
+  .meeting-room-list > .empty-state {
     grid-column: auto;
   }
 }
