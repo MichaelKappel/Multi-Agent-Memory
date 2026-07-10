@@ -1265,7 +1265,7 @@ class FileStore(object):
         message_id = str(message_id or "").strip()
         notification_id = str(notification_id or "").strip()
         messages = []
-        for note in data["notifications"]:
+            for note in reversed(data["notifications"]):
             if note.get("workspaceId") != workspace_id or note.get("status") != "unread":
                 continue
             if note.get("targetAgentId") and note.get("targetAgentId") != agent_id:
@@ -1840,6 +1840,299 @@ class SQLiteStore(FileStore):
             "valuesRedacted": self._bool(row["values_redacted"]),
             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
         }
+
+    def _row_dict(self, row):
+        if not row:
+            return {}
+        if isinstance(row, dict):
+            return dict(row)
+        if hasattr(row, "keys"):
+            return {key: row[key] for key in row.keys()}
+        return dict(row)
+
+    def _row_json_size(self, row):
+        return _json_size(self._row_dict(row))
+
+    def _sum_workspace_rows(self, connection, table, workspace_id):
+        return sum(
+            self._row_json_size(row)
+            for row in connection.execute(
+                "SELECT * FROM %s WHERE workspace_id = ?" % table,
+                (workspace_id,),
+            )
+        )
+
+    def _ensure_default_meeting_rooms_sql(self, connection, workspace_id):
+        workspace = connection.execute(
+            "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if not workspace:
+            return []
+        company = connection.execute(
+            "SELECT * FROM matm_companies WHERE company_id = ?",
+            (workspace["company_id"],),
+        ).fetchone()
+        projects = list(
+            connection.execute(
+                "SELECT * FROM matm_projects WHERE workspace_id = ? ORDER BY created_at, project_id",
+                (workspace_id,),
+            )
+        )
+        specs = [
+            {
+                "scope": "company",
+                "scopeId": workspace["company_id"],
+                "label": "Company-wide meeting",
+                "name": "%s welcome and routing meeting" % ((company["label"] if company else "") or "Company"),
+                "purpose": "Highest-level welcome room for new agents to state who they are, why they are here, what they are working on, and which workspace, project, goal, or task room they should be routed into.",
+            },
+            {
+                "scope": "workspace",
+                "scopeId": workspace_id,
+                "label": "Workspace-wide meeting",
+                "name": "%s workspace meeting" % (workspace["label"] or "Workspace"),
+                "purpose": "Workspace operating room for active coordination, shared context, and cross-project routing after company-level intake.",
+            },
+        ]
+        for project in projects:
+            specs.append(
+                {
+                    "scope": "project",
+                    "scopeId": project["project_id"],
+                    "label": "Project-wide meeting",
+                    "name": "%s project meeting" % (project["label"] or "Project"),
+                    "purpose": "Project implementation room for assigned work, decisions, blockers, and handoff after intake routing.",
+                }
+            )
+        created = []
+        now = utc_now()
+        for spec in specs:
+            if not spec.get("scopeId"):
+                continue
+            room_id = self._meeting_room_id(workspace_id, spec["scope"], spec["scopeId"])
+            existing = connection.execute(
+                "SELECT room_id FROM matm_meeting_rooms WHERE workspace_id = ? AND room_id = ?",
+                (workspace_id, room_id),
+            ).fetchone()
+            if existing:
+                continue
+            room = {
+                "roomId": room_id,
+                "workspaceId": workspace_id,
+                "scope": spec["scope"],
+                "scopeId": spec["scopeId"],
+                "label": spec["label"],
+                "name": redact_text(spec["name"]),
+                "purpose": redact_text(spec["purpose"]),
+                "status": "active",
+                "defaultRoom": True,
+                "alwaysAvailable": True,
+                "createdAt": now,
+                "updatedAt": None,
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            }
+            connection.execute(
+                """
+                INSERT INTO matm_meeting_rooms (
+                  room_id, workspace_id, scope_type, scope_id, label, name, purpose, status,
+                  default_room, always_available, values_redacted, raw_payload_exposed, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    room_id,
+                    workspace_id,
+                    room["scope"],
+                    room["scopeId"],
+                    room["label"],
+                    room["name"],
+                    room["purpose"],
+                    room["status"],
+                    self._int_bool(True),
+                    self._int_bool(True),
+                    self._int_bool(True),
+                    self._int_bool(False),
+                    room["createdAt"],
+                    room["updatedAt"],
+                ),
+            )
+            created.append(room)
+        return created
+
+    def _workspace_usage_bytes_sql(self, connection, workspace_id):
+        workspace = connection.execute(
+            "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if not workspace:
+            return 0
+        usage = self._row_json_size(workspace)
+        company_id = workspace["company_id"]
+        company = connection.execute(
+            "SELECT * FROM matm_companies WHERE company_id = ?",
+            (company_id,),
+        ).fetchone()
+        usage += self._row_json_size(company)
+        memberships = list(
+            connection.execute(
+                "SELECT * FROM matm_account_companies WHERE company_id = ?",
+                (company_id,),
+            )
+        )
+        for membership in memberships:
+            usage += self._row_json_size(membership)
+            account = connection.execute(
+                "SELECT * FROM matm_accounts WHERE account_id = ?",
+                (membership["account_id"],),
+            ).fetchone()
+            usage += self._row_json_size(account)
+        for table in (
+            "matm_projects",
+            "matm_agents",
+            "matm_memory_records",
+            "matm_review_queue",
+            "matm_messages",
+            "matm_notifications",
+            "matm_receipts",
+            "matm_meeting_rooms",
+            "matm_meeting_messages",
+            "matm_meeting_reads",
+            "matm_routing_decisions",
+            "matm_idempotency",
+            "matm_outbox_events",
+            "matm_storage_ledger",
+            "matm_audit_log",
+        ):
+            usage += self._sum_workspace_rows(connection, table, workspace_id)
+        return usage
+
+    def workspace_usage_bytes(self, data, workspace_id=None):
+        workspace_id = workspace_id or data
+        with _LOCK:
+            with self._open_connection() as connection:
+                return self._workspace_usage_bytes_sql(connection, workspace_id)
+
+    def has_quota_for(self, workspace_id, candidate):
+        with _LOCK:
+            with self._open_connection() as connection:
+                workspace = connection.execute(
+                    "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchone()
+                if not workspace:
+                    return False
+                limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
+                return self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(candidate) <= limit
+
+    def create_free_account(self, label, company_label=None, project_label=None):
+        created_at = utc_now()
+        account_id = _id("account")
+        company_id = _id("company")
+        membership_id = _id("membership")
+        workspace_id = _id("workspace")
+        project_id = _id("project")
+        token = "me_live_" + secrets.token_urlsafe(32)
+        key_id = _id("key")
+        account_label = redact_text((company_label or label or "Free Agent Account") + " Account")
+        company_label = redact_text(company_label or label or "Free Agent Company")
+        workspace_label = redact_text(label or "Free Agent Workspace")
+        project_label = redact_text(project_label or "MemoryEndpoints Verification Project")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO matm_accounts (account_id, label, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (account_id, account_label, "active", created_at, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_companies (company_id, label, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (company_id, company_label, "active", created_at, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_account_companies (
+                          membership_id, account_id, company_id, role, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (membership_id, account_id, company_id, "owner", "active", created_at, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_workspaces (
+                          workspace_id, company_id, label, plan, storage_limit_bytes, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (workspace_id, company_id, workspace_label, "free_agent", PUBLIC_STORAGE_BYTES, "active", created_at, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_projects (project_id, workspace_id, label, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (project_id, workspace_id, project_label, "active", created_at, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_api_keys (
+                          key_id, workspace_id, token_hash, created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (key_id, workspace_id, _hash(token), created_at, None, None),
+                    )
+                    created_rooms = self._ensure_default_meeting_rooms_sql(connection, workspace_id)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "workspace.create_free_account",
+                        "system",
+                        workspace_id,
+                        {
+                            "accountId": account_id,
+                            "companyId": company_id,
+                            "accountCompanyMembershipId": membership_id,
+                            "projectId": project_id,
+                            "meetingRoomCount": len(created_rooms),
+                        },
+                    )
+        return workspace_id, key_id, token, account_id, company_id, project_id
+
+    def register_agent(self, workspace_id, agent_id, display_name):
+        now = utc_now()
+        record = {
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "displayName": redact_text(display_name or agent_id),
+            "registeredAt": now,
+            "status": "active",
+        }
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT OR REPLACE INTO matm_agents (
+                          agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            self._agent_record_id(workspace_id, agent_id),
+                            workspace_id,
+                            agent_id,
+                            record["displayName"],
+                            record["status"],
+                            record["registeredAt"],
+                            now,
+                        ),
+                    )
+                    self._record_audit_sql(connection, workspace_id, "agent.register", agent_id, workspace_id)
+        return record
 
     def _record_audit_sql(self, connection, workspace_id, action, actor, target, details=None):
         connection.execute(
@@ -2986,7 +3279,7 @@ class SQLiteStore(FileStore):
                         FROM matm_notifications n
                         JOIN matm_messages m ON m.message_id = n.message_id
                         WHERE %s
-                        ORDER BY n.created_at, n.notification_id
+                        ORDER BY n.created_at DESC, n.notification_id DESC
                         """ % " AND ".join(clauses),
                         tuple(params),
                     )
