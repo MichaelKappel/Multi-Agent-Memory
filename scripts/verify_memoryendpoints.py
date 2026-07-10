@@ -18,6 +18,7 @@ ROUTES = [
     "/docs",
     "/docs/",
     "/agent-setup",
+    "/agent-coordination",
     "/console",
     "/memory-lifecycle",
     "/transparency",

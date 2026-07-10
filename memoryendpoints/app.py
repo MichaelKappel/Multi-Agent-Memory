@@ -171,6 +171,7 @@ def html_page(title, main):
     <nav aria-label="Primary">
       <a href="/docs">Docs</a>
       <a href="/agent-setup">Agent Setup</a>
+      <a href="/agent-coordination">Agent Coordination</a>
       <a href="/console">Console</a>
       <a href="/memory-lifecycle">Memory</a>
       <a href="/transparency">Transparency</a>
@@ -636,6 +637,7 @@ def route_home(start_response):
     <p class="lead">A practical MATM operator surface for bounded workspace memory, current messages, redacted receipts, and AI-ready discovery.</p>
     <div class="actions">
       <a class="button primary" href="/agent-setup">Create agent workspace</a>
+      <a class="button" href="/agent-coordination">Agent coordination quickstart</a>
       <a class="button" href="/console">Open human console</a>
       <a class="button" href="/api/matm/connector-contract">Connector contract</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
@@ -644,6 +646,7 @@ def route_home(start_response):
   </div>
   <aside class="home-status" aria-label="Operational entry points">
     <h2>Operational Surface</h2>
+    <a href="/agent-coordination"><strong>Agent coordination</strong><span>register, rooms, memory, inbox, ack</span></a>
     <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
     <a href="/api/matm/connector-contract"><strong>Connector contract</strong><span>settings, routes, redaction, routing</span></a>
     <a href="/api/matm/readiness-result"><strong>Readiness</strong><span>deployment and capability evidence</span></a>
@@ -669,12 +672,13 @@ def route_docs(start_response):
   <h2>Companion documentation</h2>
   <p><a href="{companion_docs_url}">MultiAgentMemory.com</a> is the public GitHub companion documentation site. It explains how the repository, `.uai` memory, protected MATM endpoints, review queue, dogfooding, and deployment evidence fit together. The source repository is <a href="{github_repo_url}">MichaelKappel/Multi-Agent-Memory</a>.</p>
   <h2>Discovery routes</h2>
-  <ul>
-    <li><code>/llms.txt</code> and <code>/llms-full.txt</code> summarize public agent guidance.</li>
-    <li><code>/ai-manifest.json</code> exposes route inventory and support boundaries.</li>
-    <li><code>/api/matm/connector-contract</code> gives optional connectors one stable setup, API, UI, and routing contract.</li>
-    <li><code>/api/matm/readiness-result</code> exposes current local readiness and deployment blockers.</li>
-    <li><code>/.well-known/mcp.json</code> and <code>/mcp/resources</code> expose resource discovery.</li>
+  <ul class="route-list">
+    <li><a href="/llms.txt"><code>/llms.txt</code></a> and <a href="/llms-full.txt"><code>/llms-full.txt</code></a> summarize public agent guidance.</li>
+    <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a> exposes route inventory and support boundaries.</li>
+    <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a> gives optional connectors one stable setup, API, UI, and routing contract.</li>
+    <li><a href="/agent-coordination"><code>/agent-coordination</code></a> gives authenticated agents one copy-safe coordination quickstart.</li>
+    <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a> exposes current local readiness and deployment blockers.</li>
+    <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a> and <a href="/mcp/resources"><code>/mcp/resources</code></a> expose resource discovery.</li>
   </ul>
 </section>
 """.format(companion_docs_url=COMPANION_DOCS_URL, github_repo_url=GITHUB_REPO_URL)
@@ -687,33 +691,158 @@ def route_agent_setup(start_response):
   <h1>Agent Setup</h1>
   <p>Agents create a free workspace with <code>POST /api/matm/agent-setup/free-account</code>. The returned key is shown once and must be saved by the human or host. MemoryEndpoints stores only a hash.</p>
   <p>The free workspace quota is <strong>200 MB</strong>. Checkout, coupon use, and human-only setup are not required.</p>
+  <p>The <a href="/agent-coordination">Agent Coordination Quickstart</a> continues from the one-time key into registration, meeting rooms, memory, current messages, acknowledgements, and evidence.</p>
   <p>The <a href="/console">human verification console</a> lets a human-side agent enter a saved key, inspect the company/workspace/project boundary, read memory, send current messages to all agents or a particular agent, acknowledge notifications, and see redacted receipts.</p>
-  <pre><code>curl -X POST /api/matm/agent-setup/free-account \\
+  <h2>Copy-Safe Setup</h2>
+  <p>These examples use placeholder labels only. Save the returned workspace key outside source control, logs, prompts, and public chat.</p>
+  <h3>Bash</h3>
+  <pre><code>curl -sS -X POST "https://memoryendpoints.com/api/matm/agent-setup/free-account" \\
   -H "Content-Type: application/json" \\
-  -d "{\"companyLabel\":\"Example Company\",\"label\":\"Example Workspace\",\"projectLabel\":\"Example Project\"}"</code></pre>
+  --data '{"companyLabel":"Example Company","label":"Example Workspace","projectLabel":"Example Project"}'</code></pre>
+  <h3>PowerShell</h3>
+  <pre><code>$body = @{
+  companyLabel = "Example Company"
+  label = "Example Workspace"
+  projectLabel = "Example Project"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "https://memoryendpoints.com/api/matm/agent-setup/free-account" `
+  -ContentType "application/json" `
+  -Body $body</code></pre>
 </section>
 """
     return response(start_response, "200 OK", html_page("Agent Setup", body), "text/html; charset=utf-8")
 
 
+def route_agent_coordination(start_response):
+    body = """
+<section class="page">
+  <h1>Agent Coordination Quickstart</h1>
+  <p>This is the shortest public path from a one-time workspace key to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+  <h2>Inputs</h2>
+  <ul>
+    <li><code>MEMORYENDPOINTS_BASE_URL</code>: <code>https://memoryendpoints.com</code></li>
+    <li><code>MEMORYENDPOINTS_WORKSPACE_ID</code>: workspace id returned by setup.</li>
+    <li><code>MEMORYENDPOINTS_WORKSPACE_KEY</code>: one-time workspace key returned by setup; save in a secret store only.</li>
+    <li><code>MEMORYENDPOINTS_AGENT_ID</code>: stable public-safe agent id, such as <code>localendpoint-agent</code> or <code>tinyrustlm-agent</code>.</li>
+  </ul>
+  <h2>PowerShell Flow</h2>
+  <pre><code>$env:MEMORYENDPOINTS_BASE_URL = "https://memoryendpoints.com"
+$env:MEMORYENDPOINTS_WORKSPACE_ID = "&lt;workspace-id&gt;"
+$env:MEMORYENDPOINTS_AGENT_ID = "example-agent"
+$env:MEMORYENDPOINTS_WORKSPACE_KEY = "&lt;workspace-key-shown-once&gt;"
+$headers = @{
+  Authorization = "Bearer $env:MEMORYENDPOINTS_WORKSPACE_KEY"
+}
+
+$registerBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  agentId = $env:MEMORYENDPOINTS_AGENT_ID
+  displayName = "Example Agent"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agents/register" -Headers $headers -ContentType "application/json" -Body $registerBody
+
+$rooms = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms?agent_id=$env:MEMORYENDPOINTS_AGENT_ID" -Headers $headers
+$projectRoom = $rooms.items | Where-Object { $_.scope -eq "project" } | Select-Object -First 1
+
+$meetingBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  roomId = $projectRoom.roomId
+  senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  safeSummary = "Public-safe project-room status: agent registered, listed rooms, and is ready for connector work."
+} | ConvertTo-Json
+$post = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages" -Headers $headers -ContentType "application/json" -Body $meetingBody
+Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($post.transcriptQueryUrl)" -Headers $headers</code></pre>
+  <h2>Memory Save And Search</h2>
+  <pre><code>$memoryBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  actorAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  scope = "project"
+  scopeId = $projectRoom.scopeId
+  memoryType = "status"
+  subject = "Example connector coordination"
+  title = "Example public-safe status"
+  summary = "The agent can save and search public-safe hosted memory while local .uai memory remains active."
+  tags = @("coordination", "public-safe")
+  source = "agent-coordination-quickstart"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/memory-events/submit" -Headers $headers -ContentType "application/json" -Body $memoryBody
+Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/search?q=coordination&amp;scope=project" -Headers $headers</code></pre>
+  <h2>Current Message And Receipt</h2>
+  <pre><code>$messageBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  targetAgentId = "codex-coordinator"
+  safeSummary = "Public-safe current-message check from example-agent."
+  responseRequired = $true
+} | ConvertTo-Json
+$message = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agent-messages" -Headers $headers -ContentType "application/json" -Body $messageBody
+$inbox = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($message.inboxQueryUrl)" -Headers $headers
+
+$ackBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  notificationId = $message.notificationId
+  consumerAgentId = $message.canonicalTargetAgentId
+  status = "read"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/notifications/ack" -Headers $headers -ContentType "application/json" -Body $ackBody</code></pre>
+  <h2>Required Evidence</h2>
+  <ul>
+    <li>Post a project-room status note with routes exercised, tests run, and remaining blocker.</li>
+    <li>Prove read-after-write with returned <code>transcriptQueryUrl</code> and <code>inboxQueryUrl</code>.</li>
+    <li>Show <code>persisted=true</code> and either <code>visibleToSender=true</code> or <code>visibleToTarget=true</code> after POST.</li>
+    <li>Confirm no workspace key, raw private payload, hidden prompt, model weight, private log, or proprietary internals were stored or printed.</li>
+  </ul>
+  <h2>Public Discovery</h2>
+  <ul class="route-list">
+    <li><a href="/agent-setup"><code>/agent-setup</code></a></li>
+    <li><a href="/console"><code>/console</code></a></li>
+    <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a></li>
+    <li><a href="/api/matm/live-capability-matrix"><code>/api/matm/live-capability-matrix</code></a></li>
+    <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a></li>
+    <li><a href="/llms.txt"><code>/llms.txt</code></a></li>
+    <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a></li>
+    <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a></li>
+    <li><a href="/mcp/resources"><code>/mcp/resources</code></a></li>
+  </ul>
+</section>
+"""
+    return response(start_response, "200 OK", html_page("Agent Coordination", body), "text/html; charset=utf-8")
+
+
 def route_console(start_response):
     body = """
 <section class="console-shell debug-json-hidden" data-matm-console>
-  <h1>Human Verification Console</h1>
-  <p>Enter a workspace key returned by the setup route. The key is used only in this browser session and is never printed back by this console.</p>
-  <nav class="console-nav" aria-label="Console workflow">
-    <a href="#workspace-overview">Workspace</a>
-    <a href="#memory-workflow">Memory</a>
-    <a href="#review-queue">Reviews</a>
-    <a href="#meeting-rooms">Meetings</a>
-    <a href="#message-lanes">Messages</a>
-    <a href="#receipts-audit">Receipts/Audit</a>
-  </nav>
-  <label class="console-debug-toggle">
-    <input type="checkbox" data-console-debug-toggle>
-    Show debug JSON
-  </label>
-  <form class="console-grid" data-console-auth>
+  <header class="console-hero">
+    <div>
+      <p class="eyebrow">Operator console</p>
+      <h1>Human Verification Console</h1>
+      <p>Load a saved workspace key, inspect scoped memory, send agent messages, and confirm receipts without exposing private credentials.</p>
+    </div>
+    <aside class="operator-guardrails" aria-label="Console guardrails">
+      <span class="status-badge neutral" data-console-surface-badge>Surface pending</span>
+      <span class="status-badge good">Key masked</span>
+      <span class="status-badge good">Raw JSON hidden</span>
+      <span class="status-badge good">Copy-safe IDs</span>
+    </aside>
+  </header>
+  <div class="console-utility-bar">
+    <nav class="console-nav" aria-label="Console workflow">
+      <a href="#workspace-overview">Workspace</a>
+      <a href="#memory-workflow">Memory</a>
+      <a href="#review-queue">Reviews</a>
+      <a href="#meeting-rooms">Meetings</a>
+      <a href="#message-lanes">Messages</a>
+      <a href="#receipts-audit">Receipts/Audit</a>
+    </nav>
+    <label class="console-debug-toggle">
+      <input type="checkbox" data-console-debug-toggle>
+      Show debug JSON
+    </label>
+  </div>
+  <form class="console-grid console-auth-grid" data-console-auth>
     <label>Workspace key
       <input type="password" name="workspaceKey" autocomplete="off" placeholder="me_live_..." required>
     </label>
@@ -723,11 +852,20 @@ def route_console(start_response):
     <button class="button primary" type="submit">Load workspace</button>
   </form>
   <div class="console-status" data-console-status>Waiting for a key.</div>
+  <div class="operator-metrics" data-console-operator-metrics>
+    <p class="empty-state">Operator status will appear after the workspace loads.</p>
+  </div>
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>
   </div>
   <section class="console-panel" id="workspace-overview">
-    <h2>Workspace Overview</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Boundary</span>
+        <h2>Workspace Overview</h2>
+      </div>
+      <span class="status-badge neutral">account / company / workspace / project</span>
+    </div>
     <div class="operator-summary" data-console-workspace-summary>
       <p class="empty-state">Load a workspace to see account, company, workspace, project, storage, and redaction status.</p>
     </div>
@@ -737,7 +875,13 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel" id="memory-workflow">
-    <h2>Memory</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Hosted memory</span>
+        <h2>Memory</h2>
+      </div>
+      <span class="status-badge good">filesystem excluded</span>
+    </div>
     <form class="console-grid" data-console-memory>
       <label>Actor agent
         <input name="actorAgentId" value="human-verifier-agent" required>
@@ -822,7 +966,13 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel" id="review-queue">
-    <h2>Review Queue</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Promotion</span>
+        <h2>Review Queue</h2>
+      </div>
+      <span class="status-badge neutral">public-safe review</span>
+    </div>
     <form class="console-grid" data-console-review>
       <label>Review status
         <select name="status">
@@ -870,7 +1020,13 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel" id="meeting-rooms">
-    <h2>Meetings</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Coordination</span>
+        <h2>Meetings</h2>
+      </div>
+      <span class="status-badge neutral">company / workspace / project rooms</span>
+    </div>
     <div class="actions lane-actions">
       <button class="button" type="button" data-console-refresh-meeting-rooms>Refresh rooms</button>
       <button class="button" type="button" data-console-mark-meeting-read>Mark room read</button>
@@ -902,7 +1058,13 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel" id="message-lanes">
-    <h2>Messages</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Current message lane</span>
+        <h2>Messages</h2>
+      </div>
+      <span class="status-badge neutral">broadcast or targeted</span>
+    </div>
     <form class="console-grid" data-console-message>
       <label>Sender agent
         <input name="senderAgentId" value="human-verifier-agent" required>
@@ -959,7 +1121,13 @@ def route_console(start_response):
     </details>
   </section>
   <section class="console-panel" id="receipts-audit">
-    <h2>Receipts And Audit</h2>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Evidence</span>
+        <h2>Receipts And Audit</h2>
+      </div>
+      <span class="status-badge good">redacted output</span>
+    </div>
     <form class="console-grid" data-console-receipts-filter>
       <label>Receipt consumer
         <select name="consumerAgentId">
@@ -1066,6 +1234,7 @@ def text_discovery(name):
         "Companion documentation: %s." % COMPANION_DOCS_URL,
         "Source repository: %s." % GITHUB_REPO_URL,
         "Memory boundary: hosted workspace memory for protected search; local files remain startup and migration evidence.",
+        "Agent coordination quickstart: /agent-coordination.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "Readiness evidence: /api/matm/readiness-result.",
         "Authority boundary: no certification, endorsement, hidden credential validation, or automatic memory promotion.",
@@ -1844,6 +2013,8 @@ def application(environ, start_response):
         return route_docs(start_response)
     if path == "/agent-setup" and method == "GET":
         return route_agent_setup(start_response)
+    if path == "/agent-coordination" and method == "GET":
+        return route_agent_coordination(start_response)
     if path == "/console" and method == "GET":
         return route_console(start_response)
     if path == "/memory-lifecycle" and method == "GET":

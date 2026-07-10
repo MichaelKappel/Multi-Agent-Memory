@@ -28,6 +28,19 @@
     selectedMeetingRoomId: "",
     latestMeetingMessageId: "",
     inboxRequestSeq: 0,
+    memoryCount: null,
+    memoryScopeCounts: null,
+    memoryFilesystemIncluded: false,
+    reviewCount: null,
+    meetingRoomCount: null,
+    inboxUnreadCount: null,
+    laneUnreadCount: null,
+    messageDeliveryCounts: null,
+    receiptCount: null,
+    auditCount: null,
+    receiptsPayloadsHidden: null,
+    auditCredentialsHidden: null,
+    auditPayloadsHidden: null,
   };
   var agentLanes = [
     { agentId: "human-verifier-agent", label: "Human" },
@@ -259,6 +272,118 @@
     return item;
   }
 
+  function surfaceInfo() {
+    var hostname = window.location.hostname || "";
+    var isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    return {
+      isLocal: isLocal,
+      label: isLocal ? "local site" : "live site",
+      badge: isLocal ? "local" : "production",
+      kind: isLocal ? "neutral" : "good",
+      origin: window.location.origin || hostname,
+    };
+  }
+
+  function updateSurfaceBadge() {
+    var node = pick("[data-console-surface-badge]");
+    if (!node) {
+      return;
+    }
+    var surface = surfaceInfo();
+    node.textContent = surface.badge;
+    node.className = "status-badge " + surface.kind;
+  }
+
+  function countMeta(counts, preferredKeys) {
+    counts = counts || {};
+    var keys = (preferredKeys || []).slice();
+    Object.keys(counts).forEach(function (key) {
+      if (keys.indexOf(key) === -1) {
+        keys.push(key);
+      }
+    });
+    var parts = keys.filter(function (key) {
+      return counts[key];
+    }).map(function (key) {
+      return key + " " + counts[key];
+    });
+    return parts.join(" / ");
+  }
+
+  function metricCard(title, value, meta, badges) {
+    var card = el("article", "metric-card");
+    card.appendChild(el("span", "summary-label", title));
+    card.appendChild(el("strong", "", value || "Pending"));
+    card.appendChild(el("span", "summary-meta", meta || "Awaiting data"));
+    var badgeLine = el("div", "badge-line");
+    (badges || []).forEach(function (badge) {
+      appendBadge(badgeLine, badge.text, badge.kind);
+    });
+    if (badgeLine.childNodes.length) {
+      card.appendChild(badgeLine);
+    }
+    return card;
+  }
+
+  function renderOperatorMetrics() {
+    var node = pick("[data-console-operator-metrics]");
+    if (!node) {
+      return;
+    }
+    updateSurfaceBadge();
+    clear(node);
+    var surface = surfaceInfo();
+    var boundaryReady = Boolean(state.workspaceOperatorSummary && state.workspaceOperatorSummary.hierarchyReady);
+    var deliveryCounts = state.messageDeliveryCounts || {};
+    var unreadCount = state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
+      ? state.laneUnreadCount
+      : state.inboxUnreadCount;
+    var evidencePending = state.receiptCount === null && state.auditCount === null;
+    node.appendChild(metricCard(
+      "Session",
+      state.workspaceId ? "Workspace loaded" : "Awaiting key",
+      surface.origin,
+      [
+        { text: surface.badge, kind: surface.kind },
+        { text: state.workspaceId ? "key hidden" : "key masked", kind: "good" },
+      ]
+    ));
+    node.appendChild(metricCard(
+      "Boundary",
+      boundaryReady ? "4 levels loaded" : "Boundary pending",
+      "account / company / workspace / project",
+      [
+        { text: boundaryReady ? "pass" : "pending", kind: boundaryReady ? "good" : "neutral" },
+      ]
+    ));
+    node.appendChild(metricCard(
+      "Memory",
+      state.memoryCount !== null && state.memoryCount !== undefined ? state.memoryCount + " item(s)" : "Search pending",
+      countMeta(state.memoryScopeCounts, ["account", "company", "workspace", "project"]) || "hosted search",
+      [
+        { text: "hosted", kind: "good" },
+        { text: state.memoryFilesystemIncluded ? "filesystem review" : "filesystem excluded", kind: state.memoryFilesystemIncluded ? "warn" : "good" },
+      ]
+    ));
+    node.appendChild(metricCard(
+      "Messages",
+      unreadCount !== null && unreadCount !== undefined ? unreadCount + " unread" : "Inbox pending",
+      countMeta(deliveryCounts, ["broadcast", "targeted"]) || "broadcast / targeted",
+      [
+        { text: "rows", kind: "neutral" },
+      ]
+    ));
+    node.appendChild(metricCard(
+      "Evidence",
+      evidencePending ? "Evidence pending" : (state.receiptCount !== null && state.receiptCount !== undefined ? state.receiptCount : 0) + " receipts",
+      evidencePending ? "receipts / audit" : (state.auditCount !== null && state.auditCount !== undefined ? state.auditCount : 0) + " audit events",
+      [
+        { text: state.auditCredentialsHidden === false ? "credential review" : "credentials hidden", kind: state.auditCredentialsHidden === false ? "warn" : "good" },
+        { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
+      ]
+    ));
+  }
+
   function renderSessionSummary(workspace, operatorSummary) {
     var node = pick("[data-console-session-summary]");
     if (!node) {
@@ -285,8 +410,8 @@
       workspace.workspaceId &&
       (project.id || projectRaw.projectId || workspace.primaryProjectId)
     );
-    node.appendChild(sessionItem("Surface", isLocal ? "local site" : "live site", window.location.origin || hostname, [
-      { text: isLocal ? "local" : "production", kind: isLocal ? "neutral" : "good" },
+    node.appendChild(sessionItem("Surface", surface.label, surface.origin, [
+      { text: surface.badge, kind: surface.kind },
     ]));
     node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
       { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
@@ -312,6 +437,7 @@
       actions.appendChild(link);
     });
     node.appendChild(actions);
+    renderOperatorMetrics();
   }
 
   function boundaryStep(label, value, status, copyLabel) {
@@ -478,6 +604,11 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    var summary = (payload && payload.operatorSummary) || {};
+    state.memoryCount = summary.count !== undefined ? summary.count : items.length;
+    state.memoryScopeCounts = summary.scopeCounts || null;
+    state.memoryFilesystemIncluded = Boolean(summary.filesystemDocsIncluded);
+    renderOperatorMetrics();
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
       renderMemoryOperatorSummary(node, payload, items);
@@ -595,6 +726,9 @@
     appendFilterSummary(node, payload && payload.filters);
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
+    state.inboxUnreadCount = operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length;
+    state.messageDeliveryCounts = deliveryCounts;
+    renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary inbox-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Inbox"));
     appendBadge(summaryLine, (operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length) + " unread", items.length ? "warn" : "good");
@@ -711,9 +845,26 @@
     }
     clear(node);
     if (!results || !results.length) {
+      state.laneUnreadCount = null;
+      state.messageDeliveryCounts = null;
+      renderOperatorMetrics();
       node.appendChild(el("p", "empty-state", "All-lane unread counts will appear after the workspace loads."));
       return;
     }
+    var totalUnread = 0;
+    var totalBroadcast = 0;
+    var totalTargeted = 0;
+    results.forEach(function (result) {
+      var payload = result.payload || {};
+      var items = payload.items || [];
+      var deliveryCounts = payload.deliveryCounts || {};
+      totalUnread += payload.unreadCount !== undefined ? payload.unreadCount : items.length;
+      totalBroadcast += deliveryCounts.broadcast || 0;
+      totalTargeted += deliveryCounts.targeted || 0;
+    });
+    state.laneUnreadCount = totalUnread;
+    state.messageDeliveryCounts = {broadcast: totalBroadcast, targeted: totalTargeted};
+    renderOperatorMetrics();
     node.appendChild(el("div", "result-count", results.length + " agent lane(s) checked."));
     results.forEach(function (result) {
       var payload = result.payload || {};
@@ -778,6 +929,8 @@
     clear(node);
     var rooms = (payload && payload.items) || [];
     var summary = (payload && payload.operatorSummary) || {};
+    state.meetingRoomCount = summary.count !== undefined ? summary.count : rooms.length;
+    renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary meeting-rooms-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Meeting rooms"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral");
@@ -961,6 +1114,9 @@
     var items = (payload && payload.items) || [];
     appendFilterSummary(node, payload && payload.filters);
     var summary = (payload && payload.operatorSummary) || {};
+    state.receiptCount = summary.count !== undefined ? summary.count : items.length;
+    state.receiptsPayloadsHidden = summary.allPayloadsHidden !== undefined ? summary.allPayloadsHidden : null;
+    renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary receipt-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Receipts"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " total", items.length ? "good" : "neutral");
@@ -1093,6 +1249,10 @@
     clear(node);
     var items = (payload && payload.items) || [];
     var summary = (payload && payload.operatorSummary) || {};
+    state.auditCount = summary.count !== undefined ? summary.count : items.length;
+    state.auditCredentialsHidden = summary.allCredentialsHidden !== undefined ? summary.allCredentialsHidden : null;
+    state.auditPayloadsHidden = summary.allPayloadsHidden !== undefined ? summary.allPayloadsHidden : null;
+    renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary audit-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Audit"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " events", items.length ? "good" : "neutral");
@@ -1139,6 +1299,8 @@
     var items = (payload && payload.items) || [];
     appendFilterSummary(node, payload && payload.filters);
     var summary = (payload && payload.operatorSummary) || {};
+    state.reviewCount = summary.count !== undefined ? summary.count : items.length;
+    renderOperatorMetrics();
     var statusCounts = summary.statusCounts || (payload && payload.statusCounts) || {};
     var summaryLine = el("div", "filter-summary review-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Reviews"));
@@ -1547,6 +1709,8 @@
   var authForm = pick("[data-console-auth]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
+  updateSurfaceBadge();
+  renderOperatorMetrics();
   if (debugToggle) {
     debugToggle.addEventListener("change", function () {
       setDebugJsonVisible(debugToggle.checked);

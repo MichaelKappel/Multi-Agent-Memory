@@ -8,6 +8,7 @@ ROUTE_TABLE = [
     {"route": "/docs", "access": "public", "methods": ["GET"], "purpose": "Human-readable documentation."},
     {"route": "/docs/", "access": "public", "methods": ["GET"], "purpose": "Trailing-slash documentation alias."},
     {"route": "/agent-setup", "access": "public", "methods": ["GET"], "purpose": "Agent setup instructions."},
+    {"route": "/agent-coordination", "access": "public", "methods": ["GET"], "purpose": "Authenticated agent coordination quickstart with copy-safe examples."},
     {"route": "/console", "access": "public", "methods": ["GET"], "purpose": "Human verification console for authenticated workspace keys."},
     {"route": "/memory-lifecycle", "access": "public", "methods": ["GET"], "purpose": "Memory lifecycle explanation."},
     {"route": "/transparency", "access": "public", "methods": ["GET"], "purpose": "Support boundaries and no-op behavior."},
