@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import threading
@@ -46,6 +47,20 @@ def _public_value(value):
     if isinstance(value, str):
         return redact_text(value)
     return value
+
+
+def _search_tokens(query):
+    return [token for token in re.split(r"[^a-z0-9]+", (query or "").lower()) if len(token) >= 2]
+
+
+def _memory_query_matches(query, haystack):
+    q = (query or "").lower().strip()
+    if not q:
+        return True
+    if q in haystack:
+        return True
+    tokens = _search_tokens(q)
+    return bool(tokens) and all(token in haystack for token in tokens)
 
 
 def _audit_detail_summary(details):
@@ -1147,7 +1162,7 @@ class FileStore(object):
                     event.get("scopeId", ""),
                 ]
             ).lower()
-            if not q or q in haystack:
+            if _memory_query_matches(q, haystack):
                 items.append(_public_memory_event(event))
         return items
 
@@ -2595,7 +2610,7 @@ class SQLiteStore(FileStore):
                     event.get("scopeId", ""),
                 ]
             ).lower()
-            if not q or q in haystack:
+            if _memory_query_matches(q, haystack):
                 items.append(_public_memory_event(event))
         return items
 

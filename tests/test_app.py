@@ -549,6 +549,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("credentials hidden", js)
         self.assertIn("payload hidden", js)
         self.assertIn("Loaded workspace shortcuts", js)
+        self.assertIn("bootstrapRefresh", js)
+        self.assertIn("refreshInitialConsoleViews", js)
+        self.assertIn("renderBootstrapRefreshStatus", js)
+        self.assertIn("operator views refreshed", js)
+        self.assertIn("operator views need attention", js)
+        self.assertIn("Check \" + failures", js)
+        self.assertIn('bootstrapRefresh("memory"', js)
+        self.assertIn('bootstrapRefresh("reviews"', js)
+        self.assertIn('bootstrapRefresh("meetings"', js)
+        self.assertIn('bootstrapRefresh("routing"', js)
+        self.assertIn('bootstrapRefresh("inbox"', js)
+        self.assertIn('bootstrapRefresh("lanes"', js)
+        self.assertIn('bootstrapRefresh("receipts"', js)
+        self.assertIn('bootstrapRefresh("audit"', js)
 
     def test_console_js_treats_debug_json_as_advanced_view(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -2706,6 +2720,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         self.assertEqual(0, json.loads(text)["count"])
+
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=project lane promoted" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertEqual(1, payload["count"])
+        self.assertEqual("Promoted project decision", payload["items"][0]["title"])
+        self.assertFalse(payload["operatorSummary"]["filesystemDocsIncluded"])
 
     def test_memory_search_summarizes_hosted_long_term_memory_migration(self):
         status, _headers, text = call_app(

@@ -2175,6 +2175,62 @@
     });
   }
 
+  function bootstrapRefresh(label, task) {
+    return Promise.resolve()
+      .then(task)
+      .then(function () {
+        return {label: label, ok: true};
+      })
+      .catch(function (error) {
+        return {label: label, ok: false, error: error && error.message ? error.message : String(error || "failed")};
+      });
+  }
+
+  function renderBootstrapRefreshStatus(results) {
+    var failures = (results || []).filter(function (result) {
+      return !result.ok;
+    });
+    var completed = (results || []).filter(function (result) {
+      return result.ok;
+    }).map(function (result) {
+      return result.label;
+    });
+    if (failures.length) {
+      if (!completed.length) {
+        setStatus(
+          "Workspace loaded; operator views need attention: " + failures.map(function (result) { return result.label; }).join(", ") + ".",
+          true
+        );
+        return results;
+      }
+      setStatus(
+        "Workspace loaded; refreshed " + completed.join(", ") + ". Check " + failures.map(function (result) { return result.label; }).join(", ") + ".",
+        true
+      );
+      return results;
+    }
+    setStatus("Workspace loaded; operator views refreshed: " + completed.join(", ") + ".", false);
+    return results;
+  }
+
+  function refreshInitialConsoleViews() {
+    var meetingRefresh = function () {
+      return refreshMeetingRooms().then(function () {
+        return refreshMeetingMessages(state.selectedMeetingRoomId);
+      });
+    };
+    return Promise.all([
+      bootstrapRefresh("memory", function () { return refreshMemory("verification"); }),
+      bootstrapRefresh("reviews", function () { return refreshReviewQueue("pending"); }),
+      bootstrapRefresh("meetings", meetingRefresh),
+      bootstrapRefresh("routing", refreshRoutingDecisions),
+      bootstrapRefresh("inbox", function () { return refreshInbox(state.agentId); }),
+      bootstrapRefresh("lanes", refreshLaneOverview),
+      bootstrapRefresh("receipts", refreshReceipts),
+      bootstrapRefresh("audit", refreshAudit),
+    ]).then(renderBootstrapRefreshStatus);
+  }
+
   var authForm = pick("[data-console-auth]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
@@ -2214,15 +2270,7 @@
       }
       loadWorkspace()
         .then(function () { return registerAgent(state.agentId); })
-        .then(function () { return refreshMemory("verification"); })
-        .then(function () { return refreshReviewQueue("pending"); })
-        .then(function () { return refreshMeetingRooms(); })
-        .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
-        .then(function () { return refreshRoutingDecisions(); })
-        .then(function () { return refreshInbox(state.agentId); })
-        .then(function () { return refreshLaneOverview(); })
-        .then(refreshReceipts)
-        .then(refreshAudit)
+        .then(refreshInitialConsoleViews)
         .catch(function (error) { setStatus(error.message, true); });
     });
   }
