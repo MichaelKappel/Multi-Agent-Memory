@@ -31,6 +31,7 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn("content: attr(data-label)", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertNotIn("font-size: clamp", css)
+        self.assertIn('/static/site.css?v=ui2', home)
         self.assertIn('data-label="Surface"', home)
         self.assertIn('data-label="Layer"', guide)
 
