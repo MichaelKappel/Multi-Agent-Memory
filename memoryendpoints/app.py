@@ -1382,6 +1382,7 @@ def route_console(start_response):
     <nav class="console-nav" aria-label="Console workflow">
       <a href="#workspace-overview">Workspace</a>
       <a href="#memory-workflow">Memory</a>
+      <a href="#sync-workflow">Sync</a>
       <a href="#review-queue">Reviews</a>
       <a href="#meeting-rooms">Meetings</a>
       <a href="#message-lanes">Messages</a>
@@ -1392,6 +1393,7 @@ def route_console(start_response):
         <button type="button" data-console-workflow-view="all" aria-pressed="false">All</button>
         <button type="button" class="is-active" data-console-workflow-view="workspace" aria-pressed="true">Workspace</button>
         <button type="button" data-console-workflow-view="memory" aria-pressed="false">Memory</button>
+        <button type="button" data-console-workflow-view="sync" aria-pressed="false">Sync</button>
         <button type="button" data-console-workflow-view="reviews" aria-pressed="false">Reviews</button>
         <button type="button" data-console-workflow-view="meetings" aria-pressed="false">Meetings</button>
         <button type="button" data-console-workflow-view="messages" aria-pressed="false">Messages</button>
@@ -1422,6 +1424,7 @@ def route_console(start_response):
     <div class="command-bar-actions">
       <button class="button compact" type="button" data-console-command="memory">Search Verification</button>
       <button class="button compact" type="button" data-console-command="long-term">Long-Term Memory</button>
+      <button class="button compact" type="button" data-console-command="sync">Sync</button>
       <button class="button compact" type="button" data-console-command="meetings">Meetings</button>
       <button class="button compact" type="button" data-console-command="messages">Messages</button>
       <button class="button compact" type="button" data-console-command="receipts">Receipts</button>
@@ -1576,6 +1579,121 @@ def route_console(start_response):
     <details class="debug-json">
       <summary>Debug JSON</summary>
       <pre data-console-memory-output>{}</pre>
+    </details>
+  </section>
+  <section class="console-panel" id="sync-workflow" data-console-workflow-target="sync">
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Distributed MATM sync</span>
+        <h2>Sync</h2>
+      </div>
+      <span class="status-badge neutral">devices / mutations / receipts / heads</span>
+    </div>
+    <div class="actions lane-actions">
+      <button class="button" type="button" data-console-refresh-sync-capabilities>Refresh capabilities</button>
+      <button class="button" type="button" data-console-refresh-sync-retention>Refresh retention</button>
+    </div>
+    <div class="console-results sync-capability-summary" data-console-sync-capability-summary>
+      <p class="empty-state">Sync capabilities and retention policy will appear here.</p>
+    </div>
+    <form class="console-grid" data-console-sync-device>
+      <label>Agent id
+        <input name="agentId" value="human-verifier-agent" required>
+      </label>
+      <label>Device id
+        <input name="deviceId" value="human-verifier-device" placeholder="client-stable device id">
+      </label>
+      <label>Label
+        <input name="label" value="Human verification sync device">
+      </label>
+      <button class="button primary" type="submit">Register device</button>
+      <button class="button" type="button" data-console-sync-device-rotate>Rotate device</button>
+      <button class="button" type="button" data-console-sync-device-revoke>Revoke device</button>
+    </form>
+    <div class="console-results sync-device-summary" data-console-sync-device-summary>
+      <p class="empty-state">Device authority confirmations will appear here.</p>
+    </div>
+    <form class="console-grid" data-console-sync-mutation>
+      <label>Actor agent
+        <input name="actorAgentId" value="human-verifier-agent" required>
+      </label>
+      <label>Device id
+        <input name="deviceId" value="human-verifier-device" required>
+      </label>
+      <label>Device epoch
+        <input name="deviceEpoch" type="number" min="1" step="1" value="1" required>
+      </label>
+      <label>Logical memory id
+        <input name="logicalMemoryId" value="human-verifier-sync-memory" required>
+      </label>
+      <label>Operation
+        <select name="operation">
+          <option value="upsert" selected>upsert</option>
+          <option value="delete">delete</option>
+        </select>
+      </label>
+      <label>Parent revision
+        <input name="parentRevisionId" placeholder="current head revision for updates">
+      </label>
+      <label>Scope
+        <select name="scope">
+          <option value="company">company</option>
+          <option value="workspace" selected>workspace</option>
+          <option value="project">project</option>
+        </select>
+      </label>
+      <label>Memory type
+        <select name="memoryType">
+          <option value="status" selected>status</option>
+          <option value="decision">decision</option>
+          <option value="procedure">procedure</option>
+          <option value="risk">risk</option>
+          <option value="evidence">evidence</option>
+          <option value="handoff">handoff</option>
+          <option value="note">note</option>
+        </select>
+      </label>
+      <label class="wide">Title
+        <input name="title" value="Human console sync verification" required>
+      </label>
+      <label class="wide">Public-safe summary
+        <textarea name="summary" rows="3" required>Human console submitted an idempotent distributed sync mutation and will read back receipt, change, and head evidence.</textarea>
+      </label>
+      <label class="wide">Source reference
+        <input name="sourceRef" value="memoryendpoints://console/sync-workflow">
+      </label>
+      <button class="button primary" type="submit">Submit mutation</button>
+    </form>
+    <div class="console-results sync-mutation-summary" data-console-sync-mutation-summary>
+      <p class="empty-state">Mutation confirmations will appear here.</p>
+    </div>
+    <form class="console-grid compact-grid" data-console-sync-readback>
+      <label>Receipt id
+        <input name="receiptId" placeholder="syncreceipt-...">
+      </label>
+      <label>After sequence
+        <input name="afterSequence" type="number" min="0" step="1" value="0">
+      </label>
+      <label>Logical memory id
+        <input name="logicalMemoryId" value="human-verifier-sync-memory">
+      </label>
+      <label>Limit
+        <select name="limit">
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <button class="button" type="button" data-console-sync-read-receipt>Read receipt</button>
+      <button class="button" type="button" data-console-sync-read-changes>Read changes</button>
+      <button class="button" type="button" data-console-sync-read-heads>Read heads</button>
+    </form>
+    <div class="console-results sync-readback-list" data-console-sync-readback-list>
+      <p class="empty-state">Receipt, change, and head readback will appear here.</p>
+    </div>
+    <details class="debug-json">
+      <summary>Sync JSON</summary>
+      <pre data-console-sync-output>{}</pre>
     </details>
   </section>
   <section class="console-panel" id="review-queue" data-console-workflow-target="reviews">

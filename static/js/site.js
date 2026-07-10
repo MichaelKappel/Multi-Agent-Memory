@@ -26,6 +26,8 @@
     firstReviewId: "",
     debugJson: false,
     workflowView: "workspace",
+    runtimeVersion: null,
+    runtimeVersionError: "",
     workspaceOperatorSummary: null,
     agentRegistrationSummary: null,
     selectedMeetingRoomId: "",
@@ -43,6 +45,13 @@
     messageDeliveryCounts: null,
     receiptCount: null,
     auditCount: null,
+    syncCapabilityStatus: null,
+    syncDeviceStatus: null,
+    syncLatestDeviceId: "",
+    syncLatestReceiptId: "",
+    syncLatestRevisionId: "",
+    syncLatestServerSequence: null,
+    syncHeadCount: null,
     receiptsPayloadsHidden: null,
     auditCredentialsHidden: null,
     auditPayloadsHidden: null,
@@ -64,6 +73,7 @@
     all: "All",
     workspace: "Workspace",
     memory: "Memory",
+    sync: "Sync",
     reviews: "Reviews",
     meetings: "Meetings",
     messages: "Messages",
@@ -72,6 +82,7 @@
   var workflowViewByHash = {
     "#workspace-overview": "workspace",
     "#memory-workflow": "memory",
+    "#sync-workflow": "sync",
     "#review-queue": "reviews",
     "#meeting-rooms": "meetings",
     "#message-lanes": "messages",
@@ -397,6 +408,51 @@
     node.className = "status-badge " + surface.kind;
   }
 
+  function runtimeEvidence() {
+    var payload = state.runtimeVersion || {};
+    var build = payload.build || {};
+    var sourceSha = build.sourceShaShort || (build.sourceSha ? build.sourceSha.slice(0, 12) : "");
+    var backend = payload.storeBackend || "";
+    var backendStatus = payload.storeBackendStatus || "";
+    var backendVerified = payload.storeBackendVerified === true;
+    if (!state.runtimeVersion) {
+      return {
+        value: state.runtimeVersionError ? "Runtime review" : "Runtime pending",
+        meta: state.runtimeVersionError || "/api/version",
+        badges: [
+          { text: state.runtimeVersionError ? "version unavailable" : "version pending", kind: state.runtimeVersionError ? "warn" : "neutral" },
+        ],
+      };
+    }
+    return {
+      value: sourceSha ? "source " + sourceSha : "source pending",
+      meta: [backend || "backend unknown", backendStatus].filter(Boolean).join(" / "),
+      badges: [
+        { text: "/api/version", kind: payload.ok === false ? "warn" : "neutral" },
+        { text: backendVerified ? "backend verified" : "backend pending", kind: backendVerified ? "good" : "warn" },
+      ],
+    };
+  }
+
+  function refreshRuntimeVersion() {
+    return publicApi("/api/version")
+      .then(function (payload) {
+        state.runtimeVersion = payload;
+        state.runtimeVersionError = "";
+        if (state.workspace && state.workspace.workspaceId) {
+          renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
+        } else {
+          renderOperatorMetrics();
+        }
+        return payload;
+      })
+      .catch(function (error) {
+        state.runtimeVersionError = error && error.message ? error.message : "Could not read /api/version.";
+        renderOperatorMetrics();
+        return null;
+      });
+  }
+
   function countMeta(counts, preferredKeys) {
     counts = counts || {};
     var keys = (preferredKeys || []).slice();
@@ -459,6 +515,8 @@
     var broadcastSeen = Boolean(deliveryCounts.broadcast);
     var targetedSeen = Boolean(deliveryCounts.targeted);
     var receiptsKnown = state.receiptCount !== null && state.receiptCount !== undefined;
+    var syncKnown = Boolean(state.syncCapabilityStatus || state.syncLatestReceiptId || state.syncLatestRevisionId || state.syncHeadCount !== null);
+    var syncReady = Boolean(state.syncLatestReceiptId && state.syncHeadCount !== null);
     var redactionKnown = state.auditCredentialsHidden !== null && state.auditPayloadsHidden !== null && state.receiptsPayloadsHidden !== null;
     var redactionReview = state.auditCredentialsHidden === false || state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false;
     var header = el("div", "verifier-checklist-header");
@@ -490,6 +548,12 @@
       "acknowledgement evidence"
     ));
     node.appendChild(checklistRow(
+      "Distributed sync",
+      !syncKnown ? checklistStatus("pending", "pending") : (syncReady ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
+      !syncKnown ? "Refresh Sync capabilities, then register a device and submit a mutation." : (syncReady ? "Sync mutation receipt, change feed, and head readback are visible." : "Sync capability or mutation state is visible; complete readback to prove the path."),
+      state.syncLatestReceiptId ? "receipt " + shortId(state.syncLatestReceiptId) : (state.syncCapabilityStatus || "sync workflow")
+    ));
+    node.appendChild(checklistRow(
       "Redaction",
       !redactionKnown ? checklistStatus("pending", "pending") : (redactionReview ? checklistStatus("review", "review") : checklistStatus("pass", "pass")),
       !redactionKnown ? "Refresh receipts and audit to verify hidden credentials and payloads." : (redactionReview ? "One redaction signal needs review." : "Credentials and private payloads are hidden in visible evidence."),
@@ -511,6 +575,7 @@
       ? state.laneUnreadCount
       : state.inboxUnreadCount;
     var evidencePending = state.receiptCount === null && state.auditCount === null;
+    var runtime = runtimeEvidence();
     node.appendChild(metricCard(
       "Session",
       state.workspaceId ? "Workspace loaded" : "Awaiting key",
@@ -519,6 +584,12 @@
         { text: surface.badge, kind: surface.kind },
         { text: state.workspaceId ? "key hidden" : "key masked", kind: "good" },
       ]
+    ));
+    node.appendChild(metricCard(
+      "Runtime",
+      runtime.value,
+      runtime.meta,
+      runtime.badges
     ));
     node.appendChild(metricCard(
       "Boundary",
@@ -600,6 +671,7 @@
     var project = operatorLevel(operatorSummary, "project");
     var privacy = (operatorSummary && operatorSummary.privacy) || {};
     var agentSummary = state.agentRegistrationSummary || {};
+    var runtime = runtimeEvidence();
     var hierarchyReady = operatorSummary && operatorSummary.hierarchyReady !== undefined ? operatorSummary.hierarchyReady : Boolean(
       (account.id || accountRaw.accountId || workspace.accountId) &&
       (company.id || companyRaw.companyId || workspace.companyId) &&
@@ -609,6 +681,7 @@
     node.appendChild(sessionItem("Surface", surface.label, surface.origin, [
       { text: surface.badge, kind: surface.kind },
     ]));
+    node.appendChild(sessionItem("Runtime", runtime.value, runtime.meta, runtime.badges));
     node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
       { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
     ]));
@@ -624,6 +697,7 @@
     actions.setAttribute("aria-label", "Loaded workspace shortcuts");
     [
       { href: "#memory-workflow", label: "Memory" },
+      { href: "#sync-workflow", label: "Sync" },
       { href: "#meeting-rooms", label: "Meetings" },
       { href: "#message-lanes", label: "Messages" },
       { href: "#receipts-audit", label: "Receipts" },
@@ -2175,6 +2249,307 @@
     node.appendChild(row);
   }
 
+  function syncScopeId(scope) {
+    if (scope === "company") {
+      return state.companyId || state.workspaceId;
+    }
+    if (scope === "project") {
+      return state.projectId || state.workspaceId;
+    }
+    return state.workspaceId;
+  }
+
+  function setSyncDeviceFields(deviceId, authorityEpoch) {
+    if (!deviceId) {
+      return;
+    }
+    state.syncLatestDeviceId = deviceId;
+    var deviceForm = pick("[data-console-sync-device]");
+    var mutationForm = pick("[data-console-sync-mutation]");
+    if (deviceForm && deviceForm.elements.deviceId) {
+      deviceForm.elements.deviceId.value = deviceId;
+    }
+    if (mutationForm && mutationForm.elements.deviceId) {
+      mutationForm.elements.deviceId.value = deviceId;
+    }
+    if (mutationForm && mutationForm.elements.deviceEpoch && authorityEpoch) {
+      mutationForm.elements.deviceEpoch.value = String(authorityEpoch);
+    }
+  }
+
+  function setSyncReadbackFields(receiptId, logicalMemoryId, serverSequence, revisionId) {
+    var readbackForm = pick("[data-console-sync-readback]");
+    var mutationForm = pick("[data-console-sync-mutation]");
+    if (readbackForm) {
+      if (receiptId && readbackForm.elements.receiptId) {
+        readbackForm.elements.receiptId.value = receiptId;
+      }
+      if (logicalMemoryId && readbackForm.elements.logicalMemoryId) {
+        readbackForm.elements.logicalMemoryId.value = logicalMemoryId;
+      }
+      if (serverSequence !== undefined && serverSequence !== null && readbackForm.elements.afterSequence) {
+        readbackForm.elements.afterSequence.value = String(Math.max(0, Number(serverSequence || 0) - 1));
+      }
+    }
+    if (revisionId && mutationForm && mutationForm.elements.parentRevisionId) {
+      mutationForm.elements.parentRevisionId.value = revisionId;
+    }
+  }
+
+  function renderSyncCapabilitySummary(payload) {
+    var node = pick("[data-console-sync-capability-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var capabilities = (payload && payload.data) || (payload && payload.capabilities) || {};
+    var policy = (payload && payload.policy) || capabilities.retention || {};
+    state.syncCapabilityStatus = capabilities.status || policy.schemaVersion || "available";
+    renderOperatorMetrics();
+    var summaryLine = el("div", "filter-summary sync-capability-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Sync capability"));
+    appendBadge(summaryLine, capabilities.status || "available", capabilities.status === "live" ? "good" : "neutral");
+    appendBadge(summaryLine, capabilities.protocol || "distributed sync", "neutral");
+    appendBadge(summaryLine, policy.hardForgetSupported || (capabilities.mutationContract && capabilities.mutationContract.hardForgetSupported) ? "hard forget supported" : "hard forget rejected", policy.hardForgetSupported ? "warn" : "good");
+    appendBadge(summaryLine, policy.rawPrivatePayloadStored ? "payload storage review" : "private payload not stored", policy.rawPrivatePayloadStored ? "warn" : "good");
+    appendBadge(summaryLine, capabilities.rawCredentialExposed ? "credential exposure review" : "credentials hidden", capabilities.rawCredentialExposed ? "warn" : "good");
+    node.appendChild(summaryLine);
+    var routes = capabilities.routes || {};
+    var row = resultRow(
+      "Distributed sync contract",
+      "Offline-capable clients register devices, submit idempotent mutations, then read back receipts, changes, and heads.",
+      [
+        { text: capabilities.publicSafeOnly ? "public-safe only" : "public-safety review", kind: capabilities.publicSafeOnly ? "good" : "warn" },
+        { text: capabilities.valuesRedacted || policy.valuesRedacted ? "redacted" : "redaction review", kind: capabilities.valuesRedacted || policy.valuesRedacted ? "good" : "warn" },
+        { text: capabilities.checkpointContract && capabilities.checkpointContract.monotonicServerSequence ? "monotonic sequence" : "checkpoint review", kind: capabilities.checkpointContract && capabilities.checkpointContract.monotonicServerSequence ? "good" : "warn" },
+      ],
+      [
+        routes.registerDevice || "/api/matm/sync/devices",
+        routes.submitMutation || "/api/matm/sync/mutations",
+        routes.lookupReceipt || "/api/matm/sync/receipts",
+        routes.changes || "/api/matm/sync/changes",
+        routes.heads || "/api/matm/sync/heads",
+      ]
+    );
+    node.appendChild(row);
+  }
+
+  function renderSyncDeviceSummary(payload) {
+    var node = pick("[data-console-sync-device-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var device = (payload && payload.device) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    if (!device.deviceId) {
+      node.appendChild(el("p", "empty-state", "Device authority confirmations will appear here."));
+      return;
+    }
+    state.syncDeviceStatus = device.status || summary.status || "";
+    setSyncDeviceFields(device.deviceId, device.authorityEpoch || summary.authorityEpoch);
+    renderOperatorMetrics();
+    var summaryLine = el("div", "filter-summary sync-device-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Device authority"));
+    appendBadge(summaryLine, summary.action || "register", "neutral");
+    appendBadge(summaryLine, device.status || "active", device.status === "revoked" ? "warn" : "good");
+    appendBadge(summaryLine, "epoch " + String(device.authorityEpoch || summary.authorityEpoch || 0), "neutral");
+    appendBadge(summaryLine, payload.persisted ? "persisted" : "readback pending", payload.persisted ? "good" : "warn");
+    appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    node.appendChild(summaryLine);
+    var row = resultRow(
+      "Sync device " + (summary.action || "registered"),
+      device.label || "Device authority is ready for idempotent sync mutations.",
+      [
+        { text: device.status || "active", kind: device.status === "revoked" ? "warn" : "good" },
+        { text: "epoch " + String(device.authorityEpoch || 0), kind: "neutral" },
+        { text: payload.deviceAuthorityPersisted ? "authority persisted" : "authority review", kind: payload.deviceAuthorityPersisted ? "good" : "warn" },
+        { text: device.valuesRedacted || payload.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "device " + shortId(device.deviceId),
+        "agent " + (device.agentId || "unknown"),
+        device.createdAt || "",
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy device id", copyLabel: "Sync device id", value: device.deviceId },
+    ]);
+    node.appendChild(row);
+  }
+
+  function renderSyncMutationSummary(payload) {
+    var node = pick("[data-console-sync-mutation-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var receipt = (payload && payload.receipt) || {};
+    var revision = (payload && payload.revision) || {};
+    var confirmation = (payload && payload.confirmation) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    var receiptId = receipt.receiptId || "";
+    var revisionId = revision.syncRevisionId || receipt.syncRevisionId || "";
+    var logicalMemoryId = receipt.logicalMemoryId || revision.logicalMemoryId || "";
+    var serverSequence = payload && payload.serverSequence !== undefined ? payload.serverSequence : receipt.serverSequence;
+    state.syncLatestReceiptId = receiptId;
+    state.syncLatestRevisionId = revisionId;
+    state.syncLatestServerSequence = serverSequence;
+    setSyncReadbackFields(receiptId, logicalMemoryId, serverSequence, payload && payload.status === "applied" ? revisionId : "");
+    renderOperatorMetrics();
+    var status = (payload && payload.status) || receipt.status || "unknown";
+    var conflictCode = receipt.conflictCode || summary.conflictCode || "";
+    var summaryLine = el("div", "filter-summary sync-mutation-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Sync mutation"));
+    appendBadge(summaryLine, status, status === "applied" ? "good" : "warn");
+    appendBadge(summaryLine, "sequence " + String(serverSequence || 0), "neutral");
+    appendBadge(summaryLine, confirmation.persisted || (payload && payload.persisted) ? "readback confirmed" : "readback pending", confirmation.persisted || (payload && payload.persisted) ? "good" : "warn");
+    appendBadge(summaryLine, confirmation.receiptVisible ? "receipt visible" : "receipt check", confirmation.receiptVisible ? "good" : "warn");
+    appendBadge(summaryLine, confirmation.revisionVisibleInChanges ? "change visible" : "change check", confirmation.revisionVisibleInChanges ? "good" : "warn");
+    appendBadge(summaryLine, confirmation.headVisible ? "head visible" : "head check", confirmation.headVisible ? "good" : "warn");
+    if (conflictCode) {
+      appendBadge(summaryLine, conflictCode, "warn");
+    }
+    node.appendChild(summaryLine);
+    var row = resultRow(
+      "Sync mutation " + status,
+      revision.summary || "Mutation receipt recorded without exposing raw idempotency keys or private payloads.",
+      [
+        { text: revision.operation || "mutation", kind: "neutral" },
+        { text: revision.memoryType || "memory", kind: "neutral" },
+        { text: receipt.conflict || (payload && payload.conflict) ? "conflict" : "no conflict", kind: receipt.conflict || (payload && payload.conflict) ? "warn" : "good" },
+        { text: receipt.idempotencyKeyExposed ? "idempotency exposed" : "idempotency hidden", kind: receipt.idempotencyKeyExposed ? "warn" : "good" },
+        { text: receipt.valuesRedacted || payload.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "receipt " + shortId(receiptId),
+        "revision " + shortId(revisionId),
+        "logical " + (logicalMemoryId || "not set"),
+        "head " + shortId((payload && payload.head && payload.head.headRevisionId) || ""),
+        payload && payload.receiptQueryUrl ? "receipt query ready" : "",
+        payload && payload.changesQueryUrl ? "changes query ready" : "",
+        payload && payload.headsQueryUrl ? "heads query ready" : "",
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy receipt id", copyLabel: "Sync receipt id", value: receiptId },
+      { label: "Copy revision id", copyLabel: "Sync revision id", value: revisionId },
+      { label: "Copy receipt query", copyLabel: "Sync receipt query URL", value: payload && payload.receiptQueryUrl },
+      { label: "Copy changes query", copyLabel: "Sync changes query URL", value: payload && payload.changesQueryUrl },
+      { label: "Copy heads query", copyLabel: "Sync heads query URL", value: payload && payload.headsQueryUrl },
+    ]);
+    node.appendChild(row);
+  }
+
+  function syncRevisionRow(item) {
+    var row = resultRow(
+      "Revision " + shortId(item.syncRevisionId),
+      item.summary || "Sync revision.",
+      [
+        { text: item.operation || "mutation", kind: "neutral" },
+        { text: item.status || "status", kind: item.status === "applied" ? "good" : "warn" },
+        { text: "seq " + String(item.serverSequence || 0), kind: "neutral" },
+        { text: item.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "logical " + (item.logicalMemoryId || "not set"),
+        "revision " + shortId(item.syncRevisionId),
+        "parent " + shortId(item.parentRevisionId),
+        "actor " + (item.actorAgentId || "unknown"),
+        item.source ? "source " + item.source : "",
+      ]
+    );
+    return appendCopyActions(row, [
+      { label: "Copy revision id", copyLabel: "Sync revision id", value: item.syncRevisionId },
+      { label: "Copy logical id", copyLabel: "Logical memory id", value: item.logicalMemoryId },
+    ]);
+  }
+
+  function syncHeadRow(item) {
+    var row = resultRow(
+      "Head " + (item.logicalMemoryId || "logical memory"),
+      "Current sync head for this logical memory id.",
+      [
+        { text: item.status || "active", kind: item.status === "active" ? "good" : "warn" },
+        { text: "seq " + String(item.serverSequence || item.indexedThroughSequence || 0), kind: "neutral" },
+        { text: item.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "head " + shortId(item.headRevisionId),
+        "logical " + (item.logicalMemoryId || "not set"),
+        item.updatedAt || "",
+      ]
+    );
+    return appendCopyActions(row, [
+      { label: "Copy head revision", copyLabel: "Head revision id", value: item.headRevisionId },
+      { label: "Copy logical id", copyLabel: "Logical memory id", value: item.logicalMemoryId },
+    ]);
+  }
+
+  function renderSyncReadback(payload, kind) {
+    var node = pick("[data-console-sync-readback-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var label = kind || "readback";
+    var items = [];
+    if (label === "receipt") {
+      items = payload && payload.receipt ? [payload.receipt] : [];
+    } else if (label === "changes") {
+      items = (payload && payload.changes && payload.changes.items) || [];
+    } else {
+      items = (payload && payload.items) || [];
+    }
+    if (label === "heads") {
+      state.syncHeadCount = payload && payload.count !== undefined ? payload.count : items.length;
+    }
+    renderOperatorMetrics();
+    var summaryLine = el("div", "filter-summary sync-readback-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Sync " + label));
+    appendBadge(summaryLine, items.length + " row(s)", items.length ? "good" : "neutral");
+    appendBadge(summaryLine, payload && payload.valuesRedacted ? "redacted" : "redaction review", payload && payload.valuesRedacted ? "good" : "warn");
+    appendBadge(summaryLine, payload && payload.rawCredentialExposed ? "credential exposure review" : "credentials hidden", payload && payload.rawCredentialExposed ? "warn" : "good");
+    if (label === "changes" && payload && payload.changes) {
+      appendBadge(summaryLine, "indexed " + String(payload.changes.indexedThroughSequence || 0), "neutral");
+      appendBadge(summaryLine, payload.changes.hasMore ? "more changes" : "checkpoint complete", payload.changes.hasMore ? "warn" : "good");
+    }
+    node.appendChild(summaryLine);
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No sync " + label + " rows returned."));
+      return;
+    }
+    items.forEach(function (item) {
+      if (label === "receipt") {
+        var receiptRow = resultRow(
+          "Receipt " + (item.status || "recorded"),
+          "Receipt confirms the idempotent sync mutation without exposing the raw key.",
+          [
+            { text: item.status || "recorded", kind: item.status === "applied" ? "good" : "warn" },
+            { text: "seq " + String(item.serverSequence || 0), kind: "neutral" },
+            { text: item.idempotencyKeyExposed ? "idempotency exposed" : "idempotency hidden", kind: item.idempotencyKeyExposed ? "warn" : "good" },
+            { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+          ],
+          [
+            "receipt " + shortId(item.receiptId),
+            "revision " + shortId(item.syncRevisionId),
+            "logical " + (item.logicalMemoryId || "not set"),
+            item.conflictCode ? "code " + item.conflictCode : "",
+          ]
+        );
+        appendCopyActions(receiptRow, [
+          { label: "Copy receipt id", copyLabel: "Sync receipt id", value: item.receiptId },
+          { label: "Copy revision id", copyLabel: "Sync revision id", value: item.syncRevisionId },
+        ]);
+        node.appendChild(receiptRow);
+      } else if (label === "changes") {
+        node.appendChild(syncRevisionRow(item));
+      } else {
+        node.appendChild(syncHeadRow(item));
+      }
+    });
+  }
+
   function authHeaders(extra) {
     var headers = {
       "Accept": "application/json",
@@ -2202,6 +2577,45 @@
     return fetch(path, fetchOptions).then(function (response) {
       return response.json().then(function (payload) {
         if (!response.ok || payload.ok === false) {
+          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    });
+  }
+
+  function publicApi(path) {
+    return fetch(path, {
+      method: "GET",
+      headers: {"Accept": "application/json"},
+      cache: "no-store",
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok || payload.ok === false) {
+          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
+          throw new Error(detail);
+        }
+        return payload;
+      });
+    });
+  }
+
+  function apiAllowingStatuses(path, options, allowedStatuses) {
+    options = options || {};
+    allowedStatuses = allowedStatuses || [];
+    var fetchOptions = {
+      method: options.method || "GET",
+      headers: authHeaders(options.headers),
+      cache: "no-store",
+    };
+    if (options.body) {
+      fetchOptions.headers["Content-Type"] = "application/json";
+      fetchOptions.body = JSON.stringify(options.body);
+    }
+    return fetch(path, fetchOptions).then(function (response) {
+      return response.json().then(function (payload) {
+        if ((!response.ok || payload.ok === false) && allowedStatuses.indexOf(response.status) === -1) {
           var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
           throw new Error(detail);
         }
@@ -2565,6 +2979,160 @@
     });
   }
 
+  function refreshSyncCapabilities() {
+    return publicApi("/api/matm/sync/capabilities").then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncCapabilitySummary(payload);
+      return payload;
+    });
+  }
+
+  function refreshSyncRetention() {
+    if (!state.key || !state.workspaceId) {
+      return refreshSyncCapabilities();
+    }
+    var qs = query({workspace_id: state.workspaceId});
+    return api("/api/matm/sync/retention?" + qs).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncCapabilitySummary(payload);
+      return payload;
+    });
+  }
+
+  function syncDeviceOperation(operation) {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before changing sync device authority."));
+    }
+    var form = pick("[data-console-sync-device]");
+    var agentId = form && form.elements.agentId ? form.elements.agentId.value.trim() : state.agentId;
+    var deviceId = form && form.elements.deviceId ? form.elements.deviceId.value.trim() : "";
+    var label = form && form.elements.label ? form.elements.label.value.trim() : "";
+    if ((operation === "rotate" || operation === "revoke") && !deviceId) {
+      return Promise.reject(new Error("Device id is required for rotate and revoke."));
+    }
+    var path = "/api/matm/sync/devices";
+    if (operation === "rotate") {
+      path = "/api/matm/sync/devices/rotate";
+    } else if (operation === "revoke") {
+      path = "/api/matm/sync/devices/revoke";
+    }
+    return api(path, {
+      method: "POST",
+      headers: {"Idempotency-Key": "console-sync-device-" + operation + "-" + (deviceId || agentId) + "-" + Date.now()},
+      body: {
+        workspaceId: state.workspaceId,
+        agentId: agentId || state.agentId,
+        deviceId: deviceId,
+        label: label,
+      },
+    }).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncDeviceSummary(payload);
+      return payload;
+    });
+  }
+
+  function submitSyncMutation() {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before submitting sync mutations."));
+    }
+    var form = pick("[data-console-sync-mutation]");
+    if (!form) {
+      return Promise.reject(new Error("Sync mutation form is unavailable."));
+    }
+    var logicalMemoryId = form.elements.logicalMemoryId.value.trim();
+    var deviceId = form.elements.deviceId.value.trim();
+    if (!logicalMemoryId) {
+      return Promise.reject(new Error("Logical memory id is required for sync mutations."));
+    }
+    if (!deviceId) {
+      return Promise.reject(new Error("Device id is required for sync mutations."));
+    }
+    var scope = form.elements.scope.value;
+    var body = {
+      workspaceId: state.workspaceId,
+      actorAgentId: form.elements.actorAgentId.value.trim() || state.agentId,
+      deviceId: deviceId,
+      deviceEpoch: Number(form.elements.deviceEpoch.value || 1),
+      logicalMemoryId: logicalMemoryId,
+      operation: form.elements.operation.value,
+      parentRevisionId: form.elements.parentRevisionId.value.trim(),
+      scope: scope,
+      scopeId: syncScopeId(scope),
+      memoryType: form.elements.memoryType.value,
+      title: form.elements.title.value.trim(),
+      summary: form.elements.summary.value.trim(),
+      sourceRef: form.elements.sourceRef.value.trim() || "memoryendpoints://console/sync-workflow",
+    };
+    return apiAllowingStatuses("/api/matm/sync/mutations", {
+      method: "POST",
+      headers: {"Idempotency-Key": "console-sync-mutation-" + logicalMemoryId + "-" + Date.now()},
+      body: body,
+    }, [409]).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncMutationSummary(payload);
+      return payload;
+    });
+  }
+
+  function syncReadbackParams() {
+    var form = pick("[data-console-sync-readback]");
+    return {
+      receiptId: form && form.elements.receiptId ? form.elements.receiptId.value.trim() : "",
+      afterSequence: form && form.elements.afterSequence ? form.elements.afterSequence.value : "0",
+      logicalMemoryId: form && form.elements.logicalMemoryId ? form.elements.logicalMemoryId.value.trim() : "",
+      limit: form && form.elements.limit ? form.elements.limit.value : "25",
+    };
+  }
+
+  function readSyncReceipt() {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before reading sync receipts."));
+    }
+    var params = syncReadbackParams();
+    var receiptId = params.receiptId || state.syncLatestReceiptId;
+    if (!receiptId) {
+      return Promise.reject(new Error("Receipt id is required for sync receipt readback."));
+    }
+    var qs = query({workspace_id: state.workspaceId, receipt_id: receiptId});
+    return api("/api/matm/sync/receipts?" + qs).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncReadback(payload, "receipt");
+      return payload;
+    });
+  }
+
+  function readSyncChanges() {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before reading sync changes."));
+    }
+    var params = syncReadbackParams();
+    var qs = query({
+      workspace_id: state.workspaceId,
+      after_sequence: params.afterSequence || 0,
+      limit: params.limit || 25,
+      logical_memory_id: params.logicalMemoryId,
+    });
+    return api("/api/matm/sync/changes?" + qs).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncReadback(payload, "changes");
+      return payload;
+    });
+  }
+
+  function readSyncHeads() {
+    if (!state.key || !state.workspaceId) {
+      return Promise.reject(new Error("Load workspace before reading sync heads."));
+    }
+    var params = syncReadbackParams();
+    var qs = query({workspace_id: state.workspaceId, logical_memory_id: params.logicalMemoryId});
+    return api("/api/matm/sync/heads?" + qs).then(function (payload) {
+      render("[data-console-sync-output]", payload);
+      renderSyncReadback(payload, "heads");
+      return payload;
+    });
+  }
+
   function reviewQueueFilters(status) {
     var form = pick("[data-console-review]");
     var params = {workspace_id: state.workspaceId, status: status || ""};
@@ -2646,6 +3214,7 @@
       bootstrapRefresh("lanes", refreshLaneOverview),
       bootstrapRefresh("receipts", refreshReceipts),
       bootstrapRefresh("audit", refreshAudit),
+      bootstrapRefresh("sync", refreshSyncRetention),
     ]).then(renderBootstrapRefreshStatus);
   }
 
@@ -2658,6 +3227,7 @@
     var workflow = {
       memory: "memory",
       "long-term": "memory",
+      sync: "sync",
       meetings: "meetings",
       messages: "messages",
       receipts: "evidence",
@@ -2677,6 +3247,12 @@
         });
     } else if (action === "long-term") {
       task = showHostedLongTermMemory();
+    } else if (action === "sync") {
+      task = refreshSyncRetention()
+        .then(function (payload) {
+          setStatus("Sync capabilities refreshed from the command bar.", false);
+          return payload;
+        });
     } else if (action === "meetings") {
       task = refreshMeetingRooms()
         .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
@@ -2717,6 +3293,8 @@
   updateSurfaceBadge();
   renderOperatorMetrics();
   renderCommandBar();
+  refreshRuntimeVersion();
+  refreshSyncCapabilities().catch(function () {});
   if (debugToggle) {
     debugToggle.addEventListener("change", function () {
       setDebugJsonVisible(debugToggle.checked);
@@ -2840,6 +3418,92 @@
       showHostedLongTermMemory().catch(function (error) {
         setStatus(error.message, true);
       });
+    });
+  }
+
+  var refreshSyncCapabilitiesButton = pick("[data-console-refresh-sync-capabilities]");
+  if (refreshSyncCapabilitiesButton) {
+    refreshSyncCapabilitiesButton.addEventListener("click", function () {
+      refreshSyncCapabilities()
+        .then(function () { setStatus("Sync capabilities refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var refreshSyncRetentionButton = pick("[data-console-refresh-sync-retention]");
+  if (refreshSyncRetentionButton) {
+    refreshSyncRetentionButton.addEventListener("click", function () {
+      refreshSyncRetention()
+        .then(function () { setStatus(state.workspaceId ? "Sync retention refreshed." : "Public sync capabilities refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncDeviceForm = pick("[data-console-sync-device]");
+  if (syncDeviceForm) {
+    syncDeviceForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      syncDeviceOperation("register")
+        .then(function () { setStatus("Sync device registered and read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncDeviceRotateButton = pick("[data-console-sync-device-rotate]");
+  if (syncDeviceRotateButton) {
+    syncDeviceRotateButton.addEventListener("click", function () {
+      syncDeviceOperation("rotate")
+        .then(function () { setStatus("Sync device authority rotated and read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncDeviceRevokeButton = pick("[data-console-sync-device-revoke]");
+  if (syncDeviceRevokeButton) {
+    syncDeviceRevokeButton.addEventListener("click", function () {
+      syncDeviceOperation("revoke")
+        .then(function () { setStatus("Sync device revoked and read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncMutationForm = pick("[data-console-sync-mutation]");
+  if (syncMutationForm) {
+    syncMutationForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitSyncMutation()
+        .then(function () { return readSyncReceipt(); })
+        .then(function () { return readSyncChanges(); })
+        .then(function () { return readSyncHeads(); })
+        .then(function () { setStatus("Sync mutation submitted and read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncReadReceiptButton = pick("[data-console-sync-read-receipt]");
+  if (syncReadReceiptButton) {
+    syncReadReceiptButton.addEventListener("click", function () {
+      readSyncReceipt()
+        .then(function () { setStatus("Sync receipt read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncReadChangesButton = pick("[data-console-sync-read-changes]");
+  if (syncReadChangesButton) {
+    syncReadChangesButton.addEventListener("click", function () {
+      readSyncChanges()
+        .then(function () { setStatus("Sync changes read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var syncReadHeadsButton = pick("[data-console-sync-read-heads]");
+  if (syncReadHeadsButton) {
+    syncReadHeadsButton.addEventListener("click", function () {
+      readSyncHeads()
+        .then(function () { setStatus("Sync heads read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 

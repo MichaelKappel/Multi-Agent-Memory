@@ -895,7 +895,11 @@ pre {
 .routing-decisions-summary,
 .meeting-rooms-summary,
 .meeting-messages-summary,
-.meeting-promotion-operator-summary {
+.meeting-promotion-operator-summary,
+.sync-capability-operator-summary,
+.sync-device-operator-summary,
+.sync-mutation-operator-summary,
+.sync-readback-operator-summary {
   margin-top: 4px;
 }
 
