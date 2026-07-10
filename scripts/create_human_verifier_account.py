@@ -135,9 +135,9 @@ def main(argv=None):
         (
             "company",
             company_id,
-            "Company hierarchy verified",
-            "The company is a distinct organization boundary linked to an account through account-company membership.",
-            ["company", "account", "hierarchy"],
+            "Company/account boundary verification seeded",
+            "The company/account boundary is visible to the human verifier: the company is a distinct organization boundary linked to an account through account-company membership.",
+            ["verification", "company", "account", "boundary", "hierarchy"],
         ),
         (
             "workspace",
