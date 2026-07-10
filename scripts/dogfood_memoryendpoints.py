@@ -24,10 +24,13 @@ REPORT_PATH = ROOT / "docs" / "reports" / "dogfood-memory-run.json"
 PROGRESS_PATH = ROOT / ".uai" / "progress.uai"
 DOGFOOD_STORE_DIR = ROOT / "var" / "dogfood-memory"
 DOGFOOD_STORE = DOGFOOD_STORE_DIR / "store.json"
-LIVE_READBACK_ATTEMPTS = 16
+LIVE_READBACK_ATTEMPTS = 32
 LIVE_WRITE_ATTEMPTS = 16
 LIVE_WORKSPACE_SETUP_ATTEMPTS = 8
 LIVE_WORKSPACE_READY_ATTEMPTS = 6
+LIVE_ACK_READBACK_ATTEMPTS = 24
+LIVE_READ_DELAY_SECONDS = 1.5
+LIVE_ACK_READ_DELAY_SECONDS = 1.5
 
 
 class WsgiTransport(object):
@@ -277,6 +280,35 @@ def read_current_message_until(transport, headers, workspace_id, agent_id, messa
     return last_status, last_payload
 
 
+def contains_receipt(payload, notification_id, consumer_agent_id):
+    if not notification_id:
+        return False
+    for item in payload.get("items") or []:
+        if item.get("notificationId") != notification_id:
+            continue
+        if consumer_agent_id and item.get("consumerAgentId") != consumer_agent_id:
+            continue
+        return True
+    return False
+
+
+def read_receipts_until(transport, headers, workspace_id, notification_id, consumer_agent_id, attempts=1, delay_seconds=1.0):
+    attempts = max(1, int(attempts or 1))
+    last_status = "500 Missing Receipt Read"
+    last_payload = {"ok": False, "valuesRedacted": True}
+    for attempt in range(attempts):
+        last_status, last_payload = transport.call(
+            "/api/matm/receipts",
+            headers=headers,
+            query=urlencode({"workspace_id": workspace_id, "consumer_agent_id": consumer_agent_id}),
+        )
+        if contains_receipt(last_payload, notification_id, consumer_agent_id):
+            return last_status, last_payload
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return last_status, last_payload
+
+
 def append_progress(report):
     if report.get("liveDogfoodVerified"):
         detail = "Live MATM dogfood run verified against `https://memoryendpoints.com`"
@@ -384,7 +416,7 @@ def run_sequence(transport, label, base_url=None):
             path="/api/matm/search",
             query=urlencode({"workspace_id": workspace_id, "q": memory_event_id}),
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         memory_readback_verified = contains_memory_event(search, memory_event_id)
         step(report, "search_memory", status, search, verified=memory_readback_verified)
@@ -427,7 +459,7 @@ def run_sequence(transport, label, base_url=None):
             meeting_message_id,
             url=meeting_post.get("transcriptQueryUrl"),
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         meeting_readback_verified = contains_meeting_message(meeting_messages, meeting_message_id)
         step(report, "read_meeting_messages", status, meeting_messages, verified=meeting_readback_verified)
@@ -462,7 +494,7 @@ def run_sequence(transport, label, base_url=None):
             meeting_memory_event_id,
             url=meeting_promotion.get("memoryQueryUrl"),
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         meeting_memory_readback_verified = contains_memory_event(meeting_memory_search, meeting_memory_event_id)
         step(report, "read_promoted_meeting_memory", status, meeting_memory_search, verified=meeting_memory_readback_verified)
@@ -481,7 +513,7 @@ def run_sequence(transport, label, base_url=None):
                 }
             ),
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         meeting_memory_source_readback_verified = contains_memory_event(meeting_memory_source_search, meeting_memory_event_id)
         step(report, "read_promoted_meeting_memory_by_source", status, meeting_memory_source_search, verified=meeting_memory_source_readback_verified)
@@ -531,7 +563,7 @@ def run_sequence(transport, label, base_url=None):
             notification_id,
             expected_visible=True,
             attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            delay_seconds=LIVE_READ_DELAY_SECONDS,
         )
         current_readback_verified = contains_current_message(current, message_id, notification_id)
         step(report, "read_current_message", status, current, verified=current_readback_verified)
@@ -557,12 +589,17 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "acknowledge_notification", status, ack, verified=ack_verified)
 
-        status, receipts = transport.call(
-            "/api/matm/receipts",
-            headers=auth,
-            query=urlencode({"workspace_id": workspace_id, "consumer_agent_id": "memoryendpoints-followup-agent"}),
+        status, receipts = read_receipts_until(
+            transport,
+            auth,
+            workspace_id,
+            notification_id,
+            "memoryendpoints-followup-agent",
+            attempts=LIVE_ACK_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
+            delay_seconds=LIVE_ACK_READ_DELAY_SECONDS,
         )
-        step(report, "read_redacted_receipts", status, receipts)
+        receipt_readback_verified = contains_receipt(receipts, notification_id, "memoryendpoints-followup-agent")
+        step(report, "read_redacted_receipts", status, receipts, verified=receipt_readback_verified)
 
         status, audit_log = transport.call(
             "/api/matm/audit-log",
@@ -579,8 +616,8 @@ def run_sequence(transport, label, base_url=None):
             message_id,
             notification_id,
             expected_visible=False,
-            attempts=LIVE_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
-            delay_seconds=1.0,
+            attempts=LIVE_ACK_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
+            delay_seconds=LIVE_ACK_READ_DELAY_SECONDS,
         )
         post_ack_verified = not contains_current_message(post_ack_current, message_id, notification_id)
         step(report, "read_current_message_after_ack", status, post_ack_current, verified=post_ack_verified)
