@@ -298,6 +298,10 @@ def build_local_report():
         and deploy_dry_run.get("status") == "ready"
         and deploy_dry_run.get("safeNoOp") is True
     )
+    local_dogfood_verified = bool(
+        (dogfood and dogfood.get("localDogfoodVerified"))
+        or (local_dogfood and local_dogfood.get("localDogfoodVerified"))
+    )
 
     checks = [
         {"id": "unit_and_integration_tests", "status": status((check_result(enterprise, "unit_and_integration_tests") or {}).get("ok")), "evidence": ["tests/test_app.py"]},
@@ -307,7 +311,7 @@ def build_local_report():
             "status": status(bool(uai and uai.get("ok"))),
             "evidence": ["docs/reports/uai-memory-audit.json", ".uai/memory-maintenance.uai", ".uai/startup-packet.uai", ".uai/totem.uai"],
         },
-        {"id": "local_dogfood", "status": status(bool(dogfood and dogfood.get("localDogfoodVerified"))), "evidence": ["docs/reports/dogfood-memory-run.json"]},
+        {"id": "local_dogfood", "status": status(local_dogfood_verified), "evidence": ["docs/reports/dogfood-memory-run.json", "docs/reports/dogfood-memory-run-local.json"]},
         {"id": "package_check", "status": status(package_evidence_current), "evidence": ["docs/reports/package-verification-report.json", "docs/reports/enterprise-readiness-audit.json"]},
         {"id": "secret_scan", "status": status(bool(secret and secret.get("ok"))), "evidence": ["docs/reports/secret-scan-report.json"]},
         {"id": "repository_boundary", "status": status(bool((boundary and boundary.get("ok")) or repository_boundary_check_current)), "evidence": ["docs/reports/repository-boundary-audit.json", "scripts/audit_repository_boundary.py", "sites/multiagentmemory.com/"]},
@@ -352,7 +356,7 @@ def build_local_report():
         "localUaiStaysActiveAlways": bool(uai and uai.get("localUaiStaysActiveAlways")),
         "dateFreeHotMemory": bool(uai and uai.get("dateFreeHotMemory")),
         "noForbiddenActiveMemoryFilename": bool(uai and uai.get("noForbiddenActiveMemoryFilename")),
-        "localDogfoodVerified": bool(dogfood and dogfood.get("localDogfoodVerified")),
+        "localDogfoodVerified": local_dogfood_verified,
         "liveDogfoodVerified": bool(dogfood and dogfood.get("liveDogfoodVerified")),
         "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
         "meetingMemoryPromotionVerified": memory_loop_evidence["meetingMemoryPromotionVerified"],
@@ -637,6 +641,11 @@ def build_final_markdown(local_report):
     )
     ci_not_required = github_ci_not_required()
     enterprise_blockers = enterprise.get("blockers") if enterprise_current else []
+    failed_local_check_ids = [
+        item.get("id")
+        for item in (local_report.get("checks") or [])
+        if item.get("status") != "pass"
+    ]
     completion_allowed = bool(local_report.get("ok") and live_routes.get("ok") and latest_deployed and mysql_verified and live_dogfood and not enterprise_blockers and not dirty_source_paths)
     status_line = "Status: complete for this evidence snapshot. `completionClaimAllowed` is `true`." if completion_allowed else "Status: not complete. `completionClaimAllowed` is `false`."
     lines = [
@@ -750,6 +759,11 @@ def build_final_markdown(local_report):
             "- Live dogfooding: latest contract blocked until protected audit-log readback is deployed and verified."
             if live_core_dogfood
             else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
+        )
+    if not local_report.get("ok"):
+        blocked_lines.append(
+            "- Local verification report: blocked until local checks pass; failing checks: `%s`."
+            % "`, `".join(failed_local_check_ids[:8] or ["unknown"])
         )
     if dirty_source_paths:
         blocked_lines.append(
