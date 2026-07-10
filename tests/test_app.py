@@ -123,6 +123,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("source_prefix", review_queue["queryFilters"])
         self.assertIn("longTermMemoryReviews", review_queue["operatorSummaryFields"])
         self.assertIn("docs/long-term-memory", review_queue["longTermMemoryReviewHealth"])
+        routing = payload["data"]["routingDecisions"]
+        self.assertEqual("/api/matm/routing-decisions", routing["route"])
+        self.assertIn("routedAgentId", routing["requiredPostFields"])
+        self.assertIn("destination_room_id", routing["queryFilters"])
+        self.assertIn("canonicalRoutingDecisionId", routing["postConfirmationFields"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
         status, _headers, text = call_app("/")
@@ -207,7 +212,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("/api/matm/meeting-rooms", data["coordinationFlow"]["meetingRoomsRoute"])
         self.assertEqual("/api/matm/meeting-rooms", data["coordinationFlow"]["meetingRoomCreateRoute"])
         self.assertEqual("/api/matm/meeting-messages/promote", data["coordinationFlow"]["meetingMessagePromoteRoute"])
+        self.assertEqual("/api/matm/routing-decisions", data["coordinationFlow"]["routingDecisionRoute"])
         self.assertEqual(["agent_id", "scope", "scope_id"], data["coordinationFlow"]["meetingRoomQueryFilters"])
+        self.assertIn("routed_agent_id", data["coordinationFlow"]["routingDecisionQueryFilters"])
+        self.assertIn("specificGoal", data["coordinationFlow"]["requiredRoutingDecisionFields"])
         self.assertEqual(["company", "workspace", "project", "goal", "task"], data["coordinationFlow"]["supportedMeetingRoomScopes"])
         self.assertIn("workspaceId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
         self.assertIn("creatorAgentId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
@@ -229,7 +237,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("visibleInReviewQueue", data["responseContract"]["postConfirmationFields"])
         self.assertIn("roomQueryUrl", data["responseContract"]["postConfirmationFields"])
         self.assertIn("visibleToAgent", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("visibleToRoutedAgent", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("canonicalRoutingDecisionId", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("routingDecisionQueryUrl", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("destinationTranscriptQueryUrl", data["responseContract"]["postConfirmationFields"])
         self.assertTrue(any("company welcome/routing room" in item for item in data["coordinationFlow"]["routingPolicy"]))
+        self.assertTrue(any("routing-decisions" in item for item in data["coordinationFlow"]["routingPolicy"]))
         self.assertTrue(any("Create goal or task rooms" in item for item in data["coordinationFlow"]["routingPolicy"]))
         self.assertTrue(any("project-room status note" in item for item in data["evidenceToPostBack"]))
         self.assertIn("/mcp/resources", data["publicDiscovery"]["mcpResources"])
@@ -362,6 +375,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-clear-meeting-room-filter", text)
         self.assertIn("data-console-create-meeting-room", text)
         self.assertIn("data-console-meeting-room-create-summary", text)
+        self.assertIn("data-console-routing-decision", text)
+        self.assertIn("data-console-refresh-routing-decisions", text)
+        self.assertIn("data-console-routing-decision-summary", text)
+        self.assertIn("data-console-routing-decisions-list", text)
+        self.assertIn('name="routedAgentId"', text)
+        self.assertIn('name="expectedEvidence"', text)
         self.assertIn("data-console-meeting-rooms-list", text)
         self.assertIn("data-console-meeting-message", text)
         self.assertIn("data-console-meeting-post-summary", text)
@@ -417,6 +436,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".lane-overview", css)
         self.assertIn(".meeting-room-list", css)
         self.assertIn(".meeting-room-create-summary", css)
+        self.assertIn(".routing-decision-summary", css)
+        self.assertIn(".routing-decision-list", css)
+        self.assertIn(".broadcast-ack-isolation-summary", css)
+        self.assertIn(".routing-decision-operator-summary", css)
+        self.assertIn(".routing-decisions-summary", css)
         self.assertIn(".meeting-post-summary", css)
         self.assertIn(".meeting-promotion-summary", css)
         self.assertIn(".meeting-rooms-summary", css)
@@ -497,10 +521,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
         self.assertIn("visibleNotificationIds", js)
+        self.assertIn("visibleNotificationRecords", js)
+        self.assertIn("lastAckedBroadcast", js)
         self.assertIn("data-console-ack-visible", js)
         self.assertIn("data-console-ack-summary", js)
         self.assertIn("ackNotification(notificationId", js)
         self.assertIn("renderAcknowledgementSummary", js)
+        self.assertIn("renderBroadcastAckIsolationSummary", js)
+        self.assertIn("broadcast-ack-isolation-summary", js)
+        self.assertIn("remaining lanes visible", js)
+        self.assertIn("ack isolation pass", js)
+        self.assertIn("ack isolation review", js)
         self.assertIn("payload.operatorSummary", js)
         self.assertIn("operatorSummaries", js)
         self.assertIn("summary.statusCounts", js)
@@ -532,6 +563,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("refreshedLane: actualLane", js)
         self.assertIn("payload.delivery", js)
         self.assertIn("payload.operatorSummary", js)
+        self.assertIn("expectedRecipientCount", js)
+        self.assertIn("visibleRecipientCount", js)
+        self.assertIn("recipientCount", js)
+        self.assertIn("recipientReadbackText", js)
+        self.assertIn("\" recipients\"", js)
+        self.assertIn("\" visible\"", js)
         self.assertIn("operatorSummary.deliveryCounts", js)
         self.assertIn("operatorSummary.responseDisposition", js)
         self.assertIn("operatorSummary.rawCredentialExposed", js)
@@ -648,14 +685,25 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("renderMeetingPromotion", js)
         self.assertIn("promoteMeetingMessage", js)
         self.assertIn("renderMeetingRead", js)
+        self.assertIn("latestRoutingDecisionId", js)
+        self.assertIn("renderRoutingDecision", js)
+        self.assertIn("renderRoutingDecisions", js)
+        self.assertIn("refreshRoutingDecisions", js)
         self.assertIn("/api/matm/meeting-rooms", js)
         self.assertIn("/api/matm/meeting-messages", js)
         self.assertIn("/api/matm/meeting-messages/promote", js)
         self.assertIn("/api/matm/meeting-rooms/read", js)
+        self.assertIn("/api/matm/routing-decisions", js)
         self.assertIn("data-console-create-meeting-room", js)
         self.assertIn("data-console-meeting-room-filter", js)
         self.assertIn("data-console-clear-meeting-room-filter", js)
         self.assertIn("data-console-meeting-room-create-summary", js)
+        self.assertIn("data-console-routing-decision", js)
+        self.assertIn("data-console-routing-decision-summary", js)
+        self.assertIn("data-console-routing-decisions-list", js)
+        self.assertIn("data-console-refresh-routing-decisions", js)
+        self.assertIn("Routing decision created and read back.", js)
+        self.assertIn("Routing decisions refreshed.", js)
         self.assertIn("Meeting rooms filtered.", js)
         self.assertIn("Meeting room filter cleared.", js)
         self.assertIn("Load workspace before creating a meeting room.", js)
@@ -1767,6 +1815,156 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 self.assertEqual("422 Unprocessable Entity", status)
                 self.assert_safe_noop_response(text, "unsupported_meeting_room_scope")
 
+    def test_structured_routing_decision_posts_transcript_and_readback(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "%s-routing-store.json" % backend)
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "%s-routing.sqlite3" % backend)
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Routing Company",
+                        "label": "Routing Workspace",
+                        "projectLabel": "Routing Project",
+                    },
+                )
+                self.assertEqual("201 Created", status)
+                setup = json.loads(text)
+                workspace_id = setup["workspaceId"]
+                token = setup["apiKeySecret"]
+                auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    headers=auth,
+                    query="workspace_id=%s&agent_id=codex-coordinator" % workspace_id,
+                )
+                self.assertEqual("200 OK", status)
+                default_rooms = json.loads(text)["items"]
+                company_room = [room for room in default_rooms if room["scope"] == "company"][0]
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    method="POST",
+                    headers=dict(auth, HTTP_IDEMPOTENCY_KEY="routing-goal-room-%s" % backend),
+                    body={
+                        "workspaceId": workspace_id,
+                        "creatorAgentId": "codex-coordinator",
+                        "scope": "goal",
+                        "scopeId": "goal-routing-decision-proof",
+                        "name": "Routing decision proof goal",
+                        "purpose": "Goal room for public-safe structured routing decision evidence.",
+                    },
+                )
+                self.assertEqual("201 Created", status)
+                goal_room = json.loads(text)["room"]
+
+                routing_body = {
+                    "workspaceId": workspace_id,
+                    "sourceRoomId": company_room["roomId"],
+                    "destinationRoomId": goal_room["roomId"],
+                    "coordinatorAgentId": "codex-coordinator",
+                    "routedAgentId": "tinyrustlm-agent",
+                    "lane": "optional-public-safe-memory-connector",
+                    "specificGoal": "Build the optional hosted memory connector and post public-safe implementation evidence.",
+                    "expectedEvidence": ["routes exercised", "tests run", "redaction result", "remaining blocker"],
+                    "nextAction": "Open the goal room and post connector implementation evidence.",
+                    "supportPlan": "Codex will review architecture, API/UI dogfood evidence, and blockers.",
+                }
+                routing_headers = dict(auth, HTTP_IDEMPOTENCY_KEY="routing-decision-proof-%s" % backend)
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    method="POST",
+                    headers=routing_headers,
+                    body=routing_body,
+                )
+                self.assertEqual("201 Created", status)
+                payload = json.loads(text)
+                decision = payload["routingDecision"]
+                message = payload["message"]
+                summary = payload["operatorSummary"]
+                self.assertTrue(payload["persisted"])
+                self.assertTrue(payload["visibleToRoutedAgent"])
+                self.assertEqual("memoryendpoints.routing_decision_operator_summary.v1", summary["schemaVersion"])
+                self.assertEqual("tinyrustlm-agent", decision["routedAgentId"])
+                self.assertEqual("optional-public-safe-memory-connector", decision["lane"])
+                self.assertEqual(goal_room["roomId"], decision["destinationRoomId"])
+                self.assertEqual("goal", decision["destinationScope"])
+                self.assertEqual("goal-routing-decision-proof", decision["destinationScopeId"])
+                self.assertEqual(4, len(decision["expectedEvidence"]))
+                self.assertEqual(decision["routingDecisionId"], payload["canonicalRoutingDecisionId"])
+                self.assertEqual(company_room["roomId"], payload["canonicalRoomId"])
+                self.assertEqual(message["meetingMessageId"], payload["messageId"])
+                self.assertIn("/api/matm/routing-decisions?", payload["routingDecisionQueryUrl"])
+                self.assertIn("/api/matm/meeting-messages?", payload["transcriptQueryUrl"])
+                self.assertIn("/api/matm/meeting-messages?", payload["destinationTranscriptQueryUrl"])
+                self.assertIn("Routing decision for tinyrustlm-agent", message["safeSummary"])
+                self.assertIn("expectedEvidence=routes exercised", message["safeSummary"])
+                self.assertTrue(payload["valuesRedacted"])
+                self.assertFalse(payload["rawCredentialExposed"])
+                self.assertFalse(payload["rawPayloadExposed"])
+                self.assertNotIn(token, json.dumps(payload))
+
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    headers=auth,
+                    query=(
+                        "workspace_id=%s&routed_agent_id=tinyrustlm-agent&destination_room_id=%s&lane=optional-public-safe-memory-connector"
+                        % (workspace_id, goal_room["roomId"])
+                    ),
+                )
+                self.assertEqual("200 OK", status)
+                readback = json.loads(text)
+                self.assertEqual("memoryendpoints.routing_decisions.v1", readback["schemaVersion"])
+                self.assertEqual(1, readback["count"])
+                self.assertEqual(decision["routingDecisionId"], readback["items"][0]["routingDecisionId"])
+                self.assertEqual(1, readback["operatorSummary"]["routedAgentCounts"]["tinyrustlm-agent"])
+                self.assertEqual(1, readback["operatorSummary"]["laneCounts"]["optional-public-safe-memory-connector"])
+                self.assertEqual(1, readback["operatorSummary"]["destinationScopeCounts"]["goal"])
+                self.assertEqual(
+                    {
+                        "routedAgentId": "tinyrustlm-agent",
+                        "destinationRoomId": goal_room["roomId"],
+                        "lane": "optional-public-safe-memory-connector",
+                    },
+                    readback["filters"],
+                )
+                if backend == "sqlite":
+                    from memoryendpoints.storage import SQLiteStore
+
+                    store = SQLiteStore(os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
+                    snapshot = store._load()
+                    self.assertTrue(
+                        any(item["routingDecisionId"] == decision["routingDecisionId"] for item in snapshot["routingDecisions"])
+                    )
+                    store._save(snapshot)
+                    reloaded_snapshot = store._load()
+                    self.assertTrue(
+                        any(item["routingDecisionId"] == decision["routingDecisionId"] for item in reloaded_snapshot["routingDecisions"])
+                    )
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-messages",
+                    headers=auth,
+                    query="workspace_id=%s&room_id=%s&agent_id=tinyrustlm-agent" % (workspace_id, company_room["roomId"]),
+                )
+                self.assertEqual("200 OK", status)
+                transcript = json.loads(text)
+                self.assertTrue(any(item["meetingMessageId"] == message["meetingMessageId"] for item in transcript["items"]))
+
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    method="POST",
+                    headers=routing_headers,
+                    body=routing_body,
+                )
+                self.assertEqual("201 Created", status)
+                replay = json.loads(text)
+                self.assertTrue(replay["idempotentReplay"])
+                self.assertEqual(decision["routingDecisionId"], replay["routingDecision"]["routingDecisionId"])
+
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -1806,11 +2004,25 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         broadcast_payload = json.loads(text)
         self.assertEqual("broadcast", broadcast_payload["delivery"]["messageType"])
         self.assertTrue(broadcast_payload["delivery"]["broadcast"])
+        self.assertEqual(3, broadcast_payload["delivery"]["recipientCount"])
         self.assertEqual({"broadcast": 1, "targeted": 0}, broadcast_payload["deliveryCounts"])
+        self.assertEqual(3, len(broadcast_payload["notifications"]))
+        self.assertEqual(3, len(broadcast_payload["notificationIds"]))
+        self.assertEqual(3, broadcast_payload["expectedRecipientCount"])
+        self.assertEqual(3, broadcast_payload["visibleRecipientCount"])
+        self.assertEqual(
+            {"codex-agent", "human-verifier-agent", "observer-agent"},
+            set(broadcast_payload["visibleToAgents"]),
+        )
+        self.assertEqual(
+            {"codex-agent", "human-verifier-agent", "observer-agent"},
+            {item["targetAgentId"] for item in broadcast_payload["notifications"]},
+        )
         broadcast_summary = broadcast_payload["operatorSummary"]
         self.assertEqual("memoryendpoints.message_delivery_operator_summary.v1", broadcast_summary["schemaVersion"])
         self.assertEqual("broadcast", broadcast_summary["messageType"])
         self.assertTrue(broadcast_summary["broadcast"])
+        self.assertEqual(3, broadcast_summary["recipientCount"])
         self.assertEqual({"broadcast": 1, "targeted": 0}, broadcast_summary["deliveryCounts"])
         self.assertEqual(0, broadcast_summary["responseDispositionCounts"]["required_response"])
         self.assertEqual(1, broadcast_summary["responseDispositionCounts"]["viewed_acknowledgement"])
@@ -1874,6 +2086,31 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Broadcast to every active agent in the swarm.", codex_summaries)
         self.assertIn("Targeted message for Codex only.", codex_summaries)
         self.assertEqual({"broadcast", "targeted"}, {item["delivery"]["messageType"] for item in codex["items"]})
+
+        codex_broadcast = next(item for item in codex["items"] if item["delivery"]["messageType"] == "broadcast")
+        status, _headers, text = call_app(
+            "/api/matm/notifications/ack",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "notificationId": codex_broadcast["notification"]["notificationId"],
+                "consumerAgentId": "codex-agent",
+                "status": "read",
+            },
+        )
+        self.assertEqual("200 OK", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=codex-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        codex_after_ack = json.loads(text)
+        self.assertEqual(1, codex_after_ack["unreadCount"])
+        self.assertEqual({"broadcast": 0, "targeted": 1}, codex_after_ack["deliveryCounts"])
+        self.assertEqual("Targeted message for Codex only.", codex_after_ack["items"][0]["message"]["safeSummary"])
 
         status, _headers, text = call_app(
             "/api/matm/current-message",
@@ -2806,6 +3043,71 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         self.assertTrue(os.path.exists(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]))
 
+        for agent_id in ("sqlite-agent", "sqlite-observer-agent"):
+            status, _headers, _text = call_app(
+                "/api/matm/agents/register",
+                method="POST",
+                headers=auth,
+                body={"workspaceId": workspace_id, "agentId": agent_id, "displayName": agent_id},
+            )
+            self.assertEqual("201 Created", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/agent-messages",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "senderAgentId": "sqlite-agent",
+                "safeSummary": "SQLite broadcast should remain visible to every registered agent until each one reads it.",
+                "responseRequired": False,
+            },
+        )
+        self.assertEqual("202 Accepted", status)
+        sqlite_broadcast = json.loads(text)
+        self.assertEqual("broadcast", sqlite_broadcast["delivery"]["messageType"])
+        self.assertEqual(2, sqlite_broadcast["expectedRecipientCount"])
+        self.assertEqual(2, sqlite_broadcast["visibleRecipientCount"])
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=sqlite-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        sqlite_sender_inbox = json.loads(text)
+        self.assertEqual({"broadcast": 1, "targeted": 0}, sqlite_sender_inbox["deliveryCounts"])
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=sqlite-observer-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        sqlite_observer_inbox = json.loads(text)
+        self.assertEqual({"broadcast": 1, "targeted": 0}, sqlite_observer_inbox["deliveryCounts"])
+
+        status, _headers, _text = call_app(
+            "/api/matm/notifications/ack",
+            method="POST",
+            headers=auth,
+            body={
+                "workspaceId": workspace_id,
+                "notificationId": sqlite_sender_inbox["items"][0]["notification"]["notificationId"],
+                "consumerAgentId": "sqlite-agent",
+                "status": "read",
+            },
+        )
+        self.assertEqual("200 OK", status)
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=sqlite-observer-agent" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual({"broadcast": 1, "targeted": 0}, json.loads(text)["deliveryCounts"])
+
         with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
             tables = {
                 row[0]
@@ -2833,6 +3135,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "matm_receipts",
                     "matm_meeting_rooms",
                     "matm_meeting_messages",
+                    "matm_routing_decisions",
                     "matm_meeting_reads",
                     "matm_idempotency",
                     "matm_outbox_events",

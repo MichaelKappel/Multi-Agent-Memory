@@ -616,6 +616,7 @@ pre {
 .review-decision-summary,
 .memory-submit-summary,
 .meeting-room-create-summary,
+.routing-decision-summary,
 .meeting-post-summary,
 .meeting-promotion-summary {
   margin: 8px 0 14px;
@@ -627,6 +628,7 @@ pre {
 
 .message-delivery .delivery-row,
 .meeting-room-create-summary .result-row,
+.routing-decision-summary .result-row,
 .meeting-promotion-summary .result-row,
 .memory-submit-summary .submission-row {
   border-left: 4px solid var(--accent);
@@ -642,6 +644,10 @@ pre {
 
 .meeting-room-list {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.routing-decision-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .lane-overview .result-count {
@@ -717,6 +723,9 @@ pre {
 .audit-summary,
 .review-summary,
 .long-term-review-summary,
+.broadcast-ack-isolation-summary,
+.routing-decision-operator-summary,
+.routing-decisions-summary,
 .meeting-rooms-summary,
 .meeting-messages-summary,
 .meeting-promotion-operator-summary {

@@ -75,6 +75,12 @@ def _audit_detail_summary(details):
         items.append("meeting messages %s" % (safe.get("meetingMessageCount") or 0))
     if safe.get("unreadMeetingCount") not in (None, ""):
         items.append("meeting unread %s" % (safe.get("unreadMeetingCount") or 0))
+    if safe.get("routingDecisionCount") not in (None, ""):
+        items.append("routing decisions %s" % (safe.get("routingDecisionCount") or 0))
+    if safe.get("routedAgentId"):
+        items.append("routed %s" % safe.get("routedAgentId"))
+    if safe.get("routingLane"):
+        items.append("lane %s" % safe.get("routingLane"))
     if safe.get("statusFilter"):
         items.append("status %s" % safe.get("statusFilter"))
     if safe.get("actionFilter"):
@@ -177,6 +183,7 @@ def _blank_store():
         "meetingRooms": {},
         "meetingMessages": [],
         "meetingReads": [],
+        "routingDecisions": [],
         "outboxEvents": [],
         "storageLedger": [],
         "auditLog": [],
@@ -551,6 +558,122 @@ class FileStore(object):
                 room = data.get("meetingRooms", {}).get(message.get("roomId")) or {}
                 return dict(message), dict(room)
         return None, None
+
+    def routing_decisions(self, workspace_id, filters=None, limit=50):
+        data = self._load()
+        filters = filters or {}
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        key_pairs = (
+            ("roomId", "sourceRoomId"),
+            ("sourceRoomId", "sourceRoomId"),
+            ("destinationRoomId", "destinationRoomId"),
+            ("routedAgentId", "routedAgentId"),
+            ("coordinatorAgentId", "coordinatorAgentId"),
+            ("lane", "lane"),
+            ("destinationScope", "destinationScope"),
+            ("destinationScopeId", "destinationScopeId"),
+            ("status", "status"),
+        )
+        items = []
+        for item in data.get("routingDecisions", []):
+            if item.get("workspaceId") != workspace_id:
+                continue
+            matched = True
+            for filter_key, item_key in key_pairs:
+                value = filters.get(filter_key)
+                if value and item.get(item_key) != value:
+                    matched = False
+                    break
+            if matched:
+                items.append(dict(item))
+        return items[-limit_value:]
+
+    def submit_routing_decision(
+        self,
+        workspace_id,
+        source_room_id,
+        coordinator_agent_id,
+        routed_agent_id,
+        lane,
+        destination_room_id,
+        specific_goal,
+        expected_evidence,
+        next_action,
+        support_plan,
+        safe_summary,
+    ):
+        data = self._load()
+        self._ensure_default_meeting_rooms(data, workspace_id)
+        source_room = data.get("meetingRooms", {}).get(source_room_id)
+        destination_room = data.get("meetingRooms", {}).get(destination_room_id)
+        if (
+            not source_room
+            or source_room.get("workspaceId") != workspace_id
+            or source_room.get("status") != "active"
+            or not destination_room
+            or destination_room.get("workspaceId") != workspace_id
+            or destination_room.get("status") != "active"
+        ):
+            return None, None, None, None
+        now = utc_now()
+        message = {
+            "meetingMessageId": _time_ordered_id("meetmsg"),
+            "workspaceId": workspace_id,
+            "roomId": source_room_id,
+            "scope": source_room.get("scope"),
+            "scopeId": source_room.get("scopeId"),
+            "senderAgentId": coordinator_agent_id,
+            "safeSummary": redact_text(safe_summary),
+            "createdAt": now,
+            "rawMessageBodyStored": False,
+            "valuesRedacted": True,
+            "rawPayloadExposed": False,
+        }
+        decision = {
+            "routingDecisionId": _time_ordered_id("route"),
+            "workspaceId": workspace_id,
+            "sourceRoomId": source_room_id,
+            "destinationRoomId": destination_room_id,
+            "destinationScope": destination_room.get("scope"),
+            "destinationScopeId": destination_room.get("scopeId"),
+            "coordinatorAgentId": redact_text(coordinator_agent_id),
+            "routedAgentId": redact_text(routed_agent_id),
+            "lane": redact_text(lane),
+            "specificGoal": redact_text(specific_goal),
+            "expectedEvidence": [redact_text(str(item)) for item in (expected_evidence or [])],
+            "nextAction": redact_text(next_action),
+            "supportPlan": redact_text(support_plan),
+            "meetingMessageId": message["meetingMessageId"],
+            "status": "active",
+            "createdAt": now,
+            "valuesRedacted": True,
+            "rawPayloadExposed": False,
+        }
+        data.setdefault("meetingMessages", []).append(message)
+        data.setdefault("routingDecisions", []).append(decision)
+        self._append_outbox(data, workspace_id, "matm.meeting_message.submitted", "meeting_message", message["meetingMessageId"], message)
+        self._append_outbox(data, workspace_id, "matm.routing_decision.submitted", "routing_decision", decision["routingDecisionId"], decision)
+        self._append_storage_ledger(data, workspace_id, "meeting_message", message["meetingMessageId"], message)
+        self._append_storage_ledger(data, workspace_id, "routing_decision", decision["routingDecisionId"], decision)
+        self.audit(
+            data,
+            "routing_decision.submit",
+            coordinator_agent_id,
+            decision["routingDecisionId"],
+            workspace_id,
+            {
+                "roomScope": source_room.get("scope"),
+                "routingDecisionCount": 1,
+                "routedAgentId": routed_agent_id,
+                "routingLane": lane,
+            },
+        )
+        self._save(data)
+        return decision, message, dict(source_room), dict(destination_room)
 
     def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
         data = self._load()
@@ -1074,9 +1197,26 @@ class FileStore(object):
         self._save(data)
         return review, None
 
+    def _active_agent_ids(self, data, workspace_id, fallback_agent_id=None):
+        ids = []
+        for agent in data.get("agents", {}).values():
+            if agent.get("workspaceId") != workspace_id:
+                continue
+            if (agent.get("status") or "active") != "active":
+                continue
+            agent_id = agent.get("agentId")
+            if agent_id and agent_id not in ids:
+                ids.append(agent_id)
+        if fallback_agent_id and fallback_agent_id not in ids:
+            ids.append(fallback_agent_id)
+        ids.sort()
+        return ids
+
     def submit_message(self, workspace_id, sender_agent_id, target_agent_id, safe_summary, response_required):
         data = self._load()
         safe_summary = redact_text(safe_summary)
+        target_agent_id = (target_agent_id or "").strip()
+        recipient_agent_ids = [target_agent_id] if target_agent_id else self._active_agent_ids(data, workspace_id, sender_agent_id)
         message = {
             "messageId": _id("msg"),
             "workspaceId": workspace_id,
@@ -1088,23 +1228,37 @@ class FileStore(object):
             "rawMessageBodyStored": False,
             "valuesRedacted": True,
         }
-        note = {
-            "notificationId": _id("note"),
-            "workspaceId": workspace_id,
-            "messageId": message["messageId"],
-            "targetAgentId": target_agent_id,
-            "status": "unread",
-            "responseDisposition": "required_response" if response_required else "viewed_acknowledgement",
-            "createdAt": utc_now(),
-            "readAt": None,
-        }
+        notes = []
+        for recipient_agent_id in recipient_agent_ids:
+            notes.append(
+                {
+                    "notificationId": _id("note"),
+                    "workspaceId": workspace_id,
+                    "messageId": message["messageId"],
+                    "targetAgentId": recipient_agent_id,
+                    "status": "unread",
+                    "responseDisposition": "required_response" if response_required else "viewed_acknowledgement",
+                    "createdAt": utc_now(),
+                    "readAt": None,
+                }
+            )
         data["messages"].append(message)
-        data["notifications"].append(note)
+        data["notifications"].extend(notes)
         self._append_outbox(data, workspace_id, "matm.agent_message.submitted", "message", message["messageId"], message)
         self._append_storage_ledger(data, workspace_id, "message", message["messageId"], message)
-        self.audit(data, "message.submit", sender_agent_id, message["messageId"], workspace_id)
+        self.audit(
+            data,
+            "message.submit",
+            sender_agent_id,
+            message["messageId"],
+            workspace_id,
+            {
+                "deliveryCounts": {"broadcast": 1 if not target_agent_id else 0, "targeted": 1 if target_agent_id else 0},
+                "recipientCount": len(notes),
+            },
+        )
         self._save(data)
-        return message, note
+        return message, notes
 
     def inbox(self, workspace_id, agent_id):
         data = self._load()
@@ -1168,6 +1322,7 @@ class SQLiteStore(FileStore):
         "matm_notifications",
         "matm_messages",
         "matm_meeting_reads",
+        "matm_routing_decisions",
         "matm_meeting_messages",
         "matm_meeting_rooms",
         "matm_outbox_events",
@@ -1472,6 +1627,34 @@ class SQLiteStore(FileStore):
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_meeting_messages_room_created ON matm_meeting_messages (workspace_id, room_id, created_at);
 
+            CREATE TABLE IF NOT EXISTS matm_routing_decisions (
+              routing_decision_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              source_room_id TEXT NOT NULL,
+              destination_room_id TEXT NOT NULL,
+              destination_scope TEXT NOT NULL,
+              destination_scope_id TEXT NOT NULL,
+              coordinator_agent_id TEXT NOT NULL,
+              routed_agent_id TEXT NOT NULL,
+              lane TEXT NOT NULL,
+              specific_goal TEXT NOT NULL,
+              expected_evidence_json TEXT NOT NULL,
+              next_action TEXT NOT NULL,
+              support_plan TEXT NOT NULL,
+              meeting_message_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (source_room_id) REFERENCES matm_meeting_rooms (room_id),
+              FOREIGN KEY (destination_room_id) REFERENCES matm_meeting_rooms (room_id),
+              FOREIGN KEY (meeting_message_id) REFERENCES matm_meeting_messages (meeting_message_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_routing_decisions_agent ON matm_routing_decisions (workspace_id, routed_agent_id, created_at);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_routing_decisions_destination ON matm_routing_decisions (workspace_id, destination_room_id, created_at);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_routing_decisions_status ON matm_routing_decisions (workspace_id, status, created_at);
+
             CREATE TABLE IF NOT EXISTS matm_meeting_reads (
               meeting_read_id TEXT PRIMARY KEY,
               workspace_id TEXT NOT NULL,
@@ -1606,6 +1789,30 @@ class SQLiteStore(FileStore):
             "safeSummary": row["safe_summary"],
             "createdAt": row["created_at"],
             "rawMessageBodyStored": self._bool(row["raw_message_body_stored"]),
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _routing_decision_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "routingDecisionId": row["routing_decision_id"],
+            "workspaceId": row["workspace_id"],
+            "sourceRoomId": row["source_room_id"],
+            "destinationRoomId": row["destination_room_id"],
+            "destinationScope": row["destination_scope"],
+            "destinationScopeId": row["destination_scope_id"],
+            "coordinatorAgentId": row["coordinator_agent_id"],
+            "routedAgentId": row["routed_agent_id"],
+            "lane": row["lane"],
+            "specificGoal": row["specific_goal"],
+            "expectedEvidence": self._json_load(row["expected_evidence_json"], []),
+            "nextAction": row["next_action"],
+            "supportPlan": row["support_plan"],
+            "meetingMessageId": row["meeting_message_id"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
             "valuesRedacted": self._bool(row["values_redacted"]),
             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
         }
@@ -1999,6 +2206,191 @@ class SQLiteStore(FileStore):
                 )
                 return message, room or {}
 
+    def routing_decisions(self, workspace_id, filters=None, limit=50):
+        filters = filters or {}
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 50
+        limit_value = max(1, min(limit_value, 200))
+        filter_columns = {
+            "roomId": "source_room_id",
+            "sourceRoomId": "source_room_id",
+            "destinationRoomId": "destination_room_id",
+            "routedAgentId": "routed_agent_id",
+            "coordinatorAgentId": "coordinator_agent_id",
+            "lane": "lane",
+            "destinationScope": "destination_scope",
+            "destinationScopeId": "destination_scope_id",
+            "status": "status",
+        }
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        for key, column in filter_columns.items():
+            value = filters.get(key)
+            if value:
+                clauses.append("%s = ?" % column)
+                params.append(value)
+        params.append(limit_value)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_routing_decisions
+                        WHERE %s
+                        ORDER BY created_at DESC, routing_decision_id DESC
+                        LIMIT ?
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+                rows.reverse()
+                return [self._routing_decision_from_row(row) for row in rows]
+
+    def submit_routing_decision(
+        self,
+        workspace_id,
+        source_room_id,
+        coordinator_agent_id,
+        routed_agent_id,
+        lane,
+        destination_room_id,
+        specific_goal,
+        expected_evidence,
+        next_action,
+        support_plan,
+        safe_summary,
+    ):
+        safe_expected = [redact_text(str(item)) for item in (expected_evidence or [])]
+        safe_summary = redact_text(safe_summary)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    source_room = self._room_from_row(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_rooms
+                            WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                            """,
+                            (workspace_id, source_room_id),
+                        ).fetchone()
+                    )
+                    destination_room = self._room_from_row(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_meeting_rooms
+                            WHERE workspace_id = ? AND room_id = ? AND status = 'active'
+                            """,
+                            (workspace_id, destination_room_id),
+                        ).fetchone()
+                    )
+                    if not source_room or not destination_room:
+                        return None, None, None, None
+                    now = utc_now()
+                    message = {
+                        "meetingMessageId": _time_ordered_id("meetmsg"),
+                        "workspaceId": workspace_id,
+                        "roomId": source_room_id,
+                        "scope": source_room.get("scope"),
+                        "scopeId": source_room.get("scopeId"),
+                        "senderAgentId": coordinator_agent_id,
+                        "safeSummary": safe_summary,
+                        "createdAt": now,
+                        "rawMessageBodyStored": False,
+                        "valuesRedacted": True,
+                        "rawPayloadExposed": False,
+                    }
+                    decision = {
+                        "routingDecisionId": _time_ordered_id("route"),
+                        "workspaceId": workspace_id,
+                        "sourceRoomId": source_room_id,
+                        "destinationRoomId": destination_room_id,
+                        "destinationScope": destination_room.get("scope"),
+                        "destinationScopeId": destination_room.get("scopeId"),
+                        "coordinatorAgentId": redact_text(coordinator_agent_id),
+                        "routedAgentId": redact_text(routed_agent_id),
+                        "lane": redact_text(lane),
+                        "specificGoal": redact_text(specific_goal),
+                        "expectedEvidence": safe_expected,
+                        "nextAction": redact_text(next_action),
+                        "supportPlan": redact_text(support_plan),
+                        "meetingMessageId": message["meetingMessageId"],
+                        "status": "active",
+                        "createdAt": now,
+                        "valuesRedacted": True,
+                        "rawPayloadExposed": False,
+                    }
+                    connection.execute(
+                        """
+                        INSERT INTO matm_meeting_messages (
+                          meeting_message_id, workspace_id, room_id, scope_type, scope_id, sender_agent_id,
+                          safe_summary, raw_message_body_stored, values_redacted, raw_payload_exposed, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message["meetingMessageId"],
+                            workspace_id,
+                            source_room_id,
+                            message["scope"] or "workspace",
+                            message["scopeId"] or workspace_id,
+                            coordinator_agent_id,
+                            safe_summary,
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            now,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_routing_decisions (
+                          routing_decision_id, workspace_id, source_room_id, destination_room_id,
+                          destination_scope, destination_scope_id, coordinator_agent_id, routed_agent_id,
+                          lane, specific_goal, expected_evidence_json, next_action, support_plan,
+                          meeting_message_id, status, values_redacted, raw_payload_exposed, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            decision["routingDecisionId"],
+                            workspace_id,
+                            source_room_id,
+                            destination_room_id,
+                            decision["destinationScope"] or "workspace",
+                            decision["destinationScopeId"] or workspace_id,
+                            decision["coordinatorAgentId"],
+                            decision["routedAgentId"],
+                            decision["lane"],
+                            decision["specificGoal"],
+                            self._json_dump(safe_expected),
+                            decision["nextAction"],
+                            decision["supportPlan"],
+                            message["meetingMessageId"],
+                            decision["status"],
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            now,
+                        ),
+                    )
+                    self._insert_outbox_sql(connection, workspace_id, "matm.meeting_message.submitted", "meeting_message", message["meetingMessageId"], message)
+                    self._insert_outbox_sql(connection, workspace_id, "matm.routing_decision.submitted", "routing_decision", decision["routingDecisionId"], decision)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "meeting_message", message["meetingMessageId"], message)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "routing_decision", decision["routingDecisionId"], decision)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "routing_decision.submit",
+                        coordinator_agent_id,
+                        decision["routingDecisionId"],
+                        {
+                            "roomScope": source_room.get("scope"),
+                            "routingDecisionCount": 1,
+                            "routedAgentId": routed_agent_id,
+                            "routingLane": lane,
+                        },
+                    )
+                    return decision, message, source_room, destination_room
+
     def submit_meeting_message(self, workspace_id, room_id, sender_agent_id, safe_summary):
         safe_summary = redact_text(safe_summary)
         with _LOCK:
@@ -2374,6 +2766,9 @@ class SQLiteStore(FileStore):
                             "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
                         }
                     )
+
+                for row in connection.execute("SELECT * FROM matm_routing_decisions ORDER BY created_at, routing_decision_id"):
+                    data["routingDecisions"].append(self._routing_decision_from_row(row))
 
                 for row in connection.execute("SELECT * FROM matm_meeting_reads ORDER BY updated_at, meeting_read_id"):
                     data["meetingReads"].append(
@@ -2788,6 +3183,38 @@ class SQLiteStore(FileStore):
                                 self._int_bool(message.get("valuesRedacted", True)),
                                 self._int_bool(message.get("rawPayloadExposed")),
                                 message.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for decision in data.get("routingDecisions", []):
+                        connection.execute(
+                            """
+                            INSERT INTO matm_routing_decisions (
+                              routing_decision_id, workspace_id, source_room_id, destination_room_id,
+                              destination_scope, destination_scope_id, coordinator_agent_id, routed_agent_id,
+                              lane, specific_goal, expected_evidence_json, next_action, support_plan,
+                              meeting_message_id, status, values_redacted, raw_payload_exposed, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                decision.get("routingDecisionId"),
+                                decision.get("workspaceId"),
+                                decision.get("sourceRoomId"),
+                                decision.get("destinationRoomId"),
+                                decision.get("destinationScope") or "workspace",
+                                decision.get("destinationScopeId") or decision.get("workspaceId"),
+                                decision.get("coordinatorAgentId"),
+                                decision.get("routedAgentId"),
+                                decision.get("lane") or "coordination",
+                                decision.get("specificGoal") or "",
+                                self._json_dump(decision.get("expectedEvidence") or []),
+                                decision.get("nextAction") or "",
+                                decision.get("supportPlan") or "",
+                                decision.get("meetingMessageId"),
+                                decision.get("status") or "active",
+                                self._int_bool(decision.get("valuesRedacted", True)),
+                                self._int_bool(decision.get("rawPayloadExposed")),
+                                decision.get("createdAt") or utc_now(),
                             ),
                         )
 

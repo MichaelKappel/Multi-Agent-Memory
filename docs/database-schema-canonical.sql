@@ -246,6 +246,34 @@ CREATE TABLE IF NOT EXISTS matm_meeting_messages (
   CONSTRAINT fk_matm_meeting_messages_room FOREIGN KEY (room_id) REFERENCES matm_meeting_rooms (room_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_routing_decisions (
+  routing_decision_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  source_room_id VARCHAR(96) NOT NULL,
+  destination_room_id VARCHAR(96) NOT NULL,
+  destination_scope VARCHAR(32) NOT NULL,
+  destination_scope_id VARCHAR(128) NOT NULL,
+  coordinator_agent_id VARCHAR(128) NOT NULL,
+  routed_agent_id VARCHAR(128) NOT NULL,
+  lane VARCHAR(96) NOT NULL,
+  specific_goal TEXT NOT NULL,
+  expected_evidence_json TEXT NOT NULL,
+  next_action TEXT NOT NULL,
+  support_plan TEXT NOT NULL,
+  meeting_message_id VARCHAR(96) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  values_redacted TINYINT(1) NOT NULL DEFAULT 1,
+  raw_payload_exposed TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_matm_routing_decisions_agent (workspace_id, routed_agent_id, created_at),
+  KEY ix_matm_routing_decisions_destination (workspace_id, destination_room_id, created_at),
+  KEY ix_matm_routing_decisions_status (workspace_id, status, created_at),
+  CONSTRAINT fk_matm_routing_decisions_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_routing_decisions_source_room FOREIGN KEY (source_room_id) REFERENCES matm_meeting_rooms (room_id),
+  CONSTRAINT fk_matm_routing_decisions_destination_room FOREIGN KEY (destination_room_id) REFERENCES matm_meeting_rooms (room_id),
+  CONSTRAINT fk_matm_routing_decisions_message FOREIGN KEY (meeting_message_id) REFERENCES matm_meeting_messages (meeting_message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_meeting_reads (
   meeting_read_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,

@@ -21,6 +21,8 @@
     agentId: "human-verifier-agent",
     firstNotificationId: "",
     visibleNotificationIds: [],
+    visibleNotificationRecords: {},
+    lastAckedBroadcast: null,
     firstReviewId: "",
     debugJson: false,
     workflowView: "all",
@@ -29,6 +31,7 @@
     selectedMeetingRoomId: "",
     latestMeetingMessageId: "",
     latestMeetingMessageSummary: "",
+    latestRoutingDecisionId: "",
     inboxRequestSeq: 0,
     memoryCount: null,
     memoryScopeCounts: null,
@@ -825,9 +828,11 @@
       var message = item.message || {};
       var notification = item.notification || {};
       var delivery = item.delivery || {};
-      var target = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
-      var messageType = delivery.messageType || (target ? "targeted" : "broadcast");
+      var laneRecipient = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
+      var messageType = delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
       var isTargeted = messageType === "targeted";
+      var target = isTargeted ? laneRecipient : "";
+      var recipientText = isTargeted ? (target || "selected agent") : "all agents";
       var row = resultRow(
         isTargeted ? "Targeted message" : "Broadcast message",
         message.safeSummary,
@@ -839,7 +844,7 @@
         ],
         [
           "from " + (message.senderAgentId || "unknown"),
-          "to " + (target || "all agents"),
+          "to " + recipientText,
           "delivery " + messageType,
           "response " + (delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement"),
           "message " + shortId(message.messageId),
@@ -867,14 +872,28 @@
     var delivery = (payload && payload.delivery) || {};
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
-    var target = operatorSummary.targetAgentId || delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
-    var messageType = operatorSummary.messageType || delivery.messageType || (target ? "targeted" : "broadcast");
+    var laneRecipient = operatorSummary.targetAgentId || delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
+    var messageType = operatorSummary.messageType || delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
     var responseDisposition = operatorSummary.responseDisposition || delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement";
     var isTargeted = messageType === "targeted";
-    var refreshedLane = refreshedAgentId || target || state.agentId;
+    var target = isTargeted ? laneRecipient : "";
+    var refreshedLane = refreshedAgentId || laneRecipient || state.agentId;
+    var recipientText = isTargeted ? (target || "selected agent") : "all agents";
+    var expectedRecipientCount = payload && payload.expectedRecipientCount !== undefined
+      ? payload.expectedRecipientCount
+      : (operatorSummary.recipientCount || delivery.recipientCount || ((payload && payload.notifications && payload.notifications.length) || 1));
+    var visibleRecipientCount = payload && payload.visibleRecipientCount !== undefined
+      ? payload.visibleRecipientCount
+      : (payload && payload.visibleToTarget ? expectedRecipientCount : 0);
+    var recipientReadbackText = visibleRecipientCount + "/" + expectedRecipientCount + " visible";
+    var recipientReadbackOk = expectedRecipientCount > 0 && visibleRecipientCount >= expectedRecipientCount;
     var summaryLine = el("div", "filter-summary delivery-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Delivery"));
     appendBadge(summaryLine, messageType, isTargeted ? "neutral" : "good");
+    if (!isTargeted) {
+      appendBadge(summaryLine, expectedRecipientCount + " recipients", expectedRecipientCount > 1 ? "good" : "warn");
+      appendBadge(summaryLine, recipientReadbackText, recipientReadbackOk ? "good" : "warn");
+    }
     appendCountBadges(summaryLine, "Counts", deliveryCounts, ["broadcast", "targeted"]);
     appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
     appendBadge(
@@ -897,11 +916,12 @@
       ],
       [
         "from " + (message.senderAgentId || "unknown"),
-        "to " + (target || "all agents"),
+        "to " + recipientText,
         "delivery " + messageType,
         "response " + responseDisposition,
         "message " + shortId(message.messageId),
         "notification " + shortId(notification.notificationId),
+        isTargeted ? "" : "recipients " + recipientReadbackText,
         "refreshed " + refreshedLane + " inbox",
       ]
     );
@@ -911,7 +931,7 @@
       { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
     ]);
     node.appendChild(summaryLine);
-    node.appendChild(el("div", "result-count", target ? refreshedLane + " inbox refreshed." : "Broadcast accepted; " + refreshedLane + " inbox refreshed."));
+    node.appendChild(el("div", "result-count", isTargeted ? refreshedLane + " inbox refreshed." : "Broadcast accepted; " + refreshedLane + " inbox refreshed."));
     node.appendChild(row);
   }
 
@@ -943,6 +963,7 @@
     state.messageDeliveryCounts = {broadcast: totalBroadcast, targeted: totalTargeted};
     renderOperatorMetrics();
     node.appendChild(el("div", "result-count", results.length + " agent lane(s) checked."));
+    renderBroadcastAckIsolationSummary(node, results);
     results.forEach(function (result) {
       var payload = result.payload || {};
       var items = payload.items || [];
@@ -983,6 +1004,50 @@
     });
   }
 
+  function broadcastItemVisible(item, messageId) {
+    var message = (item && item.message) || {};
+    var delivery = (item && item.delivery) || {};
+    var notification = (item && item.notification) || {};
+    var type = delivery.messageType || (message.targetAgentId || notification.targetAgentId ? "targeted" : "broadcast");
+    return type === "broadcast" && message.messageId === messageId;
+  }
+
+  function renderBroadcastAckIsolationSummary(parent, results) {
+    var acked = state.lastAckedBroadcast || {};
+    if (!acked.messageId) {
+      return;
+    }
+    var checkedAgents = [];
+    var visibleAgents = [];
+    (results || []).forEach(function (result) {
+      if (!result || !result.ok) {
+        return;
+      }
+      checkedAgents.push(result.agentId);
+      var items = (result.payload && result.payload.items) || [];
+      if (items.some(function (item) { return broadcastItemVisible(item, acked.messageId); })) {
+        visibleAgents.push(result.agentId);
+      }
+    });
+    var remainingAgents = checkedAgents.filter(function (agentId) {
+      return agentId !== acked.ackAgentId;
+    });
+    var missingAgents = remainingAgents.filter(function (agentId) {
+      return visibleAgents.indexOf(agentId) === -1;
+    });
+    var ackedLaneCleared = visibleAgents.indexOf(acked.ackAgentId) === -1;
+    var ok = remainingAgents.length > 0 && missingAgents.length === 0 && ackedLaneCleared;
+    var line = el("div", "filter-summary broadcast-ack-isolation-summary");
+    line.appendChild(el("span", "filter-summary-label", "Broadcast ack isolation"));
+    appendBadge(line, ok ? "ack isolation pass" : "ack isolation review", ok ? "good" : "warn");
+    appendBadge(line, visibleAgents.length + "/" + remainingAgents.length + " remaining lanes visible", ok ? "good" : "warn");
+    appendBadge(line, ackedLaneCleared ? "acked lane cleared" : "acked lane still unread", ackedLaneCleared ? "good" : "warn");
+    if (missingAgents.length) {
+      appendBadge(line, "missing " + missingAgents.join(", "), "warn");
+    }
+    parent.appendChild(line);
+  }
+
   function setMeetingRoom(roomId) {
     if (!roomId) {
       return;
@@ -991,6 +1056,15 @@
     var form = pick("[data-console-meeting-message]");
     if (form && form.elements.roomId) {
       form.elements.roomId.value = roomId;
+    }
+    var routingForm = pick("[data-console-routing-decision]");
+    if (routingForm) {
+      if (routingForm.elements.destinationRoomId && !routingForm.elements.destinationRoomId.value) {
+        routingForm.elements.destinationRoomId.value = roomId;
+      }
+      if (routingForm.elements.sourceRoomId && !routingForm.elements.sourceRoomId.value) {
+        routingForm.elements.sourceRoomId.value = roomId;
+      }
     }
   }
 
@@ -1110,6 +1184,100 @@
     ]);
     node.appendChild(summaryLine);
     node.appendChild(row);
+  }
+
+  function renderRoutingDecision(payload) {
+    var node = pick("[data-console-routing-decision-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var decision = (payload && payload.routingDecision) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    var destination = (payload && payload.destinationRoom) || {};
+    if (!decision.routingDecisionId) {
+      node.appendChild(el("p", "empty-state", "Structured routing decisions will appear here."));
+      return;
+    }
+    state.latestRoutingDecisionId = decision.routingDecisionId;
+    var summaryLine = el("div", "filter-summary routing-decision-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Routing decision"));
+    appendBadge(summaryLine, decision.lane || "lane", "neutral");
+    appendBadge(summaryLine, summary.destinationScope || decision.destinationScope || "room", "neutral");
+    appendBadge(summaryLine, payload.visibleToRoutedAgent ? "agent visible" : "visibility review", payload.visibleToRoutedAgent ? "good" : "warn");
+    appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    var evidence = decision.expectedEvidence || [];
+    var row = resultRow(
+      "Routing decision created",
+      decision.specificGoal || "Agent has a structured route.",
+      [
+        { text: decision.lane || "lane", kind: "neutral" },
+        { text: decision.status || "active", kind: "good" },
+        { text: decision.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "agent " + (decision.routedAgentId || "unknown"),
+        "coordinator " + (decision.coordinatorAgentId || state.agentId),
+        "destination " + shortId(decision.destinationRoomId || destination.roomId),
+        "decision " + shortId(decision.routingDecisionId),
+        "message " + shortId(decision.meetingMessageId),
+        evidence.length + " evidence items",
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy routing id", copyLabel: "Routing decision id", value: decision.routingDecisionId },
+      { label: "Copy destination room", copyLabel: "Destination room id", value: decision.destinationRoomId || destination.roomId },
+      { label: "Copy meeting message", copyLabel: "Meeting message id", value: decision.meetingMessageId },
+    ]);
+    node.appendChild(summaryLine);
+    node.appendChild(row);
+  }
+
+  function renderRoutingDecisions(payload) {
+    var node = pick("[data-console-routing-decisions-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var items = (payload && payload.items) || [];
+    var summary = (payload && payload.operatorSummary) || {};
+    var summaryLine = el("div", "filter-summary routing-decisions-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Routing readback"));
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " decisions", items.length ? "good" : "neutral");
+    appendCountBadges(summaryLine, "Scopes", summary.destinationScopeCounts, ["company", "workspace", "project", "goal", "task"]);
+    appendCountBadges(summaryLine, "Lanes", summary.laneCounts, []);
+    appendBadge(summaryLine, summary.rawPayloadExposedCount ? "payload exposure review" : "payload hidden", summary.rawPayloadExposedCount ? "warn" : "good");
+    appendFilterSummary(summaryLine, (payload && payload.filters) || {});
+    node.appendChild(summaryLine);
+    if (!items.length) {
+      node.appendChild(el("p", "empty-state", "No routing decisions match the current filters."));
+      return;
+    }
+    items.forEach(function (decision) {
+      var evidence = decision.expectedEvidence || [];
+      var row = resultRow(
+        "Routing for " + (decision.routedAgentId || "agent"),
+        decision.specificGoal || decision.nextAction || "Structured routing decision.",
+        [
+          { text: decision.lane || "lane", kind: "neutral" },
+          { text: decision.destinationScope || "room", kind: "neutral" },
+          { text: decision.status || "active", kind: decision.status === "active" ? "good" : "neutral" },
+        ],
+        [
+          "decision " + shortId(decision.routingDecisionId),
+          "destination " + shortId(decision.destinationRoomId),
+          "message " + shortId(decision.meetingMessageId),
+          evidence.length + " evidence items",
+          decision.createdAt || "",
+        ]
+      );
+      appendCopyActions(row, [
+        { label: "Copy routing id", copyLabel: "Routing decision id", value: decision.routingDecisionId },
+        { label: "Copy destination room", copyLabel: "Destination room id", value: decision.destinationRoomId },
+        { label: "Copy routed agent", copyLabel: "Routed agent id", value: decision.routedAgentId },
+      ]);
+      node.appendChild(row);
+    });
   }
 
   function renderMeetingMessages(payload) {
@@ -1773,7 +1941,21 @@
       setInboxAgent(resolvedAgent);
       var first = payload.items && payload.items.length ? payload.items[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
+      state.visibleNotificationRecords = {};
       state.visibleNotificationIds = ((payload && payload.items) || []).map(function (item) {
+        var notification = item.notification || {};
+        var message = item.message || {};
+        var delivery = item.delivery || {};
+        var notificationId = notification.notificationId;
+        if (notificationId) {
+          state.visibleNotificationRecords[notificationId] = {
+            notificationId: notificationId,
+            messageId: message.messageId || "",
+            messageType: delivery.messageType || (message.targetAgentId || notification.targetAgentId ? "targeted" : "broadcast"),
+            safeSummary: message.safeSummary || "",
+            ackAgentId: resolvedAgent,
+          };
+        }
         return item.notification && item.notification.notificationId;
       }).filter(Boolean);
       render("[data-console-inbox-output]", payload);
@@ -1845,6 +2027,26 @@
     return api("/api/matm/meeting-messages?" + qs).then(function (payload) {
       render("[data-console-meeting-output]", payload);
       renderMeetingMessages(payload);
+      return payload;
+    });
+  }
+
+  function refreshRoutingDecisions() {
+    if (!state.workspaceId) {
+      renderRoutingDecisions({items: [], operatorSummary: {count: 0}});
+      return Promise.resolve({items: []});
+    }
+    var form = pick("[data-console-routing-decision]");
+    var params = {workspace_id: state.workspaceId, limit: 25};
+    if (form) {
+      params.routed_agent_id = form.elements.routedAgentId ? form.elements.routedAgentId.value.trim() : "";
+      params.destination_room_id = form.elements.destinationRoomId ? form.elements.destinationRoomId.value.trim() : "";
+      params.lane = form.elements.lane ? form.elements.lane.value.trim() : "";
+    }
+    var qs = query(params);
+    return api("/api/matm/routing-decisions?" + qs).then(function (payload) {
+      render("[data-console-meeting-output]", payload);
+      renderRoutingDecisions(payload);
       return payload;
     });
   }
@@ -2016,6 +2218,7 @@
         .then(function () { return refreshReviewQueue("pending"); })
         .then(function () { return refreshMeetingRooms(); })
         .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
+        .then(function () { return refreshRoutingDecisions(); })
         .then(function () { return refreshInbox(state.agentId); })
         .then(function () { return refreshLaneOverview(); })
         .then(refreshReceipts)
@@ -2174,6 +2377,71 @@
           });
         })
         .then(function () { setStatus("Meeting room created and selected.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var routingDecisionForm = pick("[data-console-routing-decision]");
+  if (routingDecisionForm) {
+    routingDecisionForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before creating a routing decision.", true);
+        return;
+      }
+      var sourceRoomId = routingDecisionForm.elements.sourceRoomId.value.trim() || state.selectedMeetingRoomId;
+      var destinationRoomId = routingDecisionForm.elements.destinationRoomId.value.trim() || state.selectedMeetingRoomId;
+      var evidence = routingDecisionForm.elements.expectedEvidence.value.split(/\r?\n|,/).map(function (item) {
+        return item.trim();
+      }).filter(Boolean);
+      if (!sourceRoomId || !destinationRoomId) {
+        setStatus("Source and destination room ids are required for routing decisions.", true);
+        return;
+      }
+      if (!evidence.length) {
+        setStatus("Expected evidence is required for routing decisions.", true);
+        return;
+      }
+      api("/api/matm/routing-decisions", {
+        method: "POST",
+        headers: {"Idempotency-Key": "console-routing-" + sourceRoomId + "-" + destinationRoomId + "-" + Date.now()},
+        body: {
+          workspaceId: state.workspaceId,
+          sourceRoomId: sourceRoomId,
+          destinationRoomId: destinationRoomId,
+          coordinatorAgentId: routingDecisionForm.elements.coordinatorAgentId.value.trim() || state.agentId,
+          routedAgentId: routingDecisionForm.elements.routedAgentId.value.trim(),
+          lane: routingDecisionForm.elements.lane.value.trim(),
+          specificGoal: routingDecisionForm.elements.specificGoal.value.trim(),
+          expectedEvidence: evidence,
+          nextAction: routingDecisionForm.elements.nextAction.value.trim(),
+          supportPlan: routingDecisionForm.elements.supportPlan.value.trim(),
+        },
+      })
+        .then(function (payload) {
+          render("[data-console-meeting-output]", payload);
+          renderRoutingDecision(payload);
+          if (payload.destinationRoomId) {
+            setMeetingRoom(payload.destinationRoomId);
+          }
+          return refreshRoutingDecisions().then(function () {
+            return refreshMeetingMessages(payload.canonicalRoomId || sourceRoomId);
+          });
+        })
+        .then(function () { setStatus("Routing decision created and read back.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var refreshRoutingButton = pick("[data-console-refresh-routing-decisions]");
+  if (refreshRoutingButton) {
+    refreshRoutingButton.addEventListener("click", function () {
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before refreshing routing decisions.", true);
+        return;
+      }
+      refreshRoutingDecisions()
+        .then(function () { setStatus("Routing decisions refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }
@@ -2395,6 +2663,7 @@
 
   var ackButton = pick("[data-console-ack]");
   function ackNotification(notificationId, idempotencySuffix) {
+    var ackContext = state.visibleNotificationRecords[notificationId] || {};
     return api("/api/matm/notifications/ack", {
       method: "POST",
       headers: {"Idempotency-Key": "console-ack-" + notificationId + (idempotencySuffix || "")},
@@ -2404,6 +2673,16 @@
         consumerAgentId: state.agentId,
         status: "read",
       },
+    }).then(function (payload) {
+      if (ackContext.messageType === "broadcast" && ackContext.messageId) {
+        state.lastAckedBroadcast = {
+          messageId: ackContext.messageId,
+          safeSummary: ackContext.safeSummary || "",
+          ackAgentId: ackContext.ackAgentId || state.agentId,
+          notificationId: notificationId,
+        };
+      }
+      return payload;
     });
   }
 

@@ -173,21 +173,43 @@ def _memory_submission_confirmation(store, workspace_id, event):
     }
 
 
-def _current_message_confirmation(store, workspace_id, message, note):
+def _current_message_confirmation(store, workspace_id, message, notes):
     message = message or {}
-    note = note or {}
-    target_agent_id = message.get("targetAgentId") or message.get("senderAgentId") or ""
-    inbox_items = store.inbox(workspace_id, target_agent_id)
-    visible = any((item.get("notification") or {}).get("notificationId") == note.get("notificationId") for item in inbox_items)
+    notes = notes if isinstance(notes, list) else ([notes] if notes else [])
+    notification_ids = [note.get("notificationId") for note in notes if note and note.get("notificationId")]
+    message_target = message.get("targetAgentId") or ""
+    recipient_agent_ids = []
+    for note in notes:
+        recipient = (note or {}).get("targetAgentId") or message_target or message.get("senderAgentId") or ""
+        if recipient and recipient not in recipient_agent_ids:
+            recipient_agent_ids.append(recipient)
+    if not recipient_agent_ids:
+        recipient_agent_ids = [message_target or message.get("senderAgentId") or ""]
+    visible_agents = []
+    for recipient_agent_id in recipient_agent_ids:
+        inbox_items = store.inbox(workspace_id, recipient_agent_id)
+        visible = any(
+            ((item.get("notification") or {}).get("notificationId") in notification_ids)
+            or ((item.get("message") or {}).get("messageId") == message.get("messageId"))
+            for item in inbox_items
+        )
+        if visible:
+            visible_agents.append(recipient_agent_id)
+    persisted = bool(recipient_agent_ids) and len(visible_agents) == len(recipient_agent_ids)
+    first_recipient = recipient_agent_ids[0] if recipient_agent_ids else ""
     return {
-        "persisted": visible,
-        "visibleToTarget": visible,
-        "canonicalTargetAgentId": message.get("targetAgentId") or "",
+        "persisted": persisted,
+        "visibleToTarget": persisted,
+        "visibleToAgents": visible_agents,
+        "visibleRecipientCount": len(visible_agents),
+        "expectedRecipientCount": len(recipient_agent_ids),
+        "canonicalTargetAgentId": message_target,
         "messageId": message.get("messageId"),
-        "notificationId": note.get("notificationId"),
+        "notificationId": notification_ids[0] if notification_ids else "",
+        "notificationIds": notification_ids,
         "inboxQueryUrl": _protected_query_url(
             "/api/matm/current-message",
-            {"agent_id": target_agent_id},
+            {"agent_id": message_target or first_recipient},
         ),
         "valuesRedacted": True,
     }
@@ -304,16 +326,18 @@ def escape_html(value):
 def _delivery_metadata(message, notification=None, inbox_agent_id=""):
     message = message or {}
     notification = notification or {}
-    target_agent_id = message.get("targetAgentId") or notification.get("targetAgentId") or ""
-    message_type = "targeted" if target_agent_id else "broadcast"
+    message_target_agent_id = message.get("targetAgentId") or ""
+    notification_target_agent_id = notification.get("targetAgentId") or ""
+    message_type = "targeted" if message_target_agent_id else "broadcast"
     response_disposition = notification.get("responseDisposition") or (
         "required_response" if message.get("responseRequired") else "viewed_acknowledgement"
     )
     return {
         "messageType": message_type,
-        "broadcast": not bool(target_agent_id),
-        "targetAgentId": target_agent_id,
-        "inboxAgentId": inbox_agent_id or "",
+        "broadcast": not bool(message_target_agent_id),
+        "targetAgentId": message_target_agent_id,
+        "recipientAgentId": notification_target_agent_id,
+        "inboxAgentId": inbox_agent_id or notification_target_agent_id or message_target_agent_id or "",
         "responseDisposition": response_disposition,
         "valuesRedacted": True,
         "rawPayloadExposed": False,
@@ -336,6 +360,8 @@ def _message_delivery_operator_summary(delivery, delivery_counts):
         "broadcast": bool(broadcast),
         "targetAgentId": delivery.get("targetAgentId") or "",
         "inboxAgentId": delivery.get("inboxAgentId") or delivery.get("targetAgentId") or "",
+        "recipientAgentId": delivery.get("recipientAgentId") or "",
+        "recipientCount": delivery.get("recipientCount") or 1,
         "responseDisposition": response_disposition,
         "deliveryCounts": delivery_counts,
         "responseDispositionCounts": response_counts,
@@ -755,6 +781,114 @@ def _meeting_read_operator_summary(read_state, room):
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
+    }
+
+
+def _string_list(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.splitlines() if "\n" in value else value.split(",")
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    items = []
+    for item in raw_items:
+        text = redact_text(str(item).strip())
+        if text:
+            items.append(text[:240])
+    return items[:10]
+
+
+def _routing_decision_summary(fields, destination_room):
+    evidence = fields.get("expectedEvidence") or []
+    evidence_text = "; ".join(evidence[:5])
+    parts = [
+        "Routing decision for %s: lane=%s" % (fields.get("routedAgentId") or "agent", fields.get("lane") or "unassigned"),
+        "destination=%s room %s" % (destination_room.get("scope") or fields.get("destinationScope") or "room", fields.get("destinationRoomId") or ""),
+        "scopeId=%s" % (destination_room.get("scopeId") or fields.get("destinationScopeId") or ""),
+        "goal=%s" % (fields.get("specificGoal") or ""),
+        "nextAction=%s" % (fields.get("nextAction") or ""),
+    ]
+    if fields.get("supportPlan"):
+        parts.append("coordination=%s" % fields.get("supportPlan"))
+    if evidence_text:
+        parts.append("expectedEvidence=%s" % evidence_text)
+    return redact_text(". ".join(part for part in parts if part).strip())
+
+
+def _routing_decision_operator_summary(decision, source_room, destination_room):
+    decision = decision or {}
+    source_room = source_room or {}
+    destination_room = destination_room or {}
+    return {
+        "schemaVersion": "memoryendpoints.routing_decision_operator_summary.v1",
+        "routingDecisionId": decision.get("routingDecisionId") or "",
+        "meetingMessageId": decision.get("meetingMessageId") or "",
+        "sourceRoomId": decision.get("sourceRoomId") or source_room.get("roomId") or "",
+        "destinationRoomId": decision.get("destinationRoomId") or destination_room.get("roomId") or "",
+        "destinationScope": decision.get("destinationScope") or destination_room.get("scope") or "",
+        "destinationScopeId": decision.get("destinationScopeId") or destination_room.get("scopeId") or "",
+        "coordinatorAgentId": decision.get("coordinatorAgentId") or "",
+        "routedAgentId": decision.get("routedAgentId") or "",
+        "lane": decision.get("lane") or "",
+        "expectedEvidenceCount": len(decision.get("expectedEvidence") or []),
+        "status": decision.get("status") or "",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": bool(decision.get("rawPayloadExposed")),
+    }
+
+
+def _routing_decisions_operator_summary(items, filters):
+    items = items or []
+    return {
+        "schemaVersion": "memoryendpoints.routing_decisions_operator_summary.v1",
+        "count": len(items),
+        "filters": dict(filters or {}),
+        "routedAgentCounts": _count_by(items, "routedAgentId"),
+        "laneCounts": _count_by(items, "lane"),
+        "destinationScopeCounts": _count_by(items, "destinationScope", {"company": 0, "workspace": 0, "project": 0, "goal": 0, "task": 0}),
+        "activeCount": sum(1 for item in items if item.get("status") == "active"),
+        "allValuesRedacted": all(item.get("valuesRedacted") for item in items) if items else True,
+        "rawPayloadExposedCount": sum(1 for item in items if item.get("rawPayloadExposed")),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _routing_decision_confirmation(store, workspace_id, decision, message, source_room):
+    decision = decision or {}
+    message = message or {}
+    source_room = source_room or {}
+    room_id = decision.get("sourceRoomId") or source_room.get("roomId") or message.get("roomId")
+    routed_agent_id = decision.get("routedAgentId") or ""
+    decisions = store.routing_decisions(workspace_id, {"routedAgentId": routed_agent_id, "destinationRoomId": decision.get("destinationRoomId")}, 200)
+    visible_decision = any(item.get("routingDecisionId") == decision.get("routingDecisionId") for item in decisions)
+    _room, messages, _read_state = store.meeting_messages(workspace_id, room_id, routed_agent_id, 200)
+    visible_message = any(item.get("meetingMessageId") == message.get("meetingMessageId") for item in messages)
+    return {
+        "persisted": visible_decision and visible_message,
+        "visibleToRoutedAgent": visible_decision and visible_message,
+        "canonicalRoutingDecisionId": decision.get("routingDecisionId"),
+        "canonicalRoomId": room_id,
+        "destinationRoomId": decision.get("destinationRoomId"),
+        "messageId": message.get("meetingMessageId"),
+        "routingDecisionQueryUrl": _protected_query_url(
+            "/api/matm/routing-decisions",
+            {"routed_agent_id": routed_agent_id, "destination_room_id": decision.get("destinationRoomId")},
+        ),
+        "transcriptQueryUrl": _protected_query_url(
+            "/api/matm/meeting-messages",
+            {"room_id": room_id, "agent_id": routed_agent_id},
+        ),
+        "destinationTranscriptQueryUrl": _protected_query_url(
+            "/api/matm/meeting-messages",
+            {"room_id": decision.get("destinationRoomId"), "agent_id": routed_agent_id},
+        ),
+        "valuesRedacted": True,
     }
 
 
@@ -1410,6 +1544,46 @@ def route_console(start_response):
     </form>
     <div class="console-results meeting-room-create-summary" data-console-meeting-room-create-summary>
       <p class="empty-state">Goal and task room creation confirmations will appear here.</p>
+    </div>
+    <form class="console-grid" data-console-routing-decision>
+      <label>Source room id
+        <input name="sourceRoomId" placeholder="company or intake room id" required>
+      </label>
+      <label>Destination room id
+        <input name="destinationRoomId" placeholder="project / goal / task room id" required>
+      </label>
+      <label>Coordinator agent
+        <input name="coordinatorAgentId" value="codex-coordinator" required>
+      </label>
+      <label>Routed agent
+        <input name="routedAgentId" value="tinyrustlm-agent" required>
+      </label>
+      <label>Lane
+        <input name="lane" value="optional-public-safe-memory-connector" required>
+      </label>
+      <label class="wide">Specific goal
+        <textarea name="specificGoal" rows="2" required>Build and verify the optional MemoryEndpoints.com connector, then post public-safe evidence back to the destination room.</textarea>
+      </label>
+      <label class="wide">Expected evidence
+        <textarea name="expectedEvidence" rows="3" required>Routes exercised
+Tests run
+Redaction result
+Remaining blocker</textarea>
+      </label>
+      <label class="wide">Next action
+        <textarea name="nextAction" rows="2" required>Open the destination room, follow the connector contract, and post implementation evidence.</textarea>
+      </label>
+      <label class="wide">Support plan
+        <textarea name="supportPlan" rows="2" required>Codex coordinator will review architecture, verify API/UI dogfood evidence, and route blockers into focused goal or task rooms.</textarea>
+      </label>
+      <button class="button primary" type="submit">Create routing decision</button>
+      <button class="button" type="button" data-console-refresh-routing-decisions>Refresh routing</button>
+    </form>
+    <div class="console-results routing-decision-summary" data-console-routing-decision-summary>
+      <p class="empty-state">Structured routing decisions will appear here.</p>
+    </div>
+    <div class="console-results routing-decision-list" data-console-routing-decisions-list>
+      <p class="empty-state">Routing decision readback will appear after the workspace loads.</p>
     </div>
     <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
       <p class="empty-state">Company, workspace, project, goal, and task meeting rooms will appear after the workspace loads.</p>
@@ -2119,6 +2293,168 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             },
         )
+    if path == "/api/matm/routing-decisions" and method == "GET":
+        requested_limit = query.get("limit") or "50"
+        routing_filters = {
+            "roomId": query.get("room_id") or query.get("roomId") or query.get("source_room_id") or query.get("sourceRoomId") or "",
+            "destinationRoomId": query.get("destination_room_id") or query.get("destinationRoomId") or "",
+            "routedAgentId": query.get("routed_agent_id") or query.get("routedAgentId") or "",
+            "coordinatorAgentId": query.get("coordinator_agent_id") or query.get("coordinatorAgentId") or "",
+            "lane": query.get("lane") or "",
+            "destinationScope": query.get("destination_scope") or query.get("destinationScope") or "",
+            "destinationScopeId": query.get("destination_scope_id") or query.get("destinationScopeId") or "",
+            "status": query.get("status") or "",
+        }
+        active_filters = {key: value for key, value in routing_filters.items() if value}
+        if query.get("limit"):
+            active_filters["limit"] = requested_limit
+        items = store.routing_decisions(workspace_id, routing_filters, requested_limit)
+        operator_summary = _routing_decisions_operator_summary(items, active_filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "routing_decisions.read",
+            path,
+            {
+                "routingDecisionCount": len(items),
+                "filters": active_filters,
+                "filterKeys": list(active_filters.keys()),
+            },
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.routing_decisions.v1",
+                "items": items,
+                "count": len(items),
+                "filters": active_filters,
+                "operatorSummary": operator_summary,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/routing-decisions" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "routing-decision-submit", body)
+        if replay:
+            return replay
+        source_room_id = str(body.get("sourceRoomId") or body.get("source_room_id") or body.get("roomId") or body.get("room_id") or "").strip()
+        destination_room_id = str(body.get("destinationRoomId") or body.get("destination_room_id") or "").strip()
+        destination_scope = str(body.get("destinationScope") or body.get("destination_scope") or "").strip().lower()
+        destination_scope_id = str(body.get("destinationScopeId") or body.get("destination_scope_id") or "").strip()
+        coordinator_agent_id = str(body.get("coordinatorAgentId") or body.get("coordinator_agent_id") or body.get("actorAgentId") or body.get("actor_agent_id") or "").strip()
+        routed_agent_id = str(body.get("routedAgentId") or body.get("routed_agent_id") or body.get("targetAgentId") or body.get("target_agent_id") or "").strip()
+        lane = redact_text(str(body.get("lane") or "").strip())
+        specific_goal = redact_text(str(body.get("specificGoal") or body.get("specific_goal") or "").strip())
+        next_action = redact_text(str(body.get("nextAction") or body.get("next_action") or "").strip())
+        support_plan = redact_text(str(body.get("supportPlan") or body.get("support_plan") or "").strip())
+        expected_evidence = _string_list(body.get("expectedEvidence") or body.get("expected_evidence"))
+        if not source_room_id:
+            return problem(start_response, "422 Unprocessable Entity", "Source room id required", "Routing decisions require sourceRoomId or roomId.", "source_room_id_required")
+        if not coordinator_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Coordinator agent id required", "Routing decisions require coordinatorAgentId or actorAgentId.", "coordinator_agent_id_required")
+        if not routed_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Routed agent id required", "Routing decisions require routedAgentId or targetAgentId.", "routed_agent_id_required")
+        if not lane:
+            return problem(start_response, "422 Unprocessable Entity", "Routing lane required", "Routing decisions require a lane.", "routing_lane_required")
+        if not specific_goal:
+            return problem(start_response, "422 Unprocessable Entity", "Specific goal required", "Routing decisions require a specificGoal.", "specific_goal_required")
+        if not next_action:
+            return problem(start_response, "422 Unprocessable Entity", "Next action required", "Routing decisions require nextAction.", "next_action_required")
+        if not support_plan:
+            return problem(start_response, "422 Unprocessable Entity", "Support plan required", "Routing decisions require supportPlan so the receiving agent knows how the coordinator will help.", "support_plan_required")
+        if not expected_evidence:
+            return problem(start_response, "422 Unprocessable Entity", "Expected evidence required", "Routing decisions require at least one expectedEvidence item.", "expected_evidence_required")
+        if len(routed_agent_id) > 160 or len(coordinator_agent_id) > 160:
+            return problem(start_response, "422 Unprocessable Entity", "Agent id too long", "Routing decision agent ids must be at most 160 characters.", "agent_id_too_long")
+        if len(lane) > 160:
+            return problem(start_response, "422 Unprocessable Entity", "Lane too long", "Routing decision lane must be at most 160 characters.", "routing_lane_too_long")
+        if len(specific_goal) > 700 or len(next_action) > 500 or len(support_plan) > 700:
+            return problem(start_response, "422 Unprocessable Entity", "Routing field too long", "specificGoal must be at most 700 characters; nextAction at most 500; supportPlan at most 700.", "routing_field_too_long")
+        rooms = store.meeting_rooms(workspace_id, coordinator_agent_id)
+        source_room = next((room for room in rooms if room.get("roomId") == source_room_id), None)
+        if not source_room:
+            return problem(start_response, "404 Not Found", "Source room not found", "No active source meeting room exists for this workspace.", "source_room_not_found")
+        destination_room = None
+        if destination_room_id:
+            destination_room = next((room for room in rooms if room.get("roomId") == destination_room_id), None)
+        elif destination_scope and destination_scope_id:
+            destination_room = next((room for room in rooms if room.get("scope") == destination_scope and room.get("scopeId") == destination_scope_id), None)
+            destination_room_id = destination_room.get("roomId") if destination_room else ""
+        else:
+            return problem(start_response, "422 Unprocessable Entity", "Destination room required", "Routing decisions require destinationRoomId or destinationScope plus destinationScopeId.", "destination_room_required")
+        if not destination_room:
+            return problem(start_response, "404 Not Found", "Destination room not found", "No active destination meeting room exists for this workspace.", "destination_room_not_found")
+        safe_summary = _routing_decision_summary(
+            {
+                "routedAgentId": routed_agent_id,
+                "lane": lane,
+                "destinationRoomId": destination_room_id,
+                "specificGoal": specific_goal,
+                "expectedEvidence": expected_evidence,
+                "nextAction": next_action,
+                "supportPlan": support_plan,
+            },
+            destination_room,
+        )
+        if len(safe_summary) > 2000:
+            safe_summary = safe_summary[:1997] + "..."
+        quota_payload = {
+            "sourceRoomId": source_room_id,
+            "destinationRoomId": destination_room_id,
+            "routedAgentId": routed_agent_id,
+            "lane": lane,
+            "specificGoal": specific_goal,
+            "expectedEvidence": expected_evidence,
+            "nextAction": next_action,
+            "supportPlan": support_plan,
+            "safeSummary": safe_summary,
+        }
+        if not store.has_quota_for(workspace_id, quota_payload):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this routing decision.", "quota_exceeded")
+        decision, message, source_room, destination_room = store.submit_routing_decision(
+            workspace_id,
+            source_room_id,
+            coordinator_agent_id,
+            routed_agent_id,
+            lane,
+            destination_room_id,
+            specific_goal,
+            expected_evidence,
+            next_action,
+            support_plan,
+            safe_summary,
+        )
+        if not decision:
+            return problem(start_response, "404 Not Found", "Routing room not found", "The routing decision could not be saved because the source or destination room was not found.", "routing_room_not_found")
+        confirmation = _routing_decision_confirmation(store, workspace_id, decision, message, source_room)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Routing decision was not persisted", "The routing decision could not be confirmed in decision readback and room transcript after write.", "routing_decision_not_persisted")
+        payload = {
+            "ok": True,
+            "routingDecision": decision,
+            "message": message,
+            "sourceRoom": source_room,
+            "destinationRoom": destination_room,
+            "persisted": confirmation["persisted"],
+            "visibleToRoutedAgent": confirmation["visibleToRoutedAgent"],
+            "canonicalRoutingDecisionId": confirmation["canonicalRoutingDecisionId"],
+            "canonicalRoomId": confirmation["canonicalRoomId"],
+            "destinationRoomId": confirmation["destinationRoomId"],
+            "messageId": confirmation["messageId"],
+            "routingDecisionQueryUrl": confirmation["routingDecisionQueryUrl"],
+            "transcriptQueryUrl": confirmation["transcriptQueryUrl"],
+            "destinationTranscriptQueryUrl": confirmation["destinationTranscriptQueryUrl"],
+            "confirmation": confirmation,
+            "operatorSummary": _routing_decision_operator_summary(decision, source_room, destination_room),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "routing-decision-submit", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-messages/promote" and method == "POST":
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-promote", body)
         if replay:
@@ -2431,33 +2767,41 @@ def route_protected(environ, start_response, path):
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this current message.", "quota_exceeded")
         target_agent_id = body.get("targetAgentId") or body.get("target_agent_id")
-        message, note = store.submit_message(
+        message, notifications = store.submit_message(
             workspace_id,
             body.get("senderAgentId") or body.get("sender_agent_id"),
             target_agent_id,
             safe_summary,
             body.get("responseRequired") or body.get("response_required"),
         )
-        delivery = _delivery_metadata(message, note)
+        notifications = notifications if isinstance(notifications, list) else ([notifications] if notifications else [])
+        primary_notification = notifications[0] if notifications else {}
+        delivery = _delivery_metadata(message, primary_notification, (primary_notification or {}).get("targetAgentId") or "")
+        delivery["recipientCount"] = len(notifications)
         delivery_counts = {
             "broadcast": 1 if delivery["messageType"] == "broadcast" else 0,
             "targeted": 1 if delivery["messageType"] == "targeted" else 0,
         }
-        confirmation = _current_message_confirmation(store, workspace_id, message, note)
+        confirmation = _current_message_confirmation(store, workspace_id, message, notifications)
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "Current message was not persisted", "The current message could not be confirmed in the recipient inbox after write.", "current_message_not_persisted")
         operator_summary = _message_delivery_operator_summary(delivery, delivery_counts)
         payload = {
             "ok": True,
             "message": message,
-            "notification": note,
+            "notification": primary_notification,
+            "notifications": notifications,
             "delivery": delivery,
             "deliveryCounts": delivery_counts,
             "persisted": confirmation["persisted"],
             "visibleToTarget": confirmation["visibleToTarget"],
+            "visibleToAgents": confirmation["visibleToAgents"],
+            "visibleRecipientCount": confirmation["visibleRecipientCount"],
+            "expectedRecipientCount": confirmation["expectedRecipientCount"],
             "canonicalTargetAgentId": confirmation["canonicalTargetAgentId"],
             "messageId": confirmation["messageId"],
             "notificationId": confirmation["notificationId"],
+            "notificationIds": confirmation["notificationIds"],
             "inboxQueryUrl": confirmation["inboxQueryUrl"],
             "confirmation": confirmation,
             "operatorSummary": operator_summary,
