@@ -52,6 +52,18 @@ class ReportFreshnessTests(unittest.TestCase):
             )
         )
 
+    def test_build_report_rejects_stale_enterprise_summary(self):
+        enterprise = {"summary": {"currentGitHead": "old456"}}
+
+        self.assertFalse(build_readiness_reports.enterprise_summary_is_current(enterprise, "new789"))
+
+    def test_latest_code_live_deployed_uses_current_deploy_and_sha_evidence(self):
+        deploy = {"claimBoundary": {"newCodeLiveDeployed": True}}
+        live_latest = {"sourceShaMatchesExpected": True}
+
+        self.assertTrue(build_readiness_reports.latest_code_live_deployed(deploy, live_latest))
+        self.assertFalse(build_readiness_reports.latest_code_live_deployed(deploy, {"sourceShaMatchesExpected": False}))
+
     def test_github_blocker_includes_previous_public_safe_evidence(self):
         blocker = build_readiness_reports.github_blocker_text(
             {
