@@ -164,6 +164,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("visibleNotificationIds", js)
         self.assertIn("data-console-ack-visible", js)
         self.assertIn("ackNotification(notificationId", js)
+        self.assertIn(".then(refreshLaneOverview)", js)
         self.assertIn("visible notification(s) acknowledged", js)
 
     def test_console_js_renders_message_delivery_feedback(self):

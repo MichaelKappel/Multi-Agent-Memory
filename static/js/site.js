@@ -895,6 +895,7 @@
       ackNotification(state.firstNotificationId, "")
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
+        .then(refreshLaneOverview)
         .then(function () { setStatus("Notification acknowledged and receipt refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
@@ -917,6 +918,7 @@
       chain
         .then(function () { return refreshInbox(state.agentId); })
         .then(refreshReceipts)
+        .then(refreshLaneOverview)
         .then(function () { setStatus(notificationIds.length + " visible notification(s) acknowledged and receipts refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
