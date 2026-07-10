@@ -164,6 +164,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
         self.assertIn("position: sticky", css)
+        self.assertIn(".boundary-chain", css)
+        self.assertIn(".boundary-steps", css)
 
     def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -195,6 +197,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Copy notification id", js)
         self.assertIn("Copy receipt id", js)
         self.assertIn("Copy audit id", js)
+        self.assertIn("Copy workspace id", js)
+
+    def test_console_js_renders_workspace_boundary_chain(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderWorkspaceBoundaryChain", js)
+        self.assertIn("boundary-chain", js)
+        self.assertIn("Boundary chain: account -> company -> workspace -> project", js)
+        self.assertIn("Copy account id", js)
+        self.assertIn("Copy company id", js)
+        self.assertIn("Copy project id", js)
 
     def test_console_js_renders_all_agent_lane_overview(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")

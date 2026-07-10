@@ -277,6 +277,51 @@ pre {
   margin: 16px 0;
 }
 
+.boundary-chain {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.boundary-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.boundary-step {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 10px;
+}
+
+.boundary-label {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.boundary-step strong {
+  font-size: 0.95rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.boundary-step-footer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .summary-card,
 .result-row {
   border: 1px solid var(--line);
@@ -484,7 +529,8 @@ footer {
   .hero,
   .grid,
   .console-grid,
-  .operator-summary {
+  .operator-summary,
+  .boundary-steps {
     grid-template-columns: 1fr;
   }
 

@@ -182,6 +182,63 @@
     return card;
   }
 
+  function boundaryStep(label, value, status, copyLabel) {
+    var step = el("div", "boundary-step");
+    step.appendChild(el("span", "boundary-label", label));
+    step.appendChild(el("strong", "", value || "Not available"));
+    step.appendChild(el("span", "summary-meta", shortId(value)));
+    var footer = el("div", "boundary-step-footer");
+    appendBadge(footer, status || "active", status === "active" ? "good" : "neutral");
+    if (value) {
+      var button = el("button", "button compact", "Copy ID");
+      button.type = "button";
+      button.setAttribute("data-console-copy-action", "");
+      button.setAttribute("aria-label", copyLabel || (label + " id"));
+      button.addEventListener("click", function () {
+        copySafeText(value, copyLabel || (label + " id"));
+      });
+      footer.appendChild(button);
+    }
+    step.appendChild(footer);
+    return step;
+  }
+
+  function renderWorkspaceBoundaryChain(workspace, account, company, project) {
+    var chain = el("div", "boundary-chain");
+    chain.appendChild(el("div", "result-count", "Boundary chain: account -> company -> workspace -> project"));
+    var steps = el("div", "boundary-steps");
+    [
+      {
+        label: "Account",
+        value: account.accountId || workspace.accountId,
+        status: account.status || "active",
+        copyLabel: "Account id",
+      },
+      {
+        label: "Company",
+        value: company.companyId || workspace.companyId,
+        status: company.status || "active",
+        copyLabel: "Company id",
+      },
+      {
+        label: "Workspace",
+        value: workspace.workspaceId,
+        status: workspace.status || "active",
+        copyLabel: "Workspace id",
+      },
+      {
+        label: "Project",
+        value: project.projectId || workspace.primaryProjectId,
+        status: project.status || "active",
+        copyLabel: "Project id",
+      },
+    ].forEach(function (item) {
+      steps.appendChild(boundaryStep(item.label, item.value, item.status, item.copyLabel));
+    });
+    chain.appendChild(steps);
+    return chain;
+  }
+
   function renderWorkspaceSummary(workspace) {
     var node = pick("[data-console-workspace-summary]");
     if (!node) {
@@ -195,20 +252,29 @@
     var account = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
     var company = workspace.company || {};
     var project = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
-    node.appendChild(summaryCard("Account", account.label || workspace.accountId, shortId(account.accountId || workspace.accountId), [
+    node.appendChild(renderWorkspaceBoundaryChain(workspace, account, company, project));
+    appendCopyActions(node.appendChild(summaryCard("Account", account.label || workspace.accountId, shortId(account.accountId || workspace.accountId), [
       { text: account.role || "owner", kind: "neutral" },
       { text: account.status || "active", kind: "good" },
-    ]));
-    node.appendChild(summaryCard("Company", company.label || workspace.companyId, shortId(company.companyId || workspace.companyId), [
+    ])), [
+      { label: "Copy account id", copyLabel: "Account id", value: account.accountId || workspace.accountId },
+    ]);
+    appendCopyActions(node.appendChild(summaryCard("Company", company.label || workspace.companyId, shortId(company.companyId || workspace.companyId), [
       { text: company.status || "active", kind: "good" },
-    ]));
-    node.appendChild(summaryCard("Workspace", workspace.label || workspace.workspaceId, shortId(workspace.workspaceId), [
+    ])), [
+      { label: "Copy company id", copyLabel: "Company id", value: company.companyId || workspace.companyId },
+    ]);
+    appendCopyActions(node.appendChild(summaryCard("Workspace", workspace.label || workspace.workspaceId, shortId(workspace.workspaceId), [
       { text: workspace.plan || "plan unknown", kind: "neutral" },
       { text: workspace.status || "active", kind: "good" },
-    ]));
-    node.appendChild(summaryCard("Project", project.label || workspace.primaryProjectId, shortId(project.projectId || workspace.primaryProjectId), [
+    ])), [
+      { label: "Copy workspace id", copyLabel: "Workspace id", value: workspace.workspaceId },
+    ]);
+    appendCopyActions(node.appendChild(summaryCard("Project", project.label || workspace.primaryProjectId, shortId(project.projectId || workspace.primaryProjectId), [
       { text: project.status || "active", kind: "good" },
-    ]));
+    ])), [
+      { label: "Copy project id", copyLabel: "Project id", value: project.projectId || workspace.primaryProjectId },
+    ]);
     node.appendChild(summaryCard(
       "Storage",
       formatBytes(workspace.storageUsedBytes) + " used",
