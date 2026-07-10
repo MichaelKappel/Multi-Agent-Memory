@@ -160,6 +160,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("distinct unread notification id", current_message["broadcastInvariant"])
         self.assertIn("message_id", current_message["queryFilters"])
         self.assertIn("notification_id", current_message["queryFilters"])
+        self.assertIn("limit", current_message["queryFilters"])
         self.assertIn("visibleToAgents", current_message["postConfirmationFields"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
@@ -255,6 +256,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("distinct notification per recipient", data["coordinationFlow"]["broadcastInvariant"])
         self.assertIn("message_id", data["coordinationFlow"]["currentMessageQueryFilters"])
         self.assertIn("notification_id", data["coordinationFlow"]["currentMessageQueryFilters"])
+        self.assertIn("limit", data["coordinationFlow"]["currentMessageQueryFilters"])
         self.assertEqual(["company", "workspace", "project", "goal", "task"], data["coordinationFlow"]["supportedMeetingRoomScopes"])
         self.assertIn("workspaceId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
         self.assertIn("creatorAgentId", data["coordinationFlow"]["requiredMeetingRoomCreateFields"])
@@ -478,10 +480,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('data-console-inbox-agent="MemoryEndpoints-Backend-Agent"', text)
         self.assertIn("Codex inbox", text)
         self.assertIn('data-console-inbox-agent="swarm-observer-agent"', text)
+        self.assertIn('name="messageId"', text)
+        self.assertIn('name="notificationId"', text)
         self.assertIn("data-console-ack-visible", text)
+        self.assertIn('name="limit"', text)
+        self.assertIn('<option value="25" selected>25 messages</option>', text)
         self.assertIn("data-console-ack-summary", text)
         self.assertIn("data-console-receipts-list", text)
         self.assertIn("data-console-receipts-filter", text)
+        self.assertIn('<option value="codex-agent">codex-agent</option>', text)
         self.assertIn("data-console-clear-receipts-filter", text)
         self.assertIn("data-console-audit-filter", text)
         self.assertIn("data-console-clear-audit-filter", text)
@@ -659,6 +666,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("inboxRequestSeq", js)
         self.assertIn("requestSeq !== state.inboxRequestSeq", js)
         self.assertIn("inboxAgentFromPayload", js)
+        self.assertIn("inboxExactFilters", js)
+        self.assertIn("setInboxExactFilters", js)
+        self.assertIn("params.message_id = filters.messageId", js)
+        self.assertIn("params.notification_id = filters.notificationId", js)
+        self.assertIn("params.limit = filters.limit", js)
+        self.assertIn('limit: limitControl ? limitControl.value : "25"', js)
+        self.assertIn("limit: inboxExactFilters().limit", js)
+        self.assertIn("refreshInbox(refreshedLane, exactFilters)", js)
+        self.assertIn("setInboxExactFilters(exactFilters.messageId, exactFilters.notificationId)", js)
         self.assertIn("var resolvedAgent = inboxAgentFromPayload(payload, requestedAgent);", js)
         self.assertIn("if (!payload)", js)
         self.assertIn("Refreshing \" + target + \" inbox after delivery.", js)
@@ -2248,6 +2264,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Broadcast to every active agent in the swarm.", backend_summaries)
         self.assertIn("Targeted message for Backend only.", backend_summaries)
         self.assertEqual({"broadcast", "targeted"}, {item["delivery"]["messageType"] for item in backend["items"]})
+
+        status, _headers, text = call_app(
+            "/api/matm/current-message",
+            headers=auth,
+            query="workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent&limit=1" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        limited_backend = json.loads(text)
+        self.assertEqual(1, limited_backend["unreadCount"])
+        self.assertEqual(
+            {"agentId": "MemoryEndpoints-Backend-Agent", "limit": "1"},
+            limited_backend["filters"],
+        )
+        self.assertEqual(1, len(limited_backend["items"]))
 
         backend_broadcast = next(item for item in backend["items"] if item["delivery"]["messageType"] == "broadcast")
         status, _headers, text = call_app(

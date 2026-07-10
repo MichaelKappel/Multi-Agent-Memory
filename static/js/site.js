@@ -1981,10 +1981,21 @@
     });
   }
 
-  function refreshInbox(agentId) {
+  function refreshInbox(agentId, exactFilters) {
     var requestedAgent = agentId || state.agentId;
     var requestSeq = state.inboxRequestSeq += 1;
-    var qs = query({workspace_id: state.workspaceId, agent_id: requestedAgent});
+    var filters = exactFilters !== undefined ? exactFilters : inboxExactFilters();
+    var params = {workspace_id: state.workspaceId, agent_id: requestedAgent};
+    if (filters && filters.messageId) {
+      params.message_id = filters.messageId;
+    }
+    if (filters && filters.notificationId) {
+      params.notification_id = filters.notificationId;
+    }
+    if (filters && filters.limit) {
+      params.limit = filters.limit;
+    }
+    var qs = query(params);
     return api("/api/matm/current-message?" + qs).then(function (payload) {
       if (requestSeq !== state.inboxRequestSeq) {
         return null;
@@ -2150,11 +2161,36 @@
     renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
   }
 
+  function inboxExactFilters() {
+    var form = pick("[data-console-inbox]");
+    var messageControl = formControl(form, "messageId");
+    var notificationControl = formControl(form, "notificationId");
+    var limitControl = formControl(form, "limit");
+    return {
+      messageId: messageControl ? messageControl.value.trim() : "",
+      notificationId: notificationControl ? notificationControl.value.trim() : "",
+      limit: limitControl ? limitControl.value : "25",
+    };
+  }
+
+  function setInboxExactFilters(messageId, notificationId) {
+    var form = pick("[data-console-inbox]");
+    var messageControl = formControl(form, "messageId");
+    var notificationControl = formControl(form, "notificationId");
+    if (messageControl) {
+      messageControl.value = messageId || "";
+    }
+    if (notificationControl) {
+      notificationControl.value = notificationId || "";
+    }
+  }
+
   function openInboxLane(agentId, label) {
     if (!state.key || !state.workspaceId) {
       return Promise.reject(new Error("Load workspace before refreshing inbox lanes."));
     }
     setInboxAgent(agentId);
+    setInboxExactFilters("", "");
     return refreshInbox(agentId).then(function (payload) {
       if (!payload) {
         return null;
@@ -2696,7 +2732,13 @@
       })
         .then(function (payload) {
           setStatus("Message accepted; refreshing " + refreshedLane + " inbox.", false);
-          return refreshInbox(refreshedLane).then(function (inboxPayload) {
+          var exactFilters = {
+            messageId: payload.messageId || (payload.message && payload.message.messageId) || "",
+            notificationId: payload.notificationId || (payload.notification && payload.notification.notificationId) || "",
+            limit: inboxExactFilters().limit,
+          };
+          setInboxExactFilters(exactFilters.messageId, exactFilters.notificationId);
+          return refreshInbox(refreshedLane, exactFilters).then(function (inboxPayload) {
             var actualLane = inboxAgentFromPayload(inboxPayload, refreshedLane);
             renderMessageDelivery(payload, actualLane);
             return refreshLaneOverview().then(function () {

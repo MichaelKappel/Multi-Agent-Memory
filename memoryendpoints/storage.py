@@ -1280,10 +1280,15 @@ class FileStore(object):
         self._save(data)
         return message, notes
 
-    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None):
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
         data = self._load()
         message_id = str(message_id or "").strip()
         notification_id = str(notification_id or "").strip()
+        try:
+            limit_value = int(limit or 0)
+        except (TypeError, ValueError):
+            limit_value = 0
+        limit_value = max(0, min(limit_value, 200))
         messages = []
         for note in reversed(data["notifications"]):
             if note.get("workspaceId") != workspace_id or note.get("status") != "unread":
@@ -1301,6 +1306,8 @@ class FileStore(object):
                     break
             if message:
                 messages.append({"notification": note, "message": message})
+                if limit_value and len(messages) >= limit_value:
+                    break
         return messages
 
     def receipts(self, workspace_id, consumer_agent_id=None):
@@ -3543,10 +3550,15 @@ class SQLiteStore(FileStore):
                     )
                     return message, notes
 
-    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None):
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
         agent_id = (agent_id or "").strip()
         clauses = ["n.workspace_id = ?", "n.status = 'unread'"]
         params = [workspace_id]
+        try:
+            limit_value = int(limit or 0)
+        except (TypeError, ValueError):
+            limit_value = 0
+        limit_value = max(0, min(limit_value, 200))
         if agent_id:
             clauses.append("(n.target_agent_id = ? OR n.target_agent_id IS NULL OR n.target_agent_id = '')")
             params.append(agent_id)
@@ -3560,6 +3572,10 @@ class SQLiteStore(FileStore):
         if notification_id:
             clauses.append("n.notification_id = ?")
             params.append(notification_id)
+        limit_sql = ""
+        if limit_value:
+            limit_sql = " LIMIT ?"
+            params.append(limit_value)
         with _LOCK:
             with self._open_connection() as connection:
                 rows = list(
@@ -3576,7 +3592,8 @@ class SQLiteStore(FileStore):
                         JOIN matm_messages m ON m.message_id = n.message_id
                         WHERE %s
                         ORDER BY n.created_at DESC, n.notification_id DESC
-                        """ % " AND ".join(clauses),
+                        %s
+                        """ % (" AND ".join(clauses), limit_sql),
                         tuple(params),
                     )
                 )

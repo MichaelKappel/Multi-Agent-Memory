@@ -336,6 +336,7 @@ Query:
 - `agent_id`
 - `message_id` optional exact readback filter for a specific current-message write.
 - `notification_id` optional exact readback filter for a specific recipient notification.
+- `limit` optional, capped at 200 unread records.
 
 ### GET `/api/matm/agent-inbox`
 
@@ -347,6 +348,7 @@ Query:
 - `agent_id`
 - `message_id` optional exact readback filter.
 - `notification_id` optional exact recipient notification filter.
+- `limit` optional, capped at 200 unread records.
 
 ### POST `/api/matm/notifications/ack`
 

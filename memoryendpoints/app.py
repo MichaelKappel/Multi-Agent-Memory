@@ -1696,6 +1696,20 @@ Remaining blocker</textarea>
       <label>Inbox agent
         <input name="agentId" value="human-verifier-agent" required>
       </label>
+      <label>Message id
+        <input name="messageId" placeholder="optional exact message id">
+      </label>
+      <label>Notification id
+        <input name="notificationId" placeholder="optional exact notification id">
+      </label>
+      <label>Result limit
+        <select name="limit">
+          <option value="25" selected>25 messages</option>
+          <option value="50">50 messages</option>
+          <option value="100">100 messages</option>
+          <option value="200">200 messages</option>
+        </select>
+      </label>
       <button class="button" type="submit">Refresh inbox</button>
       <button class="button" type="button" data-console-ack>Mark first unread read</button>
       <button class="button" type="button" data-console-ack-visible>Mark visible read</button>
@@ -1730,6 +1744,7 @@ Remaining blocker</textarea>
         <select name="consumerAgentId">
           <option value="">current inbox agent</option>
           <option value="human-verifier-agent">human-verifier-agent</option>
+          <option value="codex-agent">codex-agent</option>
           <option value="MemoryEndpoints-Backend-Agent">MemoryEndpoints-Backend-Agent</option>
           <option value="swarm-observer-agent">swarm-observer-agent</option>
         </select>
@@ -2881,7 +2896,12 @@ def route_protected(environ, start_response, path):
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
         message_filter = query.get("message_id") or query.get("messageId") or ""
         notification_filter = query.get("notification_id") or query.get("notificationId") or ""
-        raw_items = store.inbox(workspace_id, agent_filter, message_filter, notification_filter)
+        requested_limit = query.get("limit") or ""
+        try:
+            limit_value = max(1, min(int(requested_limit), 200)) if requested_limit else 0
+        except (TypeError, ValueError):
+            limit_value = 0
+        raw_items = store.inbox(workspace_id, agent_filter, message_filter, notification_filter, limit_value)
         items = []
         delivery_counts = {"broadcast": 0, "targeted": 0}
         for item in raw_items:
@@ -2897,6 +2917,8 @@ def route_protected(environ, start_response, path):
             filters["messageId"] = message_filter
         if notification_filter:
             filters["notificationId"] = notification_filter
+        if limit_value:
+            filters["limit"] = str(limit_value)
         operator_summary = _inbox_operator_summary(items, filters, delivery_counts, path == "/api/matm/current-message")
         _audit_read(
             store,
