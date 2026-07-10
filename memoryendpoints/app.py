@@ -399,21 +399,42 @@ def _meeting_rooms_operator_summary(rooms, filters):
             "state current work or requested assignment",
             "wait for coordinator routing to workspace, project, goal, or task room",
         ],
-        "routingOrder": ["company", "workspace", "project", "goal_or_task"],
-        "customGoalTaskRoomsPlanned": True,
+        "routingOrder": ["company", "workspace", "project", "goal", "task"],
+        "customGoalTaskRoomsSupported": True,
+        "roomCreationRoute": "/api/matm/meeting-rooms",
         "valuesRedacted": True,
     }
     return {
         "schemaVersion": "memoryendpoints.meeting_rooms_operator_summary.v1",
         "count": len(rooms),
         "filters": dict(filters or {}),
-        "scopeCounts": _count_by(rooms, "scope", {"company": 0, "workspace": 0, "project": 0}),
+        "scopeCounts": _count_by(rooms, "scope", {"company": 0, "workspace": 0, "project": 0, "goal": 0, "task": 0}),
         "alwaysAvailableCount": sum(1 for room in rooms if room.get("alwaysAvailable")),
         "defaultRoomCount": sum(1 for room in rooms if room.get("defaultRoom")),
         "messageCount": sum(int(room.get("messageCount") or 0) for room in rooms),
         "unreadCount": sum(int(room.get("unreadCount") or 0) for room in rooms),
         "readStateCount": sum(1 for room in rooms if room.get("readState")),
         "roomFlow": room_flow,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _meeting_room_create_operator_summary(room, created, creator_agent_id):
+    room = room or {}
+    return {
+        "schemaVersion": "memoryendpoints.meeting_room_create_operator_summary.v1",
+        "roomId": room.get("roomId") or "",
+        "scope": room.get("scope") or "",
+        "scopeId": room.get("scopeId") or "",
+        "creatorAgentId": creator_agent_id or "",
+        "created": bool(created),
+        "reusedExistingRoom": not bool(created),
+        "alwaysAvailable": bool(room.get("alwaysAvailable")),
+        "defaultRoom": bool(room.get("defaultRoom")),
+        "roomCreationRoute": "/api/matm/meeting-rooms",
+        "transcriptRoute": "/api/matm/meeting-messages",
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
@@ -590,10 +611,10 @@ def _workspace_operator_summary(workspace):
         },
         "meetingRooms": {
             "count": len(meeting_rooms),
-            "scopeCounts": _count_by(meeting_rooms, "scope", {"company": 0, "workspace": 0, "project": 0}),
+            "scopeCounts": _count_by(meeting_rooms, "scope", {"company": 0, "workspace": 0, "project": 0, "goal": 0, "task": 0}),
             "alwaysAvailableCount": sum(1 for room in meeting_rooms if room.get("alwaysAvailable")),
             "entryRoomScope": "company",
-            "routingOrder": ["company", "workspace", "project", "goal_or_task"],
+            "routingOrder": ["company", "workspace", "project", "goal", "task"],
         },
         "copySafeIds": True,
         "valuesRedacted": True,
@@ -747,11 +768,21 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agen
 $rooms = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms?agent_id=$env:MEMORYENDPOINTS_AGENT_ID" -Headers $headers
 $projectRoom = $rooms.items | Where-Object { $_.scope -eq "project" } | Select-Object -First 1
 
+$goalRoomBody = @{
+  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
+  creatorAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  scope = "goal"
+  scopeId = "goal-example-connector"
+  name = "Example connector goal meeting"
+  purpose = "Public-safe coordination room for one bounded connector goal."
+} | ConvertTo-Json
+$goalRoom = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms" -Headers $headers -ContentType "application/json" -Body $goalRoomBody
+
 $meetingBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
-  roomId = $projectRoom.roomId
+  roomId = $goalRoom.room.roomId
   senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
-  safeSummary = "Public-safe project-room status: agent registered, listed rooms, and is ready for connector work."
+  safeSummary = "Public-safe goal-room status: agent registered, listed rooms, created a goal room, and is ready for connector work."
 } | ConvertTo-Json
 $post = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages" -Headers $headers -ContentType "application/json" -Body $meetingBody
 Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($post.transcriptQueryUrl)" -Headers $headers</code></pre>
@@ -792,7 +823,7 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
   <ul>
     <li>Post a project-room status note with routes exercised, tests run, and remaining blocker.</li>
     <li>Prove read-after-write with returned <code>transcriptQueryUrl</code> and <code>inboxQueryUrl</code>.</li>
-    <li>Show <code>persisted=true</code> and either <code>visibleToSender=true</code> or <code>visibleToTarget=true</code> after POST.</li>
+    <li>Show <code>persisted=true</code> and <code>visibleToAgent=true</code>, <code>visibleToSender=true</code>, or <code>visibleToTarget=true</code> after POST.</li>
     <li>Confirm no workspace key, raw private payload, hidden prompt, model weight, private log, or proprietary internals were stored or printed.</li>
   </ul>
   <h2>Public Discovery</h2>
@@ -1025,14 +1056,38 @@ def route_console(start_response):
         <span class="section-kicker">Coordination</span>
         <h2>Meetings</h2>
       </div>
-      <span class="status-badge neutral">company / workspace / project rooms</span>
+      <span class="status-badge neutral">company / workspace / project / goal / task rooms</span>
     </div>
     <div class="actions lane-actions">
       <button class="button" type="button" data-console-refresh-meeting-rooms>Refresh rooms</button>
       <button class="button" type="button" data-console-mark-meeting-read>Mark room read</button>
     </div>
+    <form class="console-grid" data-console-create-meeting-room>
+      <label>Room scope
+        <select name="scope">
+          <option value="goal">goal</option>
+          <option value="task">task</option>
+        </select>
+      </label>
+      <label>Scope id
+        <input name="scopeId" value="goal-human-verification" required>
+      </label>
+      <label>Creator agent
+        <input name="creatorAgentId" value="human-verifier-agent" required>
+      </label>
+      <label>Name
+        <input name="name" value="Human verification goal meeting">
+      </label>
+      <label class="wide">Purpose
+        <textarea name="purpose" rows="2">Public-safe goal or task coordination room for focused agent work, blockers, evidence, and handoff.</textarea>
+      </label>
+      <button class="button primary" type="submit">Create room</button>
+    </form>
+    <div class="console-results meeting-room-create-summary" data-console-meeting-room-create-summary>
+      <p class="empty-state">Goal and task room creation confirmations will appear here.</p>
+    </div>
     <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
-      <p class="empty-state">Company, workspace, and project meeting rooms will appear after the workspace loads.</p>
+      <p class="empty-state">Company, workspace, project, goal, and task meeting rooms will appear after the workspace loads.</p>
     </div>
     <form class="console-grid" data-console-meeting-message>
       <label>Room id
@@ -1714,6 +1769,74 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             },
         )
+    if path == "/api/matm/meeting-rooms" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-create", body)
+        if replay:
+            return replay
+        scope = str(body.get("scope") or "").strip().lower()
+        scope_id = str(body.get("scopeId") or body.get("scope_id") or "").strip()
+        creator_agent_id = str(body.get("creatorAgentId") or body.get("creator_agent_id") or body.get("agentId") or body.get("agent_id") or "").strip()
+        label = str(body.get("label") or "").strip()
+        name = str(body.get("name") or "").strip()
+        purpose = str(body.get("purpose") or "").strip()
+        if scope not in ("goal", "task"):
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported meeting room scope", "Create custom meeting rooms only for goal or task scope; company, workspace, and project rooms are hierarchy-derived.", "unsupported_meeting_room_scope")
+        if not scope_id:
+            return problem(start_response, "422 Unprocessable Entity", "Scope id required", "Goal and task meeting rooms require scopeId.", "scope_id_required")
+        if not creator_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Creator agent id required", "Meeting room creation requires creatorAgentId or agentId.", "creator_agent_id_required")
+        if len(scope_id) > 160:
+            return problem(start_response, "422 Unprocessable Entity", "Scope id too long", "Meeting room scopeId must be at most 160 characters.", "scope_id_too_long")
+        if len(label) > 120 or len(name) > 160:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting room name too long", "Meeting room label must be at most 120 characters and name must be at most 160 characters.", "meeting_room_name_too_long")
+        if len(purpose) > 1000:
+            return problem(start_response, "422 Unprocessable Entity", "Meeting room purpose too long", "Meeting room purpose must be at most 1000 characters.", "meeting_room_purpose_too_long")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this meeting room.", "quota_exceeded")
+        room, created = store.create_meeting_room(
+            workspace_id,
+            scope,
+            scope_id,
+            label=label,
+            name=name,
+            purpose=purpose,
+            creator_agent_id=creator_agent_id,
+        )
+        rooms = store.meeting_rooms(workspace_id, creator_agent_id)
+        visible = any(item.get("roomId") == room.get("roomId") for item in rooms)
+        if not visible:
+            return problem(start_response, "500 Internal Server Error", "Meeting room was not persisted", "The meeting room could not be confirmed in the room list after write.", "meeting_room_not_persisted")
+        confirmation = {
+            "persisted": visible,
+            "visibleToAgent": visible,
+            "canonicalRoomId": room.get("roomId"),
+            "roomQueryUrl": _protected_query_url(
+                "/api/matm/meeting-rooms",
+                {"agent_id": creator_agent_id},
+            ),
+            "transcriptQueryUrl": _protected_query_url(
+                "/api/matm/meeting-messages",
+                {"room_id": room.get("roomId"), "agent_id": creator_agent_id},
+            ),
+            "valuesRedacted": True,
+        }
+        payload = {
+            "ok": True,
+            "room": room,
+            "created": bool(created),
+            "persisted": confirmation["persisted"],
+            "visibleToAgent": confirmation["visibleToAgent"],
+            "canonicalRoomId": confirmation["canonicalRoomId"],
+            "roomQueryUrl": confirmation["roomQueryUrl"],
+            "transcriptQueryUrl": confirmation["transcriptQueryUrl"],
+            "confirmation": confirmation,
+            "operatorSummary": _meeting_room_create_operator_summary(room, created, creator_agent_id),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "meeting-room-create", body, payload, "201 Created" if created else "200 OK")
+        return json_response(start_response, payload, "201 Created" if created else "200 OK")
     if path == "/api/matm/meeting-rooms" and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
         filters = {"agentId": agent_filter} if agent_filter else {}

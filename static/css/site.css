@@ -567,6 +567,7 @@ pre {
 
 .review-decision-summary,
 .memory-submit-summary,
+.meeting-room-create-summary,
 .meeting-post-summary {
   margin: 8px 0 14px;
 }
@@ -576,6 +577,7 @@ pre {
 }
 
 .message-delivery .delivery-row,
+.meeting-room-create-summary .result-row,
 .memory-submit-summary .submission-row {
   border-left: 4px solid var(--accent);
 }

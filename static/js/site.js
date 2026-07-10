@@ -933,7 +933,7 @@
     var summaryLine = el("div", "filter-summary meeting-rooms-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Meeting rooms"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project"]);
+    appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project", "goal", "task"]);
     appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn");
     appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -985,6 +985,47 @@
       row.appendChild(actions);
       node.appendChild(row);
     });
+  }
+
+  function renderMeetingRoomCreate(payload) {
+    var node = pick("[data-console-meeting-room-create-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var room = (payload && payload.room) || {};
+    var summary = (payload && payload.operatorSummary) || {};
+    if (!room.roomId) {
+      node.appendChild(el("p", "empty-state", "Goal and task room creation confirmations will appear here."));
+      return;
+    }
+    var summaryLine = el("div", "filter-summary meeting-room-create-operator-summary");
+    summaryLine.appendChild(el("span", "filter-summary-label", "Room creation"));
+    appendBadge(summaryLine, room.scope || "room", "neutral");
+    appendBadge(summaryLine, payload.created ? "created" : "reused", payload.created ? "good" : "neutral");
+    appendBadge(summaryLine, summary.alwaysAvailable ? "available" : "availability review", summary.alwaysAvailable ? "good" : "warn");
+    appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    var row = resultRow(
+      payload.created ? "Meeting room created" : "Meeting room ready",
+      room.purpose || "Goal or task coordination room is ready.",
+      [
+        { text: room.scope || "room", kind: "neutral" },
+        { text: room.defaultRoom ? "default" : "custom", kind: room.defaultRoom ? "neutral" : "good" },
+        { text: room.valuesRedacted ? "redacted" : "", kind: "good" },
+      ],
+      [
+        "room " + shortId(room.roomId),
+        "scope " + (room.scopeId || "not set"),
+        "creator " + (summary.creatorAgentId || state.agentId),
+        "route " + (summary.roomCreationRoute || "/api/matm/meeting-rooms"),
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy room id", copyLabel: "Meeting room id", value: room.roomId },
+      { label: "Copy scope id", copyLabel: "Scope id", value: room.scopeId },
+    ]);
+    node.appendChild(summaryLine);
+    node.appendChild(row);
   }
 
   function renderMeetingMessages(payload) {
@@ -1255,7 +1296,7 @@
     var summaryLine = el("div", "filter-summary audit-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Audit"));
     appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " events", items.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Actions", summary.actionCounts, ["memory.search", "message.submit", "current_message.read", "notification.ack", "receipts.read", "audit_log.read"]);
+    appendCountBadges(summaryLine, "Actions", summary.actionCounts, ["memory.search", "message.submit", "meeting_room.create", "current_message.read", "notification.ack", "receipts.read", "audit_log.read"]);
     appendBadge(summaryLine, summary.allCredentialsHidden === false ? "credential exposure review" : "credentials hidden", summary.allCredentialsHidden === false ? "warn" : "good");
     appendBadge(summaryLine, summary.allPayloadsHidden === false ? "payload exposure review" : "payloads hidden", summary.allPayloadsHidden === false ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -1817,6 +1858,46 @@
       refreshMeetingRooms()
         .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
         .then(function () { setStatus("Meeting rooms refreshed.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var createMeetingRoomForm = pick("[data-console-create-meeting-room]");
+  if (createMeetingRoomForm) {
+    createMeetingRoomForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!state.key || !state.workspaceId) {
+        setStatus("Load workspace before creating a meeting room.", true);
+        return;
+      }
+      var scope = createMeetingRoomForm.elements.scope.value;
+      var scopeId = createMeetingRoomForm.elements.scopeId.value.trim();
+      if (!scopeId) {
+        setStatus("Scope id is required for goal and task meeting rooms.", true);
+        return;
+      }
+      api("/api/matm/meeting-rooms", {
+        method: "POST",
+        headers: {"Idempotency-Key": "console-meeting-room-" + scope + "-" + scopeId + "-" + Date.now()},
+        body: {
+          workspaceId: state.workspaceId,
+          creatorAgentId: createMeetingRoomForm.elements.creatorAgentId.value.trim() || state.agentId,
+          scope: scope,
+          scopeId: scopeId,
+          name: createMeetingRoomForm.elements.name.value.trim(),
+          purpose: createMeetingRoomForm.elements.purpose.value.trim(),
+        },
+      })
+        .then(function (payload) {
+          renderMeetingRoomCreate(payload);
+          if (payload.room && payload.room.roomId) {
+            setMeetingRoom(payload.room.roomId);
+          }
+          return refreshMeetingRooms().then(function () {
+            return refreshMeetingMessages(state.selectedMeetingRoomId);
+          });
+        })
+        .then(function () { setStatus("Meeting room created and selected.", false); })
         .catch(function (error) { setStatus(error.message, true); });
     });
   }

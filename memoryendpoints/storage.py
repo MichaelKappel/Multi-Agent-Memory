@@ -448,7 +448,7 @@ class FileStore(object):
             )
             self._save(data)
         rooms = []
-        scope_order = {"company": 0, "workspace": 1, "project": 2}
+        scope_order = {"company": 0, "workspace": 1, "project": 2, "goal": 3, "task": 4}
         for room in data.get("meetingRooms", {}).values():
             if room.get("workspaceId") != workspace_id or room.get("status") != "active":
                 continue
@@ -463,6 +463,52 @@ class FileStore(object):
             rooms.append(item)
         rooms.sort(key=lambda item: (scope_order.get(item.get("scope"), 99), item.get("name") or "", item.get("roomId") or ""))
         return rooms
+
+    def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
+        data = self._load()
+        self._ensure_default_meeting_rooms(data, workspace_id)
+        data.setdefault("meetingRooms", {})
+        scope = (scope or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        room_id = self._meeting_room_id(workspace_id, scope, scope_id)
+        now = utc_now()
+        default_label = "%s coordination room" % scope.title()
+        default_name = "%s %s meeting" % (scope.title(), scope_id)
+        default_purpose = "%s-level coordination room for assigned agents, blockers, evidence, and handoff." % scope.title()
+        existing = data["meetingRooms"].get(room_id)
+        created = existing is None
+        room = existing or {
+            "roomId": room_id,
+            "workspaceId": workspace_id,
+            "scope": scope,
+            "scopeId": scope_id,
+            "createdAt": now,
+        }
+        room.update(
+            {
+                "label": redact_text(label or room.get("label") or default_label),
+                "name": redact_text(name or room.get("name") or default_name),
+                "purpose": redact_text(purpose or room.get("purpose") or default_purpose),
+                "status": "active",
+                "defaultRoom": False,
+                "alwaysAvailable": True,
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+                "updatedAt": now,
+            }
+        )
+        data["meetingRooms"][room_id] = room
+        self._append_storage_ledger(data, workspace_id, "meeting_room", room_id, room)
+        self.audit(
+            data,
+            "meeting_room.create" if created else "meeting_room.update",
+            creator_agent_id or "system",
+            room_id,
+            workspace_id,
+            {"roomScope": scope, "scopeId": scope_id, "created": created},
+        )
+        self._save(data)
+        return dict(room), created
 
     def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
         data = self._load()
@@ -1708,7 +1754,7 @@ class SQLiteStore(FileStore):
                         SELECT * FROM matm_meeting_rooms
                         WHERE workspace_id = ? AND status = 'active'
                         ORDER BY
-                          CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 ELSE 99 END,
+                          CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 WHEN 'goal' THEN 3 WHEN 'task' THEN 4 ELSE 99 END,
                           name, room_id
                         """,
                         (workspace_id,),
@@ -1755,6 +1801,100 @@ class SQLiteStore(FileStore):
                         room["unreadCount"] = unread
                     rooms.append(room)
                 return rooms
+
+    def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
+        scope = (scope or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        room_id = self._meeting_room_id(workspace_id, scope, scope_id)
+        now = utc_now()
+        default_label = "%s coordination room" % scope.title()
+        default_name = "%s %s meeting" % (scope.title(), scope_id)
+        default_purpose = "%s-level coordination room for assigned agents, blockers, evidence, and handoff." % scope.title()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    existing = connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_rooms
+                        WHERE workspace_id = ? AND room_id = ?
+                        """,
+                        (workspace_id, room_id),
+                    ).fetchone()
+                    created = existing is None
+                    existing_room = self._room_from_row(existing) if existing else {}
+                    room = {
+                        "roomId": room_id,
+                        "workspaceId": workspace_id,
+                        "scope": scope,
+                        "scopeId": scope_id,
+                        "label": redact_text(label or existing_room.get("label") or default_label),
+                        "name": redact_text(name or existing_room.get("name") or default_name),
+                        "purpose": redact_text(purpose or existing_room.get("purpose") or default_purpose),
+                        "status": "active",
+                        "defaultRoom": False,
+                        "alwaysAvailable": True,
+                        "createdAt": existing_room.get("createdAt") or now,
+                        "updatedAt": now,
+                        "valuesRedacted": True,
+                        "rawPayloadExposed": False,
+                    }
+                    if created:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_meeting_rooms (
+                              room_id, workspace_id, scope_type, scope_id, label, name, purpose, status,
+                              default_room, always_available, values_redacted, raw_payload_exposed, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                room_id,
+                                workspace_id,
+                                scope,
+                                scope_id,
+                                room["label"],
+                                room["name"],
+                                room["purpose"],
+                                room["status"],
+                                self._int_bool(False),
+                                self._int_bool(True),
+                                self._int_bool(True),
+                                self._int_bool(False),
+                                room["createdAt"],
+                                room["updatedAt"],
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE matm_meeting_rooms
+                            SET label = ?, name = ?, purpose = ?, status = ?, default_room = ?,
+                                always_available = ?, values_redacted = ?, raw_payload_exposed = ?, updated_at = ?
+                            WHERE workspace_id = ? AND room_id = ?
+                            """,
+                            (
+                                room["label"],
+                                room["name"],
+                                room["purpose"],
+                                room["status"],
+                                self._int_bool(False),
+                                self._int_bool(True),
+                                self._int_bool(True),
+                                self._int_bool(False),
+                                room["updatedAt"],
+                                workspace_id,
+                                room_id,
+                            ),
+                        )
+                    self._insert_storage_ledger_sql(connection, workspace_id, "meeting_room", room_id, room)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "meeting_room.create" if created else "meeting_room.update",
+                        creator_agent_id or "system",
+                        room_id,
+                        {"roomScope": scope, "scopeId": scope_id, "created": created},
+                    )
+                    return room, created
 
     def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
         try:
