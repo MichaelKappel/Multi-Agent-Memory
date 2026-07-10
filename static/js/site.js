@@ -17,6 +17,7 @@
     workspaceId: "",
     companyId: "",
     projectId: "",
+    workspace: null,
     agentId: "human-verifier-agent",
     firstNotificationId: "",
     visibleNotificationIds: [],
@@ -180,6 +181,70 @@
       card.appendChild(badgeLine);
     }
     return card;
+  }
+
+  function sessionItem(title, value, meta, badges) {
+    var item = el("article", "session-item");
+    item.appendChild(el("span", "summary-label", title));
+    item.appendChild(el("strong", "", value || "Not available"));
+    if (meta) {
+      item.appendChild(el("span", "summary-meta", meta));
+    }
+    var badgeLine = el("div", "badge-line");
+    (badges || []).forEach(function (badge) {
+      appendBadge(badgeLine, badge.text, badge.kind);
+    });
+    if (badgeLine.childNodes.length) {
+      item.appendChild(badgeLine);
+    }
+    return item;
+  }
+
+  function renderSessionSummary(workspace) {
+    var node = pick("[data-console-session-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    if (!workspace || !workspace.workspaceId) {
+      node.appendChild(el("p", "empty-state", "Session status will appear after the workspace loads."));
+      return;
+    }
+    var hostname = window.location.hostname || "";
+    var isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    var account = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
+    var company = workspace.company || {};
+    var project = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
+    var hierarchyReady = Boolean(
+      (account.accountId || workspace.accountId) &&
+      (company.companyId || workspace.companyId) &&
+      workspace.workspaceId &&
+      (project.projectId || workspace.primaryProjectId)
+    );
+    node.appendChild(sessionItem("Surface", isLocal ? "local site" : "live site", window.location.origin || hostname, [
+      { text: isLocal ? "local" : "production", kind: isLocal ? "neutral" : "good" },
+    ]));
+    node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
+      { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
+    ]));
+    node.appendChild(sessionItem("Key", workspace.rawKeyStoredByServer ? "review key handling" : "not echoed", "browser session only", [
+      { text: workspace.rawKeyStoredByServer ? "review" : "private", kind: workspace.rawKeyStoredByServer ? "warn" : "good" },
+    ]));
+    node.appendChild(sessionItem("Agent", state.agentId, "current inbox lane", [
+      { text: "active", kind: "good" },
+    ]));
+    var actions = el("nav", "session-actions");
+    actions.setAttribute("aria-label", "Loaded workspace shortcuts");
+    [
+      { href: "#memory-workflow", label: "Memory" },
+      { href: "#message-lanes", label: "Messages" },
+      { href: "#receipts-audit", label: "Receipts" },
+    ].forEach(function (item) {
+      var link = el("a", "button compact", item.label);
+      link.href = item.href;
+      actions.appendChild(link);
+    });
+    node.appendChild(actions);
   }
 
   function boundaryStep(label, value, status, copyLabel) {
@@ -741,7 +806,9 @@
       state.workspaceId = workspace.workspaceId || state.workspaceId;
       state.companyId = workspace.companyId || state.companyId;
       state.projectId = workspace.primaryProjectId || state.projectId;
+      state.workspace = workspace;
       render("[data-console-workspace]", workspace);
+      renderSessionSummary(workspace);
       renderWorkspaceSummary(workspace);
       setStatus("Workspace loaded. Key remains session-local.", false);
       return workspace;
@@ -840,6 +907,7 @@
     if (form && form.elements.agentId) {
       form.elements.agentId.value = agentId;
     }
+    renderSessionSummary(state.workspace);
   }
 
   function openInboxLane(agentId, label) {

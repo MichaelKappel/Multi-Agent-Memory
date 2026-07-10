@@ -242,6 +242,9 @@ def route_console(start_response):
     <button class="button primary" type="submit">Load workspace</button>
   </form>
   <div class="console-status" data-console-status>Waiting for a key.</div>
+  <div class="operator-session" data-console-session-summary>
+    <p class="empty-state">Session status will appear after the workspace loads.</p>
+  </div>
   <section class="console-panel" id="workspace-overview">
     <h2>Workspace Overview</h2>
     <div class="operator-summary" data-console-workspace-summary>

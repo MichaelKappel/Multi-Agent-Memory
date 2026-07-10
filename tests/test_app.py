@@ -118,6 +118,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Console workflow", text)
         self.assertIn('class="console-nav"', text)
         self.assertIn('href="#workspace-overview"', text)
+        self.assertIn("data-console-session-summary", text)
         self.assertIn('id="memory-workflow"', text)
         self.assertIn('id="message-lanes"', text)
         self.assertIn("data-console-workspace-summary", text)
@@ -169,9 +170,23 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".lane-overview", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
+        self.assertIn(".operator-session", css)
+        self.assertIn(".session-item", css)
+        self.assertIn(".session-actions", css)
         self.assertIn("position: sticky", css)
         self.assertIn(".boundary-chain", css)
         self.assertIn(".boundary-steps", css)
+
+    def test_console_js_renders_session_status_strip(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderSessionSummary", js)
+        self.assertIn("data-console-session-summary", js)
+        self.assertIn("window.location.hostname", js)
+        self.assertIn("live site", js)
+        self.assertIn("4 levels loaded", js)
+        self.assertIn("not echoed", js)
+        self.assertIn("Loaded workspace shortcuts", js)
 
     def test_console_js_tracks_visible_notifications_for_bulk_ack(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")

@@ -277,6 +277,43 @@ pre {
   margin: 16px 0;
 }
 
+.operator-session {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 10px;
+  margin: 12px 0 18px;
+}
+
+.operator-session > .empty-state {
+  grid-column: 1 / -1;
+}
+
+.session-item {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.session-item strong {
+  font-size: 0.98rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.session-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .boundary-chain {
   grid-column: 1 / -1;
   border: 1px solid var(--line);
@@ -538,6 +575,7 @@ footer {
   .grid,
   .console-grid,
   .operator-summary,
+  .operator-session,
   .boundary-steps {
     grid-template-columns: 1fr;
   }
@@ -590,6 +628,16 @@ footer {
 
   nav a[href*="multiagentmemory"] {
     grid-column: 1 / -1;
+  }
+
+  .session-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .session-actions a {
+    justify-content: center;
   }
 
   .result-row-top {
