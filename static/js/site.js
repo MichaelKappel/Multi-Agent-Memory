@@ -610,6 +610,40 @@
     });
   }
 
+  function renderReviewDecisionSummary(payload) {
+    var node = pick("[data-console-review-decision-summary]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var review = (payload && payload.review) || {};
+    if (!review.reviewId) {
+      node.appendChild(el("p", "empty-state", "Review decisions will appear as operator confirmation rows."));
+      return;
+    }
+    var status = review.status || "recorded";
+    var row = resultRow(
+      "Review decision " + status,
+      "Decision recorded without exposing the raw review note.",
+      [
+        { text: status, kind: status === "promoted" ? "good" : (status === "quarantined" ? "warn" : "neutral") },
+        { text: review.valuesRedacted ? "redacted" : "", kind: "good" },
+        { text: review.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: review.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "review " + shortId(review.reviewId),
+        "memory " + shortId(review.memoryEventId),
+        "reviewer " + (review.reviewerAgentId || "unknown"),
+        review.decidedAt || review.updatedAt || "",
+      ]
+    );
+    appendCopyActions(row, [
+      { label: "Copy review id", copyLabel: "Review id", value: review.reviewId },
+      { label: "Copy memory id", copyLabel: "Memory id", value: review.memoryEventId },
+    ]);
+    node.appendChild(row);
+  }
+
   function authHeaders(extra) {
     var headers = {
       "Accept": "application/json",
@@ -965,6 +999,7 @@
       })
         .then(function (payload) {
           render("[data-console-review-decision-output]", payload);
+          renderReviewDecisionSummary(payload);
           return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending");
         })
         .then(function () { return refreshMemory(searchForm ? searchForm.elements.query.value : ""); })

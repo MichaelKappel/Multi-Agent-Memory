@@ -130,6 +130,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-clear-search-filters", text)
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
+        self.assertIn("data-console-review-decision-summary", text)
         self.assertIn("data-console-inbox-list", text)
         self.assertIn("data-console-message-targets", text)
         self.assertIn("data-console-message-delivery", text)
@@ -160,6 +161,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".row-meta span", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
+        self.assertIn(".review-decision-summary", css)
         self.assertIn(".lane-overview", css)
         self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
@@ -208,6 +210,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Copy account id", js)
         self.assertIn("Copy company id", js)
         self.assertIn("Copy project id", js)
+
+    def test_console_js_renders_review_decision_feedback(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderReviewDecisionSummary", js)
+        self.assertIn("data-console-review-decision-summary", js)
+        self.assertIn("Review decision ", js)
+        self.assertIn("Decision recorded without exposing the raw review note.", js)
+        self.assertIn("payload hidden", js)
 
     def test_console_js_renders_all_agent_lane_overview(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")

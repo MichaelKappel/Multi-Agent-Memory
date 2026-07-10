@@ -367,6 +367,9 @@ def route_console(start_response):
       </label>
       <button class="button primary" type="submit">Submit decision</button>
     </form>
+    <div class="console-results review-decision-summary" data-console-review-decision-summary>
+      <p class="empty-state">Review decisions will appear as operator confirmation rows.</p>
+    </div>
     <details class="debug-json">
       <summary>Review JSON</summary>
       <pre data-console-review-output>{}</pre>
