@@ -2,7 +2,7 @@
   "auditLogCount": 10,
   "auditTrailReadbackVerified": true,
   "currentMessageUnreadCount": 1,
-  "generatedAt": "2026-07-09T21:07:22Z",
+  "generatedAt": "2026-07-10T00:35:22Z",
   "latestDogfoodContractVerified": true,
   "liveAuditTrailReadbackVerified": true,
   "liveCoreDogfoodVerified": true,
@@ -25,7 +25,7 @@
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T21:07:19Z",
+      "generatedAt": "2026-07-10T00:35:14Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": false,
       "liveDogfoodVerified": false,
@@ -47,11 +47,15 @@
           "name": "create_free_workspace",
           "ok": true,
           "payloadShape": [
+            "accountId",
             "apiKeySecret",
             "checkoutRequired",
+            "companyId",
+            "hierarchy",
             "idempotencySupported",
             "keyId",
             "ok",
+            "projectId",
             "rawKeyStoredByServer",
             "showKeyOnce",
             "storageLimitBytes",
@@ -86,9 +90,10 @@
           "ok": true,
           "payloadShape": [
             "count",
-            "docsMemory",
-            "docsMemoryCount",
+            "filesystemDocsIncluded",
+            "filters",
             "items",
+            "memorySource",
             "ok"
           ],
           "required": true
@@ -183,14 +188,14 @@
       ],
       "target": "local_wsgi_application",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:60d5a406e8d8aad2cb1ad744b1e8aae69c3054dfcaab5a19910ba79972d4ed6a"
+      "workspaceIdHash": "sha256:e1c5c45035684468dec0cb7c0dcb2ac47335685382092f8b53472f17a05bef2b"
     },
     {
       "auditLogCount": 10,
       "auditTrailReadbackVerified": true,
       "coreDogfoodWorkflowVerified": true,
       "currentMessageUnreadCount": 1,
-      "generatedAt": "2026-07-09T21:07:20Z",
+      "generatedAt": "2026-07-10T00:35:14Z",
       "latestDogfoodContractVerified": true,
       "liveCoreDogfoodVerified": true,
       "liveDogfoodVerified": true,
@@ -212,11 +217,15 @@
           "name": "create_free_workspace",
           "ok": true,
           "payloadShape": [
+            "accountId",
             "apiKeySecret",
             "checkoutRequired",
+            "companyId",
+            "hierarchy",
             "idempotencySupported",
             "keyId",
             "ok",
+            "projectId",
             "rawKeyStoredByServer",
             "showKeyOnce",
             "storageLimitBytes",
@@ -251,9 +260,10 @@
           "ok": true,
           "payloadShape": [
             "count",
-            "docsMemory",
-            "docsMemoryCount",
+            "filesystemDocsIncluded",
+            "filters",
             "items",
+            "memorySource",
             "ok"
           ],
           "required": true
@@ -348,7 +358,7 @@
       ],
       "target": "https://memoryendpoints.com",
       "valuesRedacted": true,
-      "workspaceIdHash": "sha256:4c8cc7b9119fa2ad59b8c27588e6946c426ba99b6c8aaf4700717960fa8bdaa2"
+      "workspaceIdHash": "sha256:d7d9dbad3f3ccc4b4ed96252bf55dbfb6bcf770bb7c8b2f10a3a9d09657c6dff"
     }
   ],
   "schemaVersion": "memoryendpoints.dogfood_run.v3",
@@ -359,11 +369,15 @@
       "name": "create_free_workspace",
       "ok": true,
       "payloadShape": [
+        "accountId",
         "apiKeySecret",
         "checkoutRequired",
+        "companyId",
+        "hierarchy",
         "idempotencySupported",
         "keyId",
         "ok",
+        "projectId",
         "rawKeyStoredByServer",
         "showKeyOnce",
         "storageLimitBytes",
@@ -398,9 +412,10 @@
       "ok": true,
       "payloadShape": [
         "count",
-        "docsMemory",
-        "docsMemoryCount",
+        "filesystemDocsIncluded",
+        "filters",
         "items",
+        "memorySource",
         "ok"
       ],
       "required": true
@@ -493,7 +508,6 @@
       "required": true
     }
   ],
-  "uaiProgressUpdated": true,
   "valuesRedacted": true,
-  "workspaceIdHash": "sha256:4c8cc7b9119fa2ad59b8c27588e6946c426ba99b6c8aaf4700717960fa8bdaa2"
+  "workspaceIdHash": "sha256:d7d9dbad3f3ccc4b4ed96252bf55dbfb6bcf770bb7c8b2f10a3a9d09657c6dff"
 }

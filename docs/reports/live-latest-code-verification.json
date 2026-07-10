@@ -1,9 +1,9 @@
 {
-  "expectedSourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+  "expectedSourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
   "expectedSourceShaSource": "git_head",
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+  "gitHeadAtVerification": "cfb5edd699f0854f9d231d936463704eb01e8a93",
   "items": [
     {
       "leakHitCount": 0,
@@ -62,15 +62,15 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+      "expectedSourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+      "sourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
       "sourceShaMatchesExpected": true,
-      "sourceShaShort": "9d1b91a0c500",
+      "sourceShaShort": "cfb5edd699f0",
       "status": 200
     },
     {
@@ -187,7 +187,7 @@
     }
   ],
   "mode": "http",
-  "observedSourceSha": "9d1b91a0c500dbcffdd72094cfd974ffe2bdedb2",
+  "observedSourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
   "ok": true,
   "reportScope": "point_in_time_snapshot",
   "routeCount": 22,

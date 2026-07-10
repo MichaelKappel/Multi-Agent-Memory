@@ -1,51 +1,43 @@
-﻿{
-    "schemaVersion":  "memoryendpoints.live_console_ui_smoke.v3",
-    "baseUrl":  "https://memoryendpoints.com/console",
-    "sourceSha":  "e8274124bbd17fc8234fdbfb788745e1813cfd4e",
-    "transport":  "http_html_static_assets_and_protected_api",
-    "htmlStatus":  200,
-    "assetStatus":  {
-                        "siteJs":  200,
-                        "siteCss":  200
-                    },
-    "htmlMarkers":  {
-                        "workspaceOverview":  true,
-                        "operatorSummary":  true,
-                        "consoleResults":  true,
-                        "memoryTypeFilter":  true,
-                        "reviewStatusFilter":  true,
-                        "tagFilter":  true,
-                        "reviewQueue":  true,
-                        "reviewList":  true,
-                        "reviewDecision":  true,
-                        "debugJson":  true
-                    },
-    "assetMarkers":  {
-                         "memorySearchFilters":  true,
-                         "memoryTypeQuery":  true,
-                         "reviewStatusQuery":  true,
-                         "tagQuery":  true,
-                         "renderReviewSummary":  true,
-                         "compactButtons":  true
-                     },
-    "protectedReadbacks":  {
-                               "promotedLongTermOk":  true,
-                               "promotedLongTermCount":  8,
-                               "promotedFilters":  {
-                                                       "reviewStatus":  "promoted",
-                                                       "tag":  "long-term-memory-migration"
-                                                   },
-                               "pendingLongTermOk":  true,
-                               "pendingLongTermCount":  0,
-                               "duplicateDocsSeedOk":  true,
-                               "duplicateDocsSeedCount":  0,
-                               "memorySource":  "hosted_workspace_store",
-                               "filesystemDocsIncluded":  false,
-                               "reviewQueueOk":  true,
-                               "pendingReviewCount":  4,
-                               "reviewQueueValuesRedacted":  true
-                           },
-    "ok":  true,
-    "valuesRedacted":  true,
-    "rawCredentialsStored":  false
+{
+  "assetMarkers": {
+    "memorySearchFilters": true,
+    "memoryTypeQuery": true,
+    "reviewStatusQuery": true,
+    "rowActions": true,
+    "tagQuery": true
+  },
+  "assetStatus": {
+    "siteCss": 200,
+    "siteJs": 200
+  },
+  "baseUrl": "https://memoryendpoints.com/console",
+  "htmlMarkers": {
+    "consoleResults": true,
+    "debugJson": true,
+    "memoryTypeFilter": true,
+    "operatorSummary": true,
+    "reviewQueue": true,
+    "reviewStatusFilter": true,
+    "tagFilter": true,
+    "workspaceOverview": true
+  },
+  "htmlStatus": 200,
+  "ok": true,
+  "protectedReadbacks": {
+    "filesystemDocsIncluded": false,
+    "filteredHostedMemorySearchCount": 8,
+    "filteredHostedMemorySearchOk": true,
+    "filters": {
+      "reviewStatus": "promoted",
+      "tag": "long-term-memory-migration"
+    },
+    "matchedPromotedCount": 8,
+    "memorySource": "hosted_workspace_store",
+    "valuesRedacted": true
+  },
+  "rawCredentialsStored": false,
+  "schemaVersion": "memoryendpoints.live_console_ui_smoke.v3",
+  "sourceSha": "cfb5edd699f0854f9d231d936463704eb01e8a93",
+  "transport": "http_html_static_assets_and_protected_api",
+  "valuesRedacted": true
 }
