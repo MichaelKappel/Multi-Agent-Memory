@@ -2048,6 +2048,119 @@ class SQLiteStore(FileStore):
             usage += self._sum_workspace_rows(connection, table, workspace_id)
         return usage
 
+    def workspace_status(self, workspace_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace:
+                        return None
+                    created_rooms = self._ensure_default_meeting_rooms_sql(connection, workspace_id)
+                    if created_rooms:
+                        self._record_audit_sql(
+                            connection,
+                            workspace_id,
+                            "meeting_rooms.ensure_defaults",
+                            "system",
+                            workspace_id,
+                            {"meetingRoomCount": len(created_rooms)},
+                        )
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    used = self._workspace_usage_bytes_sql(connection, workspace_id)
+                    limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
+                    company_id = workspace["company_id"]
+                    company = connection.execute(
+                        "SELECT * FROM matm_companies WHERE company_id = ?",
+                        (company_id,),
+                    ).fetchone()
+                    memberships = []
+                    account_items = []
+                    for membership in connection.execute(
+                        """
+                        SELECT * FROM matm_account_companies
+                        WHERE company_id = ?
+                        ORDER BY created_at, membership_id
+                        """,
+                        (company_id,),
+                    ):
+                        membership_item = {
+                            "membershipId": membership["membership_id"],
+                            "accountId": membership["account_id"],
+                            "companyId": membership["company_id"],
+                            "role": membership["role"],
+                            "status": membership["status"],
+                            "createdAt": membership["created_at"],
+                            "valuesRedacted": True,
+                        }
+                        if membership["updated_at"]:
+                            membership_item["updatedAt"] = membership["updated_at"]
+                        memberships.append(membership_item)
+                        account = connection.execute(
+                            "SELECT * FROM matm_accounts WHERE account_id = ?",
+                            (membership["account_id"],),
+                        ).fetchone()
+                        if account:
+                            account_item = {
+                                "accountId": account["account_id"],
+                                "label": account["label"],
+                                "status": account["status"],
+                                "createdAt": account["created_at"],
+                                "role": membership["role"],
+                                "valuesRedacted": True,
+                            }
+                            if account["updated_at"]:
+                                account_item["updatedAt"] = account["updated_at"]
+                            account_items.append(account_item)
+                    projects = []
+                    for project in connection.execute(
+                        """
+                        SELECT * FROM matm_projects
+                        WHERE workspace_id = ?
+                        ORDER BY created_at, project_id
+                        """,
+                        (workspace_id,),
+                    ):
+                        project_item = {
+                            "projectId": project["project_id"],
+                            "workspaceId": project["workspace_id"],
+                            "label": project["label"],
+                            "status": project["status"],
+                            "createdAt": project["created_at"],
+                            "valuesRedacted": True,
+                        }
+                        if project["updated_at"]:
+                            project_item["updatedAt"] = project["updated_at"]
+                        projects.append(project_item)
+                    return {
+                        "workspaceId": workspace_id,
+                        "label": workspace["label"],
+                        "accountId": account_items[0]["accountId"] if account_items else None,
+                        "companyId": company_id,
+                        "primaryProjectId": projects[0]["projectId"] if projects else None,
+                        "company": {
+                            "companyId": company["company_id"] if company else company_id,
+                            "label": (company["label"] if company else None) or "Free Agent Company",
+                            "status": (company["status"] if company else None) or "active",
+                        },
+                        "meetingRooms": self._meeting_rooms_sql(connection, workspace_id),
+                        "accounts": account_items,
+                        "accountCompanyMemberships": memberships,
+                        "projects": projects,
+                        "plan": workspace["plan"],
+                        "status": workspace["status"],
+                        "storageLimitBytes": limit,
+                        "storageUsedBytes": used,
+                        "storageRemainingBytes": max(0, limit - used),
+                        "quotaExceeded": used > limit,
+                        "rawKeyStoredByServer": False,
+                    }
+
     def workspace_usage_bytes(self, data, workspace_id=None):
         workspace_id = workspace_id or data
         with _LOCK:
@@ -2711,62 +2824,65 @@ class SQLiteStore(FileStore):
                     )
                     return review, None
 
+    def _meeting_rooms_sql(self, connection, workspace_id, agent_id=None):
+        rows = list(
+            connection.execute(
+                """
+                SELECT * FROM matm_meeting_rooms
+                WHERE workspace_id = ? AND status = 'active'
+                ORDER BY
+                  CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 WHEN 'goal' THEN 3 WHEN 'task' THEN 4 ELSE 99 END,
+                  name, room_id
+                """,
+                (workspace_id,),
+            )
+        )
+        rooms = []
+        for row in rows:
+            room = self._room_from_row(row)
+            message_rows = list(
+                connection.execute(
+                    """
+                    SELECT * FROM matm_meeting_messages
+                    WHERE workspace_id = ? AND room_id = ?
+                    ORDER BY created_at, meeting_message_id
+                    """,
+                    (workspace_id, room["roomId"]),
+                )
+            )
+            read_state = {}
+            if agent_id:
+                read_state = self._meeting_read_from_row(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_meeting_reads
+                        WHERE workspace_id = ? AND room_id = ? AND agent_id = ?
+                        """,
+                        (workspace_id, room["roomId"], agent_id),
+                    ).fetchone()
+                )
+            room["messageCount"] = len(message_rows)
+            room["lastMessageAt"] = message_rows[-1]["created_at"] if message_rows else None
+            room["readState"] = read_state
+            last_read_id = read_state.get("lastMeetingMessageId") or ""
+            if not agent_id or not last_read_id:
+                room["unreadCount"] = len(message_rows) if agent_id else 0
+            else:
+                seen = False
+                unread = 0
+                for message in message_rows:
+                    if seen:
+                        unread += 1
+                    if message["meeting_message_id"] == last_read_id:
+                        seen = True
+                room["unreadCount"] = unread
+            rooms.append(room)
+        return rooms
+
     def meeting_rooms(self, workspace_id, agent_id=None):
         with _LOCK:
             with self._open_connection() as connection:
-                rows = list(
-                    connection.execute(
-                        """
-                        SELECT * FROM matm_meeting_rooms
-                        WHERE workspace_id = ? AND status = 'active'
-                        ORDER BY
-                          CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 WHEN 'goal' THEN 3 WHEN 'task' THEN 4 ELSE 99 END,
-                          name, room_id
-                        """,
-                        (workspace_id,),
-                    )
-                )
-                rooms = []
-                for row in rows:
-                    room = self._room_from_row(row)
-                    message_rows = list(
-                        connection.execute(
-                            """
-                            SELECT * FROM matm_meeting_messages
-                            WHERE workspace_id = ? AND room_id = ?
-                            ORDER BY created_at, meeting_message_id
-                            """,
-                            (workspace_id, room["roomId"]),
-                        )
-                    )
-                    read_state = {}
-                    if agent_id:
-                        read_state = self._meeting_read_from_row(
-                            connection.execute(
-                                """
-                                SELECT * FROM matm_meeting_reads
-                                WHERE workspace_id = ? AND room_id = ? AND agent_id = ?
-                                """,
-                                (workspace_id, room["roomId"], agent_id),
-                            ).fetchone()
-                        )
-                    room["messageCount"] = len(message_rows)
-                    room["lastMessageAt"] = message_rows[-1]["created_at"] if message_rows else None
-                    room["readState"] = read_state
-                    last_read_id = read_state.get("lastMeetingMessageId") or ""
-                    if not agent_id or not last_read_id:
-                        room["unreadCount"] = len(message_rows) if agent_id else 0
-                    else:
-                        seen = False
-                        unread = 0
-                        for message in message_rows:
-                            if seen:
-                                unread += 1
-                            if message["meeting_message_id"] == last_read_id:
-                                seen = True
-                        room["unreadCount"] = unread
-                    rooms.append(room)
-                return rooms
+                return self._meeting_rooms_sql(connection, workspace_id, agent_id)
 
     def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
         scope = (scope or "").strip().lower()
