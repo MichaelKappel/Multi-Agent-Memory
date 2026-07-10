@@ -390,7 +390,8 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "register_agent", status, agent)
 
-        status, memory = transport.call(
+        status, memory = call_with_retries(
+            transport,
             "/api/matm/memory-events/submit",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-memory-" + run_tag),
@@ -405,6 +406,8 @@ def run_sequence(transport, label, base_url=None):
                 "confidence": 0.86,
                 "source": "scripts/dogfood_memoryendpoints.py",
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         step(report, "submit_memory", status, memory)
         memory_event_id = (memory.get("event") or {}).get("eventId", "")
@@ -438,7 +441,8 @@ def run_sequence(transport, label, base_url=None):
         project_rooms = [item for item in meeting_room_items if item.get("scope") == "project"]
         meeting_room_id = ((project_rooms or meeting_room_items or [{}])[0]).get("roomId", "")
 
-        status, meeting_post = transport.call(
+        status, meeting_post = call_with_retries(
+            transport,
             "/api/matm/meeting-messages",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-meeting-message-" + run_tag),
@@ -448,6 +452,8 @@ def run_sequence(transport, label, base_url=None):
                 "senderAgentId": "memoryendpoints-dogfood-agent",
                 "safeSummary": "Project meeting dogfood: use first-class meeting rooms for project coordination and routing.",
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         step(report, "post_meeting_message", status, meeting_post)
         meeting_message_id = meeting_post.get("messageId") or (meeting_post.get("message") or {}).get("meetingMessageId", "")
@@ -538,7 +544,8 @@ def run_sequence(transport, label, base_url=None):
         )
         step(report, "mark_meeting_room_read", status, meeting_read, verified=meeting_read_verified)
 
-        status, message = transport.call(
+        status, message = call_with_retries(
+            transport,
             "/api/matm/agent-messages",
             method="POST",
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-message-" + run_tag),
@@ -549,6 +556,8 @@ def run_sequence(transport, label, base_url=None):
                 "safeSummary": "Action required: review the dogfood memory report and continue hardening work.",
                 "responseRequired": True,
             },
+            retry_statuses=("401", "404", "500"),
+            attempts=LIVE_WRITE_ATTEMPTS,
         )
         step(report, "create_current_message", status, message)
         message_id = message.get("messageId") or (message.get("message") or {}).get("messageId", "")
