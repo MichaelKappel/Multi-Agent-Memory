@@ -63,6 +63,8 @@ class LongTermMemoryMigrationTests(unittest.TestCase):
                     "source": "docs/long-term-memory/a.md",
                     "title": "A",
                     "tags": ["long-term-memory-migration"],
+                    "reviewStatus": "promoted",
+                    "promotionState": "promoted",
                     "valuesRedacted": True,
                     "rawPrivatePayloadStored": False,
                 },
@@ -70,6 +72,8 @@ class LongTermMemoryMigrationTests(unittest.TestCase):
                     "source": "docs/long-term-memory/extra.md",
                     "title": "Extra",
                     "tags": ["long-term-memory-migration"],
+                    "reviewStatus": "pending",
+                    "promotionState": "review_pending",
                     "valuesRedacted": True,
                     "rawPrivatePayloadStored": False,
                 },
@@ -84,6 +88,9 @@ class LongTermMemoryMigrationTests(unittest.TestCase):
         self.assertFalse(summary["allExpectedSourcesFound"])
         self.assertEqual(["docs/long-term-memory/b.md"], summary["missingSourcePaths"])
         self.assertEqual(["docs/long-term-memory/extra.md"], summary["unexpectedHostedSourcePaths"])
+        self.assertEqual({"pending": 1, "promoted": 1}, summary["currentReviewStatusCounts"])
+        self.assertEqual({"promoted": 1, "review_pending": 1}, summary["currentPromotionStateCounts"])
+        self.assertFalse(summary["currentAllPromoted"])
         self.assertTrue(summary["allValuesRedacted"])
         self.assertEqual(0, summary["rawPrivatePayloadStoredCount"])
 

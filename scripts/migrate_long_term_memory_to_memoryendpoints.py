@@ -254,6 +254,17 @@ def hosted_migration_readback(payload, expected_items):
     missing_sources = [source for source in expected_sources if source not in hosted_sources]
     unexpected_sources = [source for source in hosted_sources if source not in expected_source_set]
     raw_private_payload_count = sum(1 for item in hosted_items if item.get("rawPrivatePayloadStored"))
+    review_status_counts = {}
+    promotion_state_counts = {}
+    for item in hosted_items:
+        review_status = item.get("reviewStatus") or "unknown"
+        promotion_state = item.get("promotionState") or "unknown"
+        review_status_counts[review_status] = review_status_counts.get(review_status, 0) + 1
+        promotion_state_counts[promotion_state] = promotion_state_counts.get(promotion_state, 0) + 1
+    all_promoted = bool(hosted_items) and all(
+        item.get("reviewStatus") == "promoted" and item.get("promotionState") == "promoted"
+        for item in hosted_items
+    )
     return {
         "status": payload.get("_httpStatus"),
         "count": normalized_count(payload, items),
@@ -264,6 +275,9 @@ def hosted_migration_readback(payload, expected_items):
         "unexpectedHostedSourcePaths": unexpected_sources,
         "hostedSourcePaths": hosted_sources,
         "hostedItemTitles": sorted(item.get("title") for item in hosted_items if item.get("title")),
+        "currentReviewStatusCounts": dict(sorted(review_status_counts.items())),
+        "currentPromotionStateCounts": dict(sorted(promotion_state_counts.items())),
+        "currentAllPromoted": all_promoted,
         "allValuesRedacted": all(bool(item.get("valuesRedacted", True)) for item in hosted_items) if hosted_items else False,
         "rawPrivatePayloadStoredCount": raw_private_payload_count,
         "memorySource": payload.get("memorySource"),
