@@ -431,6 +431,19 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.filter-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-summary-label {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;

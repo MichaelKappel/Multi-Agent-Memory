@@ -124,7 +124,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-memory-list", text)
         self.assertIn('name="memoryType"', text)
         self.assertIn('name="reviewStatus"', text)
+        self.assertIn('name="promotionState"', text)
         self.assertIn('name="tag"', text)
+        self.assertIn('name="actorAgentId"', text)
+        self.assertIn("data-console-clear-search-filters", text)
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-inbox-list", text)
@@ -155,6 +158,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
         self.assertIn(".lane-overview", css)
+        self.assertIn(".filter-summary", css)
         self.assertIn(".console-nav", css)
         self.assertIn("position: sticky", css)
 
@@ -200,6 +204,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("refreshLaneOverview", js)
         self.assertIn("data-console-open-lane", js)
         self.assertIn("All inbox lanes refreshed.", js)
+
+    def test_console_js_sends_full_memory_search_filters(self):
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+
+        self.assertIn("appendFilterSummary", js)
+        self.assertIn("memoryScopeGroups", js)
+        self.assertIn('"account", "company", "workspace", "project"', js)
+        self.assertIn('group.scope + " memory ("', js)
+        self.assertIn("filters.promotion_state", js)
+        self.assertIn("filters.actor_agent_id", js)
+        self.assertIn("form.elements.promotionState", js)
+        self.assertIn("form.elements.actorAgentId", js)
+        self.assertIn("data-console-clear-search-filters", js)
+        self.assertIn("Memory search filters cleared.", js)
 
     def test_version_route_exposes_build_provenance(self):
         status, _headers, text = call_app("/api/version")

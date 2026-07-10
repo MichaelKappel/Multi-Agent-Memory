@@ -307,10 +307,21 @@ def route_console(start_response):
           <option value="promoted">promoted</option>
         </select>
       </label>
+      <label>Promotion state
+        <select name="promotionState">
+          <option value="">all promotion states</option>
+          <option value="review_pending">review pending</option>
+          <option value="promoted">promoted</option>
+        </select>
+      </label>
       <label>Tag filter
         <input name="tag" placeholder="long-term-memory-migration">
       </label>
+      <label>Actor filter
+        <input name="actorAgentId" placeholder="human-verifier-agent">
+      </label>
       <button class="button" type="submit">Search</button>
+      <button class="button" type="button" data-console-clear-search-filters>Clear filters</button>
     </form>
     <div class="console-results" data-console-memory-list>
       <p class="empty-state">Search results will appear as scoped memory rows.</p>

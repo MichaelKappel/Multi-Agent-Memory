@@ -106,6 +106,44 @@
     parent.appendChild(meta);
   }
 
+  function appendFilterSummary(parent, filters) {
+    var active = filters || {};
+    var keys = Object.keys(active).filter(function (key) {
+      return active[key] !== undefined && active[key] !== null && active[key] !== "";
+    });
+    if (!keys.length) {
+      return;
+    }
+    var summary = el("div", "filter-summary");
+    summary.appendChild(el("span", "filter-summary-label", "Filters"));
+    keys.forEach(function (key) {
+      summary.appendChild(el("span", "status-badge neutral", key + ": " + active[key]));
+    });
+    parent.appendChild(summary);
+  }
+
+  function memoryScopeGroups(items) {
+    var order = ["account", "company", "workspace", "project"];
+    var groups = {};
+    (items || []).forEach(function (item) {
+      var scope = item.scope || "other";
+      if (!groups[scope]) {
+        groups[scope] = [];
+      }
+      groups[scope].push(item);
+    });
+    Object.keys(groups).forEach(function (scope) {
+      if (order.indexOf(scope) === -1) {
+        order.push(scope);
+      }
+    });
+    return order.filter(function (scope) {
+      return groups[scope] && groups[scope].length;
+    }).map(function (scope) {
+      return { scope: scope, items: groups[scope] };
+    });
+  }
+
   function copySafeText(value, label) {
     if (!value || !navigator.clipboard) {
       setStatus("Clipboard is unavailable for " + label + ".", true);
@@ -230,30 +268,35 @@
     var items = (payload && payload.items) || [];
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
+      appendFilterSummary(node, payload && payload.filters);
       return;
     }
     node.appendChild(el("div", "result-count", items.length + " hosted memory item(s). Filesystem docs are excluded from protected search."));
-    items.forEach(function (item) {
-      var row = resultRow(
-        item.title || item.subject,
-        item.summary,
-        [
-          { text: item.scope, kind: "neutral" },
-          { text: item.memoryType, kind: "neutral" },
-          { text: item.reviewStatus || item.promotionState, kind: item.reviewStatus === "quarantined" ? "warn" : "good" },
-          { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
-        ],
-        [
-          "actor " + (item.actorAgentId || "unknown"),
-          "id " + shortId(item.eventId),
-          item.createdAt || "",
-          "source " + (item.source || "api"),
-        ]
-      );
-      appendCopyActions(row, [
-        { label: "Copy memory id", copyLabel: "Memory id", value: item.eventId },
-      ]);
-      node.appendChild(row);
+    appendFilterSummary(node, payload && payload.filters);
+    memoryScopeGroups(items).forEach(function (group) {
+      node.appendChild(el("div", "result-group-title", group.scope + " memory (" + group.items.length + ")"));
+      group.items.forEach(function (item) {
+        var row = resultRow(
+          item.title || item.subject,
+          item.summary,
+          [
+            { text: item.scope, kind: "neutral" },
+            { text: item.memoryType, kind: "neutral" },
+            { text: item.reviewStatus || item.promotionState, kind: item.reviewStatus === "quarantined" ? "warn" : "good" },
+            { text: item.valuesRedacted ? "redacted" : "", kind: "good" },
+          ],
+          [
+            "actor " + (item.actorAgentId || "unknown"),
+            "id " + shortId(item.eventId),
+            item.createdAt || "",
+            "source " + (item.source || "api"),
+          ]
+        );
+        appendCopyActions(row, [
+          { label: "Copy memory id", copyLabel: "Memory id", value: item.eventId },
+        ]);
+        node.appendChild(row);
+      });
     });
   }
 
@@ -580,7 +623,9 @@
       filters.scope = form.elements.scope ? form.elements.scope.value : "";
       filters.memory_type = form.elements.memoryType ? form.elements.memoryType.value : "";
       filters.review_status = form.elements.reviewStatus ? form.elements.reviewStatus.value : "";
+      filters.promotion_state = form.elements.promotionState ? form.elements.promotionState.value : "";
       filters.tag = form.elements.tag ? form.elements.tag.value.trim() : "";
+      filters.actor_agent_id = form.elements.actorAgentId ? form.elements.actorAgentId.value.trim() : "";
     }
     return filters;
   }
@@ -751,6 +796,20 @@
       refreshMemory(searchForm.elements.query.value).catch(function (error) {
         setStatus(error.message, true);
       });
+    });
+  }
+
+  var clearSearchFiltersButton = pick("[data-console-clear-search-filters]");
+  if (clearSearchFiltersButton && searchForm) {
+    clearSearchFiltersButton.addEventListener("click", function () {
+      ["scope", "memoryType", "reviewStatus", "promotionState", "tag", "actorAgentId"].forEach(function (field) {
+        if (searchForm.elements[field]) {
+          searchForm.elements[field].value = "";
+        }
+      });
+      refreshMemory(searchForm.elements.query.value)
+        .then(function () { setStatus("Memory search filters cleared.", false); })
+        .catch(function (error) { setStatus(error.message, true); });
     });
   }
 
