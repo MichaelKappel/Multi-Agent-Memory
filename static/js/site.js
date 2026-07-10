@@ -46,6 +46,11 @@
     receiptsPayloadsHidden: null,
     auditCredentialsHidden: null,
     auditPayloadsHidden: null,
+    latestMemoryItems: [],
+    latestInboxItems: [],
+    latestReceiptItems: [],
+    latestAuditItems: [],
+    latestReviewItems: [],
   };
   var agentLanes = [
     { agentId: "human-verifier-agent", label: "Human" },
@@ -479,6 +484,7 @@
         { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
       ]
     ));
+    renderOperatorDesk();
     renderCommandBar();
   }
 
@@ -716,6 +722,253 @@
     return row;
   }
 
+  function deskPanel(selector, fallback) {
+    var panel = pick(selector);
+    if (!panel) {
+      return null;
+    }
+    clear(panel);
+    if (fallback) {
+      panel.appendChild(el("p", "empty-state", fallback));
+    }
+    return panel;
+  }
+
+  function setOperatorDeskStatus(text, kind) {
+    var node = pick("[data-console-operator-desk] .operator-desk-header .status-badge");
+    if (node) {
+      node.textContent = text;
+      node.className = "status-badge " + (kind || "neutral");
+    }
+  }
+
+  function appendDeskHeading(parent, title, meta) {
+    var heading = el("div", "operator-desk-panel-heading");
+    heading.appendChild(el("h3", "", title));
+    if (meta) {
+      heading.appendChild(el("span", "summary-meta", meta));
+    }
+    parent.appendChild(heading);
+  }
+
+  function renderDeskBoundary() {
+    var panel = deskPanel("[data-console-desk-boundary]");
+    if (!panel) {
+      return;
+    }
+    appendDeskHeading(panel, "Hierarchy", state.workspaceId ? "copy-safe ids" : "locked");
+    if (!state.workspace || !state.workspace.workspaceId) {
+      panel.appendChild(el("p", "empty-state", "Account, company, workspace, and project cards appear after the key loads."));
+      return;
+    }
+    var workspace = state.workspace;
+    var operatorSummary = state.workspaceOperatorSummary || {};
+    var accountRaw = workspace.accounts && workspace.accounts.length ? workspace.accounts[0] : {};
+    var companyRaw = workspace.company || {};
+    var projectRaw = workspace.projects && workspace.projects.length ? workspace.projects[0] : {};
+    var account = operatorLevel(operatorSummary, "account");
+    var company = operatorLevel(operatorSummary, "company");
+    var workspaceLevel = operatorLevel(operatorSummary, "workspace");
+    var project = operatorLevel(operatorSummary, "project");
+    var cards = el("div", "operator-desk-cards");
+    [
+      {
+        title: "Account",
+        label: account.label || accountRaw.label || workspace.accountId,
+        id: account.id || accountRaw.accountId || workspace.accountId,
+        status: account.status || accountRaw.status || "active",
+        copyLabel: "Account id",
+      },
+      {
+        title: "Company",
+        label: company.label || companyRaw.label || workspace.companyId,
+        id: company.id || companyRaw.companyId || workspace.companyId,
+        status: company.status || companyRaw.status || "active",
+        copyLabel: "Company id",
+      },
+      {
+        title: "Workspace",
+        label: workspaceLevel.label || workspace.label || workspace.workspaceId,
+        id: workspaceLevel.id || workspace.workspaceId,
+        status: workspaceLevel.status || workspace.status || "active",
+        copyLabel: "Workspace id",
+      },
+      {
+        title: "Project",
+        label: project.label || projectRaw.label || workspace.primaryProjectId,
+        id: project.id || projectRaw.projectId || workspace.primaryProjectId,
+        status: project.status || projectRaw.status || "active",
+        copyLabel: "Project id",
+      },
+    ].forEach(function (item) {
+      var card = summaryCard(item.title, item.label, shortId(item.id), [
+        { text: item.status, kind: item.status === "active" ? "good" : "neutral" },
+      ]);
+      appendCopyActions(card, [
+        { label: "Copy ID", copyLabel: item.copyLabel, value: item.id },
+      ]);
+      cards.appendChild(card);
+    });
+    panel.appendChild(cards);
+  }
+
+  function memoryDeskRow(item) {
+    var row = resultRow(
+      item.title || item.subject || "Hosted memory",
+      item.summary || "Hosted memory record.",
+      [
+        { text: item.scope || "scope", kind: "neutral" },
+        { text: item.memoryType || "memory", kind: "neutral" },
+        { text: item.reviewStatus || item.promotionState || "review", kind: item.reviewStatus === "quarantined" ? "warn" : "good" },
+        { text: item.valuesRedacted ? "redacted" : "public-safe", kind: "good" },
+      ],
+      [
+        "memory " + shortId(item.eventId),
+        "actor " + (item.actorAgentId || "unknown"),
+        item.createdAt || "",
+      ]
+    );
+    row.className += " operator-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy memory id", copyLabel: "Memory id", value: item.eventId },
+    ]);
+  }
+
+  function messageDeskRow(item) {
+    var message = item.message || {};
+    var notification = item.notification || {};
+    var delivery = item.delivery || {};
+    var laneRecipient = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
+    var messageType = delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
+    var row = resultRow(
+      messageType === "targeted" ? "Targeted message" : "Broadcast message",
+      message.safeSummary || "Current-message row.",
+      [
+        { text: messageType, kind: messageType === "broadcast" ? "good" : "neutral" },
+        { text: notification.status || "unread", kind: notification.status === "read" ? "good" : "warn" },
+        { text: message.responseRequired ? "response required" : "viewed acknowledgement", kind: message.responseRequired ? "warn" : "neutral" },
+        { text: message.valuesRedacted ? "redacted" : "public-safe", kind: "good" },
+      ],
+      [
+        "from " + (message.senderAgentId || "unknown"),
+        "to " + (laneRecipient || "all agents"),
+        "message " + shortId(message.messageId),
+        "notification " + shortId(notification.notificationId),
+      ]
+    );
+    row.className += " operator-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
+      { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
+    ]);
+  }
+
+  function receiptDeskRow(item) {
+    var row = resultRow(
+      "Receipt " + (item.status || "read"),
+      "Acknowledgement receipt; raw private payload remains hidden.",
+      [
+        { text: item.status || "read", kind: "good" },
+        { text: item.valuesRedacted ? "redacted" : "public-safe", kind: "good" },
+        { text: item.rawPayloadExposed ? "payload review" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "consumer " + (item.consumerAgentId || "unknown"),
+        "receipt " + shortId(item.receiptId),
+        "notification " + shortId(item.notificationId),
+      ]
+    );
+    row.className += " operator-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy receipt id", copyLabel: "Receipt id", value: item.receiptId },
+    ]);
+  }
+
+  function auditDeskRow(item) {
+    var row = resultRow(
+      item.action || "Audit event",
+      "Actor " + (item.actor || "unknown") + " touched " + (item.target || "target") + ".",
+      [
+        { text: item.valuesRedacted ? "redacted" : "public-safe", kind: "good" },
+        { text: item.rawCredentialExposed ? "credential review" : "credentials hidden", kind: item.rawCredentialExposed ? "warn" : "good" },
+        { text: item.rawPayloadExposed ? "payload review" : "payload hidden", kind: item.rawPayloadExposed ? "warn" : "good" },
+      ],
+      [
+        "audit " + shortId(item.auditId),
+        item.createdAt || "",
+      ]
+    );
+    row.className += " operator-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy audit id", copyLabel: "Audit id", value: item.auditId },
+    ]);
+  }
+
+  function renderDeskMemory() {
+    var panel = deskPanel("[data-console-desk-memory]");
+    if (!panel) {
+      return;
+    }
+    var items = state.latestMemoryItems || [];
+    appendDeskHeading(panel, "Memory Rows", items.length ? items.length + " latest" : "search pending");
+    if (!items.length) {
+      panel.appendChild(el("p", "empty-state", "Recent hosted memory rows appear after search."));
+      return;
+    }
+    items.slice(0, 3).forEach(function (item) {
+      panel.appendChild(memoryDeskRow(item));
+    });
+  }
+
+  function renderDeskMessages() {
+    var panel = deskPanel("[data-console-desk-messages]");
+    if (!panel) {
+      return;
+    }
+    var items = state.latestInboxItems || [];
+    appendDeskHeading(panel, "Message Rows", items.length ? items.length + " unread" : "inbox clear");
+    if (!items.length) {
+      panel.appendChild(el("p", "empty-state", "Current-message rows appear after inbox refresh."));
+      return;
+    }
+    items.slice(0, 3).forEach(function (item) {
+      panel.appendChild(messageDeskRow(item));
+    });
+  }
+
+  function renderDeskEvidence() {
+    var panel = deskPanel("[data-console-desk-evidence]");
+    if (!panel) {
+      return;
+    }
+    var receipts = state.latestReceiptItems || [];
+    var audits = state.latestAuditItems || [];
+    appendDeskHeading(panel, "Evidence", (receipts.length + audits.length) ? receipts.length + " receipts / " + audits.length + " audit" : "refresh pending");
+    if (!receipts.length && !audits.length) {
+      panel.appendChild(el("p", "empty-state", "Receipt and audit rows appear after refresh."));
+      return;
+    }
+    receipts.slice(0, 2).forEach(function (item) {
+      panel.appendChild(receiptDeskRow(item));
+    });
+    audits.slice(0, 2).forEach(function (item) {
+      panel.appendChild(auditDeskRow(item));
+    });
+  }
+
+  function renderOperatorDesk() {
+    var root = pick("[data-console-operator-desk]");
+    if (!root) {
+      return;
+    }
+    var boundaryReady = Boolean(state.workspaceOperatorSummary && state.workspaceOperatorSummary.hierarchyReady);
+    setOperatorDeskStatus(state.workspaceId ? (boundaryReady ? "ready" : "boundary review") : "workspace key required", state.workspaceId ? (boundaryReady ? "good" : "warn") : "neutral");
+    renderDeskBoundary();
+    renderDeskMemory();
+    renderDeskMessages();
+    renderDeskEvidence();
+  }
+
   function renderMemorySummary(payload) {
     var node = pick("[data-console-memory-list]");
     if (!node) {
@@ -724,6 +977,7 @@
     clear(node);
     var items = (payload && payload.items) || [];
     var summary = (payload && payload.operatorSummary) || {};
+    state.latestMemoryItems = items.slice(0, 6);
     state.memoryCount = summary.count !== undefined ? summary.count : items.length;
     state.memoryScopeCounts = summary.scopeCounts || null;
     state.memoryFilesystemIncluded = Boolean(summary.filesystemDocsIncluded);
@@ -852,6 +1106,7 @@
     var items = (payload && payload.items) || [];
     var operatorSummary = (payload && payload.operatorSummary) || {};
     var lane = inboxAgentFromPayload(payload, agentId || state.agentId);
+    state.latestInboxItems = items.slice(0, 6);
     appendFilterSummary(node, payload && payload.filters);
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
@@ -1508,6 +1763,7 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    state.latestReceiptItems = items.slice(0, 6);
     appendFilterSummary(node, payload && payload.filters);
     var summary = (payload && payload.operatorSummary) || {};
     state.receiptCount = summary.count !== undefined ? summary.count : items.length;
@@ -1645,6 +1901,7 @@
     clear(node);
     var items = (payload && payload.items) || [];
     var summary = (payload && payload.operatorSummary) || {};
+    state.latestAuditItems = items.slice().reverse().slice(0, 6);
     state.auditCount = summary.count !== undefined ? summary.count : items.length;
     state.auditCredentialsHidden = summary.allCredentialsHidden !== undefined ? summary.allCredentialsHidden : null;
     state.auditPayloadsHidden = summary.allPayloadsHidden !== undefined ? summary.allPayloadsHidden : null;
@@ -1693,6 +1950,7 @@
     }
     clear(node);
     var items = (payload && payload.items) || [];
+    state.latestReviewItems = items.slice(0, 6);
     appendFilterSummary(node, payload && payload.filters);
     var summary = (payload && payload.operatorSummary) || {};
     state.reviewCount = summary.count !== undefined ? summary.count : items.length;
@@ -1937,6 +2195,7 @@
       filters.promotion_state = form.elements.promotionState ? form.elements.promotionState.value : "";
       filters.tag = form.elements.tag ? form.elements.tag.value.trim() : "";
       filters.actor_agent_id = form.elements.actorAgentId ? form.elements.actorAgentId.value.trim() : "";
+      filters.event_id = form.elements.eventId ? form.elements.eventId.value.trim() : "";
     }
     return filters;
   }
@@ -1961,7 +2220,7 @@
       if (queryControl) {
         queryControl.value = longTermMemoryTag;
       }
-      ["scope", "memoryType", "reviewStatus", "promotionState", "actorAgentId"].forEach(function (field) {
+      ["scope", "memoryType", "reviewStatus", "promotionState", "actorAgentId", "eventId"].forEach(function (field) {
         if (form.elements[field]) {
           form.elements[field].value = "";
         }
@@ -2458,7 +2717,20 @@
           renderMemorySubmissionSummary(payload);
           return payload;
         })
-        .then(function () { return refreshMemory("verification"); })
+        .then(function (payload) {
+          var eventId = payload.canonicalMemoryEventId || (payload.event && payload.event.eventId) || "";
+          var searchForm = pick("[data-console-search]");
+          if (eventId && searchForm) {
+            var queryControl = formControl(searchForm, "query");
+            if (queryControl) {
+              queryControl.value = "";
+            }
+            if (searchForm.elements.eventId) {
+              searchForm.elements.eventId.value = eventId;
+            }
+          }
+          return refreshMemory(eventId ? "" : "verification");
+        })
         .then(function () { return refreshReviewQueue(reviewForm ? reviewForm.elements.status.value : "pending"); })
         .then(function () { setStatus("Memory saved; search and review queue refreshed.", false); })
         .catch(function (error) { setStatus(error.message, true); });
@@ -2479,7 +2751,7 @@
   var clearSearchFiltersButton = pick("[data-console-clear-search-filters]");
   if (clearSearchFiltersButton && searchForm) {
     clearSearchFiltersButton.addEventListener("click", function () {
-      ["scope", "memoryType", "reviewStatus", "promotionState", "tag", "actorAgentId"].forEach(function (field) {
+      ["scope", "memoryType", "reviewStatus", "promotionState", "tag", "actorAgentId", "eventId"].forEach(function (field) {
         if (searchForm.elements[field]) {
           searchForm.elements[field].value = "";
         }

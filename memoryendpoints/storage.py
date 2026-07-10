@@ -1130,6 +1130,13 @@ class FileStore(object):
         source_prefix_filter = (filters.get("sourcePrefix") or filters.get("source_prefix") or "").strip()
         tag_filter = (filters.get("tag") or "").strip().lower()
         actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
+        event_id_filter = (
+            filters.get("eventId")
+            or filters.get("event_id")
+            or filters.get("memoryEventId")
+            or filters.get("memory_event_id")
+            or ""
+        ).strip()
         items = []
         for event in data["memoryEvents"]:
             if event.get("workspaceId") != workspace_id:
@@ -1151,6 +1158,8 @@ class FileStore(object):
             if actor_agent_filter and (event.get("actorAgentId") or "").lower() != actor_agent_filter:
                 continue
             if tag_filter and tag_filter not in [str(tag).lower() for tag in event.get("tags", [])]:
+                continue
+            if event_id_filter and event.get("eventId") != event_id_filter:
                 continue
             haystack = " ".join(
                 [
@@ -2680,8 +2689,18 @@ class SQLiteStore(FileStore):
         source_prefix_filter = (filters.get("sourcePrefix") or filters.get("source_prefix") or "").strip()
         tag_filter = (filters.get("tag") or "").strip().lower()
         actor_agent_filter = (filters.get("actorAgentId") or filters.get("actor_agent_id") or "").strip().lower()
+        event_id_filter = (
+            filters.get("eventId")
+            or filters.get("event_id")
+            or filters.get("memoryEventId")
+            or filters.get("memory_event_id")
+            or ""
+        ).strip()
         clauses = ["workspace_id = ?", "status NOT IN ('rejected', 'quarantined')"]
         params = [workspace_id]
+        if event_id_filter:
+            clauses.append("memory_id = ?")
+            params.append(event_id_filter)
         if scope_filter:
             clauses.append("LOWER(scope_type) = ?")
             params.append(scope_filter)

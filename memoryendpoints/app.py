@@ -140,13 +140,13 @@ def _meeting_post_confirmation(store, workspace_id, room, message):
 
 def _memory_submission_confirmation(store, workspace_id, event):
     event = event or {}
-    search_query = event.get("title") or event.get("summary") or event.get("eventId") or ""
     filters = {
         "scope": event.get("scope") or "",
         "scopeId": event.get("scopeId") or "",
         "memoryType": event.get("memoryType") or "",
+        "eventId": event.get("eventId") or "",
     }
-    search_items = store.search_memory(workspace_id, search_query, filters)
+    search_items = store.search_memory(workspace_id, "", filters)
     visible_in_search = any(item.get("eventId") == event.get("eventId") for item in search_items)
     review_items = store.review_queue(workspace_id, "")
     visible_in_review_queue = any(item.get("memoryEventId") == event.get("eventId") for item in review_items)
@@ -162,7 +162,8 @@ def _memory_submission_confirmation(store, workspace_id, event):
         "memoryQueryUrl": _protected_query_url(
             "/api/matm/search",
             {
-                "q": search_query,
+                "q": "",
+                "event_id": event.get("eventId"),
                 "scope": event.get("scope"),
                 "scope_id": event.get("scopeId"),
                 "memory_type": event.get("memoryType"),
@@ -1346,6 +1347,33 @@ def route_console(start_response):
   <div class="operator-session" data-console-session-summary>
     <p class="empty-state">Session status will appear after the workspace loads.</p>
   </div>
+  <section class="operator-desk" data-console-operator-desk aria-label="Operator desk">
+    <div class="operator-desk-header">
+      <div>
+        <span class="section-kicker">At a glance</span>
+        <h2>Operator Desk</h2>
+      </div>
+      <span class="status-badge neutral">workspace key required</span>
+    </div>
+    <div class="operator-desk-grid">
+      <section class="operator-desk-panel" data-console-desk-boundary>
+        <h3>Hierarchy</h3>
+        <p class="empty-state">Account, company, workspace, and project cards appear after the key loads.</p>
+      </section>
+      <section class="operator-desk-panel" data-console-desk-memory>
+        <h3>Memory Rows</h3>
+        <p class="empty-state">Recent hosted memory rows appear after search.</p>
+      </section>
+      <section class="operator-desk-panel" data-console-desk-messages>
+        <h3>Message Rows</h3>
+        <p class="empty-state">Current-message rows appear after inbox refresh.</p>
+      </section>
+      <section class="operator-desk-panel" data-console-desk-evidence>
+        <h3>Evidence</h3>
+        <p class="empty-state">Receipt and audit rows appear after refresh.</p>
+      </section>
+    </div>
+  </section>
   <section class="console-panel" id="workspace-overview" data-console-workflow-target="workspace">
     <div class="section-heading">
       <div>
@@ -1435,6 +1463,9 @@ def route_console(start_response):
       </label>
       <label>Tag filter
         <input name="tag" placeholder="long-term-memory-migration">
+      </label>
+      <label>Memory id
+        <input name="eventId" placeholder="mem-...">
       </label>
       <label>Actor filter
         <input name="actorAgentId" placeholder="human-verifier-agent">
@@ -2338,6 +2369,7 @@ def route_protected(environ, start_response, path):
             "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
             "tag": query.get("tag") or "",
             "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
+            "eventId": query.get("event_id") or query.get("eventId") or query.get("memory_event_id") or query.get("memoryEventId") or "",
         }
         active_filters = {key: value for key, value in filters.items() if value}
         query_text = query.get("q") or query.get("query") or ""

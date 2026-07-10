@@ -167,6 +167,7 @@ Query:
 - `source_prefix` or `sourcePrefix` optional prefix filter for source references such as `docs/long-term-memory/` or `memoryendpoints://matm/meeting-messages/`
 - `tag` optional exact tag filter
 - `actor_agent_id` or `actorAgentId` optional exact actor filter
+- `event_id`, `eventId`, `memory_event_id`, or `memoryEventId` optional exact memory-event filter for deterministic post-submit readback
 
 Response includes:
 

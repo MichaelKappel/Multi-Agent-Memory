@@ -266,6 +266,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("project", data["memoryFlow"]["supportedScopes"])
         self.assertIn("goal", data["memoryFlow"]["supportedScopes"])
         self.assertIn("task", data["memoryFlow"]["supportedScopes"])
+        self.assertIn("event_id", data["memoryFlow"]["searchQueryFilters"])
+        self.assertIn("event_id", data["memoryFlow"]["retrieveByScope"])
         self.assertIn("update tag", data["memoryFlow"]["updateRule"])
         self.assertIn("source_prefix", data["memoryFlow"]["reviewQueueFilters"])
         self.assertIn("actor_agent_id", data["memoryFlow"]["reviewQueueFilters"])
@@ -325,6 +327,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/api/matm/memory-events/submit", paths)
         self.assertIn("/api/matm/current-message", paths)
         self.assertIn("/api/matm/notifications/ack", paths)
+        search_params = {item["name"] for item in paths["/api/matm/search"]["get"]["parameters"]}
+        self.assertIn("event_id", search_params)
+        self.assertIn("source_prefix", search_params)
+        self.assertIn("actor_agent_id", search_params)
         security_schemes = data["components"]["securitySchemes"]
         self.assertIn("workspaceBearer", security_schemes)
         self.assertIn("workspaceHeader", security_schemes)
@@ -428,6 +434,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-session-summary", text)
         self.assertIn("Copy-safe IDs", text)
         self.assertIn("Raw JSON hidden", text)
+        self.assertIn("data-console-operator-desk", text)
+        self.assertIn("Operator Desk", text)
+        self.assertIn("data-console-desk-boundary", text)
+        self.assertIn("data-console-desk-memory", text)
+        self.assertIn("data-console-desk-messages", text)
+        self.assertIn("data-console-desk-evidence", text)
         self.assertIn('id="memory-workflow" data-console-workflow-target="memory"', text)
         self.assertIn('id="message-lanes" data-console-workflow-target="messages"', text)
         self.assertIn('id="receipts-audit" data-console-workflow-target="evidence"', text)
@@ -438,6 +450,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('name="reviewStatus"', text)
         self.assertIn('name="promotionState"', text)
         self.assertIn('name="tag"', text)
+        self.assertIn('name="eventId"', text)
         self.assertIn('name="actorAgentId"', text)
         self.assertIn("data-console-clear-search-filters", text)
         self.assertIn("data-console-memory-shortcuts", text)
@@ -517,6 +530,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".console-panel[hidden]", css)
         self.assertIn(".operator-metrics", css)
         self.assertIn(".metric-card", css)
+        self.assertIn(".operator-desk", css)
+        self.assertIn(".operator-desk-grid", css)
+        self.assertIn(".operator-desk-cards", css)
+        self.assertIn(".operator-desk-row", css)
         self.assertIn(".section-heading", css)
         self.assertIn(".agent-shortcuts", css)
         self.assertIn(".message-delivery", css)
@@ -567,6 +584,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("agentRegistrationSummary", js)
         self.assertIn("operatorLevel", js)
         self.assertIn("renderOperatorMetrics", js)
+        self.assertIn("renderOperatorDesk", js)
+        self.assertIn("data-console-operator-desk", js)
+        self.assertIn("data-console-desk-boundary", js)
+        self.assertIn("data-console-desk-memory", js)
+        self.assertIn("data-console-desk-messages", js)
+        self.assertIn("data-console-desk-evidence", js)
+        self.assertIn("latestMemoryItems", js)
+        self.assertIn("latestInboxItems", js)
+        self.assertIn("latestReceiptItems", js)
+        self.assertIn("latestAuditItems", js)
         self.assertIn("setWorkflowView", js)
         self.assertIn("data-console-active-workflow", js)
         self.assertIn("data-console-workflow-view", js)
@@ -877,8 +904,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('group.scope + " memory ("', js)
         self.assertIn("filters.promotion_state", js)
         self.assertIn("filters.actor_agent_id", js)
+        self.assertIn("filters.event_id", js)
         self.assertIn("form.elements.promotionState", js)
         self.assertIn("form.elements.actorAgentId", js)
+        self.assertIn("form.elements.eventId", js)
+        self.assertIn("payload.canonicalMemoryEventId", js)
         self.assertIn("data-console-clear-search-filters", js)
         self.assertIn("Memory search filters cleared.", js)
         self.assertIn("longTermMemoryTag", js)
@@ -1317,6 +1347,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(event["eventId"], submit_payload["canonicalMemoryEventId"])
         self.assertEqual(event["reviewId"], submit_payload["reviewId"])
         self.assertIn("/api/matm/search?", submit_payload["memoryQueryUrl"])
+        self.assertIn("event_id=", submit_payload["memoryQueryUrl"])
         self.assertIn("/api/matm/review-queue?", submit_payload["reviewQueueUrl"])
         self.assertIn("/api/matm/audit-log?", submit_payload["auditLogUrl"])
         self.assertTrue(confirmation["persisted"])
@@ -2831,6 +2862,18 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             payload["filters"],
         )
         self.assertEqual("docs/long-term-memory/project-decision.md", payload["items"][0]["source"])
+
+        event_id = payload["items"][0]["eventId"]
+        status, _headers, text = call_app(
+            "/api/matm/search",
+            headers=auth,
+            query="workspace_id=%s&q=&event_id=%s" % (workspace_id, event_id),
+        )
+        self.assertEqual("200 OK", status)
+        exact_payload = json.loads(text)
+        self.assertEqual(1, exact_payload["count"])
+        self.assertEqual(event_id, exact_payload["items"][0]["eventId"])
+        self.assertEqual({"eventId": event_id}, exact_payload["filters"])
 
         status, _headers, text = call_app(
             "/api/matm/search",

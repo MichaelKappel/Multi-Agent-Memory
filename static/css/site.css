@@ -449,6 +449,93 @@ pre {
   grid-column: 1 / -1;
 }
 
+.operator-desk {
+  margin: 14px 0 20px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.operator-desk-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.operator-desk-header h2 {
+  margin: 0;
+  font-size: 1.18rem;
+}
+
+.operator-desk-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.05fr) repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.operator-desk-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.operator-desk-panel-heading {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.operator-desk-panel-heading h3,
+.operator-desk-panel h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.operator-desk-panel-heading .summary-meta {
+  border-top: 0;
+  flex: 0 1 auto;
+  padding-top: 0;
+  text-align: right;
+}
+
+.operator-desk-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operator-desk-cards .summary-card {
+  min-height: 0;
+  padding: 10px;
+}
+
+.operator-desk-cards .summary-card strong {
+  font-size: 0.92rem;
+}
+
+.operator-desk-row {
+  padding: 10px;
+}
+
+.operator-desk-row h3 {
+  font-size: 0.92rem;
+}
+
+.operator-desk-row .result-summary {
+  font-size: 0.9rem;
+}
+
+.operator-desk-row .row-meta {
+  gap: 6px 10px;
+  font-size: 0.78rem;
+}
+
 .console-command-bar {
   align-items: stretch;
   display: grid;
@@ -817,6 +904,8 @@ footer {
   .operator-summary,
   .operator-session,
   .operator-metrics,
+  .operator-desk-grid,
+  .operator-desk-cards,
   .console-command-bar,
   .boundary-steps {
     grid-template-columns: 1fr;
@@ -936,6 +1025,16 @@ footer {
   .section-heading {
     align-items: flex-start;
     display: grid;
+  }
+
+  .operator-desk-header,
+  .operator-desk-panel-heading {
+    align-items: flex-start;
+    display: grid;
+  }
+
+  .operator-desk-panel-heading .summary-meta {
+    text-align: left;
   }
 
   .result-row-top {

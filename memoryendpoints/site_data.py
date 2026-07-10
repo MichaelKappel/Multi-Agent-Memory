@@ -305,7 +305,8 @@ def connector_contract():
             "publicSafeRule": "submit summaries only; do not send raw logs, source secrets, full files, or private prompt payloads",
             "updateRule": "Submit a new reviewed public-safe memory event with the same subject/source and an explicit update tag; do not overwrite history until a dedicated revision route is advertised.",
             "submitConfirmationRule": "Treat memory save as successful only when persisted=true and the response confirms visibleInSearch or visibleInReviewQueue plus visibleInAuditLog with memoryQueryUrl, reviewQueueUrl, and auditLogUrl.",
-            "retrieveByScope": "Use /api/matm/search with scope, source_prefix, tag, actor_agent_id, memory_type, review_status, and promotion_state filters. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
+            "searchQueryFilters": ["q", "scope", "scope_id", "source_prefix", "tag", "actor_agent_id", "memory_type", "review_status", "promotion_state", "event_id"],
+            "retrieveByScope": "Use /api/matm/search with scope, source_prefix, tag, actor_agent_id, memory_type, review_status, promotion_state, and event_id filters. For deterministic post-submit readback, set event_id to the returned memory event id. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
             "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
             "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews to monitor hosted long-term memory promotion health without parsing raw review JSON.",
             "meetingPromotionRule": "Use POST /api/matm/meeting-messages/promote to turn a public-safe meeting transcript note into a durable memory event while preserving the source meeting message id.",
@@ -463,7 +464,7 @@ def openapi_spec():
         "/api/matm/workspace": {"get": protected_operation("Load workspace boundary", "Read account, company, workspace, project, storage, and redaction operator summary.")},
         "/api/matm/agents/register": {"post": protected_operation("Register agent", "Register or refresh a stable public-safe agent id.", "post", True)},
         "/api/matm/memory-events/submit": {"post": protected_operation("Submit memory event", "Save a public-safe hosted memory summary; raw private payloads and credentials are rejected/redacted.", "post", True)},
-        "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, scope, source prefix, tag, memory type, review status, and promotion filters.")},
+        "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, exact event id, scope, source prefix, tag, memory type, review status, and promotion filters.")},
         "/api/matm/review-queue": {"get": protected_operation("Read review queue", "Read memory review and long-term-memory promotion health without parsing raw debug JSON.")},
         "/api/matm/review-queue/decide": {"post": protected_operation("Decide review", "Promote, reject, or quarantine a review-pending memory item with idempotent reviewer action.", "post", True)},
         "/api/matm/meeting-rooms": {
@@ -486,6 +487,19 @@ def openapi_spec():
         "/api/matm/receipts": {"get": protected_operation("Read receipts", "Read redacted acknowledgement receipts for an agent.")},
         "/api/matm/audit-log": {"get": protected_operation("Read audit log", "Read redacted protected-operation audit events.")},
     }
+    paths["/api/matm/search"]["get"]["parameters"] = [
+        {"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Authorized workspace id."},
+        {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Public-safe text query. Leave blank when using an exact event_id readback."},
+        {"name": "event_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact memory event id for deterministic post-submit readback."},
+        {"name": "scope", "in": "query", "required": False, "schema": {"type": "string", "enum": ["company", "workspace", "project", "goal", "task"]}, "description": "Exact memory scope filter."},
+        {"name": "scope_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact scope id filter."},
+        {"name": "source_prefix", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Source URI prefix filter."},
+        {"name": "tag", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact tag filter."},
+        {"name": "actor_agent_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact actor agent id filter."},
+        {"name": "memory_type", "in": "query", "required": False, "schema": {"type": "string", "enum": ["fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"]}, "description": "Exact memory type filter."},
+        {"name": "review_status", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Review status filter."},
+        {"name": "promotion_state", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Promotion state filter."},
+    ]
     return {
         "openapi": "3.1.0",
         "info": {
