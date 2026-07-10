@@ -810,6 +810,9 @@ def route_console(start_response):
       <button class="button" type="submit">Search</button>
       <button class="button" type="button" data-console-clear-search-filters>Clear filters</button>
     </form>
+    <div class="agent-shortcuts" data-console-memory-shortcuts aria-label="Memory search shortcuts">
+      <button class="button compact" type="button" data-console-long-term-memory>Hosted long-term memory</button>
+    </div>
     <div class="console-results" data-console-memory-list>
       <p class="empty-state">Search results will appear as scoped memory rows.</p>
     </div>

@@ -49,6 +49,44 @@ class LongTermMemoryMigrationTests(unittest.TestCase):
         self.assertNotIn("ltm-migration-example", text)
         self.assertNotIn("apiKeySecret", text)
 
+    def test_hosted_readback_requires_every_source_path(self):
+        expected = [
+            {"sourcePath": "docs/long-term-memory/a.md"},
+            {"sourcePath": "docs/long-term-memory/b.md"},
+        ]
+        payload = {
+            "count": None,
+            "memorySource": "hosted_workspace_store",
+            "filesystemDocsIncluded": False,
+            "items": [
+                {
+                    "source": "docs/long-term-memory/a.md",
+                    "title": "A",
+                    "tags": ["long-term-memory-migration"],
+                    "valuesRedacted": True,
+                    "rawPrivatePayloadStored": False,
+                },
+                {
+                    "source": "docs/long-term-memory/extra.md",
+                    "title": "Extra",
+                    "tags": ["long-term-memory-migration"],
+                    "valuesRedacted": True,
+                    "rawPrivatePayloadStored": False,
+                },
+            ],
+        }
+
+        summary = migration.hosted_migration_readback(payload, expected)
+
+        self.assertEqual(2, summary["count"])
+        self.assertEqual(2, summary["expectedSourcePathCount"])
+        self.assertEqual(1, summary["matchedSourcePathCount"])
+        self.assertFalse(summary["allExpectedSourcesFound"])
+        self.assertEqual(["docs/long-term-memory/b.md"], summary["missingSourcePaths"])
+        self.assertEqual(["docs/long-term-memory/extra.md"], summary["unexpectedHostedSourcePaths"])
+        self.assertTrue(summary["allValuesRedacted"])
+        self.assertEqual(0, summary["rawPrivatePayloadStoredCount"])
+
 
 if __name__ == "__main__":
     unittest.main()

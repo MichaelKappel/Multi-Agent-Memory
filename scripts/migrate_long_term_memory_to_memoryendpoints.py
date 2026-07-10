@@ -232,7 +232,47 @@ def submit_item(base_url, token, context, actor_agent_id, item):
     }
 
 
-def verify_search(base_url, token, workspace_id):
+def normalized_count(payload, items):
+    count = payload.get("count")
+    if isinstance(count, int):
+        return count
+    return len(items)
+
+
+def hosted_migration_readback(payload, expected_items):
+    items = payload.get("items") or []
+    expected_sources = sorted(item["sourcePath"] for item in expected_items)
+    expected_source_set = set(expected_sources)
+    hosted_items = []
+    for item in items:
+        source = item.get("source") or ""
+        tags = item.get("tags") or []
+        if source in expected_source_set or (source.startswith("docs/long-term-memory/") and "long-term-memory-migration" in tags):
+            hosted_items.append(item)
+    hosted_sources = sorted(set(item.get("source") for item in hosted_items if item.get("source")))
+    matched_sources = [source for source in expected_sources if source in hosted_sources]
+    missing_sources = [source for source in expected_sources if source not in hosted_sources]
+    unexpected_sources = [source for source in hosted_sources if source not in expected_source_set]
+    raw_private_payload_count = sum(1 for item in hosted_items if item.get("rawPrivatePayloadStored"))
+    return {
+        "status": payload.get("_httpStatus"),
+        "count": normalized_count(payload, items),
+        "expectedSourcePathCount": len(expected_sources),
+        "matchedSourcePathCount": len(matched_sources),
+        "allExpectedSourcesFound": not missing_sources,
+        "missingSourcePaths": missing_sources,
+        "unexpectedHostedSourcePaths": unexpected_sources,
+        "hostedSourcePaths": hosted_sources,
+        "hostedItemTitles": sorted(item.get("title") for item in hosted_items if item.get("title")),
+        "allValuesRedacted": all(bool(item.get("valuesRedacted", True)) for item in hosted_items) if hosted_items else False,
+        "rawPrivatePayloadStoredCount": raw_private_payload_count,
+        "memorySource": payload.get("memorySource"),
+        "filesystemDocsIncluded": payload.get("filesystemDocsIncluded"),
+        "valuesRedacted": True,
+    }
+
+
+def verify_search(base_url, token, workspace_id, expected_items):
     status, payload = call_json(
         base_url,
         "/api/matm/search",
@@ -240,15 +280,8 @@ def verify_search(base_url, token, workspace_id):
         query=urlencode({"workspace_id": workspace_id, "q": "long-term-memory-migration"}),
     )
     payload = require_ok(status, payload, "verify hosted long-term memory search")
-    items = payload.get("items") or []
-    return {
-        "status": status,
-        "count": payload.get("count", len(items)),
-        "hostedItemTitles": sorted(item.get("title") for item in items if item.get("title")),
-        "memorySource": payload.get("memorySource"),
-        "filesystemDocsIncluded": payload.get("filesystemDocsIncluded"),
-        "valuesRedacted": True,
-    }
+    payload["_httpStatus"] = status
+    return hosted_migration_readback(payload, expected_items)
 
 
 def main(argv=None):
@@ -288,12 +321,17 @@ def main(argv=None):
     require_ok(status, register, "register migration actor")
 
     submitted = [submit_item(base_url, token, context, actor_agent_id, item) for item in items]
-    search = verify_search(base_url, token, context["workspaceId"])
+    search = verify_search(base_url, token, context["workspaceId"], items)
     ok = (
         len(submitted) == len(items)
-        and search["count"] >= len(items)
+        and search["allExpectedSourcesFound"]
+        and search["matchedSourcePathCount"] == len(items)
+        and search["memorySource"] == "hosted_workspace_store"
+        and search["filesystemDocsIncluded"] is False
         and not context["rawKeyStoredByServer"]
         and all(item["valuesRedacted"] and not item["rawPrivatePayloadStored"] for item in submitted)
+        and search["allValuesRedacted"]
+        and search["rawPrivatePayloadStoredCount"] == 0
     )
     report = {
         "schemaVersion": "memoryendpoints.long_term_memory_migration.v1",
@@ -305,6 +343,10 @@ def main(argv=None):
         "actorAgentId": actor_agent_id,
         "itemCount": len(items),
         "submittedCount": len(submitted),
+        "searchReadbackCount": search["count"],
+        "sourcePathReadbackVerified": search["allExpectedSourcesFound"],
+        "matchedSourcePathCount": search["matchedSourcePathCount"],
+        "missingSourcePaths": search["missingSourcePaths"],
         "searchReadback": search,
         "submitted": submitted,
         "rawCredentialValuesStored": False,

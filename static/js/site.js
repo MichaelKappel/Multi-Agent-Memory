@@ -34,6 +34,7 @@
     { agentId: "codex-agent", label: "Codex" },
     { agentId: "swarm-observer-agent", label: "Observer" },
   ];
+  var longTermMemoryTag = "long-term-memory-migration";
 
   function pick(selector) {
     return consoleRoot.querySelector(selector);
@@ -1359,6 +1360,32 @@
     });
   }
 
+  function showHostedLongTermMemory() {
+    if (!state.key || !state.workspaceId) {
+      setStatus("Load workspace before searching hosted long-term memory.", true);
+      return Promise.resolve(null);
+    }
+    var form = pick("[data-console-search]");
+    if (form) {
+      form.elements.query.value = longTermMemoryTag;
+      ["scope", "memoryType", "reviewStatus", "promotionState", "actorAgentId"].forEach(function (field) {
+        if (form.elements[field]) {
+          form.elements[field].value = "";
+        }
+      });
+      if (form.elements.tag) {
+        form.elements.tag.value = longTermMemoryTag;
+      }
+    }
+    return refreshMemory(longTermMemoryTag).then(function (payload) {
+      var count = payload && payload.operatorSummary && payload.operatorSummary.count !== undefined
+        ? payload.operatorSummary.count
+        : ((payload && payload.items) || []).length;
+      setStatus("Hosted long-term memory search refreshed: " + count + " item(s).", false);
+      return payload;
+    });
+  }
+
   function refreshInbox(agentId) {
     var requestedAgent = agentId || state.agentId;
     var requestSeq = state.inboxRequestSeq += 1;
@@ -1605,6 +1632,15 @@
       refreshMemory(searchForm.elements.query.value)
         .then(function () { setStatus("Memory search filters cleared.", false); })
         .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  var longTermMemoryButton = pick("[data-console-long-term-memory]");
+  if (longTermMemoryButton) {
+    longTermMemoryButton.addEventListener("click", function () {
+      showHostedLongTermMemory().catch(function (error) {
+        setStatus(error.message, true);
+      });
     });
   }
 

@@ -176,6 +176,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('name="tag"', text)
         self.assertIn('name="actorAgentId"', text)
         self.assertIn("data-console-clear-search-filters", text)
+        self.assertIn("data-console-memory-shortcuts", text)
+        self.assertIn("data-console-long-term-memory", text)
+        self.assertIn("Hosted long-term memory", text)
         self.assertIn("data-console-review-list", text)
         self.assertIn("data-console-review-decision", text)
         self.assertIn("data-console-review-decision-summary", text)
@@ -441,6 +444,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("form.elements.actorAgentId", js)
         self.assertIn("data-console-clear-search-filters", js)
         self.assertIn("Memory search filters cleared.", js)
+        self.assertIn("longTermMemoryTag", js)
+        self.assertIn("showHostedLongTermMemory", js)
+        self.assertIn("data-console-long-term-memory", js)
+        self.assertIn("Load workspace before searching hosted long-term memory.", js)
+        self.assertIn("Hosted long-term memory search refreshed", js)
 
     def test_console_js_wires_audit_log_filters(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
