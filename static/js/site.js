@@ -2055,10 +2055,23 @@
     }
     state.latestMeetingMessageId = items.length ? items[items.length - 1].meetingMessageId : "";
     state.latestMeetingMessageSummary = items.length ? (items[items.length - 1].safeSummary || "") : "";
+    var visibleMessageCount = summary.visibleMessageCount !== undefined
+      ? summary.visibleMessageCount
+      : ((payload && payload.visibleMessageCount !== undefined) ? payload.visibleMessageCount : items.length);
+    var totalMessageCount = summary.totalMessageCount !== undefined
+      ? summary.totalMessageCount
+      : ((payload && payload.totalMessageCount !== undefined) ? payload.totalMessageCount : visibleMessageCount);
+    var transcriptHasMore = Boolean((payload && payload.hasMore) || (summary.pagination && summary.pagination.hasMore));
     var summaryLine = el("div", "filter-summary meeting-messages-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
     appendBadge(summaryLine, roomTitle(room), "neutral");
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " messages", items.length ? "good" : "neutral");
+    appendBadge(summaryLine, visibleMessageCount + " visible messages", items.length ? "good" : "neutral");
+    if (totalMessageCount !== visibleMessageCount) {
+      appendBadge(summaryLine, totalMessageCount + " total messages", "neutral");
+    }
+    if (transcriptHasMore) {
+      appendBadge(summaryLine, "older available", "neutral");
+    }
     appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
     appendCountBadges(summaryLine, "Senders", summary.senderAgentCounts, []);
     node.appendChild(summaryLine);
@@ -2066,6 +2079,14 @@
       node.appendChild(el("p", "empty-state", "No meeting messages in this room yet."));
       return;
     }
+    var countText = visibleMessageCount + " visible meeting message(s).";
+    if (totalMessageCount !== visibleMessageCount) {
+      countText += " " + totalMessageCount + " total messages in this room.";
+    }
+    if (transcriptHasMore) {
+      countText += " Use the next cursor to read older transcript windows.";
+    }
+    node.appendChild(el("div", "result-count", countText));
     items.forEach(function (message) {
       var row = resultRow(
         "Meeting message",

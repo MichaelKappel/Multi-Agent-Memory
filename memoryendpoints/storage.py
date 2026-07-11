@@ -223,6 +223,40 @@ def _cursor_page(items, cursor, limit_value):
     }
 
 
+def _meeting_transcript_page(messages, cursor, limit_value):
+    ordered = list(messages or [])
+    total_count = len(ordered)
+    cursor = str(cursor or "").strip()
+    cursor_accepted = None
+    end = total_count
+    if cursor:
+        cursor_accepted = False
+        for index, item in enumerate(ordered):
+            if item.get("meetingMessageId") == cursor:
+                end = index
+                cursor_accepted = True
+                break
+    available = ordered[:end]
+    if limit_value:
+        page_items = available[-limit_value:]
+        has_more = len(available) > len(page_items)
+    else:
+        page_items = available
+        has_more = False
+    next_cursor = None
+    if has_more and page_items:
+        next_cursor = page_items[0].get("meetingMessageId")
+    return {
+        "items": page_items,
+        "totalMessageCount": total_count,
+        "visibleMessageCount": len(page_items),
+        "hasMore": bool(has_more),
+        "nextCursor": next_cursor,
+        "cursor": cursor,
+        "cursorAccepted": cursor_accepted,
+    }
+
+
 def _public_memory_event(event):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
@@ -606,7 +640,7 @@ class FileStore(object):
         self._save(data)
         return dict(room), created
 
-    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+    def meeting_messages_page(self, workspace_id, room_id, agent_id=None, limit=50, cursor=None):
         data = self._load()
         created = self._ensure_default_meeting_rooms(data, workspace_id)
         if created:
@@ -619,9 +653,15 @@ class FileStore(object):
         except (TypeError, ValueError):
             limit_value = 50
         limit_value = max(1, min(limit_value, 200))
-        messages = self._meeting_messages_for_room(data, workspace_id, room_id)[-limit_value:]
+        page = _meeting_transcript_page(self._meeting_messages_for_room(data, workspace_id, room_id), cursor, limit_value)
         read_state = self._meeting_read_state(data, workspace_id, room_id, agent_id) or {}
-        return dict(room), messages, read_state
+        page["room"] = dict(room)
+        page["readState"] = read_state
+        return page
+
+    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+        page = self.meeting_messages_page(workspace_id, room_id, agent_id, limit)
+        return page.get("room"), page.get("items", []), page.get("readState")
 
     def meeting_message(self, workspace_id, meeting_message_id):
         data = self._load()
@@ -3501,12 +3541,17 @@ class SQLiteStore(FileStore):
                     )
                     return room, created
 
-    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+    def meeting_messages_page(self, workspace_id, room_id, agent_id=None, limit=50, cursor=None):
         try:
             limit_value = int(limit)
         except (TypeError, ValueError):
             limit_value = 50
         limit_value = max(1, min(limit_value, 200))
+        cursor = str(cursor or "").strip()
+        cursor_clause = ""
+        cursor_params = []
+        cursor_accepted = None
+        query_limit = limit_value + 1
         with _LOCK:
             with self._open_connection() as connection:
                 room = self._room_from_row(
@@ -3519,18 +3564,48 @@ class SQLiteStore(FileStore):
                     ).fetchone()
                 )
                 if not room:
-                    return None, [], None
+                    return {"room": None, "items": [], "readState": None, "totalMessageCount": 0, "visibleMessageCount": 0, "hasMore": False, "nextCursor": None, "cursor": cursor, "cursorAccepted": None}
+                total_count = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM matm_meeting_messages
+                    WHERE workspace_id = ? AND room_id = ?
+                    """,
+                    (workspace_id, room_id),
+                ).fetchone()["count"]
+                if cursor:
+                    cursor_row = connection.execute(
+                        """
+                        SELECT meeting_message_id, created_at
+                        FROM matm_meeting_messages
+                        WHERE workspace_id = ? AND room_id = ? AND meeting_message_id = ?
+                        """,
+                        (workspace_id, room_id, cursor),
+                    ).fetchone()
+                    cursor_accepted = bool(cursor_row)
+                    if cursor_row:
+                        cursor_clause = """
+                        AND (
+                          created_at < ?
+                          OR (created_at = ? AND meeting_message_id < ?)
+                        )
+                        """
+                        cursor_params = [cursor_row["created_at"] or "", cursor_row["created_at"] or "", cursor]
                 rows = list(
                     connection.execute(
                         """
                         SELECT * FROM matm_meeting_messages
                         WHERE workspace_id = ? AND room_id = ?
+                        %s
                         ORDER BY created_at DESC, meeting_message_id DESC
                         LIMIT ?
-                        """,
-                        (workspace_id, room_id, limit_value),
+                        """ % cursor_clause,
+                        tuple([workspace_id, room_id] + cursor_params + [query_limit]),
                     )
                 )
+                has_more = len(rows) > limit_value
+                if has_more:
+                    rows = rows[:limit_value]
                 rows.reverse()
                 messages = [self._meeting_message_from_row(row) for row in rows]
                 read_state = {}
@@ -3544,7 +3619,22 @@ class SQLiteStore(FileStore):
                             (workspace_id, room_id, agent_id),
                         ).fetchone()
                     )
-                return room, messages, read_state
+                next_cursor = messages[0].get("meetingMessageId") if has_more and messages else None
+                return {
+                    "room": room,
+                    "items": messages,
+                    "readState": read_state,
+                    "totalMessageCount": int(total_count or 0),
+                    "visibleMessageCount": len(messages),
+                    "hasMore": bool(has_more),
+                    "nextCursor": next_cursor,
+                    "cursor": cursor,
+                    "cursorAccepted": cursor_accepted,
+                }
+
+    def meeting_messages(self, workspace_id, room_id, agent_id=None, limit=50):
+        page = self.meeting_messages_page(workspace_id, room_id, agent_id, limit)
+        return page.get("room"), page.get("items", []), page.get("readState")
 
     def meeting_message(self, workspace_id, meeting_message_id):
         meeting_message_id = str(meeting_message_id or "").strip()

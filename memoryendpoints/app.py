@@ -830,7 +830,20 @@ def _meeting_room_create_operator_summary(room, created, creator_agent_id):
     }
 
 
-def _meeting_messages_operator_summary(room, messages, read_state, filters, unread_count=0):
+def _meeting_transcript_ordering_summary():
+    return {
+        "schemaVersion": "memoryendpoints.meeting_transcript_ordering.v1",
+        "window": "latest_messages",
+        "displayOrder": "oldest_to_newest_within_visible_window",
+        "cursorDirection": "older",
+        "cursorField": "items[0].meetingMessageId",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _meeting_messages_operator_summary(room, messages, read_state, filters, unread_count=0, total_message_count=None, pagination=None):
     room = room or {}
     messages = messages or []
     return {
@@ -839,9 +852,13 @@ def _meeting_messages_operator_summary(room, messages, read_state, filters, unre
         "scope": room.get("scope") or "",
         "scopeId": room.get("scopeId") or "",
         "count": len(messages),
+        "visibleMessageCount": len(messages),
+        "totalMessageCount": len(messages) if total_message_count is None else int(total_message_count or 0),
         "filters": dict(filters or {}),
         "senderAgentCounts": _count_by(messages, "senderAgentId"),
         "unreadCount": int(unread_count or 0),
+        "pagination": dict(pagination or {}),
+        "transcriptOrdering": _meeting_transcript_ordering_summary(),
         "readStatePresent": bool(read_state),
         "alwaysAvailable": bool(room.get("alwaysAvailable")),
         "valuesRedacted": True,
@@ -3161,9 +3178,13 @@ def route_protected(environ, start_response, path):
     if path == "/api/matm/meeting-messages" and method == "GET":
         room_id = query.get("room_id") or query.get("roomId") or ""
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        cursor_filter = query.get("cursor") or query.get("before_meeting_message_id") or query.get("beforeMeetingMessageId") or ""
         if not room_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting transcript reads require room_id.", "meeting_room_id_required")
-        room, messages, read_state = store.meeting_messages(workspace_id, room_id, agent_filter, query.get("limit") or "50")
+        transcript_page = store.meeting_messages_page(workspace_id, room_id, agent_filter, query.get("limit") or "50", cursor_filter)
+        room = transcript_page.get("room")
+        messages = transcript_page.get("items") or []
+        read_state = transcript_page.get("readState")
         if not room:
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
         rooms = store.meeting_rooms(workspace_id, agent_filter)
@@ -3173,7 +3194,30 @@ def route_protected(environ, start_response, path):
             filters["agentId"] = agent_filter
         if query.get("limit"):
             filters["limit"] = query.get("limit")
-        operator_summary = _meeting_messages_operator_summary(room_with_counts, messages, read_state, filters, room_with_counts.get("unreadCount") or 0)
+        if cursor_filter:
+            filters["cursor"] = cursor_filter
+        pagination = {
+            "visibleMessageCount": transcript_page.get("visibleMessageCount", len(messages)),
+            "totalMessageCount": transcript_page.get("totalMessageCount", len(messages)),
+            "hasMore": bool(transcript_page.get("hasMore")),
+            "nextCursor": transcript_page.get("nextCursor"),
+            "cursor": transcript_page.get("cursor") or "",
+            "cursorAccepted": transcript_page.get("cursorAccepted"),
+            "cursorDirection": "older",
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        transcript_ordering = _meeting_transcript_ordering_summary()
+        operator_summary = _meeting_messages_operator_summary(
+            room_with_counts,
+            messages,
+            read_state,
+            filters,
+            room_with_counts.get("unreadCount") or 0,
+            transcript_page.get("totalMessageCount", len(messages)),
+            pagination,
+        )
         _audit_read(
             store,
             workspace_id,
@@ -3183,6 +3227,7 @@ def route_protected(environ, start_response, path):
             {
                 "roomScope": room.get("scope"),
                 "meetingMessageCount": len(messages),
+                "totalMessageCount": transcript_page.get("totalMessageCount", len(messages)),
                 "unreadMeetingCount": operator_summary["unreadCount"],
                 "filters": filters,
             },
@@ -3195,6 +3240,14 @@ def route_protected(environ, start_response, path):
                 "room": room_with_counts,
                 "items": messages,
                 "count": len(messages),
+                "visibleMessageCount": len(messages),
+                "totalMessageCount": transcript_page.get("totalMessageCount", len(messages)),
+                "hasMore": bool(transcript_page.get("hasMore")),
+                "nextCursor": transcript_page.get("nextCursor"),
+                "cursor": transcript_page.get("cursor") or "",
+                "cursorAccepted": transcript_page.get("cursorAccepted"),
+                "transcriptOrdering": transcript_ordering,
+                "pagination": pagination,
                 "readState": read_state or {},
                 "filters": filters,
                 "operatorSummary": operator_summary,

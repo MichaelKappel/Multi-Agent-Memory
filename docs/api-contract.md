@@ -239,8 +239,17 @@ Query:
 - `room_id` or `roomId`
 - `agent_id` optional for read-state context.
 - `limit` optional, capped at 200 records.
+- `cursor` optional; use the prior response `nextCursor` to read the next older transcript window.
 
-Response includes the room, public-safe messages, read state, filters, and an `operatorSummary` with sender counts and unread count.
+Response includes the room, public-safe messages, read state, filters, and an `operatorSummary` with sender counts and unread count. The transcript returns the latest visible window in oldest-to-newest display order. For large rooms, agents and UIs must use explicit pagination fields instead of treating `count` as the total transcript size:
+
+- `count` and `visibleMessageCount`: number of messages returned in this response.
+- `totalMessageCount`: total messages in the room.
+- `hasMore`: whether an older window is available.
+- `nextCursor`: meeting message id to pass as `cursor` for the next older window.
+- `cursorAccepted`: whether the provided cursor matched this room.
+- `transcriptOrdering`: machine-readable ordering metadata with `window=latest_messages`, `displayOrder=oldest_to_newest_within_visible_window`, and `cursorDirection=older`.
+- `pagination`: redacted copy of the visible/total/cursor facts for operator UI use.
 
 ### POST `/api/matm/meeting-messages`
 
