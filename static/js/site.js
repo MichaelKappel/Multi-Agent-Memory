@@ -63,6 +63,8 @@
     longTermMemoryHealth: null,
     latestMemoryItems: [],
     latestInboxItems: [],
+    latestLaneInboxItems: [],
+    messageDeskMode: "focused",
     latestReceiptItems: [],
     latestAuditItems: [],
     latestReviewItems: [],
@@ -1044,8 +1046,10 @@
     var delivery = item.delivery || {};
     var laneRecipient = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
     var messageType = delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
+    var laneLabel = item.operatorLaneLabel || "";
+    var laneAgentId = item.operatorLaneAgentId || "";
     var row = resultRow(
-      messageType === "targeted" ? "Targeted message" : "Broadcast message",
+      (laneLabel ? laneLabel + " lane: " : "") + (messageType === "targeted" ? "Targeted message" : "Broadcast message"),
       message.safeSummary || "Current-message row.",
       [
         { text: messageType, kind: messageType === "broadcast" ? "good" : "neutral" },
@@ -1054,6 +1058,7 @@
         { text: message.valuesRedacted ? "redacted" : "public-safe", kind: "good" },
       ],
       [
+        laneAgentId ? "lane " + laneAgentId : "",
         "from " + (message.senderAgentId || "unknown"),
         "to " + (laneRecipient || "all agents"),
         "message " + shortId(message.messageId),
@@ -1177,13 +1182,17 @@
     if (!panel) {
       return;
     }
-    var items = state.latestInboxItems || [];
-    appendDeskHeading(panel, "Message Rows", items.length ? items.length + " unread" : "inbox clear");
+    var showingLanes = state.messageDeskMode === "lanes";
+    var items = showingLanes ? (state.latestLaneInboxItems || []) : (state.latestInboxItems || []);
+    var knownUnread = showingLanes && state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
+      ? state.laneUnreadCount
+      : items.length;
+    appendDeskHeading(panel, "Message Rows", showingLanes ? knownUnread + " unread across lanes" : (items.length ? items.length + " unread" : "inbox clear"));
     if (!items.length) {
-      panel.appendChild(el("p", "empty-state", "Current-message rows appear after inbox refresh."));
+      panel.appendChild(el("p", "empty-state", showingLanes ? "All checked lanes are clear." : "Current-message rows appear after inbox refresh."));
       return;
     }
-    items.slice(0, 3).forEach(function (item) {
+    items.slice(0, showingLanes ? 4 : 3).forEach(function (item) {
       panel.appendChild(messageDeskRow(item));
     });
   }
@@ -1363,6 +1372,7 @@
     var items = (payload && payload.items) || [];
     var operatorSummary = (payload && payload.operatorSummary) || {};
     var lane = inboxAgentFromPayload(payload, agentId || state.agentId);
+    state.messageDeskMode = "focused";
     state.latestInboxItems = items.slice(0, 6);
     appendFilterSummary(node, payload && payload.filters);
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
@@ -1503,6 +1513,8 @@
     }
     clear(node);
     if (!results || !results.length) {
+      state.messageDeskMode = "lanes";
+      state.latestLaneInboxItems = [];
       state.laneUnreadCount = null;
       state.messageDeliveryCounts = null;
       renderOperatorMetrics();
@@ -1520,6 +1532,8 @@
       totalBroadcast += deliveryCounts.broadcast || 0;
       totalTargeted += deliveryCounts.targeted || 0;
     });
+    state.messageDeskMode = "lanes";
+    state.latestLaneInboxItems = collectLaneInboxItems(results);
     state.laneUnreadCount = totalUnread;
     state.messageDeliveryCounts = {broadcast: totalBroadcast, targeted: totalTargeted};
     renderOperatorMetrics();
@@ -1563,6 +1577,26 @@
       row.appendChild(actions);
       node.appendChild(row);
     });
+  }
+
+  function collectLaneInboxItems(results) {
+    var rows = [];
+    (results || []).forEach(function (result) {
+      if (!result || !result.ok) {
+        return;
+      }
+      var items = (result.payload && result.payload.items) || [];
+      items.forEach(function (item) {
+        var row = {};
+        Object.keys(item || {}).forEach(function (key) {
+          row[key] = item[key];
+        });
+        row.operatorLaneAgentId = result.agentId;
+        row.operatorLaneLabel = result.label;
+        rows.push(row);
+      });
+    });
+    return rows.slice(0, 8);
   }
 
   function broadcastItemVisible(item, messageId) {
@@ -3467,8 +3501,8 @@
           return payload;
         });
     } else if (action === "messages") {
-      task = refreshLaneOverview()
-        .then(function () { return refreshInbox(state.agentId); })
+      task = refreshInbox(state.agentId)
+        .then(function () { return refreshLaneOverview(); })
         .then(function (payload) {
           setStatus("Message lanes refreshed from the command bar.", false);
           return payload;
