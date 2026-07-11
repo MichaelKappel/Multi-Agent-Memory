@@ -7,7 +7,7 @@ Verification status: active operational memory; verify with the `.uai` audit and
 Memory scope: current architecture boundaries, runtime shape, and source-of-truth pointers.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when architecture boundaries change; submit durable public-safe architecture summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
-Source of truth: `memoryendpoints/`, `docs/api-contract.md`, `docs/storage-backends.md`, `docs/database-structure.md`, and `sites/multiagentmemory.com/`.
+Source of truth: `memoryendpoints/`, tests, deployment/runtime contracts, and database-backed MemoryEndpoints.com wiki records. Existing `docs/` files are transitional migration/evidence material until their knowledge is deliberately moved into MemoryEndpoints.com.
 Next action for agents: preserve the product boundary and verify route/storage behavior before expanding claims.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
@@ -19,6 +19,7 @@ Current architecture state:
 - Protected MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, redacted receipts, and redacted audit-log readback.
 - Protected knowledge wiki routes cover project upsert/list, database-backed company/workspace/project tree retrieval, and one-document wiki indexing through `matm_crawl_sources` and `matm_search_documents`.
 - The authenticated human `/knowledge` wiki and AI swarm knowledge routes must read the same database records. Do not create generated filesystem wiki trees as the source of truth.
+- `docs/` must not become a permanent knowledge store. After its knowledge is reviewed and moved one item at a time into the database-backed wiki/memory system, the repository should no longer retain `docs/` as a parallel documentation hierarchy.
 - File storage remains the default local backend.
 - Stdlib SQLite is a live optional relational backend for implemented MATM workflows. It uses separate MATM tables, including memory revisions, instead of a single JSON blob table in the active tested path.
 - MySQL/MariaDB remains adapter-gated because the runtime cannot claim a live MySQL client without approved non-stdlib support.

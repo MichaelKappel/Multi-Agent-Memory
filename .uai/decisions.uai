@@ -18,6 +18,7 @@ Current governing decisions:
 - Do not add `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation.
 - Store deep detail in docs, reports, MATM records, or other durable targets, then point to those from typed `.uai` files.
 - Store company, workspace, and project knowledge trees as protected database records, not as generated filesystem trees. Filesystem reports can be temporary evidence or source input, but crawlable/searchable company knowledge belongs in the database source of truth.
+- Treat `docs/` as transitional migration/evidence material only. After the knowledge is moved deliberately into MemoryEndpoints.com, `docs/` should not remain as a parallel source-of-truth documentation tree.
 - Do not bulk-import report archives into company knowledge. Ingest reports deliberately through reviewed, source-notated database document writes so scope, category, project placement, and context are correct.
 - Treat taxonomy paths as first-class wiki navigation. Each knowledge document needs title, description, keywords, and one or more hierarchy paths; multiple hierarchy placement is expected when a concept belongs in more than one context.
 - Do not copy public NeuralWikis wiki content, branding, or generated public site material.
