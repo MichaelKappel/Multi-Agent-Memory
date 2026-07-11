@@ -24,6 +24,7 @@ ROUTES = [
     "/transparency",
     "/api/version",
     "/api/matm/live-capability-matrix",
+    "/api/matm/agent-compatibility",
     "/api/matm/connector-contract",
     "/api/matm/openapi.json",
     "/api/matm/route-inventory",
