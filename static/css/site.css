@@ -1420,8 +1420,8 @@ footer {
     white-space: normal;
   }
 
-  nav a[href*="multiagentmemory"] {
-    grid-column: auto;
+  .topbar nav a[href*="multiagentmemory"] {
+    flex-basis: 100%;
   }
 
   .session-actions {

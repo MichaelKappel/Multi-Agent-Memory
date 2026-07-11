@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
@@ -20,6 +21,7 @@ LONG_TERM_MEMORY_TAG = "long-term-memory-migration"
 LONG_TERM_MEMORY_SOURCE_PREFIX = "docs/long-term-memory/"
 DEFAULT_CORS_ALLOWED_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-MemoryEndpoints-Key"
 DEFAULT_CORS_ALLOWED_METHODS = "GET, POST, OPTIONS"
+KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/knowledge/(?:company|workspace|project)/(?:[a-z0-9]+(?:-[a-z0-9]+)*/)*[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def _read_body(environ):
@@ -38,6 +40,10 @@ def _read_body(environ):
 
 def _query(environ):
     return {k: v[0] if v else "" for k, v in parse_qs(environ.get("QUERY_STRING", "")).items()}
+
+
+def _is_knowledge_page_route(path):
+    return bool(KNOWLEDGE_PAGE_ROUTE.fullmatch(path or "")) and "//" not in path and not path.endswith("/")
 
 
 def _token(environ):
@@ -267,6 +273,7 @@ def _knowledge_filters(query):
         "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
         "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
         "documentId": query.get("document_id") or query.get("documentId") or query.get("search_document_id") or query.get("searchDocumentId") or "",
+        "routeOrPath": query.get("route_or_path") or query.get("routeOrPath") or "",
     }
 
 
@@ -2322,10 +2329,11 @@ Remaining blocker</textarea>
     return response(start_response, "200 OK", html_page("Console", body), "text/html; charset=utf-8")
 
 
-def route_knowledge(start_response):
+def route_knowledge(start_response, requested_route=""):
     asset_version = escape_html(_asset_version("js/knowledge.js"))
+    initial_route = escape_html(requested_route if _is_knowledge_page_route(requested_route) else "")
     body = """
-<section class="knowledge-app" data-knowledge-app>
+<section class="knowledge-app" data-knowledge-app data-initial-route="%s">
   <header class="knowledge-header">
     <div>
       <span class="section-kicker">Private company knowledge</span>
@@ -2399,7 +2407,7 @@ def route_knowledge(start_response):
   <output class="knowledge-status" data-knowledge-status></output>
 </section>
 <script src="/static/js/knowledge.js?v=%s"></script>
-""" % asset_version
+""" % (initial_route, asset_version)
     return response(start_response, "200 OK", html_page("Knowledge", body), "text/html; charset=utf-8")
 
 
@@ -4177,8 +4185,8 @@ def application(environ, start_response):
         return route_agent_coordination(start_response)
     if path == "/console" and method == "GET":
         return route_console(start_response)
-    if path == "/knowledge" and method == "GET":
-        return route_knowledge(start_response)
+    if (path == "/knowledge" or _is_knowledge_page_route(path)) and method == "GET":
+        return route_knowledge(start_response, path if path != "/knowledge" else "")
     if path == "/memory-lifecycle" and method == "GET":
         return route_memory_lifecycle(start_response)
     if path == "/transparency" and method == "GET":

@@ -388,6 +388,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("event_id", search_params)
         self.assertIn("source_prefix", search_params)
         self.assertIn("actor_agent_id", search_params)
+        knowledge_params = {item["name"] for item in paths["/api/matm/knowledge-documents"]["get"]["parameters"]}
+        self.assertIn("route_or_path", knowledge_params)
         security_schemes = data["components"]["securitySchemes"]
         self.assertIn("workspaceBearer", security_schemes)
         self.assertIn("workspaceHeader", security_schemes)
@@ -596,7 +598,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
     def test_console_css_keeps_mobile_nav_and_memory_rows_readable(self):
         css = (Path(__file__).resolve().parents[1] / "static" / "css" / "site.css").read_text(encoding="utf-8")
 
-        self.assertIn('nav a[href*="multiagentmemory"]', css)
+        self.assertIn('.topbar nav a[href*="multiagentmemory"]', css)
+        self.assertIn("flex-basis: 100%", css)
         self.assertIn(".summary-meta", css)
         self.assertIn("overflow-wrap: anywhere", css)
         self.assertIn(".home-status", css)

@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import unittest
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app import application
 from memoryendpoints.storage import SQLiteStore
@@ -196,6 +197,36 @@ class KnowledgeWikiTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/knowledge-documents",
             headers=headers,
+            query=urlencode(
+                {
+                    "workspace_id": workspace_id,
+                    "route_or_path": doc_body["routeOrPath"],
+                    "include_text": "1",
+                }
+            ),
+        )
+        self.assertEqual("200 OK", status)
+        route_payload = json.loads(text)
+        self.assertEqual(1, route_payload["count"])
+        self.assertEqual(document_id, route_payload["items"][0]["searchDocumentId"])
+        self.assertEqual(doc_body["routeOrPath"], route_payload["filters"]["routeOrPath"])
+
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents",
+            headers=headers,
+            query=urlencode(
+                {
+                    "workspace_id": workspace_id,
+                    "route_or_path": "/knowledge/project/system-targets/not-this-page",
+                }
+            ),
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual(0, json.loads(text)["count"])
+
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents",
+            headers=headers,
             query="workspace_id=%s&taxonomy_path=%s" % (workspace_id, "AI%20infrastructure%20%3E%20agent%20memory"),
         )
         self.assertEqual("200 OK", status)
@@ -232,6 +263,40 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertEqual(["company", "workspace", "project"], contract["supportedScopes"])
         self.assertEqual([], contract["identityOwnedKnowledgeScopes"])
         self.assertEqual("many_to_many", contract["accountCompanyMembership"])
+        self.assertIn("route_or_path", contract["queryFilters"])
+
+        deep_route = "/knowledge/project/architecture/private-deep-link"
+        status, _headers, deep_text = call_app(deep_route)
+        self.assertEqual("200 OK", status)
+        self.assertIn('data-initial-route="%s"' % deep_route, deep_text)
+        self.assertIn("data-knowledge-private hidden", deep_text)
+        self.assertNotIn("Company Wiki", deep_text)
+
+        for invalid_route in (
+            "/knowledge/account/private-deep-link",
+            "/knowledge/user/private-deep-link",
+            "/knowledge/goal/private-deep-link",
+            "/knowledge/task/private-deep-link",
+            "/knowledge/project//private-deep-link",
+            "/knowledge/project/Architecture/private-deep-link",
+            "/knowledge/project/architecture/../private-deep-link",
+            "/knowledge/project/architecture/private_page",
+            "/knowledge/project/architecture/%2e%2e/private-deep-link",
+        ):
+            with self.subTest(invalid_route=invalid_route):
+                status, _headers, payload = call_app(invalid_route)
+                self.assertEqual("404 Not Found", status)
+                self.assertEqual("not_found", json.loads(payload)["error"]["code"])
+
+        knowledge_js = (Path(__file__).resolve().parents[1] / "static" / "js" / "knowledge.js").read_text(encoding="utf-8")
+        self.assertIn("function isInternalKnowledgeRoute", knowledge_js)
+        self.assertIn("route_or_path: routeOrPath", knowledge_js)
+        self.assertIn("const linkHref = match[5]", knowledge_js)
+        self.assertIn("loadDocumentByRoute(linkHref)", knowledge_js)
+        self.assertNotIn("loadDocumentByRoute(match[5])", knowledge_js)
+        self.assertIn("if (!payload) return", knowledge_js)
+        self.assertIn('window.addEventListener("popstate"', knowledge_js)
+        self.assertNotIn("innerHTML", knowledge_js)
 
         for route in (
             "/api/matm/projects",

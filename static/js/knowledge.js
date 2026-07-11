@@ -11,7 +11,12 @@
   const articleEl = app.querySelector("[data-knowledge-article]");
   const resultsEl = app.querySelector("[data-knowledge-results]");
   const statusEl = app.querySelector("[data-knowledge-status]");
-  const state = { workspaceId: "", workspaceKey: "", searchMode: "pages" };
+  const state = { workspaceId: "", workspaceKey: "", searchMode: "pages", initialRoute: app.dataset.initialRoute || "" };
+
+  function isInternalKnowledgeRoute(value) {
+    const route = String(value || "");
+    return /^\/knowledge\/(company|workspace|project)\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/)*[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route);
+  }
 
   function setStatus(message, kind) {
     statusEl.textContent = message || "";
@@ -206,7 +211,7 @@
 
   function appendInline(parent, source) {
     const text = String(source || "");
-    const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*([^*]+)\*)/g;
+    const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(((?:https?:\/\/|\/knowledge\/)[^)\s]+)\)|\*([^*]+)\*)/g;
     let cursor = 0;
     let match;
     while ((match = pattern.exec(text))) {
@@ -219,11 +224,21 @@
         element = document.createElement("code");
         element.textContent = match[3];
       } else if (match[4] && match[5]) {
+        const linkHref = match[5];
         element = document.createElement("a");
         element.textContent = match[4];
-        element.href = match[5];
-        element.target = "_blank";
-        element.rel = "noopener noreferrer external";
+        element.href = linkHref;
+        if (isInternalKnowledgeRoute(linkHref)) {
+          element.dataset.knowledgeRoute = linkHref;
+          element.addEventListener("click", function (event) {
+            if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            loadDocumentByRoute(linkHref);
+          });
+        } else {
+          element.target = "_blank";
+          element.rel = "noopener noreferrer external";
+        }
       } else {
         element = document.createElement("em");
         element.textContent = match[6] || "";
@@ -404,14 +419,21 @@
       });
   }
 
-  function loadDocument(documentId) {
-    if (!documentId) return;
+  function setKnowledgeLocation(routeOrPath) {
+    if (!isInternalKnowledgeRoute(routeOrPath) || window.location.pathname === routeOrPath) return;
+    window.history.pushState({}, "", routeOrPath);
+  }
+
+  function loadDocumentRequest(params, options) {
+    const settings = options || {};
     setStatus("Loading page...", "loading");
-    api("/api/matm/knowledge-documents", { document_id: documentId, include_text: "1", limit: "1" })
+    return api("/api/matm/knowledge-documents", Object.assign({ include_text: "1", limit: "1" }, params || {}))
       .then(function (payload) {
         const document = (payload.items || [])[0];
+        if (!document) throw new Error("Page not found.");
         renderArticle(document);
-        return api("/api/matm/external-links", { document_id: documentId, limit: "100" });
+        if (settings.updateLocation !== false) setKnowledgeLocation(document.routeOrPath || "");
+        return api("/api/matm/external-links", { document_id: document.searchDocumentId, limit: "100" });
       })
       .then(function (payload) {
         renderDocumentLinks(payload.items || []);
@@ -423,6 +445,19 @@
         if (!privateEl.hidden) appendText(articleEl, "p", error.message, "empty-state");
         setStatus(error.message, "error");
       });
+  }
+
+  function loadDocument(documentId, options) {
+    if (!documentId) return Promise.resolve();
+    return loadDocumentRequest({ document_id: documentId }, options);
+  }
+
+  function loadDocumentByRoute(routeOrPath, options) {
+    if (!isInternalKnowledgeRoute(routeOrPath)) {
+      setStatus("Unsupported wiki route.", "error");
+      return Promise.resolve();
+    }
+    return loadDocumentRequest({ route_or_path: routeOrPath }, options);
   }
 
   function runSearch() {
@@ -458,7 +493,12 @@
     state.workspaceKey = String(form.get("workspaceKey") || "").trim();
     authForm.elements.workspaceKey.value = "";
     lockPrivateKnowledge(false);
-    loadTree();
+    loadTree().then(function (payload) {
+      if (!payload) return;
+      const initialRoute = state.initialRoute;
+      state.initialRoute = "";
+      if (isInternalKnowledgeRoute(initialRoute)) loadDocumentByRoute(initialRoute, { updateLocation: false });
+    });
   });
 
   searchForm.addEventListener("submit", function (event) {
@@ -478,5 +518,19 @@
       });
       runSearch();
     });
+  });
+
+  window.addEventListener("popstate", function () {
+    if (!state.workspaceId || !state.workspaceKey) return;
+    const route = window.location.pathname;
+    if (isInternalKnowledgeRoute(route)) {
+      loadDocumentByRoute(route, { updateLocation: false });
+      return;
+    }
+    if (route === "/knowledge") {
+      clearNode(articleEl);
+      appendText(articleEl, "p", "Select a page.", "empty-state");
+      setStatus("Wiki loaded.", "ok");
+    }
   });
 })();

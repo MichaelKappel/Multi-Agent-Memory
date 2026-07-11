@@ -1674,6 +1674,7 @@ class FileStore(object):
         authority_level = (filters.get("authorityLevel") or filters.get("authority_level") or "").strip().lower()
         source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
         document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
+        route_or_path = filters.get("routeOrPath") or filters.get("route_or_path") or ""
         taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
         items = []
         for document in data.get("searchDocuments", {}).values():
@@ -1694,6 +1695,8 @@ class FileStore(object):
             if source_prefix and not (document.get("sourceUri") or "").startswith(source_prefix):
                 continue
             if document_id and document.get("searchDocumentId") != document_id:
+                continue
+            if route_or_path and document.get("routeOrPath") != route_or_path:
                 continue
             if taxonomy_prefix and not _knowledge_taxonomy_matches(taxonomy_prefix, document):
                 continue
@@ -4147,6 +4150,7 @@ class SQLiteStore(FileStore):
         authority_level = (filters.get("authorityLevel") or filters.get("authority_level") or "").strip().lower()
         source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
         document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
+        route_or_path = filters.get("routeOrPath") or filters.get("route_or_path") or ""
         taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
         clauses = ["d.workspace_id = ?"]
         params = [workspace_id]
@@ -4174,6 +4178,9 @@ class SQLiteStore(FileStore):
         if document_id:
             clauses.append("d.search_document_id = ?")
             params.append(document_id)
+        if route_or_path:
+            clauses.append("d.route_or_path = ?")
+            params.append(route_or_path)
         with _LOCK:
             with self._open_connection() as connection:
                 rows = list(
