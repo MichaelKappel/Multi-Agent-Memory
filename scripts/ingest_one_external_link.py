@@ -2,13 +2,14 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from urllib.parse import urlencode
 
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memoryendpoints.external_links import normalize_external_url
+from memoryendpoints.external_links import normalize_external_url, stable_external_link_id
 from scripts.ingest_one_knowledge_report import (
     DEFAULT_SECRET,
     call_json,
@@ -20,6 +21,95 @@ from scripts.ingest_one_knowledge_report import (
 )
 
 DEFAULT_REPORT = ROOT / "var" / "reports" / "single-external-link-ingest.json"
+
+
+def external_link_request_fingerprint(body):
+    material = dict(body)
+    metadata = dict(material.get("metadata") or {})
+    metadata.pop("requestFingerprint", None)
+    material["metadata"] = metadata
+    canonical = json.dumps(material, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return sha256_text(canonical)
+
+
+def _matching_citation(link, body):
+    document_id = body.get("knowledgeDocumentId") or ""
+    if not document_id:
+        return None
+    expected_anchor = body.get("anchorText") or body.get("pageTitle") or ""
+    expected_relationship = body.get("relationshipType") or "reference"
+    expected_label = body.get("citationLabel") or ""
+    return next(
+        (
+            mention
+            for mention in (link or {}).get("mentions") or []
+            if mention.get("knowledgeDocumentId") == document_id
+            and mention.get("relationshipType") == expected_relationship
+            and mention.get("anchorText") == expected_anchor
+            and (mention.get("citationLabel") or "") == expected_label
+        ),
+        None,
+    )
+
+
+def external_link_readback_matches(link, body):
+    link = link or {}
+    expected_keywords = sorted(set(body.get("keywords") or []))
+    actual_keywords = sorted(set(link.get("keywords") or []))
+    metadata_matches = bool(link) and all(
+        (
+            link.get("normalizedUrl") == body.get("url"),
+            link.get("siteName") == body.get("siteName"),
+            link.get("pageTitle") == body.get("pageTitle"),
+            link.get("description") == body.get("description"),
+            actual_keywords == expected_keywords,
+            link.get("language") == body.get("language"),
+            link.get("contentType") == body.get("contentType"),
+            link.get("reviewStatus") == body.get("reviewStatus"),
+            link.get("crawlStatus") == body.get("crawlStatus"),
+            link.get("crawlPolicy") == body.get("crawlPolicy"),
+            link.get("visibility") == body.get("visibility"),
+        )
+    )
+    citation = _matching_citation(link, body)
+    citation_matches = not body.get("knowledgeDocumentId") or bool(
+        citation
+        and citation.get("contextDescription") == body.get("contextDescription")
+        and int(citation.get("citationOrder") or 0) == int(body.get("citationOrder") or 0)
+    )
+    return {
+        "metadataMatches": metadata_matches,
+        "citationMatches": citation_matches,
+    }
+
+
+def external_link_preflight(base_url, token, workspace_id, normalized_url, body):
+    external_link_id = stable_external_link_id(workspace_id, normalized_url)
+    status, payload = call_json(
+        base_url,
+        "/api/matm/external-links",
+        token=token,
+        query=urlencode(
+            {
+                "workspace_id": workspace_id,
+                "external_link_id": external_link_id,
+                "limit": "10",
+            }
+        ),
+    )
+    payload = require_ok(status, payload, "preflight external link")
+    items = [item for item in payload.get("items") or [] if item.get("externalLinkId") == external_link_id]
+    link = items[0] if items else None
+    citation = _matching_citation(link, body)
+    return {
+        "link": link,
+        "sourcePreviouslyIndexed": bool(link),
+        "existingCanonicalLinkCount": len(items),
+        "citationAlreadyExists": bool(citation),
+        "existingMentionCount": int((link or {}).get("mentionCount") or 0),
+        "existingReviewStatus": (link or {}).get("reviewStatus"),
+        "existingCrawlStatus": (link or {}).get("crawlStatus"),
+    }
 
 
 def main(argv=None):
@@ -96,12 +186,20 @@ def main(argv=None):
                 "citationOrder": args.citation_order,
             }
         )
-    idempotency_material = "\n".join(
-        [normalized["normalizedUrl"], args.document_id, args.relationship_type, args.citation_label, args.anchor_text or args.page_title]
+    request_fingerprint = external_link_request_fingerprint(body)
+    body["metadata"]["requestFingerprint"] = "sha256:" + request_fingerprint
+    idempotency_key = "single-external-link-" + sha256_text(
+        normalized["normalizedUrl"] + "\n" + request_fingerprint
+    )[:24]
+    preflight = external_link_preflight(
+        args.base_url,
+        token,
+        context["workspaceId"],
+        normalized["normalizedUrl"],
+        body,
     )
-    idempotency_key = "single-external-link-" + sha256_text(idempotency_material)[:24]
     result = {
-        "schemaVersion": "memoryendpoints.single_external_link_ingest.v1",
+        "schemaVersion": "memoryendpoints.single_external_link_ingest.v2",
         "mode": "live_apply" if args.apply else "dry_run",
         "baseUrl": args.base_url.rstrip("/"),
         "url": normalized["url"],
@@ -111,15 +209,26 @@ def main(argv=None):
         "pageTitle": args.page_title,
         "description": args.description,
         "keywords": args.keyword,
-        "knowledgeDocumentId": args.document_id or None,
+        "knowledgeDocumentIdHash": "sha256:" + sha256_text(args.document_id) if args.document_id else None,
         "relationshipType": args.relationship_type if args.document_id else None,
         "citationLabel": args.citation_label if args.document_id else None,
+        "sourceReportName": args.source_report_name or None,
+        "canonicalUrlHash": "sha256:" + normalized["normalizedUrlHash"],
+        "requestFingerprint": "sha256:" + request_fingerprint,
+        "sourcePreviouslyIndexed": preflight["sourcePreviouslyIndexed"],
+        "existingCanonicalLinkCount": preflight["existingCanonicalLinkCount"],
+        "citationAlreadyExists": preflight["citationAlreadyExists"],
+        "existingMentionCount": preflight["existingMentionCount"],
+        "existingReviewStatus": preflight["existingReviewStatus"],
+        "existingCrawlStatus": preflight["existingCrawlStatus"],
         "databaseSourceOfTruth": True,
         "firstClassExternalLink": True,
         "bulkImport": False,
         "automaticFetchRequested": False,
         "rawCredentialValuesStored": False,
         "rawWorkspaceKeyStoredByServer": context["rawKeyStoredByServer"],
+        "rawWorkspaceIdWrittenToReport": False,
+        "rawKnowledgeDocumentIdWrittenToReport": False,
         "valuesRedacted": True,
     }
     if args.apply:
@@ -133,6 +242,14 @@ def main(argv=None):
         )
         payload = require_ok(status, payload, "upsert external link")
         link = payload.get("link") or {}
+        readback = external_link_preflight(
+            args.base_url,
+            token,
+            context["workspaceId"],
+            normalized["normalizedUrl"],
+            body,
+        )
+        readback_matches = external_link_readback_matches(readback.get("link"), body)
         result.update(
             {
                 "httpStatus": status,
@@ -145,13 +262,31 @@ def main(argv=None):
                 "linkQueryUrl": payload.get("linkQueryUrl"),
                 "internetSearchQueryUrl": payload.get("internetSearchQueryUrl"),
                 "knowledgeDocumentLinksQueryUrl": payload.get("knowledgeDocumentLinksQueryUrl"),
+                "readbackCanonicalLinkCount": readback["existingCanonicalLinkCount"],
+                "readbackMentionCount": readback["existingMentionCount"],
+                "readbackMatchesReviewedMetadata": readback_matches["metadataMatches"],
+                "readbackCitationMatches": readback_matches["citationMatches"],
             }
         )
     else:
         result["idempotencyKeyHash"] = "sha256:" + sha256_text(idempotency_key)
         result["wouldWriteCanonicalExternalLink"] = True
         result["wouldWriteKnowledgeCitation"] = bool(args.document_id)
-    result["ok"] = bool(result.get("persisted") or not args.apply) and not context["rawKeyStoredByServer"]
+    result["ok"] = bool(
+        (
+            not args.apply
+            or (
+                result.get("persisted")
+                and result.get("visibleInInternetSearch")
+                and result.get("visibleOnKnowledgeDocument")
+                and result.get("visibleInAuditLog")
+                and result.get("readbackCanonicalLinkCount") == 1
+                and result.get("readbackMatchesReviewedMetadata")
+                and result.get("readbackCitationMatches")
+            )
+        )
+        and not context["rawKeyStoredByServer"]
+    )
     write_json(args.report_out, result)
     print(
         json.dumps(

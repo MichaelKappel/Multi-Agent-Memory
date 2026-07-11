@@ -30,6 +30,8 @@ External evidence refresh:
 - Tracked readiness reports are point-in-time snapshots. Treat local route, package, and live latest-code report files as stale standalone evidence when their recorded source SHA does not match the Git HEAD being evaluated; use fresh no-write commands after commit or push as the current-commit proof.
 
 Coverage expectations:
+- Single-report ingestion tests must prove canonical source preflight, exact replay idempotency, body-derived revision fingerprints, data-image omission, and distinct source, selection, and indexed-content hashes.
+- Single-link ingestion tests must prove canonical-URL preflight, exact replay versus changed-metadata revision behavior, citation attachment detection, exact metadata readback, and public-safe report redaction.
 - Route handler integration tests must exercise public discovery and protected MATM workflows.
 - Private-knowledge tests must enumerate the wiki tree, document, external-link, internet-search, and project routes; prove anonymous requests are safe `401` no-ops; prove a valid key cannot select another workspace; and prove failed re-authentication clears the rendered private wiki.
 - Hierarchy tests must prove account-company membership is many-to-many while durable knowledge rejects account, user, goal, and task scopes and accepts only company, workspace, and project.

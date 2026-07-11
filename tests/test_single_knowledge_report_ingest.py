@@ -2,10 +2,77 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from scripts.ingest_one_knowledge_report import build_body, select_knowledge_unit
+from scripts.ingest_one_knowledge_report import (
+    build_body,
+    knowledge_request_fingerprint,
+    sanitize_knowledge_text,
+    select_knowledge_unit,
+    sha256_text,
+)
 
 
 class SingleKnowledgeReportIngestTests(unittest.TestCase):
+    def test_embedded_data_images_are_omitted_from_indexed_text_with_source_hashes_preserved(self):
+        text = """# Report
+
+The formula is ![][equation].
+
+[equation]: <data:image/png;base64,QUJDREVGRw==>
+"""
+        sanitized, details = sanitize_knowledge_text(text)
+
+        self.assertNotIn("data:image", sanitized)
+        self.assertNotIn("QUJDREVGRw", sanitized)
+        self.assertIn("Embedded research image omitted", sanitized)
+        self.assertEqual(1, details["embeddedDataImageDefinitionCount"])
+        self.assertEqual(1, details["embeddedDataImageReferenceCount"])
+        self.assertGreater(details["embeddedDataImageBytesOmitted"], 0)
+
+        args = SimpleNamespace(
+            title="Reviewed report",
+            source_uri="",
+            route_or_path="",
+            scope="workspace",
+            category="agent-memory",
+            description="Reviewed architecture knowledge.",
+            keyword=["agent memory"],
+            taxonomy_path=[["AI infrastructure", "agent memory"]],
+            document_type="",
+            knowledge_status="historical",
+            authority_level="reference",
+            status_reason="Research source retained for provenance.",
+            superseded_by_document_id="",
+            source_type="reviewed_markdown_report",
+            source_report_route="",
+            classification_note="Embedded data images are not searchable evidence.",
+            tag=[],
+            project_id="",
+            project_label="",
+        )
+        selected, unit = select_knowledge_unit(text, Path("Report.md"))
+        body = build_body(
+            args,
+            {"workspaceId": "workspace-one", "companyId": "company-one"},
+            "MemoryEndpoints-Backend-Agent",
+            Path("Report.md"),
+            text,
+            selected,
+            unit,
+        )
+
+        self.assertEqual("sha256:" + sha256_text(text), body["metadata"]["sourceContentHash"])
+        self.assertEqual("sha256:" + sha256_text(selected), body["metadata"]["sourceSelectionContentHash"])
+        self.assertEqual("sha256:" + sha256_text(body["searchableText"]), body["metadata"]["knowledgeUnitContentHash"])
+        self.assertNotEqual(body["metadata"]["sourceSelectionContentHash"], body["metadata"]["knowledgeUnitContentHash"])
+
+    def test_content_derived_request_fingerprint_supports_explicit_revisions(self):
+        body = {"sourceUri": "report://one", "routeOrPath": "/knowledge/one", "searchableText": "First"}
+        replay = dict(body)
+        revision = dict(body, searchableText="Second")
+
+        self.assertEqual(knowledge_request_fingerprint(body), knowledge_request_fingerprint(replay))
+        self.assertNotEqual(knowledge_request_fingerprint(body), knowledge_request_fingerprint(revision))
+
     def test_section_selection_includes_nested_content_and_stops_at_peer(self):
         text = """# **Stateful Memory Report**
 

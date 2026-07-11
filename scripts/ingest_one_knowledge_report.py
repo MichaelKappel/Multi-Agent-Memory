@@ -12,6 +12,9 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
 DEFAULT_REPORT = ROOT / "var" / "reports" / "single-knowledge-report-ingest.json"
+DATA_IMAGE_REFERENCE = re.compile(r"^\[([^\]]+)\]:\s*<?(data:image/[^>\s]+)>?\s*$", re.I)
+REFERENCE_IMAGE = re.compile(r"!\[([^\]]*)\]\[([^\]]+)\]")
+DIRECT_DATA_IMAGE = re.compile(r"!\[([^\]]*)\]\(<?data:image/[^)]+>?\)", re.I)
 
 
 def sha256_text(value):
@@ -50,6 +53,47 @@ def clean_heading(value):
     text = re.sub(r"^[*_`~]+|[*_`~]+$", "", text).strip()
     text = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", text)
     return text
+
+
+def sanitize_knowledge_text(text):
+    data_image_labels = []
+    data_image_bytes = 0
+    retained_lines = []
+    for line in text.splitlines():
+        match = DATA_IMAGE_REFERENCE.match(line.strip())
+        if match:
+            data_image_labels.append(match.group(1))
+            data_image_bytes += len(line.encode("utf-8"))
+            continue
+        retained_lines.append(line)
+    labels = {label.casefold() for label in data_image_labels}
+    reference_replacements = 0
+
+    def replace_reference(match):
+        nonlocal reference_replacements
+        if match.group(2).casefold() not in labels:
+            return match.group(0)
+        reference_replacements += 1
+        label = match.group(1).strip() or match.group(2).strip()
+        return "[Embedded research image omitted from indexed text: %s]" % label
+
+    sanitized = REFERENCE_IMAGE.sub(replace_reference, "\n".join(retained_lines))
+    direct_replacements = 0
+
+    def replace_direct(match):
+        nonlocal direct_replacements
+        direct_replacements += 1
+        label = match.group(1).strip() or "unlabelled image"
+        return "[Embedded research image omitted from indexed text: %s]" % label
+
+    sanitized = DIRECT_DATA_IMAGE.sub(replace_direct, sanitized).strip() + "\n"
+    return sanitized, {
+        "embeddedDataImageDefinitionCount": len(data_image_labels),
+        "embeddedDataImageReferenceCount": reference_replacements + direct_replacements,
+        "embeddedDataImageBytesOmitted": data_image_bytes,
+        "embeddedDataImageLabels": data_image_labels,
+        "embeddedDataImagePolicy": "omitted_from_indexed_text_preserved_by_source_and_selection_hash",
+    }
 
 
 def markdown_sections(text):
@@ -197,10 +241,51 @@ def workspace_context(base_url, token, configured_workspace_id=None):
     }
 
 
+def source_preflight(base_url, token, workspace_id, source_uri, route_or_path):
+    query = urlencode(
+        {
+            "workspace_id": workspace_id,
+            "source_prefix": source_uri,
+            "include_text": "0",
+            "limit": "500",
+        }
+    )
+    status, payload = call_json(base_url, "/api/matm/knowledge-documents", token=token, query=query)
+    payload = require_ok(status, payload, "read existing source documents")
+    items = []
+    for item in payload.get("items") or []:
+        items.append(
+            {
+                "searchDocumentId": item.get("searchDocumentId"),
+                "title": item.get("title"),
+                "scope": item.get("scope"),
+                "routeOrPath": item.get("routeOrPath"),
+                "knowledgeStatus": item.get("knowledgeStatus"),
+                "authorityLevel": item.get("authorityLevel"),
+                "contentHash": item.get("contentHash"),
+                "valuesRedacted": True,
+            }
+        )
+    return {
+        "sourcePreviouslyIngested": bool(items),
+        "existingSourceDocumentCount": len(items),
+        "targetRouteAlreadyExists": any(item.get("routeOrPath") == route_or_path for item in items),
+        "existingSourceDocuments": items,
+        "valuesRedacted": True,
+    }
+
+
+def knowledge_request_fingerprint(body):
+    serialized = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return sha256_text(serialized)
+
+
 def build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit):
     title = clean_heading(args.title or knowledge_unit.get("sectionHeading") or first_heading(source_text, source_path.stem.replace("-", " ").replace("_", " ").title()))
     source_content_hash = sha256_text(source_text)
-    knowledge_content_hash = sha256_text(knowledge_text)
+    indexed_text, sanitization = sanitize_knowledge_text(knowledge_text)
+    source_selection_hash = sha256_text(knowledge_text)
+    knowledge_content_hash = sha256_text(indexed_text)
     source_uri = args.source_uri or "report://%s-%s" % (slug(source_path.stem), source_content_hash[:12])
     route_or_path = args.route_or_path or "/knowledge/%s/%s/%s" % (args.scope, args.category, slug(title))
     document_type = args.document_type or ("reviewed-report-section" if knowledge_unit.get("kind") == "report_section" else "reviewed-report")
@@ -212,7 +297,7 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
         "description": args.description,
         "keywords": args.keyword,
         "taxonomyPaths": args.taxonomy_path,
-        "searchableText": knowledge_text,
+        "searchableText": indexed_text,
         "category": args.category,
         "documentType": document_type,
         "knowledgeStatus": args.knowledge_status,
@@ -228,6 +313,7 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
         "metadata": {
             "sourceFileName": source_path.name,
             "sourceContentHash": "sha256:" + source_content_hash,
+            "sourceSelectionContentHash": "sha256:" + source_selection_hash,
             "knowledgeUnitContentHash": "sha256:" + knowledge_content_hash,
             "ingestMode": "single_report_reviewed_section" if knowledge_unit.get("kind") == "report_section" else "single_report_reviewed",
             "knowledgeUnitKind": knowledge_unit.get("kind"),
@@ -248,6 +334,7 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
             "description": args.description,
             "keywords": args.keyword,
             "taxonomyPaths": args.taxonomy_path,
+            "contentSanitization": sanitization,
             "valuesRedacted": True,
         },
     }
@@ -321,8 +408,16 @@ def main(argv=None):
     actor_agent_id = args.agent_id or secret.get("backendAgentId") or "MemoryEndpoints-Backend-Agent"
     context = workspace_context(args.base_url, token, secret.get("workspaceId"))
     body = build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit)
-    idempotency_material = body["sourceUri"] + body["scope"] + body.get("scopeId", "") + body["routeOrPath"]
+    request_fingerprint = knowledge_request_fingerprint(body)
+    idempotency_material = body["sourceUri"] + body["scope"] + body.get("scopeId", "") + body["routeOrPath"] + request_fingerprint
     idempotency_key = "single-knowledge-page-" + sha256_text(idempotency_material)[:24]
+    preflight = source_preflight(
+        args.base_url,
+        token,
+        context["workspaceId"],
+        body["sourceUri"],
+        body["routeOrPath"],
+    )
 
     result = {
         "schemaVersion": "memoryendpoints.single_knowledge_report_ingest.v3",
@@ -331,8 +426,8 @@ def main(argv=None):
         "sourceFileName": source_path.name,
         "sourceContentHash": body["metadata"]["sourceContentHash"],
         "scope": body["scope"],
-        "scopeId": body.get("scopeId"),
-        "projectId": body.get("projectId"),
+        "scopeIdHash": "sha256:" + sha256_text(body.get("scopeId") or ""),
+        "projectIdHash": "sha256:" + sha256_text(body.get("projectId") or "") if body.get("projectId") else None,
         "category": body["category"],
         "knowledgeStatus": body["knowledgeStatus"],
         "authorityLevel": body["authorityLevel"],
@@ -350,11 +445,20 @@ def main(argv=None):
         "sourceLineStart": knowledge_unit.get("lineStart"),
         "sourceLineEnd": knowledge_unit.get("lineEnd"),
         "knowledgeUnitContentHash": body["metadata"]["knowledgeUnitContentHash"],
+        "sourceSelectionContentHash": body["metadata"]["sourceSelectionContentHash"],
+        "contentSanitization": body["metadata"]["contentSanitization"],
+        "requestFingerprint": "sha256:" + request_fingerprint,
+        "sourcePreviouslyIngested": preflight["sourcePreviouslyIngested"],
+        "existingSourceDocumentCount": preflight["existingSourceDocumentCount"],
+        "targetRouteAlreadyExists": preflight["targetRouteAlreadyExists"],
+        "existingSourceDocuments": preflight["existingSourceDocuments"],
         "databaseSourceOfTruth": True,
         "filesystemKnowledgeTree": False,
         "bulkImport": False,
         "rawReportBodyWrittenToFilesystem": False,
         "rawCredentialValuesStored": False,
+        "rawScopeIdStored": False,
+        "rawProjectIdStored": False,
         "rawWorkspaceKeyStoredByServer": context["rawKeyStoredByServer"],
         "valuesRedacted": True,
     }
@@ -423,13 +527,14 @@ def main(argv=None):
             "source": document.get("routeOrPath") or body["sourceUri"],
             "confidence": 0.9,
         }
+        memory_idempotency_material = idempotency_material + json.dumps(memory_body, sort_keys=True, separators=(",", ":"))
         status, memory_payload = call_json(
             args.base_url,
             "/api/matm/memory-events/submit",
             method="POST",
             body=memory_body,
             token=token,
-            idempotency_key="single-knowledge-memory-" + sha256_text(idempotency_material)[:24],
+            idempotency_key="single-knowledge-memory-" + sha256_text(memory_idempotency_material)[:24],
         )
         memory_payload = require_ok(status, memory_payload, "submit durable memory summary")
         event = memory_payload.get("event") or {}
