@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from scripts.ingest_one_knowledge_report import (
     build_body,
     knowledge_request_fingerprint,
+    redact_query_identifiers,
     sanitize_knowledge_text,
     select_knowledge_unit,
     sha256_text,
@@ -12,6 +13,18 @@ from scripts.ingest_one_knowledge_report import (
 
 
 class SingleKnowledgeReportIngestTests(unittest.TestCase):
+    def test_query_report_urls_redact_scope_identifiers_structurally(self):
+        redacted = redact_query_identifiers(
+            "/api/matm/search?workspace_id=workspace-secret&source=%2Fknowledge%2Fproject%2Fone&limit=10",
+            ("workspace-secret", "project-secret"),
+        )
+
+        self.assertEqual(
+            "/api/matm/search?workspace_id=redacted&source=%2Fknowledge%2Fproject%2Fone&limit=10",
+            redacted,
+        )
+        self.assertNotIn("workspace-secret", redacted)
+
     def test_embedded_data_images_are_omitted_from_indexed_text_with_source_hashes_preserved(self):
         text = """# Report
 
@@ -72,6 +85,51 @@ The formula is ![][equation].
 
         self.assertEqual(knowledge_request_fingerprint(body), knowledge_request_fingerprint(replay))
         self.assertNotEqual(knowledge_request_fingerprint(body), knowledge_request_fingerprint(revision))
+
+    def test_review_overlay_preserves_source_selection_provenance(self):
+        source = "# Research report\n\nA broad claim that requires review.\n"
+        reviewed = "# Reviewed contract\n\nThe claim is retained only as historical evidence.\n"
+        source_path = Path("Research report.md")
+        selected, unit = select_knowledge_unit(source, source_path)
+        args = SimpleNamespace(
+            title="Reviewed contract",
+            source_uri="report://research-report",
+            route_or_path="/knowledge/project/governance/reviewed-contract",
+            scope="project",
+            category="governance",
+            description="A reviewer-authored current contract with source provenance.",
+            keyword=["review overlay"],
+            taxonomy_path=[["Knowledge governance", "review overlays"]],
+            document_type="reviewed-synthesis",
+            knowledge_status="current",
+            authority_level="reviewed",
+            status_reason="",
+            superseded_by_document_id="",
+            source_type="reviewed_markdown_report",
+            source_report_route="/knowledge/project/research/source-report",
+            classification_note="The indexed body is an independent review, not a verbatim source section.",
+            tag=[],
+            project_id="project-memoryendpoints-com",
+            project_label="MemoryEndpoints.com",
+        )
+
+        body = build_body(
+            args,
+            {"workspaceId": "workspace-one", "companyId": "company-one"},
+            "MemoryEndpoints-Backend-Agent",
+            source_path,
+            source,
+            selected,
+            unit,
+            reviewed_text=reviewed,
+        )
+
+        self.assertEqual(reviewed, body["searchableText"])
+        self.assertEqual("sha256:" + sha256_text(selected), body["metadata"]["sourceSelectionContentHash"])
+        self.assertEqual("sha256:" + sha256_text(reviewed), body["metadata"]["reviewedTextContentHash"])
+        self.assertTrue(body["metadata"]["reviewOverlayApplied"])
+        self.assertFalse(body["metadata"]["reviewedTextPathStored"])
+        self.assertEqual("single_report_review_overlay", body["metadata"]["ingestMode"])
 
     def test_section_selection_includes_nested_content_and_stops_at_peer(self):
         text = """# **Stateful Memory Report**
@@ -197,6 +255,36 @@ The durable conclusion.
         self.assertNotIn("Works cited", selected)
         self.assertEqual("Works cited", unit["stopHeading"])
         self.assertEqual(5, unit["lineEnd"])
+
+    def test_explicit_stop_heading_can_span_unfenced_embedded_document_headings(self):
+        text = """# Report
+
+## Discovery proposal
+
+The report introduces an embedded Markdown artifact.
+
+# Embedded site title
+
+## Embedded links
+
+- A public-safe link.
+
+## Next report section
+
+The next topic is separate.
+"""
+
+        selected, unit = select_knowledge_unit(
+            text,
+            Path("report.md"),
+            "Discovery proposal",
+            "Next report section",
+        )
+
+        self.assertIn("# Embedded site title", selected)
+        self.assertIn("## Embedded links", selected)
+        self.assertNotIn("The next topic is separate.", selected)
+        self.assertEqual("Next report section", unit["stopHeading"])
 
     def test_section_discovery_ignores_headings_inside_code_blocks(self):
         text = """# Report

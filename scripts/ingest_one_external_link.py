@@ -23,6 +23,14 @@ from scripts.ingest_one_knowledge_report import (
 DEFAULT_REPORT = ROOT / "var" / "reports" / "single-external-link-ingest.json"
 
 
+def canonical_language(value):
+    return str(value or "und").strip().lower() or "und"
+
+
+def canonical_content_type(value):
+    return str(value or "text/html").strip().lower() or "text/html"
+
+
 def external_link_request_fingerprint(body):
     material = dict(body)
     metadata = dict(material.get("metadata") or {})
@@ -63,8 +71,8 @@ def external_link_readback_matches(link, body):
             link.get("pageTitle") == body.get("pageTitle"),
             link.get("description") == body.get("description"),
             actual_keywords == expected_keywords,
-            link.get("language") == body.get("language"),
-            link.get("contentType") == body.get("contentType"),
+            canonical_language(link.get("language")) == canonical_language(body.get("language")),
+            canonical_content_type(link.get("contentType")) == canonical_content_type(body.get("contentType")),
             link.get("reviewStatus") == body.get("reviewStatus"),
             link.get("crawlStatus") == body.get("crawlStatus"),
             link.get("crawlPolicy") == body.get("crawlPolicy"),
@@ -162,8 +170,8 @@ def main(argv=None):
         "pageTitle": args.page_title,
         "description": args.description,
         "keywords": args.keyword,
-        "language": args.language,
-        "contentType": args.content_type,
+        "language": canonical_language(args.language),
+        "contentType": canonical_content_type(args.content_type),
         "reviewStatus": args.review_status,
         "crawlStatus": args.crawl_status,
         "crawlPolicy": args.crawl_policy,

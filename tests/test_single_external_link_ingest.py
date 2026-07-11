@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 from memoryendpoints.external_links import stable_external_link_id
 from scripts.ingest_one_external_link import (
+    canonical_content_type,
+    canonical_language,
     external_link_preflight,
     external_link_readback_matches,
     external_link_request_fingerprint,
@@ -69,6 +71,23 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
 
         self.assertEqual(external_link_request_fingerprint(body), external_link_request_fingerprint(replay))
         self.assertNotEqual(external_link_request_fingerprint(body), external_link_request_fingerprint(revision))
+
+    def test_language_and_content_type_use_storage_canonical_form(self):
+        self.assertEqual("en-us", canonical_language(" en-US "))
+        self.assertEqual("und", canonical_language(""))
+        self.assertEqual("text/html", canonical_content_type(" Text/HTML "))
+
+        body = self.body()
+        body["language"] = "en-US"
+        body["contentType"] = "Text/HTML"
+        link = self.persisted_link()
+        link["language"] = "en-us"
+        link["contentType"] = "text/html"
+
+        self.assertEqual(
+            {"metadataMatches": True, "citationMatches": True},
+            external_link_readback_matches(link, body),
+        )
 
     def test_preflight_finds_canonical_url_and_exact_citation(self):
         body = self.body()

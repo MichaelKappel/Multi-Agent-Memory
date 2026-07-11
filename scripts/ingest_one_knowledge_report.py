@@ -5,7 +5,7 @@ import re
 import string
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 
@@ -36,6 +36,29 @@ def write_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def redact_query_identifiers(url, sensitive_values=()):
+    value = str(url or "")
+    if not value:
+        return value
+    sensitive = {str(item) for item in sensitive_values if item}
+    identifier_keys = {
+        "company_id",
+        "companyid",
+        "project_id",
+        "projectid",
+        "scope_id",
+        "scopeid",
+        "workspace_id",
+        "workspaceid",
+    }
+    parts = urlsplit(value)
+    query = []
+    for key, item in parse_qsl(parts.query, keep_blank_values=True):
+        normalized_key = key.replace("-", "_").casefold()
+        query.append((key, "redacted" if normalized_key in identifier_keys or item in sensitive else item))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def first_heading(text, fallback):
@@ -178,10 +201,9 @@ def select_knowledge_unit(text, source_path, section_heading="", stop_heading=""
             for item in markdown_sections(text)
             if item["title"].casefold() == requested_stop.casefold()
             and item["lineStart"] > unit["lineStart"]
-            and item["lineStart"] <= unit["lineEnd"]
         ]
         if not boundaries:
-            raise RuntimeError("stop heading not found inside selected knowledge unit: %s" % stop_heading)
+            raise RuntimeError("stop heading not found after selected knowledge unit start: %s" % stop_heading)
         if len(boundaries) > 1:
             raise RuntimeError("stop heading is ambiguous inside selected knowledge unit: %s" % stop_heading)
         boundary = boundaries[0]
@@ -280,15 +302,38 @@ def knowledge_request_fingerprint(body):
     return sha256_text(serialized)
 
 
-def build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit):
+def build_body(
+    args,
+    context,
+    actor_agent_id,
+    source_path,
+    source_text,
+    knowledge_text,
+    knowledge_unit,
+    reviewed_text=None,
+):
     title = clean_heading(args.title or knowledge_unit.get("sectionHeading") or first_heading(source_text, source_path.stem.replace("-", " ").replace("_", " ").title()))
     source_content_hash = sha256_text(source_text)
-    indexed_text, sanitization = sanitize_knowledge_text(knowledge_text)
+    indexed_source_text = knowledge_text if reviewed_text is None else reviewed_text
+    indexed_text, sanitization = sanitize_knowledge_text(indexed_source_text)
     source_selection_hash = sha256_text(knowledge_text)
+    indexed_input_hash = sha256_text(indexed_source_text)
     knowledge_content_hash = sha256_text(indexed_text)
     source_uri = args.source_uri or "report://%s-%s" % (slug(source_path.stem), source_content_hash[:12])
     route_or_path = args.route_or_path or "/knowledge/%s/%s/%s" % (args.scope, args.category, slug(title))
     document_type = args.document_type or ("reviewed-report-section" if knowledge_unit.get("kind") == "report_section" else "reviewed-report")
+    if reviewed_text is not None:
+        ingest_mode = (
+            "single_report_review_overlay_section"
+            if knowledge_unit.get("kind") == "report_section"
+            else "single_report_review_overlay"
+        )
+    else:
+        ingest_mode = (
+            "single_report_reviewed_section"
+            if knowledge_unit.get("kind") == "report_section"
+            else "single_report_reviewed"
+        )
     body = {
         "workspaceId": context["workspaceId"],
         "actorAgentId": actor_agent_id,
@@ -315,8 +360,12 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
             "sourceContentHash": "sha256:" + source_content_hash,
             "sourceSelectionContentHash": "sha256:" + source_selection_hash,
             "knowledgeUnitContentHash": "sha256:" + knowledge_content_hash,
-            "ingestMode": "single_report_reviewed_section" if knowledge_unit.get("kind") == "report_section" else "single_report_reviewed",
+            "ingestMode": ingest_mode,
             "knowledgeUnitKind": knowledge_unit.get("kind"),
+            "reviewOverlayApplied": reviewed_text is not None,
+            "indexedInputContentHash": "sha256:" + indexed_input_hash,
+            "reviewedTextContentHash": "sha256:" + indexed_input_hash if reviewed_text is not None else None,
+            "reviewedTextPathStored": False,
             "sourceReportTitle": knowledge_unit.get("reportTitle"),
             "sourceReportRoute": args.source_report_route or "",
             "sourceSectionHeading": knowledge_unit.get("sectionHeading") or "",
@@ -373,6 +422,11 @@ def main(argv=None):
     parser.add_argument("--source-report-route", default="")
     parser.add_argument("--section-heading", default="", help="Exact Markdown heading to ingest as one reviewed knowledge page. Nested subsections are included.")
     parser.add_argument("--stop-heading", default="", help="Optional exact nested heading that ends the selected knowledge page before that heading.")
+    parser.add_argument(
+        "--reviewed-text-file",
+        default="",
+        help="Optional reviewer-authored Markdown to index while retaining source report and selected-section provenance hashes.",
+    )
     parser.add_argument("--route-or-path", default="")
     parser.add_argument("--classification-note", default="")
     parser.add_argument("--description", required=True)
@@ -401,13 +455,27 @@ def main(argv=None):
     source_path = Path(args.source_file)
     source_text = source_path.read_text(encoding="utf-8", errors="replace")
     knowledge_text, knowledge_unit = select_knowledge_unit(source_text, source_path, args.section_heading, args.stop_heading)
+    reviewed_text = None
+    if args.reviewed_text_file:
+        reviewed_text = Path(args.reviewed_text_file).read_text(encoding="utf-8", errors="replace")
+        if not reviewed_text.strip():
+            raise RuntimeError("--reviewed-text-file must contain non-empty reviewed Markdown")
     secret = read_json(args.secret)
     token = secret.get("apiKeySecret") or ""
     if not token:
         raise RuntimeError("secret file does not contain apiKeySecret")
     actor_agent_id = args.agent_id or secret.get("backendAgentId") or "MemoryEndpoints-Backend-Agent"
     context = workspace_context(args.base_url, token, secret.get("workspaceId"))
-    body = build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit)
+    body = build_body(
+        args,
+        context,
+        actor_agent_id,
+        source_path,
+        source_text,
+        knowledge_text,
+        knowledge_unit,
+        reviewed_text=reviewed_text,
+    )
     request_fingerprint = knowledge_request_fingerprint(body)
     idempotency_material = body["sourceUri"] + body["scope"] + body.get("scopeId", "") + body["routeOrPath"] + request_fingerprint
     idempotency_key = "single-knowledge-page-" + sha256_text(idempotency_material)[:24]
@@ -446,6 +514,8 @@ def main(argv=None):
         "sourceLineEnd": knowledge_unit.get("lineEnd"),
         "knowledgeUnitContentHash": body["metadata"]["knowledgeUnitContentHash"],
         "sourceSelectionContentHash": body["metadata"]["sourceSelectionContentHash"],
+        "reviewOverlayApplied": body["metadata"]["reviewOverlayApplied"],
+        "reviewedTextContentHash": body["metadata"]["reviewedTextContentHash"],
         "contentSanitization": body["metadata"]["contentSanitization"],
         "requestFingerprint": "sha256:" + request_fingerprint,
         "sourcePreviouslyIngested": preflight["sourcePreviouslyIngested"],
@@ -498,8 +568,14 @@ def main(argv=None):
                 "visibleInSearch": bool(payload.get("visibleInSearch")),
                 "visibleInWikiTree": bool(payload.get("visibleInWikiTree")),
                 "visibleInAuditLog": bool(payload.get("visibleInAuditLog")),
-                "documentQueryUrl": payload.get("documentQueryUrl"),
-                "treeQueryUrl": payload.get("treeQueryUrl"),
+                "documentQueryUrl": redact_query_identifiers(
+                    payload.get("documentQueryUrl"),
+                    (context.get("workspaceId"), context.get("companyId"), body.get("scopeId"), body.get("projectId")),
+                ),
+                "treeQueryUrl": redact_query_identifiers(
+                    payload.get("treeQueryUrl"),
+                    (context.get("workspaceId"), context.get("companyId"), body.get("scopeId"), body.get("projectId")),
+                ),
             }
         )
         memory_body = {
@@ -547,14 +623,31 @@ def main(argv=None):
                 "memoryPersisted": bool(memory_payload.get("persisted")),
                 "memoryVisibleInSearch": bool(memory_payload.get("visibleInSearch")),
                 "memoryVisibleInReviewQueue": bool(memory_payload.get("visibleInReviewQueue")),
-                "memoryQueryUrl": memory_payload.get("memoryQueryUrl"),
+                "memoryQueryUrl": redact_query_identifiers(
+                    memory_payload.get("memoryQueryUrl"),
+                    (context.get("workspaceId"), context.get("companyId"), body.get("scopeId"), body.get("projectId")),
+                ),
             }
         )
     else:
         result["idempotencyKeyHash"] = "sha256:" + sha256_text(idempotency_key)
         result["wouldWriteDatabaseDocument"] = True
         result["memorySummaryRequiredForApply"] = True
-    result["ok"] = bool((result.get("persisted") and result.get("memoryPersisted")) or not args.apply) and not context["rawKeyStoredByServer"]
+    report_text = json.dumps(result, sort_keys=True)
+    result["rawCredentialValuesStored"] = bool(token and token in report_text)
+    result["rawWorkspaceIdStored"] = bool(context.get("workspaceId") and context["workspaceId"] in report_text)
+    result["rawCompanyIdStored"] = bool(context.get("companyId") and context["companyId"] in report_text)
+    result["rawScopeIdStored"] = bool(body.get("scopeId") and body["scopeId"] in report_text)
+    result["rawProjectIdStored"] = bool(body.get("projectId") and body["projectId"] in report_text)
+    result["ok"] = bool(
+        ((result.get("persisted") and result.get("memoryPersisted")) or not args.apply)
+        and not context["rawKeyStoredByServer"]
+        and not result["rawCredentialValuesStored"]
+        and not result["rawWorkspaceIdStored"]
+        and not result["rawCompanyIdStored"]
+        and not result["rawScopeIdStored"]
+        and not result["rawProjectIdStored"]
+    )
     write_json(args.report_out, result)
     print(json.dumps({"ok": result["ok"], "mode": result["mode"], "sourceFileName": source_path.name, "report": str(args.report_out), "bulkImport": False, "valuesRedacted": True}, indent=2, sort_keys=True))
     return 0 if result["ok"] else 1
