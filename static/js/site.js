@@ -55,6 +55,7 @@
     receiptsPayloadsHidden: null,
     auditCredentialsHidden: null,
     auditPayloadsHidden: null,
+    longTermMemoryHealth: null,
     latestMemoryItems: [],
     latestInboxItems: [],
     latestReceiptItems: [],
@@ -991,6 +992,37 @@
     ]);
   }
 
+  function longTermMemoryDeskRow(migration) {
+    var sourceCount = migration.sourcePathCount || migration.canonicalSourceCount || migration.count || 0;
+    var recordCount = migration.canonicalRecordCount || migration.recordCount || 0;
+    var duplicateCount = migration.duplicateRecordCount || 0;
+    var firstSource = migration.sourcePathSamples && migration.sourcePathSamples.length ? migration.sourcePathSamples[0] : "";
+    var status = migration.status || "unknown";
+    var row = resultRow(
+      "Long-term memory health",
+      "Hosted dogfood memory covers " + sourceCount + " source path(s) and " + recordCount + " canonical record(s).",
+      [
+        { text: formatStatusText(status), kind: status === "promoted" || migration.allPromoted ? "good" : "warn" },
+        { text: sourceCount + " sources", kind: sourceCount ? "good" : "neutral" },
+        { text: recordCount + " records", kind: recordCount ? "good" : "neutral" },
+        { text: duplicateCount ? duplicateCount + " duplicates" : "no duplicates", kind: duplicateCount ? "warn" : "good" },
+        { text: migration.filesystemDocsIncluded ? "filesystem review" : "filesystem excluded", kind: migration.filesystemDocsIncluded ? "warn" : "good" },
+        { text: migration.allValuesRedacted ? "redacted" : "redaction review", kind: migration.allValuesRedacted ? "good" : "warn" },
+        { text: migration.rawPrivatePayloadStoredCount ? "payload storage review" : "private payload hidden", kind: migration.rawPrivatePayloadStoredCount ? "warn" : "good" },
+      ],
+      [
+        "store " + (migration.memorySource || "hosted_workspace_store"),
+        "tag " + (migration.migrationTag || longTermMemoryTag),
+        firstSource ? "sample " + firstSource : "",
+      ]
+    );
+    row.className += " operator-desk-row long-term-memory-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy tag", copyLabel: "Long-term memory tag", value: migration.migrationTag || longTermMemoryTag },
+      { label: "Copy source sample", copyLabel: "Long-term memory source", value: firstSource },
+    ]);
+  }
+
   function messageDeskRow(item) {
     var message = item.message || {};
     var notification = item.notification || {};
@@ -1067,7 +1099,11 @@
       return;
     }
     var items = state.latestMemoryItems || [];
-    appendDeskHeading(panel, "Memory Rows", items.length ? items.length + " latest" : "search pending");
+    var migration = state.longTermMemoryHealth;
+    appendDeskHeading(panel, "Memory Rows", migration ? "long-term health loaded" : (items.length ? items.length + " latest" : "search pending"));
+    if (migration) {
+      panel.appendChild(longTermMemoryDeskRow(migration));
+    }
     if (!items.length) {
       panel.appendChild(el("p", "empty-state", "Recent hosted memory rows appear after search."));
       return;
@@ -1138,6 +1174,7 @@
     state.memoryCount = summary.count !== undefined ? summary.count : items.length;
     state.memoryScopeCounts = summary.scopeCounts || null;
     state.memoryFilesystemIncluded = Boolean(summary.filesystemDocsIncluded);
+    state.longTermMemoryHealth = summary.longTermMemoryMigration || null;
     renderOperatorMetrics();
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
