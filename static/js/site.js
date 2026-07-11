@@ -1664,7 +1664,7 @@
         rows.push(row);
       });
     });
-    return rows.slice(0, 8);
+    return attentionFirstItems(rows).slice(0, 8);
   }
 
   function broadcastItemVisible(item, messageId) {
