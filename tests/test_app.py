@@ -806,6 +806,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("inboxPayloadIsFilteredOrLimited", js)
         self.assertIn('var inboxCountLabel = limitedInboxView ? "visible unread" : "unread"', js)
         self.assertIn('unreadCount + " " + unreadLabel', js)
+        self.assertIn("inboxTotalUnreadCount + \" total unread\"", js)
+        self.assertIn("state.inboxTotalUnreadCount = inboxTotalUnreadCount", js)
         self.assertIn("attentionFirstItems", js)
         self.assertIn("isRequiredResponseItem(left.item) ? 0 : 1", js)
         self.assertIn("attentionFirstItems(items).slice(0, 2)", js)
@@ -2469,6 +2471,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         limited_backend = json.loads(text)
         self.assertEqual(1, limited_backend["unreadCount"])
+        self.assertEqual(1, limited_backend["visibleUnreadCount"])
+        self.assertEqual(2, limited_backend["totalUnreadCount"])
+        self.assertTrue(limited_backend["hasMore"])
+        self.assertTrue(limited_backend["nextCursor"].startswith("note-"))
+        self.assertEqual(2, limited_backend["operatorSummary"]["totalUnreadCount"])
+        self.assertEqual(1, limited_backend["operatorSummary"]["visibleUnreadCount"])
+        self.assertTrue(limited_backend["operatorSummary"]["pagination"]["hasMore"])
+        self.assertEqual(
+            ["required_response", "viewed_acknowledgement"],
+            limited_backend["attentionOrdering"]["priority"],
+        )
         self.assertEqual(
             {"agentId": "MemoryEndpoints-Backend-Agent", "limit": "1"},
             limited_backend["filters"],

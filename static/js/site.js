@@ -42,6 +42,7 @@
     reviewCount: null,
     meetingRoomCount: null,
     inboxUnreadCount: null,
+    inboxTotalUnreadCount: null,
     inboxCountLimited: false,
     laneUnreadCount: null,
     messageDeliveryCounts: null,
@@ -659,6 +660,7 @@
     var unreadCount = showingLaneMessages && state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
       ? state.laneUnreadCount
       : state.inboxUnreadCount;
+    var unreadTotal = showingLaneMessages ? null : state.inboxTotalUnreadCount;
     var unreadLabel = showingLaneMessages ? "unread" : (state.inboxCountLimited ? "visible unread" : "unread");
     var evidencePending = state.receiptCount === null && state.auditCount === null;
     var runtime = runtimeEvidence();
@@ -697,7 +699,9 @@
     node.appendChild(metricCard(
       "Messages",
       unreadCount !== null && unreadCount !== undefined ? unreadCount + " " + unreadLabel : "Inbox pending",
-      countMeta(deliveryCounts, ["broadcast", "targeted"]) || "broadcast / targeted",
+      !showingLaneMessages && state.inboxCountLimited && unreadTotal !== null && unreadTotal !== undefined && unreadTotal !== unreadCount
+        ? unreadTotal + " total unread"
+        : (countMeta(deliveryCounts, ["broadcast", "targeted"]) || "broadcast / targeted"),
       [
         { text: "rows", kind: "neutral" },
         { text: requiredResponseKnown ? (requiredResponseCount ? requiredResponseCount + " response needed" : "no response blockers") : "attention pending", kind: requiredResponseKnown ? (requiredResponseCount ? "warn" : "good") : "neutral" },
@@ -1442,9 +1446,13 @@
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
     var inboxUnreadCount = operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length;
+    var inboxTotalUnreadCount = operatorSummary.totalUnreadCount !== undefined
+      ? operatorSummary.totalUnreadCount
+      : ((payload && payload.totalUnreadCount !== undefined) ? payload.totalUnreadCount : inboxUnreadCount);
     var limitedInboxView = inboxPayloadIsFilteredOrLimited(payload);
     var inboxCountLabel = limitedInboxView ? "visible unread" : "unread";
     state.inboxUnreadCount = inboxUnreadCount;
+    state.inboxTotalUnreadCount = inboxTotalUnreadCount;
     state.inboxCountLimited = limitedInboxView;
     state.messageDeliveryCounts = deliveryCounts;
     state.messageRequiredResponseCount = requiredResponseCountFromPayload(payload, items);
@@ -1452,6 +1460,9 @@
     var summaryLine = el("div", "filter-summary inbox-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Inbox"));
     appendBadge(summaryLine, inboxUnreadCount + " " + inboxCountLabel, items.length ? "warn" : "good");
+    if (limitedInboxView && inboxTotalUnreadCount !== inboxUnreadCount) {
+      appendBadge(summaryLine, inboxTotalUnreadCount + " total unread", "neutral");
+    }
     appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"]);
     appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
     node.appendChild(summaryLine);
@@ -1460,6 +1471,9 @@
       return;
     }
     var countText = inboxUnreadCount + " " + inboxCountLabel + " message(s) for " + lane + ".";
+    if (limitedInboxView && inboxTotalUnreadCount !== inboxUnreadCount) {
+      countText += " " + inboxTotalUnreadCount + " total unread in this lane.";
+    }
     if (deliveryCounts.broadcast !== undefined || deliveryCounts.targeted !== undefined) {
       countText += " " + (deliveryCounts.broadcast || 0) + " broadcast, " + (deliveryCounts.targeted || 0) + " targeted.";
     }
