@@ -12,7 +12,6 @@ Next action for agents: perform the highest unblocked action that matches the cu
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current ordered actions:
-- Finish full verification, commit, push, package, explicit FTPS deployment, and exact-SHA live verification for the fenced-heading parser and isolated-SQLite dogfood fixes; keep prompt drafts and unrelated generated reports out of source control.
 - Continue `D:\DownloadArchive` with the next unprocessed report only after the previous report's page, memory, citation, hierarchy, lifecycle, and human-UI audits pass.
 - For each report, preserve one canonical source, split distinct knowledge into focused pages, choose the narrowest durable scope, add multiple useful taxonomy paths, and classify non-current claims before they enter durable memory.
 - Review every external citation independently as a first-class web record. Distinguish primary authority, vendor material, community discussion, preprints, blocked or stale paths, citation-to-claim mismatches, and jurisdiction errors.
