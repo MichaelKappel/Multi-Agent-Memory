@@ -181,6 +181,163 @@ def _memory_submission_confirmation(store, workspace_id, event):
     }
 
 
+def _knowledge_document_confirmation(store, workspace_id, document):
+    document = document or {}
+    document_id = document.get("searchDocumentId") or ""
+    filters = {"documentId": document_id}
+    search_items = store.knowledge_documents(workspace_id, filters, limit=10, include_text=False)
+    visible_in_search = any(item.get("searchDocumentId") == document_id for item in search_items)
+    tree = store.knowledge_tree(
+        workspace_id,
+        {
+            "scope": document.get("scope") or "",
+            "scopeId": document.get("scopeId") or "",
+            "category": document.get("category") or "",
+        },
+    )
+    visible_in_tree = any(
+        item.get("searchDocumentId") == document_id
+        for level in tree.get("levels", [])
+        for category in level.get("categories", [])
+        for item in category.get("documents", [])
+    )
+    audit_items = store.audit_log(workspace_id, 50, "knowledge_document.upsert")
+    visible_in_audit = any(item.get("target") == document_id for item in audit_items)
+    return {
+        "persisted": bool(document_id and visible_in_search and visible_in_tree and visible_in_audit),
+        "visibleInSearch": visible_in_search,
+        "visibleInWikiTree": visible_in_tree,
+        "visibleInAuditLog": visible_in_audit,
+        "canonicalSearchDocumentId": document_id,
+        "canonicalSourceId": document.get("sourceId"),
+        "documentQueryUrl": _protected_query_url(
+            "/api/matm/knowledge-documents",
+            {"document_id": document_id, "include_text": "1"},
+        ),
+        "searchQueryUrl": _protected_query_url(
+            "/api/matm/knowledge-documents",
+            {
+                "q": document.get("title"),
+                "scope": document.get("scope"),
+                "scope_id": document.get("scopeId"),
+                "category": document.get("category"),
+            },
+        ),
+        "treeQueryUrl": _protected_query_url(
+            "/api/matm/knowledge-tree",
+            {"scope": document.get("scope"), "scope_id": document.get("scopeId")},
+        ),
+        "valuesRedacted": True,
+    }
+
+
+def _knowledge_filters(query):
+    return {
+        "q": query.get("q") or query.get("query") or "",
+        "scope": query.get("scope") or "",
+        "scopeId": query.get("scope_id") or query.get("scopeId") or "",
+        "category": query.get("category") or "",
+        "documentType": query.get("document_type") or query.get("documentType") or "",
+        "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
+        "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
+        "documentId": query.get("document_id") or query.get("documentId") or query.get("search_document_id") or query.get("searchDocumentId") or "",
+    }
+
+
+def _truthy(value):
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _listish_values(value):
+    if isinstance(value, str):
+        return [item.strip() for item in value.replace("|", ",").replace(";", ",").split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _knowledge_taxonomy_values(body):
+    value = body.get("taxonomyPaths") or body.get("taxonomy_paths") or body.get("taxonomyPath") or body.get("taxonomy_path")
+    if isinstance(value, list):
+        return [item for item in value if item]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(";") if item.strip()]
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    value = metadata.get("taxonomyPaths") or metadata.get("taxonomyPath")
+    if isinstance(value, list):
+        return [item for item in value if item]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(";") if item.strip()]
+    return []
+
+
+def _resolve_knowledge_scope(store, workspace_id, body):
+    status = store.workspace_status(workspace_id)
+    if not status:
+        return None, "workspace_not_found"
+    scope = str(body.get("scope") or "workspace").strip().lower()
+    if scope not in ("company", "workspace", "project"):
+        return None, "unsupported_scope"
+    payload = dict(body)
+    if scope == "company":
+        company_id = status.get("companyId") or ""
+        requested = body.get("scopeId") or body.get("scope_id") or company_id
+        if requested != company_id:
+            return None, "scope_not_authorized"
+        payload["scope"] = "company"
+        payload["scopeId"] = company_id
+        payload["projectId"] = None
+        return payload, None
+    if scope == "workspace":
+        requested = body.get("scopeId") or body.get("scope_id") or workspace_id
+        if requested != workspace_id:
+            return None, "scope_not_authorized"
+        payload["scope"] = "workspace"
+        payload["scopeId"] = workspace_id
+        payload["projectId"] = None
+        return payload, None
+    project_id = body.get("projectId") or body.get("project_id") or body.get("scopeId") or body.get("scope_id") or ""
+    project_id = str(project_id).strip()
+    if not project_id:
+        return None, "project_id_required"
+    projects = {project.get("projectId"): project for project in status.get("projects", [])}
+    if project_id not in projects:
+        project_label = body.get("projectLabel") or body.get("project_label") or ""
+        if not project_label:
+            return None, "project_not_found"
+        project, error = store.upsert_project(workspace_id, project_id, project_label, body.get("actorAgentId") or body.get("actor_agent_id") or "system")
+        if error:
+            return None, error
+        projects[project.get("projectId")] = project
+    payload["scope"] = "project"
+    payload["scopeId"] = project_id
+    payload["projectId"] = project_id
+    return payload, None
+
+
+def _knowledge_operator_summary(items, filters):
+    scope_counts = {}
+    category_counts = {}
+    for item in items:
+        scope = item.get("scope") or "unknown"
+        category = item.get("category") or "uncategorized"
+        scope_counts[scope] = scope_counts.get(scope, 0) + 1
+        category_counts[category] = category_counts.get(category, 0) + 1
+    return {
+        "schemaVersion": "memoryendpoints.knowledge_operator_summary.v1",
+        "documentCount": len(items),
+        "scopeCounts": dict(sorted(scope_counts.items())),
+        "categoryCounts": dict(sorted(category_counts.items())),
+        "filters": {key: value for key, value in (filters or {}).items() if value},
+        "databaseSourceOfTruth": True,
+        "filesystemDocsIncluded": False,
+        "taskLevelTreeSupported": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _current_message_confirmation(store, workspace_id, message, notes):
     message = message or {}
     notes = notes if isinstance(notes, list) else ([notes] if notes else [])
@@ -392,6 +549,7 @@ def html_page(title, main):
       <a href="/agent-setup">Agent Setup</a>
       <a href="/agent-coordination">Agent Coordination</a>
       <a href="/console">Console</a>
+      <a href="/knowledge">Knowledge</a>
       <a href="/memory-lifecycle">Memory</a>
       <a href="/transparency">Transparency</a>
       <a href="{companion_docs_url}">MultiAgentMemory.com</a>
@@ -2081,6 +2239,63 @@ Remaining blocker</textarea>
     return response(start_response, "200 OK", html_page("Console", body), "text/html; charset=utf-8")
 
 
+def route_knowledge(start_response):
+    asset_version = escape_html(build_provenance().get("sourceShaShort") or __version__)
+    body = """
+<section class="knowledge-app" data-knowledge-app>
+  <header class="knowledge-header">
+    <div>
+      <span class="section-kicker">Company Wiki</span>
+      <h1>Knowledge</h1>
+    </div>
+    <form class="knowledge-auth" data-knowledge-auth>
+      <label>Workspace
+        <input name="workspaceId" autocomplete="off" required>
+      </label>
+      <label>Workspace key
+        <input name="workspaceKey" type="password" autocomplete="off" required>
+      </label>
+      <button class="button primary" type="submit">Open wiki</button>
+    </form>
+  </header>
+  <section class="knowledge-toolbar">
+    <form class="knowledge-search" data-knowledge-search>
+      <label>Search
+        <input name="q" placeholder="strategy, memory, routing">
+      </label>
+      <label>Scope
+        <select name="scope">
+          <option value="">All scopes</option>
+          <option value="company">Company</option>
+          <option value="workspace">Workspace</option>
+          <option value="project">Project</option>
+        </select>
+      </label>
+      <label>Category
+        <input name="category" placeholder="coding-standards">
+      </label>
+      <button class="button" type="submit">Search</button>
+      <button class="button" type="button" data-knowledge-refresh>Refresh tree</button>
+    </form>
+  </section>
+  <section class="knowledge-layout">
+    <aside class="knowledge-tree" aria-label="Knowledge tree" data-knowledge-tree>
+      <p class="empty-state">Sign in to load the wiki.</p>
+    </aside>
+    <article class="knowledge-article" data-knowledge-article>
+      <p class="empty-state">Select a page.</p>
+    </article>
+    <aside class="knowledge-results" aria-label="Search results" data-knowledge-results>
+      <p class="empty-state">Search results will appear here.</p>
+    </aside>
+  </section>
+  <output class="knowledge-status" data-knowledge-status></output>
+</section>
+<script src="/static/js/knowledge.js?v=%s"></script>
+""" % asset_version
+    return response(start_response, "200 OK", html_page("Knowledge", body), "text/html; charset=utf-8")
+
+
 def route_memory_lifecycle(start_response):
     body = """
 <section class="page">
@@ -2131,7 +2346,7 @@ def text_discovery(name):
         "Protected MATM routes: " + ", ".join(matrix["protectedRoutes"]),
         "Companion documentation: %s." % COMPANION_DOCS_URL,
         "Source repository: %s." % GITHUB_REPO_URL,
-        "Memory boundary: hosted workspace memory for protected search; local files remain startup and migration evidence.",
+        "Memory boundary: hosted workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
         "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
@@ -2207,6 +2422,7 @@ def route_public_json(path, start_response):
                 "name": SITE_NAME,
                 "capabilities": [
                     "matm_memory",
+                    "database_knowledge_wiki",
                     "meeting_rooms",
                     "current_message_inbox",
                     "redacted_receipts",
@@ -2257,6 +2473,13 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints OpenAPI Golden Path",
                 "mimeType": "application/json",
                 "route": "/api/matm/openapi.json",
+            },
+            {
+                "uri": "memoryendpoints://matm/knowledge-wiki",
+                "name": "Database-Backed Knowledge Wiki",
+                "mimeType": "application/json",
+                "route": "/api/matm/knowledge-tree",
+                "requiresAuth": True,
             },
             {
                 "uri": "memoryendpoints://matm/redacted-example-receipts",
@@ -2443,6 +2666,175 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             },
         )
+    if path == "/api/matm/projects" and method == "GET":
+        items = store.projects(workspace_id)
+        _audit_read(store, workspace_id, auth, "projects.read", path, {"count": len(items)})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "items": items,
+                "count": len(items),
+                "operatorSummary": {
+                    "schemaVersion": "memoryendpoints.projects_operator_summary.v1",
+                    "projectCount": len(items),
+                    "workspaceId": workspace_id,
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                    "rawPayloadExposed": False,
+                },
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/projects" and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "project-upsert", body)
+        if replay:
+            return replay
+        if not (body.get("label") or body.get("projectLabel") or body.get("project_label")):
+            return problem(start_response, "422 Unprocessable Entity", "Project label required", "Project upsert requires a label.", "project_label_required")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this project record.", "quota_exceeded")
+        project, error = store.upsert_project(
+            workspace_id,
+            body.get("projectId") or body.get("project_id"),
+            body.get("label") or body.get("projectLabel") or body.get("project_label"),
+            body.get("actorAgentId") or body.get("actor_agent_id") or "system",
+        )
+        if error == "workspace_not_found":
+            return problem(start_response, "404 Not Found", "Workspace not found", "No matching workspace exists for the authenticated key.", "workspace_not_found")
+        payload = {
+            "ok": True,
+            "project": project,
+            "persisted": bool(project),
+            "projectQueryUrl": _protected_query_url("/api/matm/projects", {"workspace_id": workspace_id}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "project-upsert", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
+    if path == "/api/matm/knowledge-tree" and method == "GET":
+        filters = _knowledge_filters(query)
+        active_filters = {key: value for key, value in filters.items() if value}
+        tree = store.knowledge_tree(workspace_id, filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "knowledge_tree.read",
+            path,
+            {"documentCount": tree.get("documentCount"), "filterKeys": sorted(active_filters.keys())},
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "tree": tree,
+                "filters": active_filters,
+                "knowledgeSource": "database_search_documents",
+                "filesystemDocsIncluded": False,
+                "wikiUiRoute": "/knowledge",
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/knowledge-documents" and method == "GET":
+        filters = _knowledge_filters(query)
+        active_filters = {key: value for key, value in filters.items() if value}
+        include_text = _truthy(query.get("include_text") or query.get("includeText"))
+        items = store.knowledge_documents(workspace_id, filters, query.get("limit") or "50", include_text)
+        operator_summary = _knowledge_operator_summary(items, active_filters)
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "knowledge_documents.search",
+            path,
+            {"documentCount": len(items), "filterKeys": sorted(active_filters.keys()), "includeText": include_text},
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "items": items,
+                "count": len(items),
+                "filters": active_filters,
+                "operatorSummary": operator_summary,
+                "knowledgeSource": "database_search_documents",
+                "filesystemDocsIncluded": False,
+                "includeText": include_text,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path in ("/api/matm/knowledge-documents", "/api/matm/knowledge-documents/upsert") and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "knowledge-document-upsert", body)
+        if replay:
+            return replay
+        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
+        if not actor_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "Knowledge document upsert requires actorAgentId.", "actor_agent_id_required")
+        if not (body.get("title") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Title required", "Knowledge document upsert requires a title.", "title_required")
+        if not (body.get("description") or ((body.get("metadata") if isinstance(body.get("metadata"), dict) else {}).get("description")) or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Description required", "Knowledge document upsert requires a short description for wiki browsing and agent recall.", "description_required")
+        keywords = _listish_values(body.get("keywords") or body.get("keyword") or body.get("tags") or ((body.get("metadata") if isinstance(body.get("metadata"), dict) else {}).get("keywords")))
+        if not keywords:
+            return problem(start_response, "422 Unprocessable Entity", "Keywords required", "Knowledge document upsert requires at least one keyword.", "keywords_required")
+        if not _knowledge_taxonomy_values(body):
+            return problem(start_response, "422 Unprocessable Entity", "Taxonomy paths required", "Knowledge document upsert requires at least one taxonomyPath or taxonomyPaths entry.", "taxonomy_paths_required")
+        if not ((body.get("searchableText") or body.get("content") or "").strip()):
+            return problem(start_response, "422 Unprocessable Entity", "Content required", "Knowledge document upsert requires searchableText or content.", "content_required")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this knowledge document.", "quota_exceeded")
+        scoped_payload, scope_error = _resolve_knowledge_scope(store, workspace_id, body)
+        if scope_error == "unsupported_scope":
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported knowledge scope", "Knowledge documents can only be stored at company, workspace, or project scope.", "unsupported_knowledge_scope")
+        if scope_error == "scope_not_authorized":
+            return problem(start_response, "403 Forbidden", "Scope not authorized", "The requested scope id is outside the authenticated workspace boundary.", "scope_not_authorized")
+        if scope_error == "project_id_required":
+            return problem(start_response, "422 Unprocessable Entity", "Project id required", "Project-scoped knowledge documents require projectId or scopeId.", "project_id_required")
+        if scope_error == "project_not_found":
+            return problem(start_response, "404 Not Found", "Project not found", "Project-scoped knowledge requires an existing project or a projectLabel to create one.", "project_not_found")
+        if scope_error:
+            return problem(start_response, "422 Unprocessable Entity", "Knowledge scope could not be resolved", "The requested knowledge document scope could not be resolved.", scope_error)
+        document, error = store.upsert_knowledge_document(workspace_id, actor_agent_id, scoped_payload)
+        if error == "unsupported_scope":
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported knowledge scope", "Knowledge documents can only be stored at company, workspace, or project scope.", "unsupported_knowledge_scope")
+        if error == "project_not_found":
+            return problem(start_response, "404 Not Found", "Project not found", "Project-scoped knowledge requires an existing project record in this workspace.", "project_not_found")
+        if error == "content_required":
+            return problem(start_response, "422 Unprocessable Entity", "Content required", "Knowledge document upsert requires searchableText or content.", "content_required")
+        if error:
+            return problem(start_response, "422 Unprocessable Entity", "Knowledge document rejected", "The knowledge document could not be stored.", error)
+        confirmation = _knowledge_document_confirmation(store, workspace_id, document)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "Knowledge document was not persisted", "The knowledge document could not be confirmed in search, tree, and audit readback after write.", "knowledge_document_not_persisted")
+        payload = {
+            "ok": True,
+            "document": document,
+            "persisted": confirmation["persisted"],
+            "visibleInSearch": confirmation["visibleInSearch"],
+            "visibleInWikiTree": confirmation["visibleInWikiTree"],
+            "visibleInAuditLog": confirmation["visibleInAuditLog"],
+            "canonicalSearchDocumentId": confirmation["canonicalSearchDocumentId"],
+            "canonicalSourceId": confirmation["canonicalSourceId"],
+            "documentQueryUrl": confirmation["documentQueryUrl"],
+            "searchQueryUrl": confirmation["searchQueryUrl"],
+            "treeQueryUrl": confirmation["treeQueryUrl"],
+            "wikiUiRoute": "/knowledge",
+            "confirmation": confirmation,
+            "operatorSummary": _knowledge_operator_summary([document], {"scope": document.get("scope"), "category": document.get("category")}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "knowledge-document-upsert", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/sync/retention" and method == "GET":
         _audit_read(store, workspace_id, auth, "sync.retention.read", path, {"hardForgetSupported": False})
         return json_response(
@@ -3559,6 +3951,8 @@ def application(environ, start_response):
         return route_agent_coordination(start_response)
     if path == "/console" and method == "GET":
         return route_console(start_response)
+    if path == "/knowledge" and method == "GET":
+        return route_knowledge(start_response)
     if path == "/memory-lifecycle" and method == "GET":
         return route_memory_lifecycle(start_response)
     if path == "/transparency" and method == "GET":

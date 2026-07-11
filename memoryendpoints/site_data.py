@@ -10,6 +10,7 @@ ROUTE_TABLE = [
     {"route": "/agent-setup", "access": "public", "methods": ["GET"], "purpose": "Agent setup instructions."},
     {"route": "/agent-coordination", "access": "public", "methods": ["GET"], "purpose": "Authenticated agent coordination quickstart with copy-safe examples."},
     {"route": "/console", "access": "public", "methods": ["GET"], "purpose": "Human verification console for authenticated workspace keys."},
+    {"route": "/knowledge", "access": "public", "methods": ["GET"], "purpose": "Authenticated human wiki shell backed by protected database knowledge routes."},
     {"route": "/memory-lifecycle", "access": "public", "methods": ["GET"], "purpose": "Memory lifecycle explanation."},
     {"route": "/transparency", "access": "public", "methods": ["GET"], "purpose": "Support boundaries and no-op behavior."},
     {"route": "/api/version", "access": "public", "methods": ["GET"], "purpose": "Runtime version and dependency facts."},
@@ -32,6 +33,10 @@ ROUTE_TABLE = [
     {"route": "/.well-known/mcp.json", "access": "public", "methods": ["GET"], "purpose": "MCP discovery pointer."},
     {"route": "/.well-known/ai-agent.json", "access": "public", "methods": ["GET"], "purpose": "Agent discovery pointer."},
     {"route": "/api/matm/workspace", "access": "protected", "methods": ["GET"], "purpose": "Workspace quota and status."},
+    {"route": "/api/matm/projects", "access": "protected", "methods": ["GET", "POST"], "purpose": "Workspace project list and project upsert for company/workspace/project hierarchy."},
+    {"route": "/api/matm/knowledge-tree", "access": "protected", "methods": ["GET"], "purpose": "Database-backed company/workspace/project wiki tree for humans and agents."},
+    {"route": "/api/matm/knowledge-documents", "access": "protected", "methods": ["GET", "POST"], "purpose": "Search, retrieve, and upsert protected knowledge documents from database search rows."},
+    {"route": "/api/matm/knowledge-documents/upsert", "access": "protected", "methods": ["POST"], "purpose": "Idempotent protected knowledge document upsert alias."},
     {"route": "/api/matm/agents/register", "access": "protected", "methods": ["POST"], "purpose": "Agent registration."},
     {"route": "/api/matm/memory-events/submit", "access": "protected", "methods": ["POST"], "purpose": "Workspace memory summary write with hosted search and review-queue readback confirmation."},
     {"route": "/api/matm/memory-events", "access": "protected", "methods": ["GET"], "purpose": "Workspace memory event search."},
@@ -99,25 +104,25 @@ AGENT_ABILITY_LEVELS = [
     {
         "level": "L2",
         "label": "Browser-assisted form operator",
-        "canUse": ["visible setup page", "console-assisted flow", "copy-safe examples"],
+        "canUse": ["visible setup page", "console-assisted flow", "authenticated wiki shell", "copy-safe examples"],
         "memoryAuthority": "human-supplied workspace key only",
-        "memoryEndpointsPath": ["/agent-setup", "/agent-coordination", "/console"],
+        "memoryEndpointsPath": ["/agent-setup", "/agent-coordination", "/console", "/knowledge"],
         "fallback": "Ask the human to complete setup or provide a workspace key through a secure local setting.",
     },
     {
         "level": "L3",
         "label": "Schema-capable HTTP JSON agent",
         "canUse": ["OpenAPI-style JSON", "structured POST", "safe no-op errors"],
-        "memoryAuthority": "workspace-key protected public-safe summaries",
-        "memoryEndpointsPath": ["/api/matm/openapi.json", "/api/matm/memory-events/submit", "/api/matm/search"],
+        "memoryAuthority": "workspace-key protected public-safe summaries and protected knowledge rows",
+        "memoryEndpointsPath": ["/api/matm/openapi.json", "/api/matm/memory-events/submit", "/api/matm/search", "/api/matm/knowledge-documents"],
         "fallback": "Use idempotent POST only when the workspace key and required fields are explicit; otherwise no-op.",
     },
     {
         "level": "L4",
         "label": "Authenticated owner agent",
-        "canUse": ["workspace boundary", "protected mutations", "audit and receipts"],
+        "canUse": ["workspace boundary", "protected mutations", "database wiki tree", "audit and receipts"],
         "memoryAuthority": "owned workspace scope with redaction and audit",
-        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
+        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
         "fallback": "If auth, scope, idempotency, or provenance is missing, return auth_required or human_review_required.",
     },
     {
@@ -176,7 +181,7 @@ def _route_agent_guidance(item):
     access = item.get("access") or "public"
     has_post = "POST" in methods
     is_public_api = route.startswith("/api/")
-    is_static_discovery = route in ("/", "/docs", "/docs/", "/agent-setup", "/agent-coordination", "/console", "/memory-lifecycle", "/transparency", "/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt")
+    is_static_discovery = route in ("/", "/docs", "/docs/", "/agent-setup", "/agent-coordination", "/console", "/knowledge", "/memory-lifecycle", "/transparency", "/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt")
     is_json_discovery = route in ("/ai-manifest.json", "/.well-known/mcp.json", "/.well-known/ai-agent.json", "/mcp/resources", "/api/version", "/api/matm/live-capability-matrix", "/api/matm/agent-compatibility", "/api/matm/connector-contract", "/api/matm/openapi.json", "/api/matm/route-inventory", "/api/matm/readiness-result", "/api/matm/redacted-example-receipts", "/api/matm/sync/capabilities")
 
     if access == "public" and is_static_discovery:
@@ -311,13 +316,13 @@ def agent_compatibility_contract():
             "everyRouteIncludesAgentCompatibilityGuidance": True,
         },
         "surfaceMatrix": {
-            "staticHtml": {"lowestLevel": "L0", "routes": ["/", "/docs", "/agent-setup", "/agent-coordination", "/console", "/transparency"]},
+            "staticHtml": {"lowestLevel": "L0", "routes": ["/", "/docs", "/agent-setup", "/agent-coordination", "/console", "/knowledge", "/transparency"]},
             "llmsTxt": {"lowestLevel": "L0", "routes": ["/llms.txt", "/llms-full.txt", "/ai.txt"]},
             "sitemap": {"lowestLevel": "L0", "routes": ["/sitemap.xml"]},
             "jsonDiscovery": {"lowestLevel": "L1", "routes": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/route-inventory", "/api/matm/readiness-result"]},
-            "browserForms": {"lowestLevel": "L2", "routes": ["/agent-setup", "/agent-coordination", "/console"]},
-            "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/memory-events/submit", "/api/matm/meeting-messages"]},
-            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/review-queue", "/api/matm/audit-log"]},
+            "browserForms": {"lowestLevel": "L2", "routes": ["/agent-setup", "/agent-coordination", "/console", "/knowledge"]},
+            "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/memory-events/submit", "/api/matm/knowledge-documents", "/api/matm/meeting-messages"]},
+            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log"]},
             "restoreReadback": {"lowestLevel": "L5", "routes": ["/api/matm/search", "/api/matm/current-message", "/api/matm/sync/receipts", "/api/matm/sync/changes"]},
             "multiAgent": {"lowestLevel": "L6", "routes": ["/api/matm/meeting-rooms", "/api/matm/routing-decisions", "/api/matm/agent-messages"]},
             "siteSpecificNegotiation": {"lowestLevel": "L7", "routes": ["/api/matm/live-capability-matrix", "/api/matm/connector-contract", "/api/matm/sync/capabilities"]},
@@ -428,6 +433,7 @@ def capability_matrix():
             {"level": "company", "status": "live", "storage": "company-owned workspaces"},
             {"level": "project", "status": "live", "storage": "hosted project-scoped MATM memory records"},
             {"level": "workspace", "status": "live", "storage": "hosted workspace MATM memory with firewall and review queue"},
+            {"level": "company_workspace_project_wiki", "status": "live", "storage": "database-backed crawl sources and search documents; no filesystem knowledge tree"},
             {"level": "workspace_database", "status": "live_mysql" if mysql_active else "mysql_required_not_verified", "storage": "MySQL/MariaDB relational MATM tables"},
         ],
         "memoryFirewall": {
@@ -444,6 +450,24 @@ def capability_matrix():
             "operatorSummaryFields": ["statusCounts", "visibleStatusCounts", "firewallDecisionCounts", "longTermMemoryReviews"],
             "longTermMemoryReviewHealth": "Review queue responses summarize canonical docs/long-term-memory source review health, duplicate records, and actionable counts.",
             "idempotencyRequiredForDecision": True,
+        },
+        "knowledgeWiki": {
+            "status": "live",
+            "humanRoute": "/knowledge",
+            "projectRoute": "/api/matm/projects",
+            "treeRoute": "/api/matm/knowledge-tree",
+            "documentRoute": "/api/matm/knowledge-documents",
+            "upsertRoute": "/api/matm/knowledge-documents/upsert",
+            "supportedScopes": ["company", "workspace", "project"],
+            "taskLevelTreeSupported": False,
+            "databaseSourceOfTruth": True,
+            "filesystemKnowledgeTree": False,
+            "firstClassStorage": ["matm_crawl_sources", "matm_search_documents", "matm_projects"],
+            "humanAndAgentParity": "The authenticated wiki shell and swarm agents read the same protected database tree and document rows.",
+            "queryFilters": ["q", "scope", "scope_id", "category", "taxonomy_path", "taxonomy_prefix", "document_type", "source_prefix", "document_id", "include_text", "limit"],
+            "postConfirmationFields": ["persisted", "visibleInSearch", "visibleInWikiTree", "visibleInAuditLog", "canonicalSearchDocumentId", "canonicalSourceId", "documentQueryUrl", "searchQueryUrl", "treeQueryUrl"],
+            "requiredDocumentFields": ["title", "description", "keywords", "taxonomyPaths", "searchableText"],
+            "multiHierarchyPlacement": True,
         },
         "storageBackends": [
             {"backend": "file", "status": "current" if backend == "file" else "available_local", "dependency": "python_stdlib"},
@@ -600,7 +624,7 @@ def connector_contract():
             {"name": "label", "required": True, "example": "MemoryEndpoints.com"},
             {"name": "kind", "required": True, "example": "optional_memory_connector"},
             {"name": "baseUrl", "required": True, "example": SITE_URL},
-            {"name": "capabilities", "required": True, "example": ["save_memory", "search_memory", "meeting_rooms", "current_messages"]},
+            {"name": "capabilities", "required": True, "example": ["save_memory", "search_memory", "knowledge_wiki", "meeting_rooms", "current_messages"]},
             {"name": "publicSafeOnly", "required": True, "example": True},
             {"name": "requiresUserWorkspaceKey", "required": True, "example": True},
             {"name": "secretStorage", "required": True, "example": "os_credential_vault_or_user_approved_secret_store"},
@@ -658,6 +682,26 @@ def connector_contract():
             "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
             "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews to monitor hosted long-term memory promotion health without parsing raw review JSON.",
             "meetingPromotionRule": "Use POST /api/matm/meeting-messages/promote to turn a public-safe meeting transcript note into a durable memory event while preserving the source meeting message id.",
+        },
+        "knowledgeWikiFlow": {
+            "humanRoute": "/knowledge",
+            "projectRoute": "/api/matm/projects",
+            "treeRoute": "/api/matm/knowledge-tree",
+            "documentRoute": "/api/matm/knowledge-documents",
+            "upsertRoute": "/api/matm/knowledge-documents/upsert",
+            "storageTables": ["matm_projects", "matm_crawl_sources", "matm_search_documents"],
+            "databaseSourceOfTruth": True,
+            "filesystemKnowledgeTree": False,
+            "supportedScopes": ["company", "workspace", "project"],
+            "forbiddenScopes": ["task"],
+            "queryFilters": ["q", "scope", "scope_id", "category", "taxonomy_path", "taxonomy_prefix", "document_type", "source_prefix", "document_id", "include_text", "limit"],
+            "requiredUpsertFields": ["workspaceId", "actorAgentId", "scope", "title", "description", "keywords", "taxonomyPaths", "searchableText"],
+            "recommendedUpsertFields": ["scopeId", "projectId", "projectLabel", "category", "documentType", "sourceUri", "sourceType", "routeOrPath", "metadata", "tags"],
+            "projectRule": "Project-scoped documents require a real workspace project. Create or discover the project with /api/matm/projects, or include projectLabel during document upsert so the project row is created before indexing.",
+            "taxonomyRule": "Each knowledge document requires one or more taxonomyPaths. A single canonical document can appear under multiple hierarchy paths without duplicating the stored report body.",
+            "exampleTaxonomyPaths": [["AI infrastructure", "tokenization", "prompt optimization"], ["AI infrastructure", "cost governance", "inference budgets"], ["agent operations", "context management", "prompt budgets"]],
+            "humanAndAgentParity": "The authenticated human wiki and agent swarm routes read the same protected database documents and canonical tree links.",
+            "postConfirmationRule": "Treat a document upsert as successful only when persisted=true and the response confirms visibleInSearch, visibleInWikiTree, and visibleInAuditLog with documentQueryUrl, searchQueryUrl, and treeQueryUrl.",
         },
         "memoryClassificationRules": [
             "Active startup memory stays local in .uai and must remain usable when MemoryEndpoints.com is unreachable.",
@@ -813,6 +857,16 @@ def openapi_spec():
             },
         },
         "/api/matm/workspace": {"get": protected_operation("Load workspace boundary", "Read account, company, workspace, project, storage, and redaction operator summary.")},
+        "/api/matm/projects": {
+            "get": protected_operation("List projects", "List project records in the authenticated workspace hierarchy."),
+            "post": protected_operation("Upsert project", "Create or update a real project record before project-scoped wiki indexing.", "post", True),
+        },
+        "/api/matm/knowledge-tree": {"get": protected_operation("Read knowledge tree", "Read the database-backed company/workspace/project wiki tree. Task-level durable trees are not supported.")},
+        "/api/matm/knowledge-documents": {
+            "get": protected_operation("Search knowledge documents", "Search or retrieve protected database wiki documents by text, scope, category, type, source prefix, or exact document id."),
+            "post": protected_operation("Upsert knowledge document", "Store a protected database wiki document in matm_crawl_sources and matm_search_documents.", "post", True),
+        },
+        "/api/matm/knowledge-documents/upsert": {"post": protected_operation("Upsert knowledge document", "Idempotent protected alias for database wiki document upsert.", "post", True)},
         "/api/matm/agents/register": {"post": protected_operation("Register agent", "Register or refresh a stable public-safe agent id.", "post", True)},
         "/api/matm/memory-events/submit": {"post": protected_operation("Submit memory event", "Save a public-safe hosted memory summary; raw private payloads and credentials are rejected/redacted.", "post", True)},
         "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, exact event id, scope, source prefix, tag, memory type, review status, and promotion filters.")},
@@ -859,6 +913,21 @@ def openapi_spec():
         {"name": "review_status", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Review status filter."},
         {"name": "promotion_state", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Promotion state filter."},
     ]
+    knowledge_params = [
+        {"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Authorized workspace id."},
+        {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Protected text query over database wiki rows."},
+        {"name": "scope", "in": "query", "required": False, "schema": {"type": "string", "enum": ["company", "workspace", "project"]}, "description": "Durable wiki scope filter. Task scope is intentionally unsupported."},
+        {"name": "scope_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact company, workspace, or project scope id."},
+        {"name": "category", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Knowledge category filter."},
+        {"name": "taxonomy_path", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Hierarchy path prefix filter, such as AI infrastructure > tokenization."},
+        {"name": "document_type", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Knowledge document type filter."},
+        {"name": "source_prefix", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Source URI prefix filter."},
+        {"name": "document_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact search document id for deterministic page retrieval."},
+        {"name": "include_text", "in": "query", "required": False, "schema": {"type": "boolean"}, "description": "When true, include protected stored document text."},
+        {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}, "description": "Result limit, capped by the server."},
+    ]
+    paths["/api/matm/knowledge-tree"]["get"]["parameters"] = knowledge_params[:8]
+    paths["/api/matm/knowledge-documents"]["get"]["parameters"] = knowledge_params
     return {
         "openapi": "3.1.0",
         "info": {
@@ -871,6 +940,7 @@ def openapi_spec():
             {"name": "discovery", "description": "Public-safe discovery and readiness routes."},
             {"name": "setup", "description": "Workspace setup and agent registration."},
             {"name": "memory", "description": "Hosted public-safe memory and review promotion."},
+            {"name": "knowledge", "description": "Database-backed authenticated wiki tree and protected searchable documents."},
             {"name": "coordination", "description": "Meeting rooms, routing, and current messages."},
             {"name": "evidence", "description": "Receipts and audit evidence."},
         ],
@@ -878,6 +948,9 @@ def openapi_spec():
             "create_or_enter_workspace",
             "register_agent",
             "load_workspace",
+            "create_or_discover_project",
+            "index_knowledge_document",
+            "crawl_knowledge_tree",
             "save_memory",
             "search_memory",
             "create_or_read_meeting_room",

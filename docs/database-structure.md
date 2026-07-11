@@ -7,7 +7,7 @@ The schema is organized around MATM responsibilities:
 - Account and organization boundary: `matm_accounts`, `matm_companies`, `matm_account_companies`, `matm_workspaces`, `matm_projects`
 - Access boundary: `matm_api_keys`, `matm_agents`
 - Durable memory: `matm_memory_records`, `matm_memory_revisions`, `matm_memory_tags`
-- Crawlable/searchable memory: `matm_crawl_sources`, `matm_search_documents`
+- Crawlable/searchable knowledge wiki: `matm_crawl_sources`, `matm_search_documents`
 - Current-message lane: `matm_messages`, `matm_notifications`, `matm_receipts`
 - Meeting rooms: `matm_meeting_rooms`, `matm_meeting_messages`, `matm_meeting_reads`
 - Human review and promotion: `matm_review_queue`
@@ -30,3 +30,7 @@ Design rules:
 - Record review/promotion decisions before company, workspace, or project long-term memory is treated as authoritative.
 - Use idempotency records for protected mutation retries.
 - Use storage ledger entries to enforce the 200 MB free account quota.
+- Store crawlable company/workspace/project wiki knowledge in database rows, not generated filesystem trees.
+- Reject task-level durable wiki trees. Tasks can have meeting rooms, but durable wiki knowledge must live at company, workspace, or project level.
+- Ingest research reports one file at a time with reviewed title, description, keywords, source URI, category, project placement, and one-or-more taxonomy paths. Pair each wiki document with a compact MATM memory summary so agents can recall the right page without loading full reports into active context.
+- Allow one knowledge document to appear in multiple contextual hierarchies without duplicating the report body. Hierarchy paths are part of the document contract because exact keyword search is insufficient for concepts such as prompt budgets, tokenization, prompt optimization, cost governance, and context management.

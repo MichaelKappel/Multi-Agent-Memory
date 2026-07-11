@@ -25,6 +25,8 @@ The SQLite backend stores implemented MATM workflow state in relational tables u
 
 The SQLite backend no longer relies on a single JSON blob table for the active tested workflows. It preserves the same route-level behavior as the file backend and uses SQLite `TRUNCATE` journal mode for constrained shared-host filesystems. SQLite is useful for local verification, but it is not the production-completion backend.
 
+The database-backed knowledge wiki uses `matm_crawl_sources` and `matm_search_documents` for full crawlable report context. The filesystem is only an intake or evidence source; it is not the durable wiki tree. A report should be ingested one file at a time with reviewed title, description, keywords, taxonomy paths, scope, category, source URI, project placement, and a separate compact MATM memory summary for recall. Multiple taxonomy paths are normal; they let one canonical document appear in several contextual hierarchies without duplicating stored content.
+
 SQLite databases, journals, JSON stores, logs, caches, deployment packages, raw Agent File Handoff bucket contents, and credential handoff files are local state. They are ignored by Git and excluded by `scripts/package_memoryendpoints.py`.
 
 ## MySQL / MariaDB
@@ -57,3 +59,5 @@ If Passenger/cPanel cannot expose environment variables reliably, the runtime ca
 The `.local-secrets/` directory is ignored by Git and excluded from the deployment package. Create or upload that file directly on the host outside source control. When this file exists and `MEMORYENDPOINTS_STORE_BACKEND` is not explicitly set, the runtime treats it as the host-side selection for the MySQL backend.
 
 The canonical MySQL/MariaDB relational schema is in `docs/database-schema-canonical.sql`. The app initializes missing tables on connection. `/api/version` must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before the site can be claimed to be using real MySQL.
+
+Local ingestion tools read JSON secret/config files with UTF-8 BOM tolerance so Windows-authored `.local-secrets/*.json` files work without manual cleanup. Secret values still stay outside source control and must not be echoed in logs or reports.

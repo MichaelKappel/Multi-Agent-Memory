@@ -17,6 +17,8 @@ Current architecture state:
 - Runtime code stays pure Python standard library WSGI, with browser-native HTML/CSS/JavaScript assets.
 - Public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`.
 - Protected MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, redacted receipts, and redacted audit-log readback.
+- Protected knowledge wiki routes cover project upsert/list, database-backed company/workspace/project tree retrieval, and one-document wiki indexing through `matm_crawl_sources` and `matm_search_documents`.
+- The authenticated human `/knowledge` wiki and AI swarm knowledge routes must read the same database records. Do not create generated filesystem wiki trees as the source of truth.
 - File storage remains the default local backend.
 - Stdlib SQLite is a live optional relational backend for implemented MATM workflows. It uses separate MATM tables, including memory revisions, instead of a single JSON blob table in the active tested path.
 - MySQL/MariaDB remains adapter-gated because the runtime cannot claim a live MySQL client without approved non-stdlib support.

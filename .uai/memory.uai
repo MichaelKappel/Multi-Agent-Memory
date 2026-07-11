@@ -17,9 +17,12 @@ Memory layers:
 - Active dropped-file intake: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
 - Reviewed local durable memory: `docs/long-term-memory/` and `docs/reports/`.
 - Hosted durable MATM: MemoryEndpoints.com protected routes when authenticated.
+- Database-backed knowledge wiki: protected `matm_crawl_sources` and `matm_search_documents` rows exposed through `/knowledge`, `/api/matm/knowledge-tree`, and `/api/matm/knowledge-documents`.
 - Public companion docs: MultiAgentMemory.com source under `sites/multiagentmemory.com/`.
 
 Rules:
 - Durable memory augments active `.uai`; it never retires local `.uai`.
 - `.uai` contains pointers and current operating state, not raw secrets or long report bodies.
 - README.md files are human documentation, not memory-package state.
+- Research/report intake is processed one file at a time. For each report, create one reviewed wiki document at company/workspace/project scope, then create one compact MATM memory summary that links back to that wiki source. Do not bulk-import archives.
+- Every wiki knowledge document needs a title, description, keywords, and one or more taxonomy paths. Exact search is not enough; agents must be able to browse contextual hierarchy paths such as `AI infrastructure > tokenization > prompt optimization`. One canonical document can appear in multiple hierarchies without duplicating the stored body.

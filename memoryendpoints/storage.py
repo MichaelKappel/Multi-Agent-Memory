@@ -269,6 +269,295 @@ def _public_memory_event(event):
     return item
 
 
+def _stable_id(prefix, *parts):
+    raw = json.dumps(parts, sort_keys=True, separators=(",", ":"))
+    return "%s-%s" % (prefix, _hash(raw)[:32])
+
+
+def _slug(value, fallback="item", limit=96):
+    text = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    if not text:
+        text = fallback
+    return text[:limit].strip("-") or fallback
+
+
+def _parse_limit(value, default=50, maximum=500):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(maximum, parsed))
+
+
+def _normalize_taxonomy_path(value, fallback=None):
+    if value in (None, ""):
+        value = fallback or []
+    if isinstance(value, str):
+        parts = re.split(r"\s*(?:>|/|::)\s*", value)
+    elif isinstance(value, (list, tuple)):
+        parts = value
+    else:
+        parts = fallback or []
+    normalized = []
+    for part in parts:
+        text = str(part or "").strip()
+        if text:
+            normalized.append(text[:96])
+    return normalized
+
+
+def _normalize_taxonomy_paths(value, fallback=None):
+    if value in (None, ""):
+        value = fallback or []
+    paths = []
+    if isinstance(value, str):
+        raw_paths = re.split(r"\s*(?:\n|;|\|)\s*", value)
+        paths = [_normalize_taxonomy_path(raw_path) for raw_path in raw_paths]
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            if isinstance(item, (list, tuple)):
+                paths.append(_normalize_taxonomy_path(item))
+            else:
+                paths.append(_normalize_taxonomy_path(item))
+    else:
+        paths = [_normalize_taxonomy_path(value)]
+    normalized = []
+    seen = set()
+    for path in paths:
+        clean = [part for part in path if part]
+        if not clean:
+            continue
+        key = tuple(clean)
+        if key not in seen:
+            seen.add(key)
+            normalized.append(clean)
+    return normalized
+
+
+def _normalize_keywords(value):
+    if isinstance(value, str):
+        raw = re.split(r"\s*(?:,|;|\n|\|)\s*", value)
+    elif isinstance(value, (list, tuple)):
+        raw = value
+    else:
+        raw = []
+    keywords = []
+    seen = set()
+    for item in raw:
+        keyword = str(item or "").strip()
+        if not keyword:
+            continue
+        key = keyword.lower()
+        if key not in seen:
+            seen.add(key)
+            keywords.append(keyword[:96])
+    return keywords
+
+
+def _taxonomy_child(children, label, path):
+    for child in children:
+        if child.get("label") == label and child.get("path") == path:
+            return child
+    child = {
+        "label": label,
+        "path": list(path),
+        "pathLabel": " > ".join(path),
+        "documentCount": 0,
+        "children": [],
+        "documents": [],
+    }
+    children.append(child)
+    return child
+
+
+def _sort_taxonomy(nodes):
+    nodes.sort(key=lambda item: item.get("label") or "")
+    for node in nodes:
+        node["documents"].sort(key=lambda item: (item.get("title") or "", item.get("searchDocumentId") or ""))
+        _sort_taxonomy(node.get("children") or [])
+
+
+def _knowledge_text_matches(query, document):
+    q = (query or "").lower().strip()
+    if not q:
+        return True
+    haystack = " ".join(
+        [
+            document.get("searchDocumentId", ""),
+            document.get("sourceId", ""),
+            document.get("sourceUri", ""),
+            document.get("scope", ""),
+            document.get("scopeId", ""),
+            document.get("category", ""),
+            document.get("description", ""),
+            " ".join(document.get("keywords", []) if isinstance(document.get("keywords"), list) else []),
+            (document.get("metadata") or {}).get("description", ""),
+            " ".join((document.get("metadata") or {}).get("keywords", []) if isinstance((document.get("metadata") or {}).get("keywords"), list) else []),
+            " ".join(
+                " ".join(path)
+                for path in _normalize_taxonomy_paths(
+                    document.get("taxonomyPaths")
+                    or (document.get("metadata") or {}).get("taxonomyPaths")
+                    or document.get("taxonomyPath")
+                    or (document.get("metadata") or {}).get("taxonomyPath")
+                )
+            ),
+            document.get("documentType", ""),
+            document.get("routeOrPath", ""),
+            document.get("title", ""),
+            document.get("searchableText", ""),
+            " ".join(document.get("tags", []) if isinstance(document.get("tags"), list) else []),
+            " ".join((document.get("metadata") or {}).get("tags", []) if isinstance((document.get("metadata") or {}).get("tags"), list) else []),
+        ]
+    ).lower()
+    return _memory_query_matches(q, haystack)
+
+
+def _knowledge_taxonomy_matches(prefix, document):
+    wanted = _normalize_taxonomy_path(prefix)
+    if not wanted:
+        return True
+    wanted_lower = [part.lower() for part in wanted]
+    paths = _normalize_taxonomy_paths(
+        document.get("taxonomyPaths")
+        or (document.get("metadata") or {}).get("taxonomyPaths")
+        or document.get("taxonomyPath")
+        or (document.get("metadata") or {}).get("taxonomyPath")
+    )
+    for path in paths:
+        lowered = [part.lower() for part in path]
+        if lowered[: len(wanted_lower)] == wanted_lower:
+            return True
+    return False
+
+
+def _knowledge_excerpt(text, query="", limit=420):
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(clean) <= limit:
+        return clean
+    tokens = _search_tokens(query)
+    start = 0
+    lower = clean.lower()
+    for token in tokens:
+        found = lower.find(token)
+        if found >= 0:
+            start = max(0, found - 120)
+            break
+    excerpt = clean[start : start + limit].strip()
+    if start:
+        excerpt = "..." + excerpt
+    if start + limit < len(clean):
+        excerpt = excerpt.rstrip() + "..."
+    return excerpt
+
+
+def _public_knowledge_document(document, include_text=False, query=""):
+    metadata = document.get("metadata") or {}
+    taxonomy_paths = _normalize_taxonomy_paths(document.get("taxonomyPaths") or metadata.get("taxonomyPaths") or document.get("taxonomyPath") or metadata.get("taxonomyPath"))
+    taxonomy_path = taxonomy_paths[0] if taxonomy_paths else []
+    keywords = _normalize_keywords(document.get("keywords") or metadata.get("keywords") or metadata.get("tags"))
+    description = document.get("description") or metadata.get("description") or ""
+    item = {
+        "searchDocumentId": document.get("searchDocumentId"),
+        "workspaceId": document.get("workspaceId"),
+        "sourceId": document.get("sourceId"),
+        "sourceUri": document.get("sourceUri"),
+        "sourceType": document.get("sourceType"),
+        "projectId": document.get("projectId"),
+        "scope": document.get("scope"),
+        "scopeId": document.get("scopeId"),
+        "category": document.get("category"),
+        "description": description,
+        "keywords": keywords,
+        "taxonomyPath": taxonomy_path,
+        "taxonomyPaths": taxonomy_paths,
+        "taxonomyPathLabel": " > ".join(str(part) for part in taxonomy_path),
+        "taxonomyPathLabels": [" > ".join(str(part) for part in path) for path in taxonomy_paths],
+        "documentType": document.get("documentType"),
+        "routeOrPath": document.get("routeOrPath"),
+        "title": document.get("title"),
+        "visibility": document.get("visibility"),
+        "contentHash": document.get("contentHash"),
+        "searchableTextLength": len(document.get("searchableText") or ""),
+        "metadata": document.get("metadata") or {},
+        "createdAt": document.get("createdAt"),
+        "updatedAt": document.get("updatedAt"),
+        "lastCrawledAt": document.get("lastCrawledAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "protectedContentIncluded": bool(include_text),
+    }
+    if include_text:
+        item["searchableText"] = document.get("searchableText") or ""
+    else:
+        item["excerpt"] = _knowledge_excerpt(document.get("searchableText") or "", query)
+    return item
+
+
+def _knowledge_tree_from_documents(documents):
+    scopes = []
+    scope_map = {}
+    for document in documents:
+        scope = document.get("scope") or "workspace"
+        if scope not in ("company", "workspace", "project"):
+            continue
+        scope_id = document.get("scopeId") or ""
+        scope_key = "%s:%s" % (scope, scope_id)
+        if scope_key not in scope_map:
+            scope_item = {
+                "scope": scope,
+                "scopeId": scope_id,
+                "documentCount": 0,
+                "categories": [],
+                "_categoryMap": {},
+                "taxonomy": [],
+            }
+            scope_map[scope_key] = scope_item
+            scopes.append(scope_item)
+        scope_item = scope_map[scope_key]
+        category = document.get("category") or "uncategorized"
+        category_map = scope_item["_categoryMap"]
+        if category not in category_map:
+            category_item = {"category": category, "documentCount": 0, "documents": []}
+            category_map[category] = category_item
+            scope_item["categories"].append(category_item)
+        category_item = category_map[category]
+        public_doc = _public_knowledge_document(document, include_text=False)
+        category_item["documents"].append(public_doc)
+        category_item["documentCount"] += 1
+        taxonomy_paths = _normalize_taxonomy_paths(public_doc.get("taxonomyPaths") or public_doc.get("taxonomyPath"), [[category]])
+        for taxonomy_path in taxonomy_paths:
+            current_nodes = scope_item["taxonomy"]
+            for depth, raw_segment in enumerate(taxonomy_path):
+                segment = str(raw_segment or "").strip() or "uncategorized"
+                path = taxonomy_path[: depth + 1]
+                node = _taxonomy_child(current_nodes, segment, path)
+                node["documentCount"] += 1
+                if depth == len(taxonomy_path) - 1:
+                    node["documents"].append(public_doc)
+                current_nodes = node["children"]
+        scope_item["documentCount"] += 1
+    scope_order = {"company": 0, "workspace": 1, "project": 2}
+    scopes.sort(key=lambda item: (scope_order.get(item["scope"], 9), item["scopeId"]))
+    for scope_item in scopes:
+        scope_item["categories"].sort(key=lambda item: item["category"])
+        for category_item in scope_item["categories"]:
+            category_item["documents"].sort(key=lambda item: (item.get("title") or "", item.get("searchDocumentId") or ""))
+        _sort_taxonomy(scope_item.get("taxonomy") or [])
+        scope_item.pop("_categoryMap", None)
+    return {
+        "schemaVersion": "memoryendpoints.knowledge_tree.v1",
+        "levels": scopes,
+        "scopeCounts": {scope: sum(1 for item in documents if item.get("scope") == scope) for scope in ("company", "workspace", "project")},
+        "documentCount": sum(1 for item in documents if item.get("scope") in ("company", "workspace", "project")),
+        "taskLevelTreeSupported": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _blank_store():
     return {
         "schemaVersion": "memoryendpoints.file_store.v1",
@@ -281,6 +570,8 @@ def _blank_store():
         "apiKeys": {},
         "agents": {},
         "memoryEvents": [],
+        "crawlSources": {},
+        "searchDocuments": {},
         "reviewQueue": [],
         "messages": [],
         "notifications": [],
@@ -438,7 +729,7 @@ class FileStore(object):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
-        for key in ("memoryEvents", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
+        for key in ("memoryEvents", "crawlSources", "searchDocuments", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
             for item in data.get(key, []):
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
@@ -945,6 +1236,214 @@ class FileStore(object):
             "quotaExceeded": used > limit,
             "rawKeyStoredByServer": False,
         }
+
+    def projects(self, workspace_id):
+        data = self._load()
+        items = [
+            dict(project)
+            for project in data.get("projects", {}).values()
+            if project.get("workspaceId") == workspace_id and project.get("status", "active") != "deleted"
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("projectId") or ""))
+        for item in items:
+            item["valuesRedacted"] = True
+        return items
+
+    def upsert_project(self, workspace_id, project_id=None, label=None, actor_agent_id=None):
+        data = self._load()
+        workspace = data.get("workspaces", {}).get(workspace_id)
+        if not workspace:
+            return None, "workspace_not_found"
+        safe_label = redact_text(label or project_id or "Workspace Project")
+        project_id = _slug(project_id or safe_label, "project", 80)
+        if not project_id.startswith("project-"):
+            project_id = "project-" + project_id
+        now = utc_now()
+        project = data.setdefault("projects", {}).get(project_id)
+        created = project is None
+        if not project:
+            project = {
+                "projectId": project_id,
+                "workspaceId": workspace_id,
+                "createdAt": now,
+                "valuesRedacted": True,
+            }
+            data["projects"][project_id] = project
+        project.update(
+            {
+                "workspaceId": workspace_id,
+                "label": safe_label,
+                "status": "active",
+                "updatedAt": None if created else now,
+                "valuesRedacted": True,
+            }
+        )
+        self.audit(
+            data,
+            "project.upsert",
+            actor_agent_id or "system",
+            project_id,
+            workspace_id,
+            {"created": created, "projectId": project_id},
+        )
+        self._save(data)
+        return dict(project), None
+
+    def upsert_knowledge_document(self, workspace_id, actor_agent_id, payload):
+        data = self._load()
+        if workspace_id not in data.get("workspaces", {}):
+            return None, "workspace_not_found"
+        scope = (payload.get("scope") or "workspace").strip().lower()
+        if scope not in ("company", "workspace", "project"):
+            return None, "unsupported_scope"
+        searchable_text = redact_text(payload.get("searchableText") or payload.get("content") or "")
+        if not searchable_text.strip():
+            return None, "content_required"
+        title = redact_text(payload.get("title") or "Untitled knowledge document")
+        category = _slug(payload.get("category") or "uncategorized", "uncategorized", 96)
+        document_type = _slug(payload.get("documentType") or payload.get("document_type") or "knowledge-document", "knowledge-document", 64)
+        source_uri = redact_text(payload.get("sourceUri") or payload.get("source") or "memoryendpoints://knowledge/manual")
+        source_type = _slug(payload.get("sourceType") or payload.get("source_type") or "knowledge-document", "knowledge-document", 64)
+        visibility = _slug(payload.get("visibility") or "workspace_private", "workspace-private", 32).replace("-", "_")
+        scope_id = redact_text(payload.get("scopeId") or payload.get("scope_id") or workspace_id)
+        project_id = payload.get("projectId") or payload.get("project_id")
+        if scope == "project":
+            project_id = project_id or scope_id
+        else:
+            project_id = None
+        if project_id and project_id not in data.get("projects", {}):
+            return None, "project_not_found"
+        route_or_path = payload.get("routeOrPath") or payload.get("route_or_path")
+        if not route_or_path:
+            route_or_path = "/knowledge/%s/%s/%s" % (scope, category, _slug(title, "document", 120))
+        now = utc_now()
+        source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
+        document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
+        metadata = _public_value(payload.get("metadata") or {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+        metadata["tags"] = [redact_text(tag) for tag in tags]
+        taxonomy_paths = _normalize_taxonomy_paths(payload.get("taxonomyPaths") or payload.get("taxonomy_paths") or payload.get("taxonomyPath") or payload.get("taxonomy_path") or metadata.get("taxonomyPaths") or metadata.get("taxonomyPath"), [[category]])
+        metadata["taxonomyPaths"] = taxonomy_paths
+        metadata["taxonomyPath"] = taxonomy_paths[0] if taxonomy_paths else [category]
+        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or metadata.get("keywords") or tags)
+        description = redact_text(payload.get("description") or metadata.get("description") or "")
+        metadata["keywords"] = keywords
+        metadata["description"] = description
+        content_hash = _hash(searchable_text)
+        source = data.setdefault("crawlSources", {}).get(source_id) or {
+            "sourceId": source_id,
+            "workspaceId": workspace_id,
+            "createdAt": now,
+            "valuesRedacted": True,
+        }
+        source.update(
+            {
+                "workspaceId": workspace_id,
+                "projectId": project_id,
+                "sourceUri": source_uri,
+                "sourceType": source_type,
+                "crawlPolicy": payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
+                "status": "active",
+                "lastCrawledAt": now,
+                "valuesRedacted": True,
+            }
+        )
+        data.setdefault("crawlSources", {})[source_id] = source
+        existing = data.setdefault("searchDocuments", {}).get(document_id)
+        created = existing is None
+        document = existing or {
+            "searchDocumentId": document_id,
+            "workspaceId": workspace_id,
+            "sourceId": source_id,
+            "createdAt": now,
+        }
+        document.update(
+            {
+                "workspaceId": workspace_id,
+                "memoryId": payload.get("memoryId") or payload.get("memory_id"),
+                "sourceId": source_id,
+                "sourceUri": source_uri,
+                "sourceType": source_type,
+                "projectId": project_id,
+                "scope": scope,
+                "scopeId": scope_id,
+                "category": category,
+                "description": description,
+                "keywords": keywords,
+                "taxonomyPaths": taxonomy_paths,
+                "documentType": document_type,
+                "routeOrPath": route_or_path,
+                "title": title,
+                "searchableText": searchable_text,
+                "visibility": visibility,
+                "contentHash": content_hash,
+                "metadata": metadata,
+                "lastCrawledAt": now,
+                "updatedAt": now,
+                "valuesRedacted": True,
+            }
+        )
+        data.setdefault("searchDocuments", {})[document_id] = document
+        self._append_outbox(data, workspace_id, "matm.knowledge_document.upserted", "knowledge_document", document_id, document)
+        self._append_storage_ledger(data, workspace_id, "knowledge_document", document_id, document)
+        self.audit(
+            data,
+            "knowledge_document.upsert",
+            actor_agent_id or "system",
+            document_id,
+            workspace_id,
+            {"created": created, "scope": scope, "scopeId": scope_id, "category": category, "sourceId": source_id},
+        )
+        self._save(data)
+        return _public_knowledge_document(document, include_text=True), None
+
+    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False):
+        data = self._load()
+        filters = filters or {}
+        q = filters.get("q") or filters.get("query") or ""
+        scope = (filters.get("scope") or "").strip().lower()
+        scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
+        category = (filters.get("category") or "").strip().lower()
+        document_type = (filters.get("documentType") or filters.get("document_type") or "").strip().lower()
+        source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
+        document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
+        taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
+        items = []
+        for document in data.get("searchDocuments", {}).values():
+            if document.get("workspaceId") != workspace_id:
+                continue
+            if scope and (document.get("scope") or "").lower() != scope:
+                continue
+            if scope_id and document.get("scopeId") != scope_id:
+                continue
+            if category and (document.get("category") or "").lower() != category:
+                continue
+            if document_type and (document.get("documentType") or "").lower() != document_type:
+                continue
+            if source_prefix and not (document.get("sourceUri") or "").startswith(source_prefix):
+                continue
+            if document_id and document.get("searchDocumentId") != document_id:
+                continue
+            if taxonomy_prefix and not _knowledge_taxonomy_matches(taxonomy_prefix, document):
+                continue
+            if _knowledge_text_matches(q, document):
+                items.append(document)
+        items.sort(key=lambda item: (item.get("scope") or "", item.get("category") or "", item.get("title") or "", item.get("searchDocumentId") or ""))
+        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in items[: _parse_limit(limit, 50, 500)]]
+
+    def knowledge_tree(self, workspace_id, filters=None):
+        filters = dict(filters or {})
+        filters["q"] = filters.get("q") or filters.get("query") or ""
+        documents = self.knowledge_documents(workspace_id, filters, limit=5000, include_text=False)
+        raw_documents = []
+        data = self._load()
+        public_ids = {item.get("searchDocumentId") for item in documents}
+        for document in data.get("searchDocuments", {}).values():
+            if document.get("workspaceId") == workspace_id and document.get("searchDocumentId") in public_ids:
+                raw_documents.append(document)
+        return _knowledge_tree_from_documents(raw_documents)
 
     def has_quota_for(self, workspace_id, candidate):
         data = self._load()
@@ -1950,16 +2449,27 @@ class SQLiteStore(FileStore):
               workspace_id TEXT NOT NULL,
               memory_id TEXT,
               source_id TEXT,
+              scope_type TEXT NOT NULL DEFAULT 'workspace',
+              scope_id TEXT,
+              category TEXT,
+              document_type TEXT NOT NULL DEFAULT 'knowledge_document',
               route_or_path TEXT,
               title TEXT NOT NULL,
+              description TEXT,
+              keywords_json TEXT,
+              taxonomy_paths_json TEXT,
               searchable_text TEXT NOT NULL,
               visibility TEXT NOT NULL,
+              content_hash TEXT NOT NULL DEFAULT '',
+              metadata_json TEXT,
+              created_at TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL,
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
               FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id),
               FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_visibility ON matm_search_documents (workspace_id, visibility);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id);
 
             CREATE TABLE IF NOT EXISTS matm_review_queue (
               review_id TEXT PRIMARY KEY,
@@ -2251,7 +2761,37 @@ class SQLiteStore(FileStore):
             CREATE INDEX IF NOT EXISTS ix_sqlite_audit_workspace_created ON matm_audit_log (workspace_id, created_at);
             """
         )
+        self._ensure_knowledge_schema_columns(connection)
         connection.commit()
+
+    def _ensure_knowledge_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = [
+            ("scope_type", "VARCHAR(32) NOT NULL DEFAULT 'workspace'" if mysql else "TEXT NOT NULL DEFAULT 'workspace'"),
+            ("scope_id", "VARCHAR(128)" if mysql else "TEXT"),
+            ("category", "VARCHAR(96)" if mysql else "TEXT"),
+            ("document_type", "VARCHAR(64) NOT NULL DEFAULT 'knowledge_document'" if mysql else "TEXT NOT NULL DEFAULT 'knowledge_document'"),
+            ("description", "TEXT"),
+            ("keywords_json", "TEXT"),
+            ("taxonomy_paths_json", "TEXT"),
+            ("content_hash", "CHAR(64) NOT NULL DEFAULT ''" if mysql else "TEXT NOT NULL DEFAULT ''"),
+            ("metadata_json", "TEXT"),
+            ("created_at", "TIMESTAMP NULL" if mysql else "TEXT NOT NULL DEFAULT ''"),
+        ]
+        for column, definition in additions:
+            try:
+                connection.execute("ALTER TABLE matm_search_documents ADD COLUMN %s %s" % (column, definition))
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
+        index_sql = "CREATE INDEX ix_matm_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id)" if mysql else "CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id)"
+        try:
+            connection.execute(index_sql)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate" not in message and "already exists" not in message:
+                raise
 
     def _json_load(self, value, fallback):
         if value in (None, ""):
@@ -2527,6 +3067,8 @@ class SQLiteStore(FileStore):
         for table in (
             "matm_projects",
             "matm_agents",
+            "matm_crawl_sources",
+            "matm_search_documents",
             "matm_memory_records",
             "matm_review_queue",
             "matm_messages",
@@ -2707,6 +3249,367 @@ class SQLiteStore(FileStore):
                         "quotaExceeded": used > limit,
                         "rawKeyStoredByServer": False,
                     }
+
+    def projects(self, workspace_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_projects
+                        WHERE workspace_id = ? AND status <> 'deleted'
+                        ORDER BY created_at, project_id
+                        """,
+                        (workspace_id,),
+                    )
+                )
+        items = []
+        for row in rows:
+            item = {
+                "projectId": row["project_id"],
+                "workspaceId": row["workspace_id"],
+                "label": row["label"],
+                "status": row["status"],
+                "createdAt": row["created_at"],
+                "valuesRedacted": True,
+            }
+            if row["updated_at"]:
+                item["updatedAt"] = row["updated_at"]
+            items.append(item)
+        return items
+
+    def upsert_project(self, workspace_id, project_id=None, label=None, actor_agent_id=None):
+        project_label = redact_text(label or project_id or "Workspace Project")
+        project_id = _slug(project_id or project_label, "project", 80)
+        if not project_id.startswith("project-"):
+            project_id = "project-" + project_id
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace:
+                        return None, "workspace_not_found"
+                    existing = connection.execute(
+                        "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ?",
+                        (workspace_id, project_id),
+                    ).fetchone()
+                    created = existing is None
+                    if existing:
+                        connection.execute(
+                            """
+                            UPDATE matm_projects
+                            SET label = ?, status = 'active', updated_at = ?
+                            WHERE workspace_id = ? AND project_id = ?
+                            """,
+                            (project_label, now, workspace_id, project_id),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_projects (project_id, workspace_id, label, status, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (project_id, workspace_id, project_label, "active", now, None),
+                        )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "project.upsert",
+                        actor_agent_id or "system",
+                        project_id,
+                        {"created": created, "projectId": project_id},
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ?",
+                        (workspace_id, project_id),
+                    ).fetchone()
+        return {
+            "projectId": row["project_id"],
+            "workspaceId": row["workspace_id"],
+            "label": row["label"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": True,
+        }, None
+
+    def _knowledge_document_from_row(self, row):
+        if not row:
+            return None
+        searchable_text = row["searchable_text"] or ""
+        metadata = self._json_load(row.get("metadata_json") if isinstance(row, dict) else row["metadata_json"], {})
+        return {
+            "searchDocumentId": row["search_document_id"],
+            "workspaceId": row["workspace_id"],
+            "memoryId": row["memory_id"],
+            "sourceId": row["source_id"],
+            "sourceUri": row.get("source_uri") if isinstance(row, dict) else row["source_uri"],
+            "sourceType": row.get("source_type") if isinstance(row, dict) else row["source_type"],
+            "projectId": row.get("project_id") if isinstance(row, dict) else row["project_id"],
+            "scope": row["scope_type"],
+            "scopeId": row["scope_id"],
+            "category": row["category"],
+            "description": row.get("description") if isinstance(row, dict) else row["description"],
+            "keywords": self._json_load(row.get("keywords_json") if isinstance(row, dict) else row["keywords_json"], []),
+            "taxonomyPaths": self._json_load(row.get("taxonomy_paths_json") if isinstance(row, dict) else row["taxonomy_paths_json"], []),
+            "documentType": row["document_type"],
+            "routeOrPath": row["route_or_path"],
+            "title": row["title"],
+            "searchableText": searchable_text,
+            "visibility": row["visibility"],
+            "contentHash": row["content_hash"] or _hash(searchable_text),
+            "metadata": metadata if isinstance(metadata, dict) else {},
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "lastCrawledAt": row.get("last_crawled_at") if isinstance(row, dict) else row["last_crawled_at"],
+            "valuesRedacted": True,
+        }
+
+    def upsert_knowledge_document(self, workspace_id, actor_agent_id, payload):
+        scope = (payload.get("scope") or "workspace").strip().lower()
+        if scope not in ("company", "workspace", "project"):
+            return None, "unsupported_scope"
+        searchable_text = redact_text(payload.get("searchableText") or payload.get("content") or "")
+        if not searchable_text.strip():
+            return None, "content_required"
+        title = redact_text(payload.get("title") or "Untitled knowledge document")
+        category = _slug(payload.get("category") or "uncategorized", "uncategorized", 96)
+        document_type = _slug(payload.get("documentType") or payload.get("document_type") or "knowledge-document", "knowledge-document", 64)
+        source_uri = redact_text(payload.get("sourceUri") or payload.get("source") or "memoryendpoints://knowledge/manual")
+        source_type = _slug(payload.get("sourceType") or payload.get("source_type") or "knowledge-document", "knowledge-document", 64)
+        visibility = _slug(payload.get("visibility") or "workspace_private", "workspace-private", 32).replace("-", "_")
+        scope_id = redact_text(payload.get("scopeId") or payload.get("scope_id") or workspace_id)
+        project_id = payload.get("projectId") or payload.get("project_id")
+        if scope == "project":
+            project_id = project_id or scope_id
+        else:
+            project_id = None
+        route_or_path = payload.get("routeOrPath") or payload.get("route_or_path")
+        if not route_or_path:
+            route_or_path = "/knowledge/%s/%s/%s" % (scope, category, _slug(title, "document", 120))
+        source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
+        document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
+        metadata = _public_value(payload.get("metadata") or {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+        metadata["tags"] = [redact_text(tag) for tag in tags]
+        taxonomy_paths = _normalize_taxonomy_paths(payload.get("taxonomyPaths") or payload.get("taxonomy_paths") or payload.get("taxonomyPath") or payload.get("taxonomy_path") or metadata.get("taxonomyPaths") or metadata.get("taxonomyPath"), [[category]])
+        metadata["taxonomyPaths"] = taxonomy_paths
+        metadata["taxonomyPath"] = taxonomy_paths[0] if taxonomy_paths else [category]
+        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or metadata.get("keywords") or tags)
+        description = redact_text(payload.get("description") or metadata.get("description") or "")
+        metadata["keywords"] = keywords
+        metadata["description"] = description
+        content_hash = _hash(searchable_text)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace:
+                        return None, "workspace_not_found"
+                    if project_id:
+                        project = connection.execute(
+                            "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ?",
+                            (workspace_id, project_id),
+                        ).fetchone()
+                        if not project:
+                            return None, "project_not_found"
+                    existing_source = connection.execute(
+                        "SELECT * FROM matm_crawl_sources WHERE workspace_id = ? AND source_id = ?",
+                        (workspace_id, source_id),
+                    ).fetchone()
+                    if existing_source:
+                        connection.execute(
+                            """
+                            UPDATE matm_crawl_sources
+                            SET project_id = ?, source_uri = ?, source_type = ?, crawl_policy = ?,
+                                status = 'active', last_crawled_at = ?
+                            WHERE workspace_id = ? AND source_id = ?
+                            """,
+                            (
+                                project_id,
+                                source_uri,
+                                source_type,
+                                payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
+                                now,
+                                workspace_id,
+                                source_id,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_crawl_sources (
+                              source_id, workspace_id, project_id, source_uri, source_type,
+                              crawl_policy, status, last_crawled_at, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source_id,
+                                workspace_id,
+                                project_id,
+                                source_uri,
+                                source_type,
+                                payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
+                                "active",
+                                now,
+                                now,
+                            ),
+                        )
+                    existing_doc = connection.execute(
+                        "SELECT * FROM matm_search_documents WHERE workspace_id = ? AND search_document_id = ?",
+                        (workspace_id, document_id),
+                    ).fetchone()
+                    created = existing_doc is None
+                    if existing_doc:
+                        connection.execute(
+                            """
+                            UPDATE matm_search_documents
+                            SET memory_id = ?, source_id = ?, scope_type = ?, scope_id = ?, category = ?,
+                                document_type = ?, route_or_path = ?, title = ?, description = ?,
+                                keywords_json = ?, taxonomy_paths_json = ?, searchable_text = ?,
+                                visibility = ?, content_hash = ?, metadata_json = ?, updated_at = ?
+                            WHERE workspace_id = ? AND search_document_id = ?
+                            """,
+                            (
+                                payload.get("memoryId") or payload.get("memory_id"),
+                                source_id,
+                                scope,
+                                scope_id,
+                                category,
+                                document_type,
+                                route_or_path,
+                                title,
+                                description,
+                                self._json_dump(keywords),
+                                self._json_dump(taxonomy_paths),
+                                searchable_text,
+                                visibility,
+                                content_hash,
+                                self._json_dump(metadata),
+                                now,
+                                workspace_id,
+                                document_id,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_search_documents (
+                              search_document_id, workspace_id, memory_id, source_id, scope_type,
+                              scope_id, category, document_type, route_or_path, title, description,
+                              keywords_json, taxonomy_paths_json, searchable_text, visibility, content_hash,
+                              metadata_json, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                document_id,
+                                workspace_id,
+                                payload.get("memoryId") or payload.get("memory_id"),
+                                source_id,
+                                scope,
+                                scope_id,
+                                category,
+                                document_type,
+                                route_or_path,
+                                title,
+                                description,
+                                self._json_dump(keywords),
+                                self._json_dump(taxonomy_paths),
+                                searchable_text,
+                                visibility,
+                                content_hash,
+                                self._json_dump(metadata),
+                                now,
+                                now,
+                            ),
+                        )
+                    row = connection.execute(
+                        """
+                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at
+                        FROM matm_search_documents d
+                        LEFT JOIN matm_crawl_sources s ON s.source_id = d.source_id AND s.workspace_id = d.workspace_id
+                        WHERE d.workspace_id = ? AND d.search_document_id = ?
+                        """,
+                        (workspace_id, document_id),
+                    ).fetchone()
+                    document = self._knowledge_document_from_row(row)
+                    self._insert_outbox_sql(connection, workspace_id, "matm.knowledge_document.upserted", "knowledge_document", document_id, document)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "knowledge_document", document_id, document)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "knowledge_document.upsert",
+                        actor_agent_id or "system",
+                        document_id,
+                        {"created": created, "scope": scope, "scopeId": scope_id, "category": category, "sourceId": source_id},
+                    )
+        return _public_knowledge_document(document, include_text=True), None
+
+    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False):
+        filters = filters or {}
+        q = filters.get("q") or filters.get("query") or ""
+        scope = (filters.get("scope") or "").strip().lower()
+        scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
+        category = (filters.get("category") or "").strip().lower()
+        document_type = (filters.get("documentType") or filters.get("document_type") or "").strip().lower()
+        source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
+        document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
+        taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
+        clauses = ["d.workspace_id = ?"]
+        params = [workspace_id]
+        if scope:
+            clauses.append("LOWER(d.scope_type) = ?")
+            params.append(scope)
+        if scope_id:
+            clauses.append("d.scope_id = ?")
+            params.append(scope_id)
+        if category:
+            clauses.append("LOWER(d.category) = ?")
+            params.append(category)
+        if document_type:
+            clauses.append("LOWER(d.document_type) = ?")
+            params.append(document_type)
+        if source_prefix:
+            clauses.append("s.source_uri LIKE ?")
+            params.append(source_prefix + "%")
+        if document_id:
+            clauses.append("d.search_document_id = ?")
+            params.append(document_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at
+                        FROM matm_search_documents d
+                        LEFT JOIN matm_crawl_sources s ON s.source_id = d.source_id AND s.workspace_id = d.workspace_id
+                        WHERE %s
+                        ORDER BY d.scope_type, d.category, d.title, d.search_document_id
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        documents = []
+        for row in rows:
+            document = self._knowledge_document_from_row(row)
+            if document and _knowledge_taxonomy_matches(taxonomy_prefix, document) and _knowledge_text_matches(q, document):
+                documents.append(document)
+        max_items = _parse_limit(limit, 50, 500)
+        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in documents[:max_items]]
+
+    def knowledge_tree(self, workspace_id, filters=None):
+        documents = self.knowledge_documents(workspace_id, filters or {}, limit=5000, include_text=True)
+        return _knowledge_tree_from_documents(documents)
 
     def workspace_usage_bytes(self, data, workspace_id=None):
         workspace_id = workspace_id or data
@@ -6153,4 +7056,5 @@ class MySQLStore(SQLiteStore):
     def _ensure_schema(self, connection):
         schema = (Path(__file__).resolve().parents[1] / "docs" / "database-schema-canonical.sql").read_text(encoding="utf-8")
         connection.executescript(schema)
+        self._ensure_knowledge_schema_columns(connection)
         connection.commit()
