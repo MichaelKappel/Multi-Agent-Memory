@@ -558,6 +558,18 @@
     return (items || []).filter(isRequiredResponseItem).length;
   }
 
+  function attentionFirstItems(items) {
+    return (items || []).map(function (item, index) {
+      return { item: item, index: index };
+    }).sort(function (left, right) {
+      var leftRank = isRequiredResponseItem(left.item) ? 0 : 1;
+      var rightRank = isRequiredResponseItem(right.item) ? 0 : 1;
+      return leftRank === rightRank ? left.index - right.index : leftRank - rightRank;
+    }).map(function (entry) {
+      return entry.item;
+    });
+  }
+
   function renderVerifierChecklist() {
     var node = pick("[data-console-verifier-checklist]");
     if (!node) {
@@ -1599,7 +1611,8 @@
       var requiredResponseCount = responseCounts.required_response !== undefined
         ? responseCounts.required_response
         : requiredResponseCountFromPayload(payload, items);
-      var first = items.length ? items[0].message || {} : {};
+      var attentionItems = attentionFirstItems(items);
+      var first = attentionItems.length ? attentionItems[0].message || {} : {};
       var row = resultRow(
         result.label + " inbox",
         result.ok
@@ -1641,7 +1654,7 @@
         return;
       }
       var items = (result.payload && result.payload.items) || [];
-      items.slice(0, 2).forEach(function (item) {
+      attentionFirstItems(items).slice(0, 2).forEach(function (item) {
         var row = {};
         Object.keys(item || {}).forEach(function (key) {
           row[key] = item[key];
