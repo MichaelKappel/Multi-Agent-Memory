@@ -54,6 +54,17 @@ def check_passed(checks, name):
     return any(item.get("name") == name and item.get("ok") for item in checks)
 
 
+def dogfood_verification_state(tracked_report, current_report=None, current_check_passed=False):
+    reports = [tracked_report] if tracked_report else []
+    if current_check_passed and current_report:
+        reports.append(current_report)
+    return {
+        "localDogfoodVerified": any(item.get("localDogfoodVerified") for item in reports),
+        "liveCoreDogfoodVerified": any(item.get("liveCoreDogfoodVerified") for item in reports),
+        "liveDogfoodVerified": any(item.get("liveDogfoodVerified") for item in reports),
+    }
+
+
 def stale_report_blocker(label, data, head_sha, candidate_paths):
     observed = report_sha(data, candidate_paths)
     if not observed:
@@ -138,6 +149,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     checks = []
+    dogfood_temp = None
     if args.run_checks:
         dogfood_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-dogfood.json")
         mysql_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-mysql.json")
@@ -213,6 +225,10 @@ def main(argv=None):
     live_mysql_backend_check_current = check_passed(checks, "live_mysql_backend_verifier")
     live_dogfood_check_current = check_passed(checks, "live_dogfood_verifier")
     multiagentmemory_live_site_check_current = check_passed(checks, "multiagentmemory_live_site")
+    current_dogfood = load_json(Path(dogfood_temp)) if dogfood_temp and live_dogfood_check_current else None
+    dogfood_state = dogfood_verification_state(dogfood, current_dogfood, live_dogfood_check_current)
+    local_dogfood_verified = dogfood_state["localDogfoodVerified"]
+    live_core_dogfood_verified = dogfood_state["liveCoreDogfoodVerified"]
     local_route_evidence_current = bool(
         (local_routes and local_routes.get("ok") and local_route_report_current) or wsgi_check_current
     )
@@ -299,7 +315,7 @@ def main(argv=None):
     live_mysql_backend_verified = bool(
         (live_mysql_backend and live_mysql_backend.get("ok")) or live_mysql_backend_check_current
     )
-    live_dogfood_verified = bool((dogfood and dogfood.get("liveDogfoodVerified")) or live_dogfood_check_current)
+    live_dogfood_verified = dogfood_state["liveDogfoodVerified"]
     multiagentmemory_live_site_verified = bool(
         (multiagentmemory_live_site and multiagentmemory_live_site.get("ok"))
         or multiagentmemory_live_site_check_current
@@ -345,8 +361,9 @@ def main(argv=None):
         ),
         evidence_item(
             "local_dogfooding",
-            "pass_local" if dogfood and dogfood.get("localDogfoodVerified") else "missing",
-            ["docs/reports/dogfood-memory-run.json"],
+            "pass_local" if local_dogfood_verified else "missing",
+            ["docs/reports/dogfood-memory-run.json", "scripts/enterprise_readiness_audit.py --run-checks"],
+            None if local_dogfood_verified else "Run isolated SQLite dogfood or the aggregate readiness checks before claiming local dogfood evidence.",
         ),
         evidence_item(
             "public_wsgi_routes",
@@ -407,9 +424,9 @@ def main(argv=None):
         ),
         evidence_item(
             "live_core_dogfooding_current_surface",
-            "pass_live_current_public_surface" if dogfood and dogfood.get("liveCoreDogfoodVerified") else "missing",
-            ["docs/reports/dogfood-memory-run.json"],
-            None if dogfood and dogfood.get("liveCoreDogfoodVerified") else "Run live dogfood against the currently deployed MemoryEndpoints.com API before claiming live core workflow evidence.",
+            "pass_live_current_public_surface" if live_core_dogfood_verified else "missing",
+            ["docs/reports/dogfood-memory-run.json", "scripts/enterprise_readiness_audit.py --run-checks"],
+            None if live_core_dogfood_verified else "Run live dogfood against the currently deployed MemoryEndpoints.com API before claiming live core workflow evidence.",
         ),
         evidence_item(
             "latest_code_live_deployed",
@@ -429,7 +446,7 @@ def main(argv=None):
             ["docs/reports/dogfood-memory-run.json", "scripts/enterprise_readiness_audit.py --run-checks"],
             None if live_dogfood_verified else (
                 "Live core dogfood passes on the currently deployed API, but the latest protected audit-log dogfood contract is not deployed or verified."
-                if dogfood and dogfood.get("liveCoreDogfoodVerified")
+                if live_core_dogfood_verified
                 else "Only local WSGI dogfooding is verified; live deployment/access is gated."
             ),
         ),
@@ -507,7 +524,8 @@ def main(argv=None):
             "dateFreeHotMemory": bool(uai_audit and uai_audit.get("dateFreeHotMemory")),
             "noForbiddenActiveMemoryFilename": bool(uai_audit and uai_audit.get("noForbiddenActiveMemoryFilename")),
             "livePublicRoutesVerified": live_public_routes_verified,
-            "liveCoreDogfoodVerified": bool(dogfood and dogfood.get("liveCoreDogfoodVerified")),
+            "localDogfoodVerified": local_dogfood_verified,
+            "liveCoreDogfoodVerified": live_core_dogfood_verified,
             "latestCodeLiveDeployed": latest_code_live_verified,
             "latestCodeSourceShaMatchesExpected": bool(
                 live_latest_code_check_current or (live_latest_code and live_latest_code.get("sourceShaMatchesExpected"))

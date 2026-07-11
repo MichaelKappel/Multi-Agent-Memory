@@ -131,6 +131,46 @@ The durable conclusion.
         self.assertEqual("Works cited", unit["stopHeading"])
         self.assertEqual(5, unit["lineEnd"])
 
+    def test_section_discovery_ignores_headings_inside_code_blocks(self):
+        text = """# Report
+
+## Schemas and workflows
+
+```yaml
+title: Candidate
+## Rationale
+# Embedded document title
+```
+
+~~~md
+## Another embedded heading
+~~~
+
+    ## Indented code heading
+
+The outer section continues.
+
+## Setup wizard
+
+The next real section.
+"""
+
+        selected, unit = select_knowledge_unit(
+            text,
+            Path("report.md"),
+            "Schemas and workflows",
+        )
+
+        self.assertIn("## Rationale", selected)
+        self.assertIn("## Another embedded heading", selected)
+        self.assertIn("## Indented code heading", selected)
+        self.assertIn("The outer section continues.", selected)
+        self.assertNotIn("## Setup wizard", selected)
+        self.assertEqual(3, unit["lineStart"])
+        self.assertEqual(17, unit["lineEnd"])
+        with self.assertRaisesRegex(RuntimeError, "section heading not found"):
+            select_knowledge_unit(text, Path("report.md"), "Rationale")
+
 
 if __name__ == "__main__":
     unittest.main()

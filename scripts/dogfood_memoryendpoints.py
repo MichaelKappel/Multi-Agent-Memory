@@ -23,7 +23,7 @@ from memoryendpoints.config import utc_now
 REPORT_PATH = ROOT / "docs" / "reports" / "dogfood-memory-run.json"
 PROGRESS_PATH = ROOT / ".uai" / "progress.uai"
 DOGFOOD_STORE_DIR = ROOT / "var" / "dogfood-memory"
-DOGFOOD_STORE = DOGFOOD_STORE_DIR / "store.json"
+DOGFOOD_SQLITE = DOGFOOD_STORE_DIR / "store.sqlite3"
 LIVE_READBACK_ATTEMPTS = 32
 LIVE_WRITE_ATTEMPTS = 16
 LIVE_WORKSPACE_SETUP_ATTEMPTS = 8
@@ -737,15 +737,23 @@ def combine_reports(runs):
     return report
 
 
-def restore_store_environment(previous_store_path, previous_backend):
-    if previous_store_path is None:
-        os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
+def _restore_environment_value(name, value):
+    if value is None:
+        os.environ.pop(name, None)
     else:
-        os.environ["MEMORYENDPOINTS_STORE_PATH"] = previous_store_path
-    if previous_backend is None:
-        os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
-    else:
-        os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = previous_backend
+        os.environ[name] = value
+
+
+def configure_local_store_environment():
+    os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
+    os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
+    os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = str(DOGFOOD_SQLITE)
+
+
+def restore_store_environment(previous_store_path, previous_sqlite_path, previous_backend):
+    _restore_environment_value("MEMORYENDPOINTS_STORE_PATH", previous_store_path)
+    _restore_environment_value("MEMORYENDPOINTS_SQLITE_PATH", previous_sqlite_path)
+    _restore_environment_value("MEMORYENDPOINTS_STORE_BACKEND", previous_backend)
 
 
 def main(argv=None):
@@ -757,23 +765,25 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     previous_store_path = os.environ.get("MEMORYENDPOINTS_STORE_PATH")
+    previous_sqlite_path = os.environ.get("MEMORYENDPOINTS_SQLITE_PATH")
     previous_backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND")
     runs = []
     try:
         if args.mode in ("local", "both"):
             shutil.rmtree(DOGFOOD_STORE_DIR, ignore_errors=True)
             DOGFOOD_STORE_DIR.mkdir(parents=True, exist_ok=True)
-            os.environ["MEMORYENDPOINTS_STORE_PATH"] = str(DOGFOOD_STORE)
-            os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
+            configure_local_store_environment()
             local = run_sequence(WsgiTransport(), "local-wsgi")
-            store_text = DOGFOOD_STORE.read_text(encoding="utf-8") if DOGFOOD_STORE.exists() else ""
-            local["rawCredentialValuesStored"] = local["rawCredentialValuesStored"] or ("me_live_" in store_text)
+            store_bytes = DOGFOOD_SQLITE.read_bytes() if DOGFOOD_SQLITE.exists() else b""
+            local["rawCredentialValuesStored"] = local["rawCredentialValuesStored"] or any(
+                marker in store_bytes for marker in (b"me_live_", b"apiKeySecret")
+            )
             runs.append(local)
         if args.mode in ("live", "both"):
-            restore_store_environment(previous_store_path, previous_backend)
+            restore_store_environment(previous_store_path, previous_sqlite_path, previous_backend)
             runs.append(run_sequence(HttpTransport(args.base_url), "live-http", args.base_url))
     finally:
-        restore_store_environment(previous_store_path, previous_backend)
+        restore_store_environment(previous_store_path, previous_sqlite_path, previous_backend)
 
     report = combine_reports(runs)
     if not args.no_progress_update:

@@ -25,9 +25,9 @@ Current local gate:
 - Deploy dry-run evidence must match the package report and remain a no-upload safe no-op before any live deploy claim.
 
 External evidence refresh:
-- `python scripts\check_github_actions.py --json-out docs\reports\github-ci-status-report.json` updates GitHub Actions evidence. It exits nonzero while CI is not successful, so use its report as a gate signal rather than as a local code-test failure.
-- GitHub CI must run the WSGI verifier with source-SHA provenance, using the pushed commit SHA as the expected build identity.
-- Tracked readiness reports are point-in-time snapshots. Treat local route, package, live latest-code, and GitHub CI report files as stale standalone evidence when their recorded source SHA does not match the Git HEAD being evaluated; use fresh no-write commands after commit or push as the current-commit proof.
+- GitHub Actions is not a completion gate and must not be retried unless the human explicitly re-enables it.
+- Pushed-source proof comes from the remote branch and exact live `build.sourceSha` verification, followed by live route, MySQL, package, and dogfood checks.
+- Tracked readiness reports are point-in-time snapshots. Treat local route, package, and live latest-code report files as stale standalone evidence when their recorded source SHA does not match the Git HEAD being evaluated; use fresh no-write commands after commit or push as the current-commit proof.
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.

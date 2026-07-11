@@ -55,8 +55,22 @@ def clean_heading(value):
 def markdown_sections(text):
     lines = text.splitlines()
     headings = []
+    fence_character = ""
+    fence_length = 0
     for index, line in enumerate(lines):
-        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line.strip())
+        if fence_character:
+            closing_fence = r"^[ ]{0,3}%s{%d,}[ \t]*$" % (re.escape(fence_character), fence_length)
+            if re.match(closing_fence, line):
+                fence_character = ""
+                fence_length = 0
+            continue
+        opening_fence = re.match(r"^[ ]{0,3}(`{3,}|~{3,})(?:[^\r\n]*)$", line)
+        if opening_fence:
+            marker = opening_fence.group(1)
+            fence_character = marker[0]
+            fence_length = len(marker)
+            continue
+        match = re.match(r"^[ ]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*$", line)
         if not match:
             continue
         headings.append(

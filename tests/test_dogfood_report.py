@@ -246,22 +246,47 @@ class DogfoodReportTests(unittest.TestCase):
 
     def test_restore_store_environment_removes_local_store_before_live(self):
         previous_path = os.environ.get("MEMORYENDPOINTS_STORE_PATH")
+        previous_sqlite_path = os.environ.get("MEMORYENDPOINTS_SQLITE_PATH")
         previous_backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND")
         try:
             os.environ["MEMORYENDPOINTS_STORE_PATH"] = "local-dogfood-store.json"
+            os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = "local-dogfood-store.sqlite3"
             os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "file"
 
-            dogfood_memoryendpoints.restore_store_environment(None, None)
+            dogfood_memoryendpoints.restore_store_environment(None, None, None)
 
             self.assertNotIn("MEMORYENDPOINTS_STORE_PATH", os.environ)
+            self.assertNotIn("MEMORYENDPOINTS_SQLITE_PATH", os.environ)
             self.assertNotIn("MEMORYENDPOINTS_STORE_BACKEND", os.environ)
 
-            dogfood_memoryendpoints.restore_store_environment("existing-store.json", "sqlite")
+            dogfood_memoryendpoints.restore_store_environment(
+                "existing-store.json",
+                "existing-store.sqlite3",
+                "sqlite",
+            )
 
             self.assertEqual("existing-store.json", os.environ["MEMORYENDPOINTS_STORE_PATH"])
+            self.assertEqual("existing-store.sqlite3", os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
             self.assertEqual("sqlite", os.environ["MEMORYENDPOINTS_STORE_BACKEND"])
         finally:
-            dogfood_memoryendpoints.restore_store_environment(previous_path, previous_backend)
+            dogfood_memoryendpoints.restore_store_environment(previous_path, previous_sqlite_path, previous_backend)
+
+    def test_local_dogfood_forces_isolated_sqlite_backend(self):
+        previous_path = os.environ.get("MEMORYENDPOINTS_STORE_PATH")
+        previous_sqlite_path = os.environ.get("MEMORYENDPOINTS_SQLITE_PATH")
+        previous_backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND")
+        try:
+            os.environ["MEMORYENDPOINTS_STORE_PATH"] = "inherited-store.json"
+            os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = "inherited-store.sqlite3"
+            os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "mysql"
+
+            dogfood_memoryendpoints.configure_local_store_environment()
+
+            self.assertNotIn("MEMORYENDPOINTS_STORE_PATH", os.environ)
+            self.assertEqual(str(dogfood_memoryendpoints.DOGFOOD_SQLITE), os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
+            self.assertEqual("sqlite", os.environ["MEMORYENDPOINTS_STORE_BACKEND"])
+        finally:
+            dogfood_memoryendpoints.restore_store_environment(previous_path, previous_sqlite_path, previous_backend)
 
 
 if __name__ == "__main__":

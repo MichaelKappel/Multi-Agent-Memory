@@ -37,6 +37,28 @@ class ReportFreshnessTests(unittest.TestCase):
         self.assertTrue(enterprise_readiness_audit.check_passed(checks, "live_latest_code_verifier"))
         self.assertFalse(enterprise_readiness_audit.check_passed(checks, "package_check"))
 
+    def test_enterprise_dogfood_state_accepts_successful_current_evidence(self):
+        state = enterprise_readiness_audit.dogfood_verification_state(
+            {"localDogfoodVerified": False, "liveCoreDogfoodVerified": True, "liveDogfoodVerified": False},
+            {"localDogfoodVerified": True, "liveCoreDogfoodVerified": True, "liveDogfoodVerified": True},
+            current_check_passed=True,
+        )
+
+        self.assertTrue(state["localDogfoodVerified"])
+        self.assertTrue(state["liveCoreDogfoodVerified"])
+        self.assertTrue(state["liveDogfoodVerified"])
+
+    def test_enterprise_dogfood_state_ignores_failed_current_evidence(self):
+        state = enterprise_readiness_audit.dogfood_verification_state(
+            {"localDogfoodVerified": False, "liveCoreDogfoodVerified": True, "liveDogfoodVerified": False},
+            {"localDogfoodVerified": True, "liveCoreDogfoodVerified": True, "liveDogfoodVerified": True},
+            current_check_passed=False,
+        )
+
+        self.assertFalse(state["localDogfoodVerified"])
+        self.assertTrue(state["liveCoreDogfoodVerified"])
+        self.assertFalse(state["liveDogfoodVerified"])
+
     def test_build_report_freshness_reads_nested_sha(self):
         report = {"build": {"sourceSha": "abc123"}}
 
