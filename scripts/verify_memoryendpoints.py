@@ -20,6 +20,7 @@ ROUTES = [
     "/agent-setup",
     "/agent-coordination",
     "/console",
+    "/knowledge",
     "/memory-lifecycle",
     "/transparency",
     "/api/version",

@@ -29,6 +29,7 @@ EXCLUDE_PATH_PREFIXES = {
     "agent-file-handoff/Content",
     "agent-file-handoff/Improvement",
     "docs/prompts",
+    "docs/reports",
 }
 EXCLUDE_NAMES = {"ftp_Deploy.txt", ".gitattributes", ".gitignore", ".gitkeep", "workspace.uai"}
 EXCLUDE_SUFFIXES = {
