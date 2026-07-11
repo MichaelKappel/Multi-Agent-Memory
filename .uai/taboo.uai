@@ -20,3 +20,4 @@ Taboo rules:
 - Do not copy NeuralWikis public wiki content, branding, or public claims.
 - Do not modify Totem, Taboo, or Talisman unless the human explicitly names the exact artifact and operation.
 - Do not ship jimmy-rigged one-off code, glued-on shortcuts, fake domain models, compatibility debt, or low-quality expedient patches. When a concept is part of the product domain, model it as a first-class, tested, documented system across storage, API, UI, and operations rather than hiding it behind ad hoc labels or special cases.
+- Do not ingest an old proposal as current knowledge merely because it appears in a report. Preserve it as historical or superseded evidence with an explicit reason and current replacement, and never let stale routes, schemas, filesystem fallbacks, or forbidden `.uai` concepts outrank the deployed contract.

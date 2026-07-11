@@ -48,6 +48,13 @@
     "redactedReceipts": "GET /api/matm/receipts",
     "redactedAuditLog": "GET /api/matm/audit-log"
   },
+  "knowledgeLifecycle": {
+    "statuses": ["current", "proposed", "historical", "superseded", "archived"],
+    "authorityLevels": ["canonical", "reviewed", "reference", "community", "unverified"],
+    "nonCurrentReasonRequired": true,
+    "supersededReplacementRequired": true,
+    "currentCanonicalRankingPreferred": true
+  },
   "repositoryMap": {
     "runtime": "memoryendpoints/",
     "companionSite": "sites/multiagentmemory.com/",

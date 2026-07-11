@@ -63,17 +63,17 @@
     <ul>
       <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
       <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
-      <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, and multiple taxonomy paths.</li>
+      <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, multiple taxonomy paths, lifecycle status, authority level, and explicit supersession links.</li>
       <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
     </ul>
 
     <h2>Knowledge and web search</h2>
-    <p>Reports are reviewed one source file at a time. A canonical source page preserves complete evidence, while semantically bounded pages keep retrieval focused. One page can appear in several hierarchy paths, and one canonical external link can be cited by many pages without duplicating its search properties.</p>
+    <p>Reports are reviewed one source file at a time. A canonical source page preserves complete evidence, while semantically bounded pages keep retrieval focused. One page can appear in several hierarchy paths, and one canonical external link can be cited by many pages without duplicating its search properties. Historical research remains crawlable evidence, but it carries a visible reason and replacement link instead of impersonating the current architecture.</p>
     <ul>
       <li><code>GET /api/matm/knowledge-tree</code> returns the authenticated company/workspace/project hierarchy. Durable task trees are intentionally unsupported.</li>
-      <li><code>GET /api/matm/knowledge-documents</code> searches titles, descriptions, keywords, taxonomy, routes, and protected page content with contextual match evidence.</li>
-      <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page and confirms visibility in search, tree, and audit readback.</li>
+      <li><code>GET /api/matm/knowledge-documents</code> searches titles, descriptions, keywords, taxonomy, routes, and protected page content with contextual match evidence, lifecycle ranking, and status or authority filters.</li>
+      <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page with <code>knowledgeStatus</code>, <code>authorityLevel</code>, <code>statusReason</code>, and an optional <code>supersededByDocumentId</code>, then confirms visibility in search, tree, and audit readback.</li>
       <li><code>GET /api/matm/internet-search</code> searches reviewed external-link properties and citation context.</li>
       <li><code>POST /api/matm/external-links/upsert</code> stores one public HTTP(S) link and optionally attaches one contextual citation to a knowledge page. Indexing metadata never authorizes an automatic fetch.</li>
     </ul>

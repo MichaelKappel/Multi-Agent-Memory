@@ -21,7 +21,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Free agent workspace setup with a 200 MB quota.
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
-- Protected workspace status, agent registration, memory submit/search, current-message, acknowledgement, and redacted receipt routes.
+- Protected workspace status, agent registration, memory submit/search, lifecycle-aware wiki documents, current-message, acknowledgement, and redacted receipt routes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
 
@@ -83,7 +83,7 @@ python run_dev.py
 
 Open `http://127.0.0.1:8088/`.
 
-Default local storage is JSON under `var/`. For stdlib SQLite relational database-backed storage:
+Default local storage is the stdlib SQLite relational database under `var/`. Override its path when an isolated local database is useful:
 
 ```powershell
 $env:MEMORYENDPOINTS_STORE_BACKEND='sqlite'

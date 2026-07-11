@@ -29,6 +29,32 @@
     return el;
   }
 
+  function lifecycleSummary(parent, knowledgeDocument, detailed) {
+    const status = knowledgeDocument.knowledgeStatus || "current";
+    const authority = knowledgeDocument.authorityLevel || "reviewed";
+    const wrapper = document.createElement(detailed ? "section" : "span");
+    wrapper.className = detailed ? "knowledge-lifecycle" : "knowledge-link-lifecycle";
+    wrapper.dataset.knowledgeStatus = status;
+    appendText(wrapper, "strong", status, "knowledge-lifecycle-status");
+    appendText(wrapper, "span", authority, "knowledge-lifecycle-authority");
+    if (detailed && (knowledgeDocument.statusReason || knowledgeDocument.lifecycleWarning)) {
+      appendText(wrapper, "p", knowledgeDocument.statusReason || knowledgeDocument.lifecycleWarning, "knowledge-lifecycle-reason");
+    }
+    const replacement = knowledgeDocument.supersededBy || {};
+    if (detailed && replacement.searchDocumentId) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button knowledge-replacement";
+      button.textContent = "Open current replacement";
+      button.title = replacement.title || replacement.routeOrPath || "Current replacement";
+      button.addEventListener("click", function () {
+        loadDocument(replacement.searchDocumentId);
+      });
+      wrapper.appendChild(button);
+    }
+    parent.appendChild(wrapper);
+  }
+
   function api(path, params) {
     if (!state.workspaceId || !state.workspaceKey) {
       return Promise.reject(new Error("Workspace and key are required."));
@@ -59,6 +85,7 @@
     button.dataset.documentId = knowledgeDocument.searchDocumentId || "";
     const title = appendText(button, "span", knowledgeDocument.title || "Untitled", "knowledge-link-title");
     title.title = knowledgeDocument.routeOrPath || "";
+    lifecycleSummary(button, knowledgeDocument, false);
     if (knowledgeDocument.description) appendText(button, "span", knowledgeDocument.description, "knowledge-link-description");
     if ((knowledgeDocument.taxonomyPathLabels || []).length) appendText(button, "span", knowledgeDocument.taxonomyPathLabels.join(" | "), "knowledge-link-path");
     if ((knowledgeDocument.keywords || []).length) appendText(button, "span", knowledgeDocument.keywords.join(", "), "knowledge-link-keywords");
@@ -292,6 +319,7 @@
       return;
     }
     appendText(articleEl, "h1", knowledgeDocument.title || "Untitled");
+    lifecycleSummary(articleEl, knowledgeDocument, true);
     if (knowledgeDocument.description) appendText(articleEl, "p", knowledgeDocument.description, "knowledge-article-description");
     const meta = appendText(
       articleEl,
@@ -386,6 +414,8 @@
       q: form.get("q") || "",
       scope: form.get("scope") || "",
       category: form.get("category") || "",
+      knowledge_status: form.get("knowledgeStatus") || "",
+      authority_level: form.get("authorityLevel") || "",
       limit: "50",
     };
     setStatus("Searching...", "loading");

@@ -40,6 +40,7 @@ Protected MATM workflow:
 - Knowledge tree: GET /api/matm/knowledge-tree
 - Knowledge search: GET /api/matm/knowledge-documents
 - Knowledge upsert: POST /api/matm/knowledge-documents/upsert
+- Knowledge lifecycle: current, proposed, historical, superseded, or archived; authority is canonical, reviewed, reference, community, or unverified; non-current pages explain why, and superseded pages point to the current replacement
 - Curated web search: GET /api/matm/internet-search
 - External link and citation upsert: POST /api/matm/external-links/upsert
 - Review queue read: GET /api/matm/review-queue

@@ -27,6 +27,7 @@ Required agent behavior:
 - If hosted MATM is unavailable, record public-safe progress in `.uai/progress.uai` and continue from local memory.
 - Prefer first-class, tested, documented domain models across storage, API, UI, operations, and evidence. Rewrite weak early code when needed instead of layering shortcuts over it.
 - Model external links and their knowledge-page citations as first-class database entities with searchable properties. A URL buried only in Markdown is not an acceptable search-engine or provenance model.
+- Preserve historical research without letting it impersonate current truth. Store lifecycle status, authority, reason, and superseding-document relation as first-class database properties and prefer current canonical guidance in retrieval.
 - Do not preserve `docs/` as a second knowledge system. Move knowledge into MemoryEndpoints.com deliberately, one item at a time, then remove repository documentation hierarchy rather than maintaining duplicate truth.
 - Do not place raw API keys, bearer tokens, FTP credentials, database passwords, private keys, or private handoff payloads in `.uai`.
 

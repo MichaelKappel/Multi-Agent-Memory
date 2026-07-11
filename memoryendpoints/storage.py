@@ -361,6 +361,49 @@ def _normalize_keywords(value):
     return keywords
 
 
+_KNOWLEDGE_STATUSES = ("current", "proposed", "historical", "superseded", "archived")
+_KNOWLEDGE_AUTHORITY_LEVELS = ("canonical", "reviewed", "reference", "community", "unverified")
+_KNOWLEDGE_STATUS_WEIGHTS = {
+    "current": 100,
+    "proposed": 60,
+    "historical": 20,
+    "superseded": 0,
+    "archived": -20,
+}
+_KNOWLEDGE_AUTHORITY_WEIGHTS = {
+    "canonical": 15,
+    "reviewed": 10,
+    "reference": 5,
+    "community": 0,
+    "unverified": -5,
+}
+
+
+def _knowledge_status(value):
+    normalized = _slug(value or "current", "current", 32)
+    return normalized if normalized in _KNOWLEDGE_STATUSES else ""
+
+
+def _knowledge_authority_level(value):
+    normalized = _slug(value or "reviewed", "reviewed", 32)
+    return normalized if normalized in _KNOWLEDGE_AUTHORITY_LEVELS else ""
+
+
+def _knowledge_lifecycle_rank(document):
+    status = _knowledge_status(document.get("knowledgeStatus") or document.get("knowledge_status")) or "current"
+    authority = _knowledge_authority_level(document.get("authorityLevel") or document.get("authority_level")) or "reviewed"
+    return _KNOWLEDGE_STATUS_WEIGHTS[status] + _KNOWLEDGE_AUTHORITY_WEIGHTS[authority]
+
+
+def _knowledge_lifecycle_warning(status):
+    return {
+        "proposed": "Proposed knowledge; do not treat it as the current architecture until it is accepted.",
+        "historical": "Historical evidence; verify the current architecture before acting on it.",
+        "superseded": "Superseded knowledge; follow the linked replacement instead.",
+        "archived": "Archived knowledge retained for provenance and historical reconstruction.",
+    }.get(status, "")
+
+
 def _taxonomy_child(children, label, path):
     for child in children:
         if child.get("label") == label and child.get("path") == path:
@@ -403,6 +446,7 @@ def _knowledge_text_match(query, document):
         (taxonomy, 13),
         (" ".join(document.get("keywords") or metadata.get("keywords") or []), 12),
         (document.get("description") or metadata.get("description") or "", 10),
+        (" ".join([document.get("knowledgeStatus") or "", document.get("authorityLevel") or "", document.get("statusReason") or ""]), 8),
         (document.get("category") or "", 8),
         (document.get("documentType") or "", 6),
         (document.get("searchableText") or "", 4),
@@ -485,6 +529,11 @@ def _public_knowledge_document(document, include_text=False, query=""):
     keywords = _normalize_keywords(document.get("keywords") or metadata.get("keywords") or metadata.get("tags"))
     description = document.get("description") or metadata.get("description") or ""
     match = _knowledge_text_match(query, document)
+    knowledge_status = _knowledge_status(document.get("knowledgeStatus") or metadata.get("knowledgeStatus")) or "current"
+    authority_level = _knowledge_authority_level(document.get("authorityLevel") or metadata.get("authorityLevel")) or "reviewed"
+    lifecycle_rank = _knowledge_lifecycle_rank(
+        dict(document, knowledgeStatus=knowledge_status, authorityLevel=authority_level)
+    )
     item = {
         "searchDocumentId": document.get("searchDocumentId"),
         "workspaceId": document.get("workspaceId"),
@@ -502,6 +551,14 @@ def _public_knowledge_document(document, include_text=False, query=""):
         "taxonomyPathLabel": " > ".join(str(part) for part in taxonomy_path),
         "taxonomyPathLabels": [" > ".join(str(part) for part in path) for path in taxonomy_paths],
         "documentType": document.get("documentType"),
+        "knowledgeStatus": knowledge_status,
+        "authorityLevel": authority_level,
+        "statusReason": document.get("statusReason") or metadata.get("statusReason") or "",
+        "lifecycleWarning": _knowledge_lifecycle_warning(knowledge_status),
+        "lifecycleRank": lifecycle_rank,
+        "rankingScore": match["score"] + lifecycle_rank,
+        "supersededByDocumentId": document.get("supersededByDocumentId") or metadata.get("supersededByDocumentId") or None,
+        "supersededBy": document.get("supersededBy") or None,
         "routeOrPath": document.get("routeOrPath"),
         "title": document.get("title"),
         "visibility": document.get("visibility"),
@@ -697,9 +754,17 @@ def _knowledge_tree_from_documents(documents):
         _sort_taxonomy(scope_item.get("taxonomy") or [])
         scope_item.pop("_categoryMap", None)
     return {
-        "schemaVersion": "memoryendpoints.knowledge_tree.v1",
+        "schemaVersion": "memoryendpoints.knowledge_tree.v2",
         "levels": scopes,
         "scopeCounts": {scope: sum(1 for item in documents if item.get("scope") == scope) for scope in ("company", "workspace", "project")},
+        "knowledgeStatusCounts": {
+            status: sum(1 for item in documents if (_knowledge_status(item.get("knowledgeStatus")) or "current") == status)
+            for status in _KNOWLEDGE_STATUSES
+        },
+        "authorityLevelCounts": {
+            level: sum(1 for item in documents if (_knowledge_authority_level(item.get("authorityLevel")) or "reviewed") == level)
+            for level in _KNOWLEDGE_AUTHORITY_LEVELS
+        },
         "documentCount": sum(1 for item in documents if item.get("scope") in ("company", "workspace", "project")),
         "taskLevelTreeSupported": False,
         "valuesRedacted": True,
@@ -1473,6 +1538,24 @@ class FileStore(object):
         source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
         source_project_id = payload.get("sourceProjectId") or payload.get("source_project_id")
         document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
+        knowledge_status = _knowledge_status(payload.get("knowledgeStatus") or payload.get("knowledge_status"))
+        if not knowledge_status:
+            return None, "unsupported_knowledge_status"
+        authority_level = _knowledge_authority_level(payload.get("authorityLevel") or payload.get("authority_level"))
+        if not authority_level:
+            return None, "unsupported_authority_level"
+        status_reason = redact_text(payload.get("statusReason") or payload.get("status_reason") or "")
+        superseded_by_document_id = redact_text(payload.get("supersededByDocumentId") or payload.get("superseded_by_document_id") or "") or None
+        if knowledge_status != "current" and not status_reason.strip():
+            return None, "knowledge_status_reason_required"
+        if knowledge_status == "superseded" and not superseded_by_document_id:
+            return None, "superseded_by_document_id_required"
+        if superseded_by_document_id == document_id:
+            return None, "knowledge_document_cannot_supersede_itself"
+        if superseded_by_document_id:
+            target = data.get("searchDocuments", {}).get(superseded_by_document_id)
+            if not target or target.get("workspaceId") != workspace_id:
+                return None, "superseding_knowledge_document_not_found"
         metadata = _public_value(payload.get("metadata") or {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1485,6 +1568,10 @@ class FileStore(object):
         description = redact_text(payload.get("description") or metadata.get("description") or "")
         metadata["keywords"] = keywords
         metadata["description"] = description
+        metadata["knowledgeStatus"] = knowledge_status
+        metadata["authorityLevel"] = authority_level
+        metadata["statusReason"] = status_reason
+        metadata["supersededByDocumentId"] = superseded_by_document_id
         content_hash = _hash(searchable_text)
         source = data.setdefault("crawlSources", {}).get(source_id) or {
             "sourceId": source_id,
@@ -1528,6 +1615,19 @@ class FileStore(object):
                 "keywords": keywords,
                 "taxonomyPaths": taxonomy_paths,
                 "documentType": document_type,
+                "knowledgeStatus": knowledge_status,
+                "authorityLevel": authority_level,
+                "statusReason": status_reason,
+                "supersededByDocumentId": superseded_by_document_id,
+                "supersededBy": (
+                    {
+                        "searchDocumentId": superseded_by_document_id,
+                        "title": data["searchDocuments"][superseded_by_document_id].get("title"),
+                        "routeOrPath": data["searchDocuments"][superseded_by_document_id].get("routeOrPath"),
+                    }
+                    if superseded_by_document_id
+                    else None
+                ),
                 "routeOrPath": route_or_path,
                 "title": title,
                 "searchableText": searchable_text,
@@ -1548,7 +1648,16 @@ class FileStore(object):
             actor_agent_id or "system",
             document_id,
             workspace_id,
-            {"created": created, "scope": scope, "scopeId": scope_id, "category": category, "sourceId": source_id},
+            {
+                "created": created,
+                "scope": scope,
+                "scopeId": scope_id,
+                "category": category,
+                "sourceId": source_id,
+                "knowledgeStatus": knowledge_status,
+                "authorityLevel": authority_level,
+                "supersededByDocumentId": superseded_by_document_id,
+            },
         )
         self._save(data)
         return _public_knowledge_document(document, include_text=True), None
@@ -1561,6 +1670,8 @@ class FileStore(object):
         scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
         category = (filters.get("category") or "").strip().lower()
         document_type = (filters.get("documentType") or filters.get("document_type") or "").strip().lower()
+        knowledge_status = (filters.get("knowledgeStatus") or filters.get("knowledge_status") or "").strip().lower()
+        authority_level = (filters.get("authorityLevel") or filters.get("authority_level") or "").strip().lower()
         source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
         document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
         taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
@@ -1576,6 +1687,10 @@ class FileStore(object):
                 continue
             if document_type and (document.get("documentType") or "").lower() != document_type:
                 continue
+            if knowledge_status and (_knowledge_status(document.get("knowledgeStatus")) or "current") != knowledge_status:
+                continue
+            if authority_level and (_knowledge_authority_level(document.get("authorityLevel")) or "reviewed") != authority_level:
+                continue
             if source_prefix and not (document.get("sourceUri") or "").startswith(source_prefix):
                 continue
             if document_id and document.get("searchDocumentId") != document_id:
@@ -1586,7 +1701,7 @@ class FileStore(object):
                 items.append(document)
         items.sort(
             key=lambda item: (
-                -_knowledge_text_match(q, item)["score"] if q else 0,
+                -(_knowledge_text_match(q, item)["score"] + _knowledge_lifecycle_rank(item)),
                 item.get("scope") or "",
                 item.get("category") or "",
                 item.get("title") or "",
@@ -2786,6 +2901,10 @@ class SQLiteStore(FileStore):
               description TEXT,
               keywords_json TEXT,
               taxonomy_paths_json TEXT,
+              knowledge_status TEXT NOT NULL DEFAULT 'current',
+              authority_level TEXT NOT NULL DEFAULT 'reviewed',
+              status_reason TEXT,
+              superseded_by_document_id TEXT,
               searchable_text TEXT NOT NULL,
               visibility TEXT NOT NULL,
               content_hash TEXT NOT NULL DEFAULT '',
@@ -2794,7 +2913,8 @@ class SQLiteStore(FileStore):
               updated_at TEXT NOT NULL,
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
               FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id),
-              FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id)
+              FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id),
+              FOREIGN KEY (superseded_by_document_id) REFERENCES matm_search_documents (search_document_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_visibility ON matm_search_documents (workspace_id, visibility);
             CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id);
@@ -3149,6 +3269,10 @@ class SQLiteStore(FileStore):
             ("description", "TEXT"),
             ("keywords_json", "TEXT"),
             ("taxonomy_paths_json", "TEXT"),
+            ("knowledge_status", "VARCHAR(32) NOT NULL DEFAULT 'current'" if mysql else "TEXT NOT NULL DEFAULT 'current'"),
+            ("authority_level", "VARCHAR(32) NOT NULL DEFAULT 'reviewed'" if mysql else "TEXT NOT NULL DEFAULT 'reviewed'"),
+            ("status_reason", "TEXT"),
+            ("superseded_by_document_id", "VARCHAR(96)" if mysql else "TEXT"),
             ("content_hash", "CHAR(64) NOT NULL DEFAULT ''" if mysql else "TEXT NOT NULL DEFAULT ''"),
             ("metadata_json", "TEXT"),
             ("created_at", "TIMESTAMP NULL" if mysql else "TEXT NOT NULL DEFAULT ''"),
@@ -3163,6 +3287,13 @@ class SQLiteStore(FileStore):
         index_sql = "CREATE INDEX ix_matm_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id)" if mysql else "CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id)"
         try:
             connection.execute(index_sql)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate" not in message and "already exists" not in message:
+                raise
+        lifecycle_index_sql = "CREATE INDEX ix_matm_search_workspace_lifecycle ON matm_search_documents (workspace_id, knowledge_status, authority_level)" if mysql else "CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_lifecycle ON matm_search_documents (workspace_id, knowledge_status, authority_level)"
+        try:
+            connection.execute(lifecycle_index_sql)
         except Exception as exc:
             message = str(exc).lower()
             if "duplicate" not in message and "already exists" not in message:
@@ -3717,34 +3848,55 @@ class SQLiteStore(FileStore):
     def _knowledge_document_from_row(self, row):
         if not row:
             return None
-        searchable_text = row["searchable_text"] or ""
-        metadata = self._json_load(row.get("metadata_json") if isinstance(row, dict) else row["metadata_json"], {})
-        scope = row["scope_type"]
-        scope_id = row["scope_id"]
+        def value(name, default=None):
+            if isinstance(row, dict):
+                return row.get(name, default)
+            try:
+                return row[name]
+            except (IndexError, KeyError):
+                return default
+
+        searchable_text = value("searchable_text") or ""
+        metadata = self._json_load(value("metadata_json"), {})
+        scope = value("scope_type")
+        scope_id = value("scope_id")
+        superseded_by_document_id = value("superseded_by_document_id")
+        superseded_by = None
+        if superseded_by_document_id:
+            superseded_by = {
+                "searchDocumentId": superseded_by_document_id,
+                "title": value("superseded_by_title") or "",
+                "routeOrPath": value("superseded_by_route") or "",
+            }
         return {
-            "searchDocumentId": row["search_document_id"],
-            "workspaceId": row["workspace_id"],
-            "memoryId": row["memory_id"],
-            "sourceId": row["source_id"],
-            "sourceUri": row.get("source_uri") if isinstance(row, dict) else row["source_uri"],
-            "sourceType": row.get("source_type") if isinstance(row, dict) else row["source_type"],
+            "searchDocumentId": value("search_document_id"),
+            "workspaceId": value("workspace_id"),
+            "memoryId": value("memory_id"),
+            "sourceId": value("source_id"),
+            "sourceUri": value("source_uri"),
+            "sourceType": value("source_type"),
             "projectId": scope_id if scope == "project" else None,
             "scope": scope,
             "scopeId": scope_id,
-            "category": row["category"],
-            "description": row.get("description") if isinstance(row, dict) else row["description"],
-            "keywords": self._json_load(row.get("keywords_json") if isinstance(row, dict) else row["keywords_json"], []),
-            "taxonomyPaths": self._json_load(row.get("taxonomy_paths_json") if isinstance(row, dict) else row["taxonomy_paths_json"], []),
-            "documentType": row["document_type"],
-            "routeOrPath": row["route_or_path"],
-            "title": row["title"],
+            "category": value("category"),
+            "description": value("description"),
+            "keywords": self._json_load(value("keywords_json"), []),
+            "taxonomyPaths": self._json_load(value("taxonomy_paths_json"), []),
+            "documentType": value("document_type"),
+            "knowledgeStatus": value("knowledge_status") or "current",
+            "authorityLevel": value("authority_level") or "reviewed",
+            "statusReason": value("status_reason") or "",
+            "supersededByDocumentId": superseded_by_document_id,
+            "supersededBy": superseded_by,
+            "routeOrPath": value("route_or_path"),
+            "title": value("title"),
             "searchableText": searchable_text,
-            "visibility": row["visibility"],
-            "contentHash": row["content_hash"] or _hash(searchable_text),
+            "visibility": value("visibility"),
+            "contentHash": value("content_hash") or _hash(searchable_text),
             "metadata": metadata if isinstance(metadata, dict) else {},
-            "createdAt": row["created_at"],
-            "updatedAt": row["updated_at"],
-            "lastCrawledAt": row.get("last_crawled_at") if isinstance(row, dict) else row["last_crawled_at"],
+            "createdAt": value("created_at"),
+            "updatedAt": value("updated_at"),
+            "lastCrawledAt": value("last_crawled_at"),
             "valuesRedacted": True,
         }
 
@@ -3773,6 +3925,20 @@ class SQLiteStore(FileStore):
         source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
         source_project_id = payload.get("sourceProjectId") or payload.get("source_project_id")
         document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
+        knowledge_status = _knowledge_status(payload.get("knowledgeStatus") or payload.get("knowledge_status"))
+        if not knowledge_status:
+            return None, "unsupported_knowledge_status"
+        authority_level = _knowledge_authority_level(payload.get("authorityLevel") or payload.get("authority_level"))
+        if not authority_level:
+            return None, "unsupported_authority_level"
+        status_reason = redact_text(payload.get("statusReason") or payload.get("status_reason") or "")
+        superseded_by_document_id = redact_text(payload.get("supersededByDocumentId") or payload.get("superseded_by_document_id") or "") or None
+        if knowledge_status != "current" and not status_reason.strip():
+            return None, "knowledge_status_reason_required"
+        if knowledge_status == "superseded" and not superseded_by_document_id:
+            return None, "superseded_by_document_id_required"
+        if superseded_by_document_id == document_id:
+            return None, "knowledge_document_cannot_supersede_itself"
         metadata = _public_value(payload.get("metadata") or {})
         if not isinstance(metadata, dict):
             metadata = {}
@@ -3785,6 +3951,10 @@ class SQLiteStore(FileStore):
         description = redact_text(payload.get("description") or metadata.get("description") or "")
         metadata["keywords"] = keywords
         metadata["description"] = description
+        metadata["knowledgeStatus"] = knowledge_status
+        metadata["authorityLevel"] = authority_level
+        metadata["statusReason"] = status_reason
+        metadata["supersededByDocumentId"] = superseded_by_document_id
         content_hash = _hash(searchable_text)
         now = utc_now()
         with _LOCK:
@@ -3803,6 +3973,13 @@ class SQLiteStore(FileStore):
                         ).fetchone()
                         if not project:
                             return None, "project_not_found"
+                    if superseded_by_document_id:
+                        superseding_document = connection.execute(
+                            "SELECT search_document_id FROM matm_search_documents WHERE workspace_id = ? AND search_document_id = ?",
+                            (workspace_id, superseded_by_document_id),
+                        ).fetchone()
+                        if not superseding_document:
+                            return None, "superseding_knowledge_document_not_found"
                     existing_source = connection.execute(
                         "SELECT * FROM matm_crawl_sources WHERE workspace_id = ? AND source_id = ?",
                         (workspace_id, source_id),
@@ -3856,7 +4033,8 @@ class SQLiteStore(FileStore):
                             UPDATE matm_search_documents
                             SET memory_id = ?, source_id = ?, scope_type = ?, scope_id = ?, category = ?,
                                 document_type = ?, route_or_path = ?, title = ?, description = ?,
-                                keywords_json = ?, taxonomy_paths_json = ?, searchable_text = ?,
+                                keywords_json = ?, taxonomy_paths_json = ?, knowledge_status = ?,
+                                authority_level = ?, status_reason = ?, superseded_by_document_id = ?, searchable_text = ?,
                                 visibility = ?, content_hash = ?, metadata_json = ?, updated_at = ?
                             WHERE workspace_id = ? AND search_document_id = ?
                             """,
@@ -3872,6 +4050,10 @@ class SQLiteStore(FileStore):
                                 description,
                                 self._json_dump(keywords),
                                 self._json_dump(taxonomy_paths),
+                                knowledge_status,
+                                authority_level,
+                                status_reason,
+                                superseded_by_document_id,
                                 searchable_text,
                                 visibility,
                                 content_hash,
@@ -3887,9 +4069,10 @@ class SQLiteStore(FileStore):
                             INSERT INTO matm_search_documents (
                               search_document_id, workspace_id, memory_id, source_id, scope_type,
                               scope_id, category, document_type, route_or_path, title, description,
-                              keywords_json, taxonomy_paths_json, searchable_text, visibility, content_hash,
+                              keywords_json, taxonomy_paths_json, knowledge_status, authority_level,
+                              status_reason, superseded_by_document_id, searchable_text, visibility, content_hash,
                               metadata_json, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 document_id,
@@ -3905,6 +4088,10 @@ class SQLiteStore(FileStore):
                                 description,
                                 self._json_dump(keywords),
                                 self._json_dump(taxonomy_paths),
+                                knowledge_status,
+                                authority_level,
+                                status_reason,
+                                superseded_by_document_id,
                                 searchable_text,
                                 visibility,
                                 content_hash,
@@ -3915,9 +4102,14 @@ class SQLiteStore(FileStore):
                         )
                     row = connection.execute(
                         """
-                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at
+                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at,
+                               superseding.title AS superseded_by_title,
+                               superseding.route_or_path AS superseded_by_route
                         FROM matm_search_documents d
                         LEFT JOIN matm_crawl_sources s ON s.source_id = d.source_id AND s.workspace_id = d.workspace_id
+                        LEFT JOIN matm_search_documents superseding
+                          ON superseding.search_document_id = d.superseded_by_document_id
+                         AND superseding.workspace_id = d.workspace_id
                         WHERE d.workspace_id = ? AND d.search_document_id = ?
                         """,
                         (workspace_id, document_id),
@@ -3931,7 +4123,16 @@ class SQLiteStore(FileStore):
                         "knowledge_document.upsert",
                         actor_agent_id or "system",
                         document_id,
-                        {"created": created, "scope": scope, "scopeId": scope_id, "category": category, "sourceId": source_id},
+                        {
+                            "created": created,
+                            "scope": scope,
+                            "scopeId": scope_id,
+                            "category": category,
+                            "sourceId": source_id,
+                            "knowledgeStatus": knowledge_status,
+                            "authorityLevel": authority_level,
+                            "supersededByDocumentId": superseded_by_document_id,
+                        },
                     )
         return _public_knowledge_document(document, include_text=True), None
 
@@ -3942,6 +4143,8 @@ class SQLiteStore(FileStore):
         scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
         category = (filters.get("category") or "").strip().lower()
         document_type = (filters.get("documentType") or filters.get("document_type") or "").strip().lower()
+        knowledge_status = (filters.get("knowledgeStatus") or filters.get("knowledge_status") or "").strip().lower()
+        authority_level = (filters.get("authorityLevel") or filters.get("authority_level") or "").strip().lower()
         source_prefix = filters.get("sourcePrefix") or filters.get("source_prefix") or ""
         document_id = filters.get("searchDocumentId") or filters.get("search_document_id") or filters.get("documentId") or filters.get("document_id") or ""
         taxonomy_prefix = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
@@ -3959,6 +4162,12 @@ class SQLiteStore(FileStore):
         if document_type:
             clauses.append("LOWER(d.document_type) = ?")
             params.append(document_type)
+        if knowledge_status:
+            clauses.append("LOWER(d.knowledge_status) = ?")
+            params.append(knowledge_status)
+        if authority_level:
+            clauses.append("LOWER(d.authority_level) = ?")
+            params.append(authority_level)
         if source_prefix:
             clauses.append("s.source_uri LIKE ?")
             params.append(source_prefix + "%")
@@ -3970,9 +4179,14 @@ class SQLiteStore(FileStore):
                 rows = list(
                     connection.execute(
                         """
-                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at
+                        SELECT d.*, s.source_uri, s.source_type, s.project_id, s.last_crawled_at,
+                               superseding.title AS superseded_by_title,
+                               superseding.route_or_path AS superseded_by_route
                         FROM matm_search_documents d
                         LEFT JOIN matm_crawl_sources s ON s.source_id = d.source_id AND s.workspace_id = d.workspace_id
+                        LEFT JOIN matm_search_documents superseding
+                          ON superseding.search_document_id = d.superseded_by_document_id
+                         AND superseding.workspace_id = d.workspace_id
                         WHERE %s
                         ORDER BY d.scope_type, d.category, d.title, d.search_document_id
                         """ % " AND ".join(clauses),
@@ -3986,7 +4200,7 @@ class SQLiteStore(FileStore):
                 documents.append(document)
         documents.sort(
             key=lambda item: (
-                -_knowledge_text_match(q, item)["score"] if q else 0,
+                -(_knowledge_text_match(q, item)["score"] + _knowledge_lifecycle_rank(item)),
                 item.get("scope") or "",
                 item.get("category") or "",
                 item.get("title") or "",

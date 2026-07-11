@@ -45,6 +45,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
         Path(self.tempdir).mkdir(parents=True, exist_ok=True)
         os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "store.json")
+        os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "store.sqlite3")
         os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = os.path.join(self.tempdir, "missing-mysql.json")
         os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = os.path.join(self.tempdir, "missing-admin-diagnostics.json")
 
@@ -84,6 +86,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         if code:
             self.assertEqual(code, payload["error"]["code"])
         return payload
+
+    def test_unconfigured_runtime_defaults_to_sqlite_database(self):
+        from memoryendpoints.app import _store
+        from memoryendpoints.runtime import configured_store_backend
+        from memoryendpoints.storage import SQLiteStore
+
+        os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
+        os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "default-store.sqlite3")
+
+        self.assertEqual("sqlite", configured_store_backend())
+        self.assertIsInstance(_store(), SQLiteStore)
 
     def test_mysql_schema_initialization_is_cached_per_connection_config(self):
         class CountingMySQLStore(MySQLStore):
@@ -1320,31 +1333,25 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn(token, json.dumps(operator_summary))
 
         self.assertTrue(token.startswith("me_live_"))
-        store_path = Path(os.environ["MEMORYENDPOINTS_STORE_PATH"])
-        store_text = store_path.read_text(encoding="utf-8")
-        self.assertNotIn(token, store_text)
-        self.assertNotIn("apiKeySecret", store_text)
-        store = json.loads(store_text)
-        self.assertIn(account_id, store["accounts"])
-        self.assertIn(company_id, store["companies"])
-        self.assertIn(project_id, store["projects"])
-        self.assertEqual(company_id, store["workspaces"][workspace_id]["companyId"])
-        self.assertEqual(workspace_id, store["projects"][project_id]["workspaceId"])
-        self.assertTrue(
-            any(
-                item["accountId"] == account_id and item["companyId"] == company_id
-                for item in store["accountCompanies"].values()
-            )
-        )
-        keys = [
-            api_key
-            for api_key in store["apiKeys"].values()
-            if api_key["workspaceId"] == workspace_id
-        ]
-        self.assertEqual(1, len(keys))
-        self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), keys[0]["tokenHash"])
-        self.assertNotIn("token", keys[0])
-        self.assertNotIn("apiKeySecret", keys[0])
+        store_path = Path(os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
+        store_bytes = store_path.read_bytes()
+        self.assertNotIn(token.encode("utf-8"), store_bytes)
+        self.assertNotIn(b"apiKeySecret", store_bytes)
+        connection = sqlite3.connect(str(store_path))
+        try:
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_accounts WHERE account_id = ?", (account_id,)).fetchone()[0])
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_companies WHERE company_id = ?", (company_id,)).fetchone()[0])
+            self.assertEqual((company_id,), connection.execute("SELECT company_id FROM matm_workspaces WHERE workspace_id = ?", (workspace_id,)).fetchone())
+            self.assertEqual((workspace_id,), connection.execute("SELECT workspace_id FROM matm_projects WHERE project_id = ?", (project_id,)).fetchone())
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_account_companies WHERE account_id = ? AND company_id = ?", (account_id, company_id)).fetchone()[0])
+            key_rows = connection.execute("SELECT token_hash FROM matm_api_keys WHERE workspace_id = ?", (workspace_id,)).fetchall()
+            self.assertEqual(1, len(key_rows))
+            self.assertEqual(hashlib.sha256(token.encode("utf-8")).hexdigest(), key_rows[0][0])
+            key_columns = {row[1] for row in connection.execute("PRAGMA table_info(matm_api_keys)")}
+            self.assertNotIn("token", key_columns)
+            self.assertNotIn("api_key_secret", key_columns)
+        finally:
+            connection.close()
 
         status, _headers, text = call_app(
             "/api/matm/meeting-rooms",
@@ -2734,10 +2741,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn("supersecretvalue", event["summary"])
         self.assertFalse(event["rawPrivatePayloadStored"])
 
-        store_text = Path(os.environ["MEMORYENDPOINTS_STORE_PATH"]).read_text(encoding="utf-8")
-        self.assertNotIn("supersecretvalue", store_text)
-        self.assertNotIn("tagsecretvalue", store_text)
-        self.assertNotIn("abcdefghijklmnopqrstuvwx", store_text)
+        store_bytes = Path(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]).read_bytes()
+        self.assertNotIn(b"supersecretvalue", store_bytes)
+        self.assertNotIn(b"tagsecretvalue", store_bytes)
+        self.assertNotIn(b"abcdefghijklmnopqrstuvwx", store_bytes)
 
         status, _headers, text = call_app(
             "/api/matm/search",

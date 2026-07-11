@@ -10,7 +10,7 @@ def configured_store_backend():
         return configured.strip().lower()
     if mysql_secret_config_path().exists():
         return "mysql"
-    return "file"
+    return "sqlite"
 
 
 def mysql_secret_config_path():

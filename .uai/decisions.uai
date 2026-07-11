@@ -22,6 +22,8 @@ Current governing decisions:
 - Do not bulk-import report archives into company knowledge. Ingest reports deliberately through reviewed, source-notated database document writes so scope, category, project placement, and context are correct.
 - Process one source report at a time, but do not force a multi-topic report into one oversized page. Preserve the canonical source, then create semantically bounded pages with explicit source provenance so retrieval remains focused without losing evidence.
 - Treat taxonomy paths as first-class wiki navigation. Each knowledge document needs title, description, keywords, and one or more hierarchy paths; multiple hierarchy placement is expected when a concept belongs in more than one context.
+- Treat knowledge lifecycle and authority as first-class database fields. Non-current pages require an explicit reason; superseded pages require a database relation to the current replacement; search must expose warnings and rank current canonical knowledge ahead of stale guidance.
+- Default unconfigured local runtime storage to SQLite, use verified MySQL/MariaDB in production, and never use JSON files as the durable knowledge source of truth.
 - Treat every retained external URL as its own canonical data type with URL, host, site name, page title, description, keywords, review state, and crawl state. Connect it to knowledge pages through contextual citation records; do not rely on raw URLs embedded only in report text.
 - External-link upsert is metadata indexing, not permission to crawl. Reject non-public hosts and credential-bearing URLs, and require a separate reviewed crawl decision before fetching remote content.
 - Do not copy public NeuralWikis wiki content, branding, or generated public site material.

@@ -199,6 +199,10 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
         "searchableText": knowledge_text,
         "category": args.category,
         "documentType": document_type,
+        "knowledgeStatus": args.knowledge_status,
+        "authorityLevel": args.authority_level,
+        "statusReason": args.status_reason,
+        "supersededByDocumentId": args.superseded_by_document_id or None,
         "sourceUri": source_uri,
         "sourceType": args.source_type,
         "routeOrPath": route_or_path,
@@ -221,6 +225,10 @@ def build_body(args, context, actor_agent_id, source_path, source_text, knowledg
             "sourceLineEnd": knowledge_unit.get("lineEnd"),
             "absoluteSourcePathStored": False,
             "classificationNote": args.classification_note or "",
+            "knowledgeStatus": args.knowledge_status,
+            "authorityLevel": args.authority_level,
+            "statusReason": args.status_reason,
+            "supersededByDocumentId": args.superseded_by_document_id or None,
             "description": args.description,
             "keywords": args.keyword,
             "taxonomyPaths": args.taxonomy_path,
@@ -253,6 +261,10 @@ def main(argv=None):
     parser.add_argument("--project-label", default="")
     parser.add_argument("--title", default="")
     parser.add_argument("--document-type", default="")
+    parser.add_argument("--knowledge-status", default="current", choices=["current", "proposed", "historical", "superseded", "archived"])
+    parser.add_argument("--authority-level", default="reviewed", choices=["canonical", "reviewed", "reference", "community", "unverified"])
+    parser.add_argument("--status-reason", default="")
+    parser.add_argument("--superseded-by-document-id", default="")
     parser.add_argument("--source-type", default="reviewed_markdown_report")
     parser.add_argument("--source-uri", default="")
     parser.add_argument("--source-report-route", default="")
@@ -278,6 +290,10 @@ def main(argv=None):
         raise RuntimeError("single-report ingest requires at least one --taxonomy-path")
     if args.apply and not args.memory_summary.strip():
         raise RuntimeError("applied single-report ingest requires --memory-summary so wiki content and durable MATM memory are both updated")
+    if args.knowledge_status != "current" and not args.status_reason.strip():
+        raise RuntimeError("non-current knowledge requires --status-reason")
+    if args.knowledge_status == "superseded" and not args.superseded_by_document_id.strip():
+        raise RuntimeError("superseded knowledge requires --superseded-by-document-id")
 
     source_path = Path(args.source_file)
     source_text = source_path.read_text(encoding="utf-8", errors="replace")
@@ -293,7 +309,7 @@ def main(argv=None):
     idempotency_key = "single-knowledge-page-" + sha256_text(idempotency_material)[:24]
 
     result = {
-        "schemaVersion": "memoryendpoints.single_knowledge_report_ingest.v2",
+        "schemaVersion": "memoryendpoints.single_knowledge_report_ingest.v3",
         "mode": "live_apply" if args.apply else "dry_run",
         "baseUrl": args.base_url.rstrip("/"),
         "sourceFileName": source_path.name,
@@ -302,6 +318,10 @@ def main(argv=None):
         "scopeId": body.get("scopeId"),
         "projectId": body.get("projectId"),
         "category": body["category"],
+        "knowledgeStatus": body["knowledgeStatus"],
+        "authorityLevel": body["authorityLevel"],
+        "statusReason": body["statusReason"],
+        "supersededByDocumentId": body.get("supersededByDocumentId"),
         "title": body["title"],
         "description": body["description"],
         "keywords": body["keywords"],
@@ -371,7 +391,19 @@ def main(argv=None):
             "subject": args.memory_subject or body["title"],
             "title": body["title"],
             "summary": args.memory_summary,
-            "tags": sorted(set(body["tags"] + body["keywords"] + ["single-report-ingest", "wiki-backed-memory", body["category"]])),
+            "tags": sorted(
+                set(
+                    body["tags"]
+                    + body["keywords"]
+                    + [
+                        "single-report-ingest",
+                        "wiki-backed-memory",
+                        body["category"],
+                        "knowledge-status:" + body["knowledgeStatus"],
+                        "authority:" + body["authorityLevel"],
+                    ]
+                )
+            ),
             "source": document.get("routeOrPath") or body["sourceUri"],
             "confidence": 0.9,
         }

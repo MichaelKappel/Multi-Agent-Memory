@@ -7,6 +7,9 @@
   --accent: #126c7a;
   --accent-2: #8b4e21;
   --bg: #ffffff;
+  --soft: #edf3f5;
+  --danger: #a33a2b;
+  --success: #28734d;
 }
 
 * {
@@ -859,7 +862,7 @@ pre {
 }
 
 .knowledge-search {
-  grid-template-columns: minmax(240px, 2fr) minmax(150px, 0.75fr) minmax(190px, 1fr) auto auto;
+  grid-template-columns: minmax(220px, 1.8fr) repeat(4, minmax(128px, 0.75fr)) auto auto;
 }
 
 .knowledge-auth {
@@ -965,6 +968,61 @@ pre {
 .knowledge-link-title {
   font-weight: 700;
   overflow-wrap: anywhere;
+}
+
+.knowledge-link-lifecycle {
+  color: var(--muted);
+  display: flex;
+  font-size: 0.76rem;
+  gap: 8px;
+  text-transform: capitalize;
+}
+
+.knowledge-lifecycle {
+  background: var(--soft);
+  border-left: 4px solid var(--accent);
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+}
+
+.knowledge-lifecycle[data-knowledge-status="proposed"] {
+  background: #fff7df;
+  border-left-color: #9a6b00;
+}
+
+.knowledge-lifecycle[data-knowledge-status="historical"] {
+  background: #f4f0e8;
+  border-left-color: var(--accent-2);
+}
+
+.knowledge-lifecycle[data-knowledge-status="superseded"] {
+  background: #fff0ed;
+  border-left-color: var(--danger);
+}
+
+.knowledge-lifecycle[data-knowledge-status="archived"] {
+  background: #f0f1f2;
+  border-left-color: var(--muted);
+}
+
+.knowledge-lifecycle-status {
+  text-transform: capitalize;
+}
+
+.knowledge-lifecycle-authority {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: capitalize;
+}
+
+.knowledge-lifecycle-reason {
+  margin: 0;
+}
+
+.knowledge-replacement {
+  justify-self: start;
 }
 
 .knowledge-link-path,

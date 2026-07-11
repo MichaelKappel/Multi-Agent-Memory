@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from app import application
+from memoryendpoints.storage import SQLiteStore
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -59,6 +60,48 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
         return payload, {"HTTP_AUTHORIZATION": "Bearer " + payload["apiKeySecret"]}
+
+    def test_existing_sqlite_knowledge_schema_adds_lifecycle_columns_before_index(self):
+        connection = sqlite3.connect(str(self.sqlite_path))
+        try:
+            connection.execute(
+                """
+                CREATE TABLE matm_search_documents (
+                  search_document_id TEXT PRIMARY KEY,
+                  workspace_id TEXT NOT NULL,
+                  memory_id TEXT,
+                  source_id TEXT,
+                  scope_type TEXT NOT NULL DEFAULT 'workspace',
+                  scope_id TEXT,
+                  category TEXT,
+                  document_type TEXT NOT NULL DEFAULT 'knowledge_document',
+                  route_or_path TEXT,
+                  title TEXT NOT NULL,
+                  description TEXT,
+                  keywords_json TEXT,
+                  taxonomy_paths_json TEXT,
+                  searchable_text TEXT NOT NULL,
+                  visibility TEXT NOT NULL,
+                  content_hash TEXT NOT NULL DEFAULT '',
+                  metadata_json TEXT,
+                  created_at TEXT NOT NULL DEFAULT '',
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        self.assertTrue(SQLiteStore(self.sqlite_path).healthcheck())
+        connection = sqlite3.connect(str(self.sqlite_path))
+        try:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(matm_search_documents)")}
+            indexes = {row[1] for row in connection.execute("PRAGMA index_list(matm_search_documents)")}
+            self.assertTrue({"knowledge_status", "authority_level", "status_reason", "superseded_by_document_id"}.issubset(columns))
+            self.assertIn("ix_sqlite_search_workspace_lifecycle", indexes)
+        finally:
+            connection.close()
 
     def test_database_backed_knowledge_wiki_human_and_agent_routes(self):
         setup, headers = self.setup_workspace()
@@ -193,6 +236,130 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertEqual("422 Unprocessable Entity", status)
         payload = json.loads(text)
         self.assertEqual("unsupported_knowledge_scope", payload["error"]["code"])
+
+    def test_knowledge_lifecycle_supersession_is_first_class_and_ranking_aware(self):
+        setup, headers = self.setup_workspace()
+        workspace_id = setup["workspaceId"]
+        project_id = setup["projectId"]
+
+        current_body = {
+            "workspaceId": workspace_id,
+            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "scope": "project",
+            "scopeId": project_id,
+            "projectId": project_id,
+            "title": "Current Database Architecture Contract",
+            "description": "Canonical current replacement for obsolete storage and route proposals.",
+            "keywords": ["legacy route contract", "database source of truth"],
+            "taxonomyPaths": [["MemoryEndpoints.com", "architecture", "current contract"]],
+            "category": "architecture-contract",
+            "documentType": "architecture-decision",
+            "knowledgeStatus": "current",
+            "authorityLevel": "canonical",
+            "sourceUri": "implementation://current-database-contract",
+            "routeOrPath": "/knowledge/project/architecture/current-database-contract",
+            "searchableText": "The relational database is the durable knowledge source of truth.",
+        }
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents/upsert",
+            method="POST",
+            body=current_body,
+            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-current-contract"),
+        )
+        self.assertEqual("201 Created", status)
+        current = json.loads(text)["document"]
+
+        invalid_body = dict(current_body)
+        invalid_body.update(
+            {
+                "title": "Invalid Superseded Page",
+                "sourceUri": "report://invalid-superseded-page",
+                "routeOrPath": "/knowledge/project/architecture/invalid-superseded-page",
+                "knowledgeStatus": "superseded",
+                "authorityLevel": "reviewed",
+                "statusReason": "The proposal is obsolete.",
+            }
+        )
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents/upsert",
+            method="POST",
+            body=invalid_body,
+            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-invalid-superseded"),
+        )
+        self.assertEqual("422 Unprocessable Entity", status)
+        self.assertEqual("superseded_by_document_id_required", json.loads(text)["error"]["code"])
+
+        superseded_body = dict(invalid_body)
+        superseded_body.update(
+            {
+                "title": "Legacy Route Contract",
+                "sourceUri": "report://legacy-route-contract",
+                "routeOrPath": "/knowledge/project/architecture/legacy-route-contract",
+                "description": "Historical route proposal retained for provenance.",
+                "keywords": ["legacy route contract", "filesystem fallback"],
+                "searchableText": "Legacy Route Contract proposed filesystem fallback as durable knowledge.",
+                "statusReason": "The deployed database-backed wiki replaced this filesystem proposal.",
+                "supersededByDocumentId": current["searchDocumentId"],
+            }
+        )
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents/upsert",
+            method="POST",
+            body=superseded_body,
+            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-valid-superseded"),
+        )
+        self.assertEqual("201 Created", status)
+        superseded = json.loads(text)["document"]
+        self.assertEqual("superseded", superseded["knowledgeStatus"])
+        self.assertEqual("reviewed", superseded["authorityLevel"])
+        self.assertEqual(current["searchDocumentId"], superseded["supersededByDocumentId"])
+        self.assertEqual(current["title"], superseded["supersededBy"]["title"])
+        self.assertIn("linked replacement", superseded["lifecycleWarning"])
+
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents",
+            headers=headers,
+            query="workspace_id=%s&q=legacy%%20route%%20contract&limit=10" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        search = json.loads(text)
+        self.assertEqual(current["searchDocumentId"], search["items"][0]["searchDocumentId"])
+        self.assertGreater(search["items"][0]["rankingScore"], superseded["rankingScore"])
+        self.assertEqual(1, search["operatorSummary"]["knowledgeStatusCounts"]["superseded"])
+
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-documents",
+            headers=headers,
+            query="workspace_id=%s&knowledge_status=superseded" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        filtered = json.loads(text)
+        self.assertEqual(1, filtered["count"])
+        self.assertEqual(superseded["searchDocumentId"], filtered["items"][0]["searchDocumentId"])
+
+        status, _headers, text = call_app(
+            "/api/matm/knowledge-tree",
+            headers=headers,
+            query="workspace_id=%s" % workspace_id,
+        )
+        self.assertEqual("200 OK", status)
+        tree = json.loads(text)["tree"]
+        self.assertEqual("memoryendpoints.knowledge_tree.v2", tree["schemaVersion"])
+        self.assertEqual(1, tree["knowledgeStatusCounts"]["current"])
+        self.assertEqual(1, tree["knowledgeStatusCounts"]["superseded"])
+        self.assertEqual(1, tree["authorityLevelCounts"]["canonical"])
+
+        connection = sqlite3.connect(str(self.sqlite_path))
+        try:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(matm_search_documents)")}
+            self.assertTrue({"knowledge_status", "authority_level", "status_reason", "superseded_by_document_id"}.issubset(columns))
+            row = connection.execute(
+                "SELECT knowledge_status, authority_level, status_reason, superseded_by_document_id FROM matm_search_documents WHERE search_document_id = ?",
+                (superseded["searchDocumentId"],),
+            ).fetchone()
+            self.assertEqual(("superseded", "reviewed", superseded_body["statusReason"], current["searchDocumentId"]), row)
+        finally:
+            connection.close()
 
     def test_tree_is_not_truncated_by_the_search_result_limit(self):
         setup, headers = self.setup_workspace()

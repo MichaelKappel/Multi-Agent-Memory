@@ -56,6 +56,10 @@ Retrieval is separately classified.
                 keyword=["agent memory", "retrieval"],
                 taxonomy_path=[["AI infrastructure", "agent memory"]],
                 document_type="",
+                knowledge_status="current",
+                authority_level="reviewed",
+                status_reason="",
+                superseded_by_document_id="",
                 source_type="reviewed_markdown_report",
                 source_report_route="/knowledge/project/research/stateful-memory-report",
                 classification_note="Reviewed independently.",
@@ -74,6 +78,8 @@ Retrieval is separately classified.
         self.assertNotEqual(taxonomy["metadata"]["knowledgeUnitContentHash"], retrieval["metadata"]["knowledgeUnitContentHash"])
         self.assertEqual("reviewed-report-section", taxonomy["documentType"])
         self.assertEqual("Memory taxonomy", taxonomy["title"])
+        self.assertEqual("current", taxonomy["knowledgeStatus"])
+        self.assertEqual("reviewed", taxonomy["authorityLevel"])
 
     def test_missing_section_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "section heading not found"):

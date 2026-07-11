@@ -9,7 +9,7 @@ from . import __version__
 from .build import build_provenance
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
 from .http import json_response, problem, response
-from .runtime import backend_error_code, store_backend_health
+from .runtime import backend_error_code, configured_store_backend, store_backend_health
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
@@ -262,6 +262,8 @@ def _knowledge_filters(query):
         "scopeId": query.get("scope_id") or query.get("scopeId") or "",
         "category": query.get("category") or "",
         "documentType": query.get("document_type") or query.get("documentType") or "",
+        "knowledgeStatus": query.get("knowledge_status") or query.get("knowledgeStatus") or "",
+        "authorityLevel": query.get("authority_level") or query.get("authorityLevel") or "",
         "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
         "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
         "documentId": query.get("document_id") or query.get("documentId") or query.get("search_document_id") or query.get("searchDocumentId") or "",
@@ -379,16 +381,24 @@ def _resolve_knowledge_scope(store, workspace_id, body):
 def _knowledge_operator_summary(items, filters):
     scope_counts = {}
     category_counts = {}
+    status_counts = {}
+    authority_counts = {}
     for item in items:
         scope = item.get("scope") or "unknown"
         category = item.get("category") or "uncategorized"
         scope_counts[scope] = scope_counts.get(scope, 0) + 1
         category_counts[category] = category_counts.get(category, 0) + 1
+        status = item.get("knowledgeStatus") or "current"
+        authority = item.get("authorityLevel") or "reviewed"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        authority_counts[authority] = authority_counts.get(authority, 0) + 1
     return {
-        "schemaVersion": "memoryendpoints.knowledge_operator_summary.v1",
+        "schemaVersion": "memoryendpoints.knowledge_operator_summary.v2",
         "documentCount": len(items),
         "scopeCounts": dict(sorted(scope_counts.items())),
         "categoryCounts": dict(sorted(category_counts.items())),
+        "knowledgeStatusCounts": dict(sorted(status_counts.items())),
+        "authorityLevelCounts": dict(sorted(authority_counts.items())),
         "filters": {key: value for key, value in (filters or {}).items() if value},
         "databaseSourceOfTruth": True,
         "filesystemDocsIncluded": False,
@@ -563,7 +573,7 @@ def _diagnostic_fingerprint(value):
 
 
 def _store():
-    backend = os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file"
+    backend = configured_store_backend()
     if backend in ("mysql", "mariadb"):
         return MySQLStore()
     if backend == "sqlite":
@@ -2351,6 +2361,26 @@ def route_knowledge(start_response):
       <label>Category
         <input name="category" placeholder="coding-standards">
       </label>
+      <label>Status
+        <select name="knowledgeStatus">
+          <option value="">All statuses</option>
+          <option value="current">Current</option>
+          <option value="proposed">Proposed</option>
+          <option value="historical">Historical</option>
+          <option value="superseded">Superseded</option>
+          <option value="archived">Archived</option>
+        </select>
+      </label>
+      <label>Authority
+        <select name="authorityLevel">
+          <option value="">All authority levels</option>
+          <option value="canonical">Canonical</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="reference">Reference</option>
+          <option value="community">Community</option>
+          <option value="unverified">Unverified</option>
+        </select>
+      </label>
       <button class="button" type="submit">Search</button>
       <button class="button" type="button" data-knowledge-refresh>Refresh tree</button>
     </form>
@@ -2623,7 +2653,7 @@ def route_admin_mysql_diagnostics(environ, start_response):
         "build": build_provenance(),
         "schemaVersion": "memoryendpoints.admin_mysql_diagnostics.v1",
         "authStatus": auth_status,
-        "configuredStoreBackend": os.environ.get("MEMORYENDPOINTS_STORE_BACKEND", "file").strip().lower() or "file",
+        "configuredStoreBackend": configured_store_backend(),
         "configDiagnostics": diagnostics,
         "stageDiagnostics": mysql_connection_stage_diagnostics(),
         "connectAttempt": connect_attempt,
@@ -2955,6 +2985,22 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Keywords required", "Knowledge document upsert requires at least one keyword.", "keywords_required")
         if not _knowledge_taxonomy_values(body):
             return problem(start_response, "422 Unprocessable Entity", "Taxonomy paths required", "Knowledge document upsert requires at least one taxonomyPath or taxonomyPaths entry.", "taxonomy_paths_required")
+        knowledge_status = str(body.get("knowledgeStatus") or body.get("knowledge_status") or "current").strip().lower().replace("_", "-")
+        authority_level = str(body.get("authorityLevel") or body.get("authority_level") or "reviewed").strip().lower().replace("_", "-")
+        status_reason = str(body.get("statusReason") or body.get("status_reason") or "").strip()
+        superseded_by_document_id = str(body.get("supersededByDocumentId") or body.get("superseded_by_document_id") or "").strip()
+        if knowledge_status not in ("current", "proposed", "historical", "superseded", "archived"):
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported knowledge status", "knowledgeStatus must be current, proposed, historical, superseded, or archived.", "unsupported_knowledge_status")
+        if authority_level not in ("canonical", "reviewed", "reference", "community", "unverified"):
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported authority level", "authorityLevel must be canonical, reviewed, reference, community, or unverified.", "unsupported_authority_level")
+        if knowledge_status != "current" and not status_reason:
+            return problem(start_response, "422 Unprocessable Entity", "Knowledge status reason required", "Non-current knowledge requires statusReason so humans and agents understand why it must not be treated as the active contract.", "knowledge_status_reason_required")
+        if len(status_reason) > 1000:
+            return problem(start_response, "422 Unprocessable Entity", "Knowledge status reason too long", "statusReason must be at most 1000 characters.", "knowledge_status_reason_too_long")
+        if knowledge_status == "superseded" and not superseded_by_document_id:
+            return problem(start_response, "422 Unprocessable Entity", "Superseding document required", "Superseded knowledge requires supersededByDocumentId pointing to the current replacement.", "superseded_by_document_id_required")
+        if len(superseded_by_document_id) > 96:
+            return problem(start_response, "422 Unprocessable Entity", "Superseding document id too long", "supersededByDocumentId must be at most 96 characters.", "superseded_by_document_id_too_long")
         if not ((body.get("searchableText") or body.get("content") or "").strip()):
             return problem(start_response, "422 Unprocessable Entity", "Content required", "Knowledge document upsert requires searchableText or content.", "content_required")
         if not store.has_quota_for(workspace_id, body):
@@ -2977,6 +3023,18 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "404 Not Found", "Project not found", "Project-scoped knowledge requires an existing project record in this workspace.", "project_not_found")
         if error == "content_required":
             return problem(start_response, "422 Unprocessable Entity", "Content required", "Knowledge document upsert requires searchableText or content.", "content_required")
+        if error == "unsupported_knowledge_status":
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported knowledge status", "knowledgeStatus must be current, proposed, historical, superseded, or archived.", error)
+        if error == "unsupported_authority_level":
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported authority level", "authorityLevel must be canonical, reviewed, reference, community, or unverified.", error)
+        if error == "knowledge_status_reason_required":
+            return problem(start_response, "422 Unprocessable Entity", "Knowledge status reason required", "Non-current knowledge requires statusReason.", error)
+        if error == "superseded_by_document_id_required":
+            return problem(start_response, "422 Unprocessable Entity", "Superseding document required", "Superseded knowledge requires supersededByDocumentId.", error)
+        if error == "superseding_knowledge_document_not_found":
+            return problem(start_response, "404 Not Found", "Superseding knowledge document not found", "supersededByDocumentId must identify a knowledge document in the authenticated workspace.", error)
+        if error == "knowledge_document_cannot_supersede_itself":
+            return problem(start_response, "422 Unprocessable Entity", "Invalid supersession", "A knowledge document cannot supersede itself.", error)
         if error:
             return problem(start_response, "422 Unprocessable Entity", "Knowledge document rejected", "The knowledge document could not be stored.", error)
         confirmation = _knowledge_document_confirmation(store, workspace_id, document)

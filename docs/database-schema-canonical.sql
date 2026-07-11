@@ -162,6 +162,10 @@ CREATE TABLE IF NOT EXISTS matm_search_documents (
   description TEXT NULL,
   keywords_json TEXT NULL,
   taxonomy_paths_json TEXT NULL,
+  knowledge_status VARCHAR(32) NOT NULL DEFAULT 'current',
+  authority_level VARCHAR(32) NOT NULL DEFAULT 'reviewed',
+  status_reason TEXT NULL,
+  superseded_by_document_id VARCHAR(96) NULL,
   searchable_text MEDIUMTEXT NOT NULL,
   visibility VARCHAR(32) NOT NULL,
   content_hash CHAR(64) NOT NULL DEFAULT '',
@@ -170,10 +174,12 @@ CREATE TABLE IF NOT EXISTS matm_search_documents (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY ix_matm_search_workspace_visibility (workspace_id, visibility),
   KEY ix_matm_search_workspace_scope (workspace_id, scope_type, scope_id),
+  KEY ix_matm_search_workspace_lifecycle (workspace_id, knowledge_status, authority_level),
   FULLTEXT KEY fx_matm_search_text (title, searchable_text),
   CONSTRAINT fk_matm_search_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
   CONSTRAINT fk_matm_search_memory FOREIGN KEY (memory_id) REFERENCES matm_memory_records (memory_id),
-  CONSTRAINT fk_matm_search_source FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id)
+  CONSTRAINT fk_matm_search_source FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id),
+  CONSTRAINT fk_matm_search_superseded_by FOREIGN KEY (superseded_by_document_id) REFERENCES matm_search_documents (search_document_id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_external_links (
