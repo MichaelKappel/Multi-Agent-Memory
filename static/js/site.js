@@ -1613,6 +1613,22 @@
     return {roomId: roomId, name: "Selected meeting room", scope: "room", purpose: "Posts target the selected room id."};
   }
 
+  function mergeMeetingRoomMetadata(roomId, room) {
+    var existing = state.selectedMeetingRoom && state.selectedMeetingRoom.roomId === roomId ? state.selectedMeetingRoom : {};
+    var fallback = selectedMeetingRoomFallback(roomId);
+    var merged = {};
+    [fallback, existing, room || {}].forEach(function (source) {
+      Object.keys(source).forEach(function (key) {
+        var value = source[key];
+        if (value !== undefined && value !== null && value !== "") {
+          merged[key] = value;
+        }
+      });
+    });
+    merged.roomId = roomId;
+    return merged;
+  }
+
   function renderSelectedMeetingRoom() {
     var node = pick("[data-console-selected-meeting-room]");
     if (!node) {
@@ -1661,7 +1677,7 @@
       return;
     }
     state.selectedMeetingRoomId = roomId;
-    state.selectedMeetingRoom = room && room.roomId ? room : selectedMeetingRoomFallback(roomId);
+    state.selectedMeetingRoom = mergeMeetingRoomMetadata(roomId, room && room.roomId ? room : {});
     var form = pick("[data-console-meeting-message]");
     if (form && form.elements.roomId) {
       form.elements.roomId.value = roomId;
