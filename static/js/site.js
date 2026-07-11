@@ -34,6 +34,10 @@
     selectedMeetingRoom: null,
     latestMeetingMessageId: "",
     latestMeetingMessageSummary: "",
+    meetingTranscriptNextCursor: "",
+    meetingTranscriptHasMore: false,
+    meetingTranscriptVisibleCount: null,
+    meetingTranscriptTotalCount: null,
     latestRoutingDecisionId: "",
     inboxRequestSeq: 0,
     memoryCount: null,
@@ -2062,6 +2066,11 @@
       ? summary.totalMessageCount
       : ((payload && payload.totalMessageCount !== undefined) ? payload.totalMessageCount : visibleMessageCount);
     var transcriptHasMore = Boolean((payload && payload.hasMore) || (summary.pagination && summary.pagination.hasMore));
+    var nextCursor = (payload && payload.nextCursor) || (summary.pagination && summary.pagination.nextCursor) || "";
+    state.meetingTranscriptNextCursor = nextCursor || "";
+    state.meetingTranscriptHasMore = transcriptHasMore;
+    state.meetingTranscriptVisibleCount = visibleMessageCount;
+    state.meetingTranscriptTotalCount = totalMessageCount;
     var summaryLine = el("div", "filter-summary meeting-messages-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
     appendBadge(summaryLine, roomTitle(room), "neutral");
@@ -2083,10 +2092,19 @@
     if (totalMessageCount !== visibleMessageCount) {
       countText += " " + totalMessageCount + " total messages in this room.";
     }
-    if (transcriptHasMore) {
-      countText += " Use the next cursor to read older transcript windows.";
-    }
     node.appendChild(el("div", "result-count", countText));
+    if (transcriptHasMore && nextCursor) {
+      var transcriptActions = el("div", "row-actions");
+      var olderButton = el("button", "button compact", "Load older");
+      olderButton.type = "button";
+      olderButton.addEventListener("click", function () {
+        refreshMeetingMessages(room.roomId || state.selectedMeetingRoomId, nextCursor)
+          .then(function () { setStatus("Older meeting messages loaded.", false); })
+          .catch(function (error) { setStatus(error.message, true); });
+      });
+      transcriptActions.appendChild(olderButton);
+      node.appendChild(transcriptActions);
+    }
     items.forEach(function (message) {
       var row = resultRow(
         "Meeting message",
@@ -3197,14 +3215,14 @@
     });
   }
 
-  function refreshMeetingMessages(roomId) {
+  function refreshMeetingMessages(roomId, cursor) {
     var selectedRoom = roomId || state.selectedMeetingRoomId;
     if (!selectedRoom) {
       renderMeetingMessages({items: [], room: {}, operatorSummary: {count: 0}});
       return Promise.resolve({items: []});
     }
     setMeetingRoom(selectedRoom);
-    var qs = query({workspace_id: state.workspaceId, room_id: selectedRoom, agent_id: state.agentId, limit: 50});
+    var qs = query({workspace_id: state.workspaceId, room_id: selectedRoom, agent_id: state.agentId, limit: 50, cursor: cursor || ""});
     return api("/api/matm/meeting-messages?" + qs).then(function (payload) {
       render("[data-console-meeting-output]", payload);
       renderMeetingMessages(payload);
