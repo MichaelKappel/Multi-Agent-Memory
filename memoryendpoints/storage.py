@@ -176,6 +176,53 @@ def _current_message_attention_rank(item):
     return 1
 
 
+def _current_message_attention_order(items):
+    ordered = list(items or [])
+    ordered.sort(
+        key=lambda item: (
+            ((item.get("notification") or {}).get("createdAt") or ""),
+            ((item.get("notification") or {}).get("notificationId") or ""),
+        ),
+        reverse=True,
+    )
+    ordered.sort(key=_current_message_attention_rank)
+    return ordered
+
+
+def _cursor_page(items, cursor, limit_value):
+    ordered = list(items or [])
+    total_count = len(ordered)
+    cursor = str(cursor or "").strip()
+    cursor_accepted = False
+    start = 0
+    if cursor:
+        for index, item in enumerate(ordered):
+            note = item.get("notification") or {}
+            if note.get("notificationId") == cursor:
+                start = index + 1
+                cursor_accepted = True
+                break
+    available = ordered[start:]
+    if limit_value:
+        page_items = available[:limit_value]
+        has_more = len(available) > len(page_items)
+    else:
+        page_items = available
+        has_more = False
+    next_cursor = None
+    if has_more and page_items:
+        next_cursor = (page_items[-1].get("notification") or {}).get("notificationId")
+    return {
+        "items": page_items,
+        "totalUnreadCount": total_count,
+        "visibleUnreadCount": len(page_items),
+        "hasMore": bool(has_more),
+        "nextCursor": next_cursor,
+        "cursor": cursor,
+        "cursorAccepted": bool(cursor_accepted) if cursor else None,
+    }
+
+
 def _public_memory_event(event):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
@@ -1589,7 +1636,7 @@ class FileStore(object):
         self._save(data)
         return message, notes
 
-    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
+    def inbox_page(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None, cursor=None):
         data = self._load()
         message_id = str(message_id or "").strip()
         notification_id = str(notification_id or "").strip()
@@ -1615,17 +1662,10 @@ class FileStore(object):
                     break
             if message:
                 messages.append({"notification": note, "message": message})
-        messages.sort(
-            key=lambda item: (
-                ((item.get("notification") or {}).get("createdAt") or ""),
-                ((item.get("notification") or {}).get("notificationId") or ""),
-            ),
-            reverse=True,
-        )
-        messages.sort(key=_current_message_attention_rank)
-        if limit_value:
-            messages = messages[:limit_value]
-        return messages
+        return _cursor_page(_current_message_attention_order(messages), cursor, limit_value)
+
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
+        return self.inbox_page(workspace_id, agent_id, message_id, notification_id, limit).get("items", [])
 
     def receipts(self, workspace_id, consumer_agent_id=None):
         data = self._load()
@@ -3979,7 +4019,7 @@ class SQLiteStore(FileStore):
                     )
                     return message, notes
 
-    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
+    def inbox_page(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None, cursor=None):
         agent_id = (agent_id or "").strip()
         clauses = ["n.workspace_id = ?", "n.status = 'unread'"]
         params = [workspace_id]
@@ -4001,12 +4041,68 @@ class SQLiteStore(FileStore):
         if notification_id:
             clauses.append("n.notification_id = ?")
             params.append(notification_id)
+        cursor = str(cursor or "").strip()
+        cursor_accepted = None
+        cursor_clause = ""
+        cursor_params = []
         limit_sql = ""
+        query_limit = limit_value + 1 if limit_value else 0
         if limit_value:
             limit_sql = " LIMIT ?"
-            params.append(limit_value)
+        order_sql = """
+                          CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END,
+                          n.created_at DESC,
+                          n.notification_id DESC
+        """
         with _LOCK:
             with self._open_connection() as connection:
+                total_count = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM matm_notifications n
+                    JOIN matm_messages m ON m.message_id = n.message_id
+                    WHERE %s
+                    """ % " AND ".join(clauses),
+                    tuple(params),
+                ).fetchone()["count"]
+                if cursor:
+                    cursor_row = connection.execute(
+                        """
+                        SELECT notification_id, response_disposition, created_at
+                        FROM matm_notifications
+                        WHERE workspace_id = ? AND notification_id = ?
+                        """,
+                        (workspace_id, cursor),
+                    ).fetchone()
+                    cursor_accepted = bool(cursor_row)
+                    if cursor_row:
+                        cursor_rank = 0 if cursor_row["response_disposition"] == "required_response" else 1
+                        cursor_created_at = cursor_row["created_at"] or ""
+                        cursor_clause = """
+                        AND (
+                          CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END > ?
+                          OR (
+                            CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END = ?
+                            AND n.created_at < ?
+                          )
+                          OR (
+                            CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END = ?
+                            AND n.created_at = ?
+                            AND n.notification_id < ?
+                          )
+                        )
+                        """
+                        cursor_params = [
+                            cursor_rank,
+                            cursor_rank,
+                            cursor_created_at,
+                            cursor_rank,
+                            cursor_created_at,
+                            cursor,
+                        ]
+                page_params = list(params) + cursor_params
+                if query_limit:
+                    page_params.append(query_limit)
                 rows = list(
                     connection.execute(
                         """
@@ -4020,15 +4116,17 @@ class SQLiteStore(FileStore):
                         FROM matm_notifications n
                         JOIN matm_messages m ON m.message_id = n.message_id
                         WHERE %s
-                        ORDER BY
-                          CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END,
-                          n.created_at DESC,
-                          n.notification_id DESC
                         %s
-                        """ % (" AND ".join(clauses), limit_sql),
-                        tuple(params),
+                        ORDER BY
+                        %s
+                        %s
+                        """ % (" AND ".join(clauses), cursor_clause, order_sql, limit_sql),
+                        tuple(page_params),
                     )
                 )
+        has_more = bool(limit_value and len(rows) > limit_value)
+        if has_more:
+            rows = rows[:limit_value]
         items = []
         for row in rows:
             items.append(
@@ -4056,7 +4154,21 @@ class SQLiteStore(FileStore):
                     },
                 }
             )
-        return items
+        next_cursor = None
+        if has_more and items:
+            next_cursor = (items[-1].get("notification") or {}).get("notificationId")
+        return {
+            "items": items,
+            "totalUnreadCount": int(total_count or 0),
+            "visibleUnreadCount": len(items),
+            "hasMore": has_more,
+            "nextCursor": next_cursor,
+            "cursor": cursor,
+            "cursorAccepted": cursor_accepted,
+        }
+
+    def inbox(self, workspace_id, agent_id, message_id=None, notification_id=None, limit=None):
+        return self.inbox_page(workspace_id, agent_id, message_id, notification_id, limit).get("items", [])
 
     def receipts(self, workspace_id, consumer_agent_id=None):
         clauses = ["workspace_id = ?"]

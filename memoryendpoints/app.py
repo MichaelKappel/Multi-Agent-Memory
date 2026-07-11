@@ -704,7 +704,19 @@ def _memory_search_operator_summary(items, query_text, filters):
     return summary
 
 
-def _inbox_operator_summary(items, filters, delivery_counts, current_message_lane):
+def _current_message_attention_ordering_summary():
+    return {
+        "schemaVersion": "memoryendpoints.current_message_attention_ordering.v1",
+        "priority": ["required_response", "viewed_acknowledgement"],
+        "withinPriority": "newest_notification_first",
+        "cursorField": "notification.notificationId",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _inbox_operator_summary(items, filters, delivery_counts, current_message_lane, total_unread_count=None, pagination=None):
     response_counts = {"required_response": 0, "viewed_acknowledgement": 0}
     for item in items or []:
         delivery = item.get("delivery") or {}
@@ -714,9 +726,13 @@ def _inbox_operator_summary(items, filters, delivery_counts, current_message_lan
         "schemaVersion": "memoryendpoints.inbox_operator_summary.v1",
         "agentId": (filters or {}).get("agentId") or "",
         "unreadCount": len(items or []),
+        "visibleUnreadCount": len(items or []),
+        "totalUnreadCount": len(items or []) if total_unread_count is None else int(total_unread_count or 0),
         "currentMessageLane": bool(current_message_lane),
         "deliveryCounts": dict(delivery_counts or {}),
         "responseDispositionCounts": response_counts,
+        "pagination": dict(pagination or {}),
+        "attentionOrdering": _current_message_attention_ordering_summary(),
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
@@ -3318,11 +3334,13 @@ def route_protected(environ, start_response, path):
         message_filter = query.get("message_id") or query.get("messageId") or ""
         notification_filter = query.get("notification_id") or query.get("notificationId") or ""
         requested_limit = query.get("limit") or ""
+        cursor_filter = query.get("cursor") or query.get("after_notification_id") or query.get("afterNotificationId") or ""
         try:
             limit_value = max(1, min(int(requested_limit), 200)) if requested_limit else 0
         except (TypeError, ValueError):
             limit_value = 0
-        raw_items = store.inbox(workspace_id, agent_filter, message_filter, notification_filter, limit_value)
+        inbox_page = store.inbox_page(workspace_id, agent_filter, message_filter, notification_filter, limit_value, cursor_filter)
+        raw_items = inbox_page.get("items") or []
         items = []
         delivery_counts = {"broadcast": 0, "targeted": 0}
         for item in raw_items:
@@ -3340,7 +3358,29 @@ def route_protected(environ, start_response, path):
             filters["notificationId"] = notification_filter
         if limit_value:
             filters["limit"] = str(limit_value)
-        operator_summary = _inbox_operator_summary(items, filters, delivery_counts, path == "/api/matm/current-message")
+        if cursor_filter:
+            filters["cursor"] = cursor_filter
+        pagination = {
+            "totalUnreadCount": inbox_page.get("totalUnreadCount", len(items)),
+            "visibleUnreadCount": inbox_page.get("visibleUnreadCount", len(items)),
+            "hasMore": bool(inbox_page.get("hasMore")),
+            "nextCursor": inbox_page.get("nextCursor"),
+            "cursor": inbox_page.get("cursor") or "",
+            "cursorAccepted": inbox_page.get("cursorAccepted"),
+            "limit": limit_value,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        attention_ordering = _current_message_attention_ordering_summary()
+        operator_summary = _inbox_operator_summary(
+            items,
+            filters,
+            delivery_counts,
+            path == "/api/matm/current-message",
+            inbox_page.get("totalUnreadCount", len(items)),
+            pagination,
+        )
         _audit_read(
             store,
             workspace_id,
@@ -3349,6 +3389,7 @@ def route_protected(environ, start_response, path):
             path,
             {
                 "unreadCount": len(items),
+                "totalUnreadCount": inbox_page.get("totalUnreadCount", len(items)),
                 "filters": filters,
                 "deliveryCounts": delivery_counts,
                 "responseDispositionCounts": operator_summary["responseDispositionCounts"],
@@ -3361,9 +3402,17 @@ def route_protected(environ, start_response, path):
                 "currentMessageLane": path == "/api/matm/current-message",
                 "items": items,
                 "unreadCount": len(items),
+                "visibleUnreadCount": len(items),
+                "totalUnreadCount": inbox_page.get("totalUnreadCount", len(items)),
+                "hasMore": bool(inbox_page.get("hasMore")),
+                "nextCursor": inbox_page.get("nextCursor"),
+                "cursor": inbox_page.get("cursor") or "",
+                "cursorAccepted": inbox_page.get("cursorAccepted"),
+                "attentionOrdering": attention_ordering,
                 "responseStates": ["required_response", "viewed_acknowledgement"],
                 "filters": filters,
                 "deliveryCounts": delivery_counts,
+                "pagination": pagination,
                 "operatorSummary": operator_summary,
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,

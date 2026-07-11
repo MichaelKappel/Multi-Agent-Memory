@@ -103,10 +103,12 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
         self.assertEqual("202 Accepted", status)
         return json.loads(text)
 
-    def read_current_messages(self, workspace_id, auth, limit=None):
+    def read_current_messages(self, workspace_id, auth, limit=None, cursor=None):
         query = "workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id
         if limit is not None:
             query += "&limit=%s" % limit
+        if cursor is not None:
+            query += "&cursor=%s" % cursor
         status, _headers, text = call_app("/api/matm/current-message", headers=auth, query=query)
         self.assertEqual("200 OK", status)
         return json.loads(text)
@@ -135,12 +137,34 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
 
         limited = self.read_current_messages(workspace_id, auth, limit=1)
         self.assertEqual(1, limited["unreadCount"])
+        self.assertEqual(1, limited["visibleUnreadCount"])
+        self.assertEqual(2, limited["totalUnreadCount"])
+        self.assertTrue(limited["hasMore"])
+        self.assertTrue(limited["nextCursor"].startswith("note-"))
         self.assertEqual("required_response", limited["items"][0]["delivery"]["responseDisposition"])
         self.assertEqual("Older message that needs a backend response.", limited["items"][0]["message"]["safeSummary"])
         self.assertEqual(
             {"required_response": 1, "viewed_acknowledgement": 0},
             limited["operatorSummary"]["responseDispositionCounts"],
         )
+        self.assertEqual(
+            ["required_response", "viewed_acknowledgement"],
+            limited["attentionOrdering"]["priority"],
+        )
+        self.assertEqual("newest_notification_first", limited["attentionOrdering"]["withinPriority"])
+        self.assertEqual(2, limited["operatorSummary"]["totalUnreadCount"])
+        self.assertTrue(limited["operatorSummary"]["pagination"]["hasMore"])
+
+        next_page = self.read_current_messages(workspace_id, auth, limit=1, cursor=limited["nextCursor"])
+        self.assertEqual(1, next_page["unreadCount"])
+        self.assertEqual(1, next_page["visibleUnreadCount"])
+        self.assertEqual(2, next_page["totalUnreadCount"])
+        self.assertFalse(next_page["hasMore"])
+        self.assertIsNone(next_page["nextCursor"])
+        self.assertEqual(limited["nextCursor"], next_page["cursor"])
+        self.assertTrue(next_page["cursorAccepted"])
+        self.assertEqual("viewed_acknowledgement", next_page["items"][0]["delivery"]["responseDisposition"])
+        self.assertEqual("Newer acknowledgement-only coordination message.", next_page["items"][0]["message"]["safeSummary"])
 
     def test_required_response_precedes_newer_acknowledgement_across_backends(self):
         for backend in ("file", "sqlite"):
