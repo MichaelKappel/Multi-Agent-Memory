@@ -788,6 +788,7 @@ pre {
 .memory-submit-summary,
 .meeting-room-create-summary,
 .routing-decision-summary,
+.meeting-room-target-summary,
 .meeting-post-summary,
 .meeting-promotion-summary {
   margin: 8px 0 14px;
@@ -800,6 +801,7 @@ pre {
 .message-delivery .delivery-row,
 .meeting-room-create-summary .result-row,
 .routing-decision-summary .result-row,
+.meeting-room-target-summary .selected-meeting-room-row,
 .meeting-promotion-summary .result-row,
 .memory-submit-summary .submission-row {
   border-left: 4px solid var(--accent);

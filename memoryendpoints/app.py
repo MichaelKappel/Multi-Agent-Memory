@@ -1869,6 +1869,9 @@ Remaining blocker</textarea>
     <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
       <p class="empty-state">Company, workspace, project, goal, and task meeting rooms will appear after the workspace loads.</p>
     </div>
+    <div class="console-results meeting-room-target-summary" data-console-selected-meeting-room>
+      <p class="empty-state">Select a meeting room before posting or marking a transcript read.</p>
+    </div>
     <form class="console-grid" data-console-meeting-message>
       <label>Room id
         <input name="roomId" placeholder="select a meeting room" required>

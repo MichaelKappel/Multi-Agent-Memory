@@ -31,6 +31,7 @@
     workspaceOperatorSummary: null,
     agentRegistrationSummary: null,
     selectedMeetingRoomId: "",
+    selectedMeetingRoom: null,
     latestMeetingMessageId: "",
     latestMeetingMessageSummary: "",
     latestRoutingDecisionId: "",
@@ -47,6 +48,10 @@
     auditCount: null,
     syncCapabilityStatus: null,
     syncDeviceStatus: null,
+    syncLatestMutationStatus: "",
+    syncLatestLogicalMemoryId: "",
+    syncLastReadbackKind: "",
+    syncLastReadbackCount: null,
     syncLatestDeviceId: "",
     syncLatestReceiptId: "",
     syncLatestRevisionId: "",
@@ -272,6 +277,16 @@
 
   function formatStatusText(value) {
     return String(value || "unknown").replace(/_/g, " ");
+  }
+
+  function reviewStateKind(status) {
+    if (status === "promoted" || status === "approved") {
+      return "good";
+    }
+    if (status === "quarantined" || status === "rejected") {
+      return "warn";
+    }
+    return "neutral";
   }
 
   function renderLongTermMemoryOperatorSummary(parent, migration) {
@@ -1093,6 +1108,50 @@
     ]);
   }
 
+  function syncDeskRow() {
+    var hasSyncEvidence = Boolean(
+      state.syncCapabilityStatus ||
+      state.syncDeviceStatus ||
+      state.syncLatestReceiptId ||
+      state.syncLatestRevisionId ||
+      state.syncHeadCount !== null
+    );
+    if (!hasSyncEvidence) {
+      return null;
+    }
+    var status = state.syncLatestMutationStatus || state.syncDeviceStatus || state.syncCapabilityStatus || "ready";
+    var sequence = state.syncLatestServerSequence !== null && state.syncLatestServerSequence !== undefined
+      ? String(state.syncLatestServerSequence)
+      : "pending";
+    var readbackLabel = state.syncLastReadbackKind
+      ? state.syncLastReadbackKind + " " + String(state.syncLastReadbackCount || 0)
+      : "readback pending";
+    var row = resultRow(
+      "Distributed sync health",
+      "Device authority, idempotent mutation receipts, and head readback are available from the operator console.",
+      [
+        { text: formatStatusText(status), kind: status === "applied" || status === "active" || status === "available" || status === "live" ? "good" : "neutral" },
+        { text: state.syncCapabilityStatus || "capability pending", kind: state.syncCapabilityStatus ? "good" : "neutral" },
+        { text: state.syncDeviceStatus || "device pending", kind: state.syncDeviceStatus === "revoked" ? "warn" : (state.syncDeviceStatus ? "good" : "neutral") },
+        { text: "sequence " + sequence, kind: state.syncLatestServerSequence ? "good" : "neutral" },
+        { text: readbackLabel, kind: state.syncLastReadbackCount ? "good" : "neutral" },
+      ],
+      [
+        "device " + shortId(state.syncLatestDeviceId),
+        "receipt " + shortId(state.syncLatestReceiptId),
+        "revision " + shortId(state.syncLatestRevisionId),
+        "logical " + (state.syncLatestLogicalMemoryId || "not set"),
+        state.syncHeadCount !== null ? "heads " + String(state.syncHeadCount) : "",
+      ]
+    );
+    row.className += " operator-desk-row sync-desk-row";
+    return appendCopyActions(row, [
+      { label: "Copy sync receipt id", copyLabel: "Sync receipt id", value: state.syncLatestReceiptId },
+      { label: "Copy sync revision id", copyLabel: "Sync revision id", value: state.syncLatestRevisionId },
+      { label: "Copy sync logical id", copyLabel: "Logical memory id", value: state.syncLatestLogicalMemoryId },
+    ]);
+  }
+
   function renderDeskMemory() {
     var panel = deskPanel("[data-console-desk-memory]");
     if (!panel) {
@@ -1136,10 +1195,14 @@
     }
     var receipts = state.latestReceiptItems || [];
     var audits = state.latestAuditItems || [];
-    appendDeskHeading(panel, "Evidence", (receipts.length + audits.length) ? receipts.length + " receipts / " + audits.length + " audit" : "refresh pending");
-    if (!receipts.length && !audits.length) {
-      panel.appendChild(el("p", "empty-state", "Receipt and audit rows appear after refresh."));
+    var syncRow = syncDeskRow();
+    appendDeskHeading(panel, "Evidence", (receipts.length + audits.length || syncRow) ? receipts.length + " receipts / " + audits.length + " audit" + (syncRow ? " / sync" : "") : "refresh pending");
+    if (!receipts.length && !audits.length && !syncRow) {
+      panel.appendChild(el("p", "empty-state", "Receipt, audit, and sync evidence rows appear after refresh."));
       return;
+    }
+    if (syncRow) {
+      panel.appendChild(syncRow);
     }
     receipts.slice(0, 2).forEach(function (item) {
       panel.appendChild(receiptDeskRow(item));
@@ -1546,11 +1609,59 @@
     parent.appendChild(line);
   }
 
-  function setMeetingRoom(roomId) {
+  function selectedMeetingRoomFallback(roomId) {
+    return {roomId: roomId, name: "Selected meeting room", scope: "room", purpose: "Posts target the selected room id."};
+  }
+
+  function renderSelectedMeetingRoom() {
+    var node = pick("[data-console-selected-meeting-room]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    var room = state.selectedMeetingRoom || {};
+    if (!state.selectedMeetingRoomId) {
+      node.appendChild(el("p", "empty-state", "Select a meeting room before posting or marking a transcript read."));
+      return;
+    }
+    var row = resultRow(
+      "Selected meeting room",
+      room.purpose || "Posts target the selected room id.",
+      [
+        { text: room.scope || "room", kind: "neutral" },
+        { text: (room.unreadCount || 0) + " unread", kind: room.unreadCount ? "warn" : "good" },
+        { text: (room.messageCount || 0) + " messages", kind: room.messageCount ? "good" : "neutral" },
+        { text: room.alwaysAvailable === false ? "availability review" : "available", kind: room.alwaysAvailable === false ? "warn" : "good" },
+      ],
+      [
+        "room " + shortId(state.selectedMeetingRoomId),
+        room.scopeId ? "scope " + room.scopeId : "",
+        room.name || room.label || "",
+      ]
+    );
+    row.className += " selected-meeting-room-row";
+    appendCopyActions(row, [
+      { label: "Copy selected room id", copyLabel: "Selected meeting room id", value: state.selectedMeetingRoomId },
+    ]);
+    node.appendChild(row);
+  }
+
+  function clearMeetingRoomSelection() {
+    state.selectedMeetingRoomId = "";
+    state.selectedMeetingRoom = null;
+    var form = pick("[data-console-meeting-message]");
+    if (form && form.elements.roomId) {
+      form.elements.roomId.value = "";
+    }
+    renderSelectedMeetingRoom();
+  }
+
+  function setMeetingRoom(roomId, room) {
     if (!roomId) {
       return;
     }
     state.selectedMeetingRoomId = roomId;
+    state.selectedMeetingRoom = room && room.roomId ? room : selectedMeetingRoomFallback(roomId);
     var form = pick("[data-console-meeting-message]");
     if (form && form.elements.roomId) {
       form.elements.roomId.value = roomId;
@@ -1564,6 +1675,7 @@
         routingForm.elements.sourceRoomId.value = roomId;
       }
     }
+    renderSelectedMeetingRoom();
   }
 
   function roomTitle(room) {
@@ -1597,8 +1709,15 @@
       node.appendChild(el("p", "empty-state", "No meeting rooms returned for this workspace."));
       return;
     }
+    var selectedRoom = rooms.filter(function (room) {
+      return room.roomId === state.selectedMeetingRoomId;
+    })[0];
     if (!state.selectedMeetingRoomId) {
-      setMeetingRoom(rooms[0].roomId);
+      setMeetingRoom(rooms[0].roomId, rooms[0]);
+    } else if (selectedRoom) {
+      setMeetingRoom(selectedRoom.roomId, selectedRoom);
+    } else {
+      renderSelectedMeetingRoom();
     }
     rooms.forEach(function (room) {
       var unread = room.unreadCount || 0;
@@ -1625,11 +1744,11 @@
       useButton.type = "button";
       copyButton.type = "button";
       openButton.addEventListener("click", function () {
-        setMeetingRoom(room.roomId);
+        setMeetingRoom(room.roomId, room);
         refreshMeetingMessages(room.roomId).catch(function (error) { setStatus(error.message, true); });
       });
       useButton.addEventListener("click", function () {
-        setMeetingRoom(room.roomId);
+        setMeetingRoom(room.roomId, room);
         setStatus(roomTitle(room) + " selected.", false);
       });
       copyButton.addEventListener("click", function () {
@@ -1788,7 +1907,7 @@
     var items = (payload && payload.items) || [];
     var summary = (payload && payload.operatorSummary) || {};
     if (room.roomId) {
-      setMeetingRoom(room.roomId);
+      setMeetingRoom(room.roomId, room);
     }
     state.latestMeetingMessageId = items.length ? items[items.length - 1].meetingMessageId : "";
     state.latestMeetingMessageSummary = items.length ? (items[items.length - 1].safeSummary || "") : "";
@@ -1849,24 +1968,38 @@
       return;
     }
     var summaryLine = el("div", "filter-summary meeting-promotion-operator-summary");
+    var reviewStatus = summary.reviewStatus || event.reviewStatus || "pending";
+    var promotionState = summary.promotionState || event.promotionState || "review_pending";
+    var reviewId = summary.reviewId || event.reviewId || "";
+    state.firstReviewId = reviewId || state.firstReviewId;
     summaryLine.appendChild(el("span", "filter-summary-label", "Meeting memory"));
     appendBadge(summaryLine, summary.scope || event.scope || "workspace", "neutral");
     appendBadge(summaryLine, summary.memoryType || event.memoryType || "evidence", "neutral");
+    appendBadge(summaryLine, payload.visibleInSearch ? "search visible" : "search pending", payload.visibleInSearch ? "good" : "warn");
     appendBadge(summaryLine, payload.visibleInReviewQueue ? "review visible" : "review check", payload.visibleInReviewQueue ? "good" : "warn");
+    appendBadge(summaryLine, reviewStatus, reviewStateKind(reviewStatus));
+    appendBadge(summaryLine, formatStatusText(promotionState), reviewStateKind(promotionState));
     appendBadge(summaryLine, summary.firewallDecision || "accepted", summary.firewallDecision === "quarantine_for_review" ? "warn" : "good");
     appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
+    var decisionForm = pick("[data-console-review-decision]");
+    if (decisionForm && reviewId && decisionForm.elements.reviewId) {
+      decisionForm.elements.reviewId.value = reviewId;
+    }
     var row = resultRow(
       "Meeting saved as memory",
       event.summary || message.safeSummary || "Meeting transcript message was promoted into hosted memory.",
       [
         { text: summary.scope || event.scope || "workspace", kind: "neutral" },
         { text: summary.memoryType || event.memoryType || "evidence", kind: "neutral" },
-        { text: summary.reviewStatus || event.reviewStatus || "pending", kind: (summary.reviewStatus || event.reviewStatus) === "quarantined" ? "warn" : "good" },
+        { text: reviewStatus, kind: reviewStateKind(reviewStatus) },
+        { text: formatStatusText(promotionState), kind: reviewStateKind(promotionState) },
         { text: event.valuesRedacted ? "redacted" : "", kind: "good" },
       ],
       [
         "memory " + shortId(event.eventId),
-        "review " + shortId(summary.reviewId || event.reviewId),
+        "review " + shortId(reviewId),
+        payload.visibleInSearch ? "search visible" : "search pending",
+        payload.visibleInReviewQueue ? "review queue visible" : "review queue pending",
         "meeting " + shortId(summary.meetingMessageId || message.meetingMessageId),
         "promoted by " + (summary.promotedByAgentId || state.agentId),
         "source sender " + (summary.sourceSenderAgentId || message.senderAgentId || "unknown"),
@@ -2355,6 +2488,7 @@
     var policy = (payload && payload.policy) || capabilities.retention || {};
     state.syncCapabilityStatus = capabilities.status || policy.schemaVersion || "available";
     renderOperatorMetrics();
+    renderOperatorDesk();
     var summaryLine = el("div", "filter-summary sync-capability-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Sync capability"));
     appendBadge(summaryLine, capabilities.status || "available", capabilities.status === "live" ? "good" : "neutral");
@@ -2398,6 +2532,7 @@
     state.syncDeviceStatus = device.status || summary.status || "";
     setSyncDeviceFields(device.deviceId, device.authorityEpoch || summary.authorityEpoch);
     renderOperatorMetrics();
+    renderOperatorDesk();
     var summaryLine = el("div", "filter-summary sync-device-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Device authority"));
     appendBadge(summaryLine, summary.action || "register", "neutral");
@@ -2444,9 +2579,12 @@
     state.syncLatestReceiptId = receiptId;
     state.syncLatestRevisionId = revisionId;
     state.syncLatestServerSequence = serverSequence;
+    state.syncLatestMutationStatus = (payload && payload.status) || receipt.status || "unknown";
+    state.syncLatestLogicalMemoryId = logicalMemoryId;
     setSyncReadbackFields(receiptId, logicalMemoryId, serverSequence, payload && payload.status === "applied" ? revisionId : "");
     renderOperatorMetrics();
-    var status = (payload && payload.status) || receipt.status || "unknown";
+    renderOperatorDesk();
+    var status = state.syncLatestMutationStatus;
     var conflictCode = receipt.conflictCode || summary.conflictCode || "";
     var summaryLine = el("div", "filter-summary sync-mutation-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Sync mutation"));
@@ -2553,7 +2691,10 @@
     if (label === "heads") {
       state.syncHeadCount = payload && payload.count !== undefined ? payload.count : items.length;
     }
+    state.syncLastReadbackKind = label;
+    state.syncLastReadbackCount = items.length;
     renderOperatorMetrics();
+    renderOperatorDesk();
     var summaryLine = el("div", "filter-summary sync-readback-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Sync " + label));
     appendBadge(summaryLine, items.length + " row(s)", items.length ? "good" : "neutral");
@@ -2937,7 +3078,7 @@
         });
       })
       .then(function (payload) {
-        setStatus("Meeting message saved as hosted memory.", false);
+        setStatus("Meeting message saved as hosted memory and queued for review decision.", false);
         return payload;
       });
   }
@@ -3578,7 +3719,7 @@
         setStatus("Load workspace before filtering meeting rooms.", true);
         return;
       }
-      state.selectedMeetingRoomId = "";
+      clearMeetingRoomSelection();
       refreshMeetingRooms()
         .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
         .then(function () { setStatus("Meeting rooms filtered.", false); })
@@ -3591,7 +3732,7 @@
     clearMeetingRoomFilterButton.addEventListener("click", function () {
       meetingRoomFilterForm.elements.scope.value = "";
       meetingRoomFilterForm.elements.scopeId.value = "";
-      state.selectedMeetingRoomId = "";
+      clearMeetingRoomSelection();
       refreshMeetingRooms()
         .then(function () { return refreshMeetingMessages(state.selectedMeetingRoomId); })
         .then(function () { setStatus("Meeting room filter cleared.", false); })
@@ -3628,7 +3769,7 @@
         .then(function (payload) {
           renderMeetingRoomCreate(payload);
           if (payload.room && payload.room.roomId) {
-            setMeetingRoom(payload.room.roomId);
+            setMeetingRoom(payload.room.roomId, payload.room);
             if (meetingRoomFilterForm) {
               meetingRoomFilterForm.elements.scope.value = payload.room.scope || "";
               meetingRoomFilterForm.elements.scopeId.value = payload.room.scopeId || "";
@@ -3684,7 +3825,7 @@
           render("[data-console-meeting-output]", payload);
           renderRoutingDecision(payload);
           if (payload.destinationRoomId) {
-            setMeetingRoom(payload.destinationRoomId);
+            setMeetingRoom(payload.destinationRoomId, payload.destinationRoom || null);
           }
           return refreshRoutingDecisions().then(function () {
             return refreshMeetingMessages(payload.canonicalRoomId || sourceRoomId);
@@ -3712,20 +3853,29 @@
   if (meetingMessageForm) {
     meetingMessageForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      var roomId = meetingMessageForm.elements.roomId.value.trim() || state.selectedMeetingRoomId;
+      var roomControl = formControl(meetingMessageForm, "roomId");
+      var senderControl = formControl(meetingMessageForm, "senderAgentId");
+      var summaryControl = formControl(meetingMessageForm, "safeSummary");
+      var roomId = (roomControl && roomControl.value ? roomControl.value.trim() : "") || state.selectedMeetingRoomId;
       if (!roomId) {
         setStatus("Meeting room id is required.", true);
         return;
       }
-      setMeetingRoom(roomId);
+      var senderAgentId = senderControl && senderControl.value ? senderControl.value.trim() : "";
+      var safeSummary = summaryControl && summaryControl.value ? summaryControl.value.trim() : "";
+      if (!senderAgentId || !safeSummary) {
+        setStatus("Sender agent and safe meeting note are required.", true);
+        return;
+      }
+      setMeetingRoom(roomId, state.selectedMeetingRoom && state.selectedMeetingRoom.roomId === roomId ? state.selectedMeetingRoom : null);
       api("/api/matm/meeting-messages", {
         method: "POST",
         headers: {"Idempotency-Key": "console-meeting-" + roomId + "-" + Date.now()},
         body: {
           workspaceId: state.workspaceId,
           roomId: roomId,
-          senderAgentId: meetingMessageForm.elements.senderAgentId.value.trim(),
-          safeSummary: meetingMessageForm.elements.safeSummary.value.trim(),
+          senderAgentId: senderAgentId,
+          safeSummary: safeSummary,
         },
       })
         .then(function (payload) {
