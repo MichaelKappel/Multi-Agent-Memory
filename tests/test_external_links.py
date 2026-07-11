@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from app import application
@@ -143,7 +144,7 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         self.assertEqual(1, json.loads(text)["count"])
 
-        with sqlite3.connect(str(self.sqlite_path)) as connection:
+        with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_external_links").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_external_link_mentions").fetchone()[0])
 
@@ -173,7 +174,7 @@ class ExternalLinkTests(unittest.TestCase):
             self.assertEqual("422 Unprocessable Entity", status)
             self.assertEqual(code, json.loads(text)["error"]["code"])
 
-        with sqlite3.connect(str(self.sqlite_path)) as connection:
+        with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
             self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM matm_external_links").fetchone()[0])
 
     def test_external_link_search_is_workspace_isolated(self):

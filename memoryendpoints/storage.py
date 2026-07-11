@@ -2452,6 +2452,7 @@ class FileStore(object):
         data = self._load()
         q = (query or "").lower().strip()
         filters = filters or {}
+        include_review_statuses = filters.get("_includeReviewStatuses") is True
         scope_filter = (filters.get("scope") or "").strip().lower()
         scope_id_filter = (filters.get("scopeId") or filters.get("scope_id") or "").strip()
         memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
@@ -2471,7 +2472,7 @@ class FileStore(object):
         for event in data["memoryEvents"]:
             if event.get("workspaceId") != workspace_id:
                 continue
-            if event.get("status") in ("rejected", "quarantined"):
+            if not include_review_statuses and event.get("status") in ("rejected", "quarantined"):
                 continue
             if scope_filter and (event.get("scope") or "").lower() != scope_filter:
                 continue
@@ -2509,6 +2510,9 @@ class FileStore(object):
             if _memory_query_matches(q, haystack):
                 items.append(_public_memory_event(event))
         return items
+
+    def memory_events_for_review(self, workspace_id):
+        return self.search_memory(workspace_id, "", {"_includeReviewStatuses": True})
 
     def review_queue(self, workspace_id, status=None):
         data = self._load()
@@ -4966,6 +4970,7 @@ class SQLiteStore(FileStore):
     def search_memory(self, workspace_id, query, filters=None):
         q = (query or "").lower().strip()
         filters = filters or {}
+        include_review_statuses = filters.get("_includeReviewStatuses") is True
         scope_filter = (filters.get("scope") or "").strip().lower()
         scope_id_filter = (filters.get("scopeId") or filters.get("scope_id") or "").strip()
         memory_type_filter = (filters.get("memoryType") or filters.get("memory_type") or "").strip().lower()
@@ -4981,8 +4986,10 @@ class SQLiteStore(FileStore):
             or filters.get("memory_event_id")
             or ""
         ).strip()
-        clauses = ["workspace_id = ?", "status NOT IN ('rejected', 'quarantined')"]
+        clauses = ["workspace_id = ?"]
         params = [workspace_id]
+        if not include_review_statuses:
+            clauses.append("status NOT IN ('rejected', 'quarantined')")
         if event_id_filter:
             clauses.append("memory_id = ?")
             params.append(event_id_filter)

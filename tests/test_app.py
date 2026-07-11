@@ -6,7 +6,9 @@ import os
 import shutil
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app import application
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
@@ -3043,6 +3045,100 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertNotIn(token, json.dumps(review_readback))
         self.assertNotIn(token, json.dumps(search))
 
+    def test_review_queue_source_filters_include_rejected_memory_metadata(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, backend + "-review-source.json")
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, backend + "-review-source.sqlite3")
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={"label": backend + " Review Source Workspace"},
+                )
+                self.assertEqual("201 Created", status)
+                setup = json.loads(text)
+                workspace_id = setup["workspaceId"]
+                token = setup["apiKeySecret"]
+                auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+                source = "report://review-source-filter-" + backend
+                actor_agent_id = backend + "-review-source-agent"
+
+                status, _headers, text = call_app(
+                    "/api/matm/memory-events/submit",
+                    method="POST",
+                    headers=auth,
+                    body={
+                        "workspaceId": workspace_id,
+                        "actorAgentId": actor_agent_id,
+                        "memoryType": "decision",
+                        "title": "Source-filtered review memory",
+                        "summary": "This public-safe memory must remain attributable after rejection.",
+                        "tags": ["review-source-filter"],
+                        "source": source,
+                    },
+                )
+                self.assertEqual("201 Created", status)
+
+                pending_query = urlencode(
+                    {
+                        "workspace_id": workspace_id,
+                        "status": "pending",
+                        "source_prefix": source,
+                        "tag": "review-source-filter",
+                        "memory_type": "decision",
+                        "actor_agent_id": actor_agent_id,
+                    }
+                )
+                status, _headers, text = call_app("/api/matm/review-queue", headers=auth, query=pending_query)
+                self.assertEqual("200 OK", status)
+                pending = json.loads(text)
+                self.assertEqual(1, pending["count"])
+                review_id = pending["items"][0]["reviewId"]
+
+                status, _headers, text = call_app(
+                    "/api/matm/review-queue/decide",
+                    method="POST",
+                    headers=dict(auth, HTTP_IDEMPOTENCY_KEY=backend + "-reject-review-source"),
+                    body={
+                        "workspaceId": workspace_id,
+                        "reviewId": review_id,
+                        "reviewerAgentId": "MemoryEndpoints-Backend-Agent",
+                        "decision": "reject",
+                        "reviewNote": "Reject stale public-safe guidance.",
+                    },
+                )
+                self.assertEqual("200 OK", status)
+                self.assertEqual("rejected", json.loads(text)["review"]["status"])
+
+                status, _headers, text = call_app(
+                    "/api/matm/search",
+                    headers=auth,
+                    query=urlencode({"workspace_id": workspace_id, "source_prefix": source, "limit": 10}),
+                )
+                self.assertEqual("200 OK", status)
+                self.assertEqual(0, json.loads(text)["count"])
+
+                rejected_query = urlencode(
+                    {
+                        "workspace_id": workspace_id,
+                        "status": "rejected",
+                        "source_prefix": source,
+                        "tag": "review-source-filter",
+                        "memory_type": "decision",
+                        "actor_agent_id": actor_agent_id,
+                    }
+                )
+                status, _headers, text = call_app("/api/matm/review-queue", headers=auth, query=rejected_query)
+                self.assertEqual("200 OK", status)
+                rejected = json.loads(text)
+                self.assertEqual(1, rejected["count"])
+                self.assertEqual(1, rejected["statusCounts"]["rejected"])
+                self.assertEqual(source, rejected["items"][0]["memory"]["source"])
+                self.assertIn("review-source-filter", rejected["items"][0]["memory"]["tags"])
+                self.assertTrue(rejected["items"][0]["memory"]["valuesRedacted"])
+                self.assertNotIn(token, text)
+
     def test_memory_search_supports_operator_filters(self):
         status, _headers, text = call_app(
             "/api/matm/agent-setup/free-account",
@@ -4173,7 +4269,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("200 OK", status)
         self.assertEqual({"broadcast": 1, "targeted": 0}, json.loads(text)["deliveryCounts"])
 
-        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
+        with closing(sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"])) as connection:
             tables = {
                 row[0]
                 for row in connection.execute(

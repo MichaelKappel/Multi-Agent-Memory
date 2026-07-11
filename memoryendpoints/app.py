@@ -3349,7 +3349,7 @@ def route_protected(environ, start_response, path):
             "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
         }
         active_review_filters = {key: value for key, value in review_filters.items() if value}
-        memory_items = store.search_memory(workspace_id, "", {})
+        memory_items = store.memory_events_for_review(workspace_id)
         memory_by_id = {item.get("eventId"): item for item in memory_items if item.get("eventId")}
         all_review_items = [
             item
