@@ -317,6 +317,13 @@
     parent.appendChild(line);
   }
 
+  function isLongTermMemoryHealthPayload(payload) {
+    var filters = (payload && payload.filters) || {};
+    return filters.tag === longTermMemoryTag
+      || filters.sourcePrefix === longTermMemorySourcePrefix
+      || filters.source_prefix === longTermMemorySourcePrefix;
+  }
+
   function operatorLevel(operatorSummary, level) {
     var hierarchy = (operatorSummary && operatorSummary.hierarchy) || [];
     for (var i = 0; i < hierarchy.length; i += 1) {
@@ -1246,7 +1253,7 @@
     state.memoryCount = summary.count !== undefined ? summary.count : items.length;
     state.memoryScopeCounts = summary.scopeCounts || null;
     state.memoryFilesystemIncluded = Boolean(summary.filesystemDocsIncluded);
-    if (summary.longTermMemoryMigration) {
+    if (summary.longTermMemoryMigration && isLongTermMemoryHealthPayload(payload)) {
       state.longTermMemoryHealth = summary.longTermMemoryMigration;
     }
     renderOperatorMetrics();
