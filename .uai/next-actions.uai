@@ -12,10 +12,11 @@ Next action for agents: perform the highest unblocked action that matches the cu
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current ordered actions:
-- Finish the `.uai` setup correction: full typed suite, no README memory substitutes, clear active handoff buckets, refreshed audit, and tests.
-- Keep relational SQLite storage covered by integration and migration tests.
-- Refresh local verification reports after memory and storage changes, including public-safe CI evidence through `scripts/check_github_actions.py`.
-- Commit and push source-controlled improvements once checks pass and prompt drafts remain untracked.
-- Keep deployment evidence current after every new commit by rerunning package, FileZilla-backed FTPS deploy, live latest-code SHA verification, live route verification, and dogfood.
+- Finish verification, commit, push, package, and live deployment for the rendered-Markdown-heading ingestion fix; keep prompt drafts and unrelated generated reports out of source control.
+- Continue `D:\DownloadArchive` with the next unprocessed report only after the current report's page, memory, citation, hierarchy, lifecycle, and human-UI audits pass.
+- For each report, preserve one canonical source, split distinct knowledge into focused pages, choose the narrowest durable scope, add multiple useful taxonomy paths, and classify non-current claims before they enter durable memory.
+- Review every external citation independently as a first-class web record. Distinguish primary authority, vendor material, community discussion, preprints, blocked or stale paths, citation-to-claim mismatches, and jurisdiction errors.
+- Keep relational SQLite and production MySQL behavior covered by integration, migration, route, and read-after-write tests.
+- Keep deployment evidence current after every code commit by rerunning package, FileZilla-backed FTPS deploy, live latest-code SHA verification, live route verification, MySQL verification, and dogfood.
 - Do not keep trying GitHub Actions unless the human re-enables it; the human clarified it is not needed as a completion gate.
 - Do not claim full completion until current-commit local verification, live deployment, live route verification, dogfood, package, secret scan, and gated capability documentation are current.

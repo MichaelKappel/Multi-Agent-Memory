@@ -85,6 +85,34 @@ Retrieval is separately classified.
         with self.assertRaisesRegex(RuntimeError, "section heading not found"):
             select_knowledge_unit("# Report\n\n## Present\n", Path("report.md"), "Absent")
 
+    def test_section_selection_matches_rendered_markdown_escaped_punctuation(self):
+        text = r"""# Report
+
+### **1\. Proposed LLMWikis.org Page Map**
+
+The historical route proposal.
+
+### **W3C Content Negotiation (RFC 7231\)**
+
+The historical protocol proposal.
+"""
+
+        selected, unit = select_knowledge_unit(
+            text,
+            Path("report.md"),
+            "1. Proposed LLMWikis.org Page Map",
+        )
+        protocol, protocol_unit = select_knowledge_unit(
+            text,
+            Path("report.md"),
+            "W3C Content Negotiation (RFC 7231)",
+        )
+
+        self.assertIn("historical route proposal", selected)
+        self.assertEqual("1. Proposed LLMWikis.org Page Map", unit["sectionHeading"])
+        self.assertIn("historical protocol proposal", protocol)
+        self.assertEqual("W3C Content Negotiation (RFC 7231)", protocol_unit["sectionHeading"])
+
     def test_stop_heading_excludes_nested_appendix(self):
         text = """# Report
 

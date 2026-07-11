@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import re
+import string
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -47,6 +48,7 @@ def first_heading(text, fallback):
 def clean_heading(value):
     text = re.sub(r"\s+#+\s*$", "", str(value or "").strip())
     text = re.sub(r"^[*_`~]+|[*_`~]+$", "", text).strip()
+    text = re.sub(r"\\([" + re.escape(string.punctuation) + r"])", r"\1", text)
     return text
 
 

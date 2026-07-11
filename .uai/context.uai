@@ -12,8 +12,11 @@ Next action for agents: use this as a compact orientation, then load the special
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private customer data, or private deployment values.
 
 Current context:
-- The active goal is to mature MemoryEndpoints.com into an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site.
+- The active goal is to move the reports in `D:\DownloadArchive` into the database-backed MemoryEndpoints.com knowledge system one source at a time, creating context-rich company, workspace, and project wiki trees while improving the system through dogfooding.
 - The repository has working local route, storage, package, secret-scan, `.uai`, static-site, and dogfood evidence.
 - Latest-code MemoryEndpoints.com public deployment is verified through the FileZilla-backed explicit FTPS profile; MultiAgentMemory.com companion publishing is also live-verified through its FileZilla-backed FTPS profile.
-- The active memory correction is to align with UAIX file-handoff setup while preserving the human rule that the `.uai` suite is active memory and forbidden duration/state filenames are not allowed under any purpose.
+- The database wiki has lifecycle-aware pages and first-class external-link search for `AI Agent Memory Architecture Research.md`, `MATM Architecture Design Research.md`, and `AI Memory Governance Feedback Loop.md`.
+- The latest report is represented by a canonical current governance review, one historical source, focused workspace and project pages, and individually reviewed bibliography links. NeuralWikis and LLMWikis material is kept in its narrow project scope when it is not cross-product guidance.
+- A local ingestion-tool improvement accepts rendered Markdown headings whose source punctuation is backslash-escaped; it requires the normal commit, deployment, and live verification cycle.
+- The `.uai` suite remains active memory and forbidden duration/state filenames are not allowed under any purpose.
 - Active handoff buckets must be empty or placeholder-only after processed intake is archived or otherwise dispositioned.
