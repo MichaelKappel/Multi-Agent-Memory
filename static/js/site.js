@@ -42,6 +42,7 @@
     reviewCount: null,
     meetingRoomCount: null,
     inboxUnreadCount: null,
+    inboxCountLimited: false,
     laneUnreadCount: null,
     messageDeliveryCounts: null,
     messageRequiredResponseCount: null,
@@ -558,6 +559,11 @@
     return (items || []).filter(isRequiredResponseItem).length;
   }
 
+  function inboxPayloadIsFilteredOrLimited(payload) {
+    var filters = (payload && payload.filters) || {};
+    return Boolean(filters.limit || filters.messageId || filters.notificationId || filters.message_id || filters.notification_id);
+  }
+
   function attentionFirstItems(items) {
     return (items || []).map(function (item, index) {
       return { item: item, index: index };
@@ -649,9 +655,11 @@
     var deliveryCounts = state.messageDeliveryCounts || {};
     var requiredResponseKnown = state.messageRequiredResponseCount !== null && state.messageRequiredResponseCount !== undefined;
     var requiredResponseCount = requiredResponseKnown ? state.messageRequiredResponseCount : 0;
-    var unreadCount = state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
+    var showingLaneMessages = state.messageDeskMode === "lanes";
+    var unreadCount = showingLaneMessages && state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
       ? state.laneUnreadCount
       : state.inboxUnreadCount;
+    var unreadLabel = showingLaneMessages ? "unread" : (state.inboxCountLimited ? "visible unread" : "unread");
     var evidencePending = state.receiptCount === null && state.auditCount === null;
     var runtime = runtimeEvidence();
     node.appendChild(metricCard(
@@ -688,7 +696,7 @@
     ));
     node.appendChild(metricCard(
       "Messages",
-      unreadCount !== null && unreadCount !== undefined ? unreadCount + " unread" : "Inbox pending",
+      unreadCount !== null && unreadCount !== undefined ? unreadCount + " " + unreadLabel : "Inbox pending",
       countMeta(deliveryCounts, ["broadcast", "targeted"]) || "broadcast / targeted",
       [
         { text: "rows", kind: "neutral" },
@@ -1240,7 +1248,7 @@
     var requiredResponseCount = requiredResponseKnown ? state.messageRequiredResponseCount : 0;
     var headingMeta = requiredResponseKnown && requiredResponseCount
       ? requiredResponseCount + " response needed"
-      : (showingLanes ? knownUnread + " unread across lanes" : (items.length ? items.length + " unread" : "inbox clear"));
+      : (showingLanes ? knownUnread + " unread across lanes" : (items.length ? items.length + (state.inboxCountLimited ? " visible unread" : " unread") : "inbox clear"));
     appendDeskHeading(panel, "Message Rows", headingMeta);
     if (!items.length) {
       panel.appendChild(el("p", "empty-state", showingLanes ? "All checked lanes are clear." : "Current-message rows appear after inbox refresh."));
@@ -1433,21 +1441,25 @@
     appendFilterSummary(node, payload && payload.filters);
     var deliveryCounts = operatorSummary.deliveryCounts || (payload && payload.deliveryCounts) || {};
     var responseCounts = operatorSummary.responseDispositionCounts || {};
-    state.inboxUnreadCount = operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length;
+    var inboxUnreadCount = operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length;
+    var limitedInboxView = inboxPayloadIsFilteredOrLimited(payload);
+    var inboxCountLabel = limitedInboxView ? "visible unread" : "unread";
+    state.inboxUnreadCount = inboxUnreadCount;
+    state.inboxCountLimited = limitedInboxView;
     state.messageDeliveryCounts = deliveryCounts;
     state.messageRequiredResponseCount = requiredResponseCountFromPayload(payload, items);
     renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary inbox-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Inbox"));
-    appendBadge(summaryLine, (operatorSummary.unreadCount !== undefined ? operatorSummary.unreadCount : items.length) + " unread", items.length ? "warn" : "good");
+    appendBadge(summaryLine, inboxUnreadCount + " " + inboxCountLabel, items.length ? "warn" : "good");
     appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"]);
     appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
     node.appendChild(summaryLine);
     if (!items.length) {
-      node.appendChild(el("p", "empty-state", "No unread messages for " + lane + "."));
+      node.appendChild(el("p", "empty-state", "No " + inboxCountLabel + " messages for " + lane + "."));
       return;
     }
-    var countText = (payload.unreadCount || items.length) + " unread message(s) for " + lane + ".";
+    var countText = inboxUnreadCount + " " + inboxCountLabel + " message(s) for " + lane + ".";
     if (deliveryCounts.broadcast !== undefined || deliveryCounts.targeted !== undefined) {
       countText += " " + (deliveryCounts.broadcast || 0) + " broadcast, " + (deliveryCounts.targeted || 0) + " targeted.";
     }

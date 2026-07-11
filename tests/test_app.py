@@ -803,6 +803,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("responseDispositionCounts", js)
         self.assertIn("isRequiredResponseItem", js)
         self.assertIn("requiredResponseCountFromPayload", js)
+        self.assertIn("inboxPayloadIsFilteredOrLimited", js)
+        self.assertIn('var inboxCountLabel = limitedInboxView ? "visible unread" : "unread"', js)
+        self.assertIn('unreadCount + " " + unreadLabel', js)
         self.assertIn("attentionFirstItems", js)
         self.assertIn("isRequiredResponseItem(left.item) ? 0 : 1", js)
         self.assertIn("attentionFirstItems(items).slice(0, 2)", js)
@@ -815,6 +818,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("appendCountBadges(summaryLine, \"Responses\"", js)
         self.assertIn("delivery.responseDisposition", js)
         self.assertIn("delivery.messageType", js)
+        self.assertIn('"No " + inboxCountLabel + " messages for "', js)
         self.assertIn("appendCopyActions(row", js)
 
     def test_console_js_renders_memory_submission_feedback(self):
