@@ -118,6 +118,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "/console",
             "/api/version",
             "/api/matm/live-capability-matrix",
+            "/api/matm/agent-compatibility",
             "/api/matm/connector-contract",
             "/api/matm/openapi.json",
             "/api/matm/readiness-result",
@@ -162,6 +163,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("notification_id", current_message["queryFilters"])
         self.assertIn("limit", current_message["queryFilters"])
         self.assertIn("visibleToAgents", current_message["postConfirmationFields"])
+        agent_compatibility = payload["data"]["agentCompatibility"]
+        self.assertEqual("/api/matm/agent-compatibility", agent_compatibility["route"])
+        self.assertEqual([("L%d" % index) for index in range(8)], agent_compatibility["supportedAbilityLevels"])
+        self.assertTrue(agent_compatibility["routeInventoryIncludesCompatibilityGuidance"])
+        self.assertEqual("downgrade_to_L0_or_L1", agent_compatibility["unknownClientDefault"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
         status, _headers, text = call_app("/")
@@ -181,6 +187,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('href="/agent-coordination"', docs)
         self.assertIn('href="/llms.txt"', docs)
         self.assertIn('href="/ai-manifest.json"', docs)
+        self.assertIn('href="/api/matm/agent-compatibility"', docs)
         self.assertIn('href="/.well-known/mcp.json"', docs)
         self.assertIn('href="/mcp/resources"', docs)
         self.assertIn('href="/api/matm/openapi.json"', docs)
@@ -298,6 +305,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(any("Create goal or task rooms" in item for item in data["coordinationFlow"]["routingPolicy"]))
         self.assertTrue(any("project-room status note" in item for item in data["evidenceToPostBack"]))
         self.assertEqual("/api/matm/openapi.json", data["publicDiscovery"]["openApi"])
+        self.assertEqual("/api/matm/agent-compatibility", data["publicDiscovery"]["agentCompatibility"])
         self.assertIn("/mcp/resources", data["publicDiscovery"]["mcpResources"])
         self.assertNotIn("apiKeySecret", text)
         self.assertNotIn("Bearer me_", text)
@@ -307,7 +315,40 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         resources = json.loads(text)["resources"]
         routes = {item.get("route") for item in resources}
         self.assertIn("/api/matm/connector-contract", routes)
+        self.assertIn("/api/matm/agent-compatibility", routes)
         self.assertIn("/api/matm/openapi.json", routes)
+
+    def test_agent_compatibility_contract_covers_l0_l7_and_fallbacks(self):
+        status, _headers, text = call_app("/api/matm/agent-compatibility")
+
+        self.assertEqual("200 OK", status)
+        payload = json.loads(text)
+        self.assertTrue(payload["ok"])
+        data = payload["data"]
+        self.assertEqual("memoryendpoints.agent_compatibility.v1", data["schemaVersion"])
+        self.assertEqual("public_safe_contract", data["status"])
+        self.assertEqual("downgrade_to_L0_or_L1", data["unknownClientDefault"])
+        self.assertEqual([("L%d" % index) for index in range(8)], data["supportedAbilityLevels"])
+        levels = {item["level"]: item for item in data["abilityLevels"]}
+        self.assertIn("/", levels["L0"]["memoryEndpointsPath"])
+        self.assertIn("/ai-manifest.json", levels["L1"]["memoryEndpointsPath"])
+        self.assertIn("/console", levels["L2"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/openapi.json", levels["L3"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/workspace", levels["L4"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/current-message", levels["L5"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/routing-decisions", levels["L6"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/sync/capabilities", levels["L7"]["memoryEndpointsPath"])
+        self.assertTrue(data["routeRecordContract"]["everyRouteIncludesAgentCompatibilityGuidance"])
+        self.assertIn("lowestSafeAbilityLevel", data["routeRecordContract"]["fields"])
+        self.assertIn("authUnavailableFallback", data["routeRecordContract"]["fields"])
+        self.assertIn("https://uaix.org/en-us/ai-ready-web/", data["sourceReferences"])
+        self.assertIn("https://uaix.org/en-us/spec/agent-executability-matrix/", data["sourceReferences"])
+        self.assertTrue(any("wizard" in item for item in data["dogfoodFeedbackForUAIX"]))
+        self.assertIn("/agent-coordination", data["fallbackPolicy"]["postUnavailable"])
+        self.assertFalse(data["truthBoundary"]["publicDiscoveryGrantsWriteAuthority"])
+        self.assertTrue(data["truthBoundary"]["unsupportedActionsReturnSafeNoOp"])
+        self.assertNotIn("apiKeySecret", text)
+        self.assertNotIn("Bearer me_", text)
 
     def test_openapi_golden_path_is_public_and_secret_safe(self):
         status, _headers, text = call_app("/api/matm/openapi.json")
@@ -320,9 +361,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertFalse(data["x-truthBoundary"]["rawWorkspaceKeysInPublicResponses"])
         self.assertFalse(data["x-truthBoundary"]["rawPrivatePayloadsStored"])
         self.assertTrue(data["x-truthBoundary"]["examplesUsePlaceholdersOnly"])
+        self.assertEqual("/api/matm/agent-compatibility", data["x-agentCompatibility"]["contract"])
+        self.assertEqual([("L%d" % index) for index in range(8)], data["x-agentCompatibility"]["supportedAbilityLevels"])
         self.assertIn("register_agent", data["x-memoryendpoints-goldenPath"])
         self.assertIn("search_memory", data["x-memoryendpoints-goldenPath"])
         paths = data["paths"]
+        self.assertIn("/api/matm/agent-compatibility", paths)
         self.assertIn("/api/matm/agent-setup/free-account", paths)
         self.assertIn("/api/matm/memory-events/submit", paths)
         self.assertIn("/api/matm/current-message", paths)
@@ -3671,6 +3715,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(data["routeCount"], len(data["routes"]))
         routes = {item["route"]: item for item in data["routes"]}
         self.assertIn("/docs/", routes)
+        self.assertIn("/api/matm/agent-compatibility", routes)
         self.assertIn("/api/matm/connector-contract", routes)
         self.assertIn("/api/matm/openapi.json", routes)
         self.assertIn("/api/matm/readiness-result", routes)
@@ -3686,8 +3731,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["GET"], routes["/api/matm/sync/changes"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/review-queue/decide"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/audit-log"]["methods"])
+        self.assertEqual(["GET"], routes["/api/matm/agent-compatibility"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/connector-contract"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/openapi.json"]["methods"])
+        self.assertEqual("L0", routes["/llms.txt"]["agentCompatibility"]["lowestSafeAbilityLevel"])
+        self.assertEqual("L1", routes["/api/matm/agent-compatibility"]["agentCompatibility"]["lowestSafeAbilityLevel"])
+        self.assertEqual("L6", routes["/api/matm/meeting-messages"]["agentCompatibility"]["lowestSafeAbilityLevel"])
+        self.assertEqual("L7", routes["/api/matm/sync/mutations"]["agentCompatibility"]["lowestSafeAbilityLevel"])
+        self.assertEqual("safeNoOp auth_required", routes["/api/matm/audit-log"]["agentCompatibility"]["authUnavailableFallback"])
+        self.assertIn("noOpBehavior", routes["/api/matm/review-queue/decide"]["agentCompatibility"])
 
     def test_sync_capabilities_are_public(self):
         status, _headers, text = call_app("/api/matm/sync/capabilities")

@@ -11,7 +11,7 @@ from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, R
 from .http import json_response, problem, response
 from .runtime import backend_error_code, store_backend_health
 from .security import redact_text
-from .site_data import PUBLIC_ROUTES, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
+from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 
 
@@ -1203,6 +1203,7 @@ def route_home(start_response):
       <a class="button" href="/agent-coordination">Agent coordination quickstart</a>
       <a class="button" href="/console">Open human console</a>
       <a class="button" href="/api/matm/connector-contract">Connector contract</a>
+      <a class="button" href="/api/matm/agent-compatibility">Agent compatibility</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
       <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
@@ -1212,6 +1213,7 @@ def route_home(start_response):
     <a href="/agent-coordination"><strong>Agent coordination</strong><span>register, rooms, memory, inbox, ack</span></a>
     <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
     <a href="/api/matm/connector-contract"><strong>Connector contract</strong><span>settings, routes, redaction, routing</span></a>
+    <a href="/api/matm/agent-compatibility"><strong>Agent compatibility</strong><span>L0-L7 ability paths and fallbacks</span></a>
     <a href="/api/matm/readiness-result"><strong>Readiness</strong><span>deployment and capability evidence</span></a>
     <a href="/memory-lifecycle"><strong>Memory lifecycle</strong><span>review, promotion, acknowledgement</span></a>
     <a href="/transparency"><strong>Transparency</strong><span>claims, redaction, unsupported areas</span></a>
@@ -1238,6 +1240,7 @@ def route_docs(start_response):
   <ul class="route-list">
     <li><a href="/llms.txt"><code>/llms.txt</code></a> and <a href="/llms-full.txt"><code>/llms-full.txt</code></a> summarize public agent guidance.</li>
     <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a> exposes route inventory and support boundaries.</li>
+    <li><a href="/api/matm/agent-compatibility"><code>/api/matm/agent-compatibility</code></a> maps L0-L7 agent ability levels to safe routes, fallbacks, and no-op behavior.</li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a> gives optional connectors one stable setup, API, UI, and routing contract.</li>
     <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a> gives agents and connectors a bounded OpenAPI-style golden path.</li>
     <li><a href="/agent-coordination"><code>/agent-coordination</code></a> gives authenticated agents one copy-safe coordination quickstart.</li>
@@ -1382,6 +1385,7 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
     <li><a href="/agent-setup"><code>/agent-setup</code></a></li>
     <li><a href="/console"><code>/console</code></a></li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a></li>
+    <li><a href="/api/matm/agent-compatibility"><code>/api/matm/agent-compatibility</code></a></li>
     <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a></li>
     <li><a href="/api/matm/live-capability-matrix"><code>/api/matm/live-capability-matrix</code></a></li>
     <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a></li>
@@ -2129,6 +2133,7 @@ def text_discovery(name):
         "Source repository: %s." % GITHUB_REPO_URL,
         "Memory boundary: hosted workspace memory for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
+        "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "Readiness evidence: /api/matm/readiness-result.",
         "Authority boundary: no certification, endorsement, hidden credential validation, or automatic memory promotion.",
@@ -2162,6 +2167,8 @@ def route_public_json(path, start_response):
         )
     if path == "/api/matm/live-capability-matrix":
         return json_response(start_response, {"ok": True, "data": capability_matrix()})
+    if path == "/api/matm/agent-compatibility":
+        return json_response(start_response, {"ok": True, "data": agent_compatibility_contract()})
     if path == "/api/matm/sync/capabilities":
         return json_response(start_response, {"ok": True, "data": sync_capabilities()})
     if path == "/api/matm/connector-contract":
@@ -2205,9 +2212,11 @@ def route_public_json(path, start_response):
                     "redacted_receipts",
                     "workspace_quota",
                     "connector_contract",
+                    "agent_compatibility",
                     "readiness_evidence",
                 ],
                 "manifest": "%s/ai-manifest.json" % SITE_URL,
+                "agentCompatibility": "%s/api/matm/agent-compatibility" % SITE_URL,
                 "companionDocumentation": COMPANION_DOCS_URL,
                 "sourceRepository": GITHUB_REPO_URL,
             },
@@ -2236,6 +2245,12 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints Connector Contract",
                 "mimeType": "application/json",
                 "route": "/api/matm/connector-contract",
+            },
+            {
+                "uri": "memoryendpoints://matm/agent-compatibility",
+                "name": "MemoryEndpoints Agent Compatibility Contract",
+                "mimeType": "application/json",
+                "route": "/api/matm/agent-compatibility",
             },
             {
                 "uri": "memoryendpoints://matm/openapi",

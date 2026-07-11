@@ -14,6 +14,7 @@ ROUTE_TABLE = [
     {"route": "/transparency", "access": "public", "methods": ["GET"], "purpose": "Support boundaries and no-op behavior."},
     {"route": "/api/version", "access": "public", "methods": ["GET"], "purpose": "Runtime version and dependency facts."},
     {"route": "/api/matm/live-capability-matrix", "access": "public", "methods": ["GET"], "purpose": "Current MATM capability state."},
+    {"route": "/api/matm/agent-compatibility", "access": "public", "methods": ["GET"], "purpose": "L0-L7 agent ability contract, fallbacks, and route-record guidance."},
     {"route": "/api/matm/sync/capabilities", "access": "public", "methods": ["GET"], "purpose": "Public distributed-sync v1 capability negotiation."},
     {"route": "/api/matm/connector-contract", "access": "public", "methods": ["GET"], "purpose": "Public-safe optional connector integration contract for external agents and apps."},
     {"route": "/api/matm/openapi.json", "access": "public", "methods": ["GET"], "purpose": "Bounded OpenAPI-style golden-path route schema."},
@@ -67,6 +68,284 @@ PROTECTED_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "
 
 def current_store_backend():
     return configured_store_backend()
+
+
+UAIX_AI_READY_WEB_REFERENCES = [
+    "https://uaix.org/en-us/ai-ready-web/",
+    "https://uaix.org/en-us/agent-capability-framework/",
+    "https://uaix.org/en-us/spec/capability-adaptive-agent-interoperability/",
+    "https://uaix.org/en-us/spec/capability-surface-matrix/",
+    "https://uaix.org/en-us/spec/agent-executability-matrix/",
+]
+
+
+AGENT_ABILITY_LEVELS = [
+    {
+        "level": "L0",
+        "label": "URL-only static reader",
+        "canUse": ["human pages", "sitemap", "llms.txt", "ai.txt"],
+        "memoryAuthority": "none",
+        "memoryEndpointsPath": ["/", "/docs", "/llms.txt", "/sitemap.xml", "/transparency"],
+        "fallback": "Read /transparency and stop with human_review_required when action, auth, memory, or JSON parsing is required.",
+    },
+    {
+        "level": "L1",
+        "label": "URL synthesizer and compact JSON reader",
+        "canUse": ["public JSON GET", "manifest", "route inventory", "readiness result"],
+        "memoryAuthority": "none",
+        "memoryEndpointsPath": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/route-inventory", "/api/matm/readiness-result"],
+        "fallback": "Use public route records only; do not infer write permission from public discovery.",
+    },
+    {
+        "level": "L2",
+        "label": "Browser-assisted form operator",
+        "canUse": ["visible setup page", "console-assisted flow", "copy-safe examples"],
+        "memoryAuthority": "human-supplied workspace key only",
+        "memoryEndpointsPath": ["/agent-setup", "/agent-coordination", "/console"],
+        "fallback": "Ask the human to complete setup or provide a workspace key through a secure local setting.",
+    },
+    {
+        "level": "L3",
+        "label": "Schema-capable HTTP JSON agent",
+        "canUse": ["OpenAPI-style JSON", "structured POST", "safe no-op errors"],
+        "memoryAuthority": "workspace-key protected public-safe summaries",
+        "memoryEndpointsPath": ["/api/matm/openapi.json", "/api/matm/memory-events/submit", "/api/matm/search"],
+        "fallback": "Use idempotent POST only when the workspace key and required fields are explicit; otherwise no-op.",
+    },
+    {
+        "level": "L4",
+        "label": "Authenticated owner agent",
+        "canUse": ["workspace boundary", "protected mutations", "audit and receipts"],
+        "memoryAuthority": "owned workspace scope with redaction and audit",
+        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
+        "fallback": "If auth, scope, idempotency, or provenance is missing, return auth_required or human_review_required.",
+    },
+    {
+        "level": "L5",
+        "label": "Restore/readback verifier",
+        "canUse": ["post confirmation fields", "readback URLs", "receipt verification"],
+        "memoryAuthority": "verified writes only after readback proves visibility",
+        "memoryEndpointsPath": ["/api/matm/search", "/api/matm/current-message", "/api/matm/sync/receipts", "/api/matm/sync/changes"],
+        "fallback": "Treat a mutation as incomplete until persisted=true and the returned readback route proves visibility.",
+    },
+    {
+        "level": "L6",
+        "label": "Multi-agent coordinator",
+        "canUse": ["meeting rooms", "routing decisions", "current-message fanout", "memory promotion"],
+        "memoryAuthority": "public-safe coordination notes and promoted memory only",
+        "memoryEndpointsPath": ["/api/matm/meeting-rooms", "/api/matm/meeting-messages", "/api/matm/routing-decisions", "/api/matm/agent-messages"],
+        "fallback": "Start in the company room, record routing decisions, then route work to workspace, project, goal, or task rooms.",
+    },
+    {
+        "level": "L7",
+        "label": "Site-specific capability negotiator",
+        "canUse": ["manifest negotiation", "connector contract", "sync capability contract"],
+        "memoryAuthority": "site-specific only when advertised by public manifest and protected auth",
+        "memoryEndpointsPath": ["/ai-manifest.json", "/api/matm/connector-contract", "/api/matm/live-capability-matrix", "/api/matm/sync/capabilities"],
+        "fallback": "Downgrade to L0/L1 when a capability is not listed, auth is unavailable, or an unsupported operation is requested.",
+    },
+]
+
+
+ROUTE_RECORD_CONTRACT_FIELDS = [
+    "lowestSafeAbilityLevel",
+    "highestSupportedAbilityLevel",
+    "method",
+    "contentType",
+    "sideEffectStatus",
+    "fetchExecutionClass",
+    "requiredFields",
+    "resultUrlField",
+    "restoreReadbackUrlField",
+    "writeCredentialResponsePath",
+    "browserFormEquivalent",
+    "getSafety",
+    "postBlockedFallback",
+    "liveGetBlockedFallback",
+    "mcpUnavailableFallback",
+    "authUnavailableFallback",
+    "toolUnavailableFallback",
+    "humanReviewUrl",
+    "noOpBehavior",
+]
+
+
+def _route_agent_guidance(item):
+    route = item["route"]
+    methods = item.get("methods") or ["GET"]
+    access = item.get("access") or "public"
+    has_post = "POST" in methods
+    is_public_api = route.startswith("/api/")
+    is_static_discovery = route in ("/", "/docs", "/docs/", "/agent-setup", "/agent-coordination", "/console", "/memory-lifecycle", "/transparency", "/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt")
+    is_json_discovery = route in ("/ai-manifest.json", "/.well-known/mcp.json", "/.well-known/ai-agent.json", "/mcp/resources", "/api/version", "/api/matm/live-capability-matrix", "/api/matm/agent-compatibility", "/api/matm/connector-contract", "/api/matm/openapi.json", "/api/matm/route-inventory", "/api/matm/readiness-result", "/api/matm/redacted-example-receipts", "/api/matm/sync/capabilities")
+
+    if access == "public" and is_static_discovery:
+        return {
+            "lowestSafeAbilityLevel": "L0",
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": "safe_read",
+            "fetchExecutionClass": "static_or_human_html" if route not in ("/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt") else "text_or_xml_get",
+            "contentType": "text/html" if route not in ("/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt") else "text_or_xml",
+            "requiredFields": [],
+            "resultUrlField": "",
+            "restoreReadbackUrlField": "",
+            "writeCredentialResponsePath": "",
+            "browserFormEquivalent": route if route in ("/agent-setup", "/agent-coordination", "/console") else "",
+            "getSafety": "safe",
+            "postBlockedFallback": "/agent-coordination",
+            "liveGetBlockedFallback": "/llms.txt",
+            "mcpUnavailableFallback": "/llms.txt",
+            "authUnavailableFallback": "/agent-setup",
+            "toolUnavailableFallback": "/docs",
+            "humanReviewUrl": "/transparency",
+            "noOpBehavior": "Read public guidance only; do not infer protected write authority.",
+        }
+
+    if access == "public" and is_json_discovery and not has_post:
+        return {
+            "lowestSafeAbilityLevel": "L1",
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": "safe_read",
+            "fetchExecutionClass": "public_json_get",
+            "contentType": "application/json",
+            "requiredFields": [],
+            "resultUrlField": "route_or_url",
+            "restoreReadbackUrlField": "",
+            "writeCredentialResponsePath": "",
+            "browserFormEquivalent": "/docs",
+            "getSafety": "safe",
+            "postBlockedFallback": "/agent-coordination",
+            "liveGetBlockedFallback": "/llms.txt",
+            "mcpUnavailableFallback": "/api/matm/route-inventory",
+            "authUnavailableFallback": "/agent-setup",
+            "toolUnavailableFallback": "/docs",
+            "humanReviewUrl": "/transparency",
+            "noOpBehavior": "Use discovery as advisory public evidence only; protected actions still require workspace auth.",
+        }
+
+    if route == "/api/matm/agent-setup/free-account":
+        return {
+            "lowestSafeAbilityLevel": "L2",
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": "creates_workspace_on_post",
+            "fetchExecutionClass": "browser_form_or_public_json_post",
+            "contentType": "application/json",
+            "requiredFields": ["companyLabel", "label", "projectLabel"],
+            "resultUrlField": "workspaceId",
+            "restoreReadbackUrlField": "/api/matm/workspace",
+            "writeCredentialResponsePath": "workspaceKey returned once; raw key is not stored server-side",
+            "browserFormEquivalent": "/agent-setup",
+            "getSafety": "GET is safe; POST creates a workspace and one-time secret",
+            "postBlockedFallback": "/agent-setup",
+            "liveGetBlockedFallback": "/agent-setup",
+            "mcpUnavailableFallback": "/agent-setup",
+            "authUnavailableFallback": "not_required_for_setup",
+            "toolUnavailableFallback": "/agent-setup",
+            "humanReviewUrl": "/transparency",
+            "noOpBehavior": "Do not create setup records unless the user explicitly requested workspace setup.",
+        }
+
+    if access == "protected":
+        level = "L6" if any(fragment in route for fragment in ("meeting-", "routing-decisions", "agent-messages", "current-message", "notifications")) else "L4"
+        if "/sync/" in route:
+            level = "L7"
+        side_effect = "authenticated_mutation" if has_post else "authenticated_read"
+        return {
+            "lowestSafeAbilityLevel": level,
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": side_effect,
+            "fetchExecutionClass": "protected_json_post" if has_post else "protected_json_get",
+            "contentType": "application/json",
+            "requiredFields": ["workspaceId"] if has_post else ["workspace_id"],
+            "resultUrlField": "messageId_or_memoryEventId_or_receiptId",
+            "restoreReadbackUrlField": "memoryQueryUrl_or_transcriptQueryUrl_or_inboxQueryUrl_or_receiptQueryUrl",
+            "writeCredentialResponsePath": "Authorization: Bearer <WORKSPACE_KEY> or X-MemoryEndpoints-Key; never echo raw key",
+            "browserFormEquivalent": "/console",
+            "getSafety": "GET is protected read; mutation requires POST and Idempotency-Key when advertised",
+            "postBlockedFallback": "/agent-coordination",
+            "liveGetBlockedFallback": "/agent-coordination",
+            "mcpUnavailableFallback": "/api/matm/openapi.json",
+            "authUnavailableFallback": "safeNoOp auth_required",
+            "toolUnavailableFallback": "/agent-coordination",
+            "humanReviewUrl": "/transparency",
+            "noOpBehavior": "Return safe no-op when auth, scope, idempotency, authority, or provenance is missing.",
+        }
+
+    return {
+        "lowestSafeAbilityLevel": "L1" if is_public_api else "L0",
+        "highestSupportedAbilityLevel": "L7",
+        "sideEffectStatus": "safe_read" if not has_post else "explicit_mutation",
+        "fetchExecutionClass": "public_json_get" if is_public_api else "public_get",
+        "contentType": "application/json" if is_public_api else "text/html",
+        "requiredFields": [],
+        "resultUrlField": "",
+        "restoreReadbackUrlField": "",
+        "writeCredentialResponsePath": "",
+        "browserFormEquivalent": "/docs",
+        "getSafety": "safe",
+        "postBlockedFallback": "/agent-coordination",
+        "liveGetBlockedFallback": "/llms.txt",
+        "mcpUnavailableFallback": "/llms.txt",
+        "authUnavailableFallback": "/agent-setup",
+        "toolUnavailableFallback": "/docs",
+        "humanReviewUrl": "/transparency",
+        "noOpBehavior": "Use lowest safe public route and stop when authority is unclear.",
+    }
+
+
+def agent_compatibility_contract():
+    return {
+        "schemaVersion": "memoryendpoints.agent_compatibility.v1",
+        "site": SITE_NAME,
+        "baseUrl": SITE_URL,
+        "generatedAt": utc_now(),
+        "status": "public_safe_contract",
+        "sourceReferences": UAIX_AI_READY_WEB_REFERENCES,
+        "scope": "MemoryEndpoints applies UAIX AI-ready web and agent-compatibility guidance to this target site; this endpoint is implementation evidence, not a UAIX certification claim.",
+        "unknownClientDefault": "downgrade_to_L0_or_L1",
+        "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
+        "abilityLevels": AGENT_ABILITY_LEVELS,
+        "routeRecordContract": {
+            "routeInventory": "/api/matm/route-inventory",
+            "fields": ROUTE_RECORD_CONTRACT_FIELDS,
+            "everyRouteIncludesAgentCompatibilityGuidance": True,
+        },
+        "surfaceMatrix": {
+            "staticHtml": {"lowestLevel": "L0", "routes": ["/", "/docs", "/agent-setup", "/agent-coordination", "/console", "/transparency"]},
+            "llmsTxt": {"lowestLevel": "L0", "routes": ["/llms.txt", "/llms-full.txt", "/ai.txt"]},
+            "sitemap": {"lowestLevel": "L0", "routes": ["/sitemap.xml"]},
+            "jsonDiscovery": {"lowestLevel": "L1", "routes": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/route-inventory", "/api/matm/readiness-result"]},
+            "browserForms": {"lowestLevel": "L2", "routes": ["/agent-setup", "/agent-coordination", "/console"]},
+            "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/memory-events/submit", "/api/matm/meeting-messages"]},
+            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/review-queue", "/api/matm/audit-log"]},
+            "restoreReadback": {"lowestLevel": "L5", "routes": ["/api/matm/search", "/api/matm/current-message", "/api/matm/sync/receipts", "/api/matm/sync/changes"]},
+            "multiAgent": {"lowestLevel": "L6", "routes": ["/api/matm/meeting-rooms", "/api/matm/routing-decisions", "/api/matm/agent-messages"]},
+            "siteSpecificNegotiation": {"lowestLevel": "L7", "routes": ["/api/matm/live-capability-matrix", "/api/matm/connector-contract", "/api/matm/sync/capabilities"]},
+        },
+        "fallbackPolicy": {
+            "postUnavailable": "Use /agent-coordination or /console for browser-assisted flow; otherwise stop with human_review_required.",
+            "authUnavailable": "Use public setup and discovery only; protected routes return safeNoOp auth_required.",
+            "mcpUnavailable": "Use /api/matm/route-inventory, /api/matm/openapi.json, and /llms.txt.",
+            "liveGetUnavailable": "Use cached public guidance only if provided by the operator; do not claim live verification.",
+            "toolsUnavailable": "Use L0/L1 text and JSON routes, then ask for human review before action.",
+            "memoryEndpointUnavailable": "Keep local .uai active startup memory usable; do not treat hosted memory outage as permission to forget active local instructions.",
+        },
+        "dogfoodFeedbackForUAIX": [
+            "Publish one compact JSON companion that composes AI-Ready Web evidence requirements with L0-L7 agent compatibility so agents do not have to stitch separate standards pages together.",
+            "Make route-record compatibility fields validator-addressable: lowest safe level, highest supported level, side-effect status, fetch class, required fields, readback URL, browser equivalent, fallbacks, human review URL, and no-op behavior.",
+            "Make the wizard generate L0/L1 fallback routes beside OpenAPI or MCP output so low-capability agents are not stranded on POST-only or JavaScript-only flows.",
+            "Require memory guidance to preserve local .uai active memory even when hosted memory endpoints are unavailable, then route public-safe durable memory to the hosted system.",
+            "Warn when examples and real credentials share the same prompt block; require machine-readable auth blocks with placeholder-only examples.",
+        ],
+        "truthBoundary": {
+            "publicDiscoveryGrantsWriteAuthority": False,
+            "protectedWritesRequireWorkspaceKey": True,
+            "rawWorkspaceKeysInPublicResponses": False,
+            "rawPrivatePayloadsStored": False,
+            "certificationClaimed": False,
+            "unsupportedActionsReturnSafeNoOp": True,
+        },
+    }
 
 
 def sync_capabilities():
@@ -218,6 +497,15 @@ def capability_matrix():
                 "allowedMethods": ["GET", "POST", "OPTIONS"],
                 "allowedHeaders": ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"],
             },
+        },
+        "agentCompatibility": {
+            "status": "live",
+            "route": "/api/matm/agent-compatibility",
+            "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
+            "unknownClientDefault": "downgrade_to_L0_or_L1",
+            "routeInventoryIncludesCompatibilityGuidance": True,
+            "lowestSafeFallback": "/transparency",
+            "publicSafeOnly": True,
         },
         "distributedSync": sync_capabilities(),
         "auditTrail": {
@@ -442,6 +730,7 @@ def connector_contract():
         },
         "publicDiscovery": {
             "capabilityMatrix": "/api/matm/live-capability-matrix",
+            "agentCompatibility": "/api/matm/agent-compatibility",
             "openApi": "/api/matm/openapi.json",
             "routeInventory": "/api/matm/route-inventory",
             "readiness": "/api/matm/readiness-result",
@@ -507,6 +796,7 @@ def openapi_spec():
     paths = {
         "/api/matm/connector-contract": {"get": public_operation("Read connector contract", "Public-safe integration contract, browser key guidance, CORS boundary, and UI expectations.")},
         "/api/matm/live-capability-matrix": {"get": public_operation("Read capability matrix", "Current public capability state and truth boundaries.")},
+        "/api/matm/agent-compatibility": {"get": public_operation("Read agent compatibility contract", "L0-L7 agent ability levels, route-record guidance, fallback policy, and UAIX dogfood feedback.")},
         "/api/matm/sync/capabilities": {"get": public_operation("Read distributed sync capabilities", "Public-safe distributed-sync v1 routes, revision/conflict semantics, checkpoint fields, and retention policy.")},
         "/api/matm/readiness-result": {"get": public_operation("Read readiness result", "Current readiness evidence without certification overclaim.")},
         "/api/matm/route-inventory": {"get": public_operation("Read route inventory", "Public and protected route inventory with access boundaries.")},
@@ -603,6 +893,12 @@ def openapi_spec():
             "valuesRedacted": True,
             "examplesUsePlaceholdersOnly": True,
         },
+        "x-agentCompatibility": {
+            "contract": "/api/matm/agent-compatibility",
+            "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
+            "unknownClientDefault": "downgrade_to_L0_or_L1",
+            "routeInventoryIncludesCompatibilityGuidance": True,
+        },
         "paths": paths,
         "components": {
             "securitySchemes": {
@@ -642,11 +938,14 @@ def manifest():
             "boundedCapabilities": True,
             "privacyPreservingReceipts": True,
             "hiddenBotOnlyContent": False,
+            "agentAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
+            "agentCompatibilityRoute": "%s/api/matm/agent-compatibility" % SITE_URL,
         },
         "evidence": {
             "routeInventory": "%s/api/matm/route-inventory" % SITE_URL,
             "readinessResult": "%s/api/matm/readiness-result" % SITE_URL,
             "capabilityMatrix": "%s/api/matm/live-capability-matrix" % SITE_URL,
+            "agentCompatibility": "%s/api/matm/agent-compatibility" % SITE_URL,
             "connectorContract": "%s/api/matm/connector-contract" % SITE_URL,
             "openApi": "%s/api/matm/openapi.json" % SITE_URL,
             "sitemap": "%s/sitemap.xml" % SITE_URL,
@@ -662,6 +961,11 @@ def manifest():
         },
         "routes": {"public": PUBLIC_ROUTES, "protected": PROTECTED_ROUTES},
         "mcp": {"resources": "%s/mcp/resources" % SITE_URL, "wellKnown": "%s/.well-known/mcp.json" % SITE_URL},
+        "agentCompatibility": {
+            "contract": "%s/api/matm/agent-compatibility" % SITE_URL,
+            "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
+            "unknownClientDefault": "downgrade_to_L0_or_L1",
+        },
     }
 
 
@@ -680,6 +984,10 @@ def readiness_result():
         "runtimeBackendHealth": health,
         "sourceReferences": [
             "https://uaix.org/en-us/ai-ready-web/",
+            "https://uaix.org/en-us/agent-capability-framework/",
+            "https://uaix.org/en-us/spec/capability-adaptive-agent-interoperability/",
+            "https://uaix.org/en-us/spec/capability-surface-matrix/",
+            "https://uaix.org/en-us/spec/agent-executability-matrix/",
             "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints",
             COMPANION_DOCS_URL,
             GITHUB_REPO_URL,
@@ -698,7 +1006,12 @@ def readiness_result():
             {
                 "id": "route_inventory",
                 "status": "pass_local",
-                "evidence": ["/api/matm/route-inventory", "docs/route-inventory.md"],
+                "evidence": ["/api/matm/route-inventory", "docs/route-inventory.md", "every route includes agentCompatibility guidance"],
+            },
+            {
+                "id": "agent_ability_compatibility",
+                "status": "pass_local",
+                "evidence": ["/api/matm/agent-compatibility", "L0-L7 ability levels", "fallback policy", "route-record contract fields"],
             },
             {
                 "id": "safe_api_boundaries",
@@ -800,6 +1113,7 @@ def route_inventory():
     routes = []
     for item in ROUTE_TABLE:
         out = dict(item)
+        out["agentCompatibility"] = _route_agent_guidance(item)
         out["valuesRedacted"] = True
         routes.append(out)
     return {
