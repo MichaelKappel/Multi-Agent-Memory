@@ -231,6 +231,30 @@ def _knowledge_document_confirmation(store, workspace_id, document):
     }
 
 
+def _external_link_confirmation(store, workspace_id, link, document_id=""):
+    link = link or {}
+    external_link_id = link.get("externalLinkId") or ""
+    items = store.external_links(workspace_id, {"externalLinkId": external_link_id}, limit=10)
+    persisted_link = next((item for item in items if item.get("externalLinkId") == external_link_id), None)
+    visible_on_document = not document_id or any(
+        mention.get("knowledgeDocumentId") == document_id
+        for mention in (persisted_link or {}).get("mentions", [])
+    )
+    audit_items = store.audit_log(workspace_id, 50, "external_link.upsert")
+    visible_in_audit = any(item.get("target") == external_link_id for item in audit_items)
+    return {
+        "persisted": bool(external_link_id and persisted_link and visible_on_document and visible_in_audit),
+        "visibleInInternetSearch": bool(persisted_link),
+        "visibleOnKnowledgeDocument": visible_on_document,
+        "visibleInAuditLog": visible_in_audit,
+        "canonicalExternalLinkId": external_link_id,
+        "linkQueryUrl": _protected_query_url("/api/matm/external-links", {"external_link_id": external_link_id}),
+        "internetSearchQueryUrl": _protected_query_url("/api/matm/internet-search", {"q": link.get("pageTitle") or link.get("siteName")}),
+        "knowledgeDocumentLinksQueryUrl": _protected_query_url("/api/matm/external-links", {"document_id": document_id}) if document_id else None,
+        "valuesRedacted": True,
+    }
+
+
 def _knowledge_filters(query):
     return {
         "q": query.get("q") or query.get("query") or "",
@@ -241,6 +265,43 @@ def _knowledge_filters(query):
         "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
         "sourcePrefix": query.get("source_prefix") or query.get("sourcePrefix") or "",
         "documentId": query.get("document_id") or query.get("documentId") or query.get("search_document_id") or query.get("searchDocumentId") or "",
+    }
+
+
+def _external_link_filters(query):
+    return {
+        "q": query.get("q") or query.get("query") or "",
+        "externalLinkId": query.get("external_link_id") or query.get("externalLinkId") or "",
+        "documentId": query.get("document_id") or query.get("documentId") or query.get("knowledge_document_id") or query.get("knowledgeDocumentId") or "",
+        "host": query.get("host") or "",
+        "siteName": query.get("site_name") or query.get("siteName") or "",
+        "reviewStatus": query.get("review_status") or query.get("reviewStatus") or "",
+        "crawlStatus": query.get("crawl_status") or query.get("crawlStatus") or "",
+        "relationshipType": query.get("relationship_type") or query.get("relationshipType") or "",
+        "scope": query.get("scope") or "",
+        "scopeId": query.get("scope_id") or query.get("scopeId") or "",
+        "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
+    }
+
+
+def _external_link_operator_summary(items, filters):
+    hosts = {}
+    sites = {}
+    for item in items or []:
+        host = item.get("host") or "unknown"
+        site = item.get("siteName") or host
+        hosts[host] = hosts.get(host, 0) + 1
+        sites[site] = sites.get(site, 0) + 1
+    return {
+        "schemaVersion": "memoryendpoints.external_link_search_operator_summary.v1",
+        "resultCount": len(items or []),
+        "hostCounts": hosts,
+        "siteCounts": sites,
+        "activeFilters": sorted(key for key, value in (filters or {}).items() if value),
+        "searchMode": "curated_external_links",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
     }
 
 
@@ -515,8 +576,20 @@ def _require_auth(environ, workspace_id):
     return auth
 
 
+def _asset_version(*relative_paths):
+    digest = hashlib.sha256()
+    for relative_path in relative_paths:
+        path = STATIC_ROOT / relative_path
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(str(relative_path).encode("utf-8"))
+    source_version = build_provenance().get("sourceShaShort") or __version__
+    return "%s-%s" % (source_version, digest.hexdigest()[:12])
+
+
 def html_page(title, main):
-    asset_version = build_provenance().get("sourceShaShort") or __version__
+    asset_version = _asset_version("css/site.css", "js/site.js")
     json_ld = json.dumps(
         {
             "@context": "https://schema.org",
@@ -2240,7 +2313,7 @@ Remaining blocker</textarea>
 
 
 def route_knowledge(start_response):
-    asset_version = escape_html(build_provenance().get("sourceShaShort") or __version__)
+    asset_version = escape_html(_asset_version("js/knowledge.js"))
     body = """
 <section class="knowledge-app" data-knowledge-app>
   <header class="knowledge-header">
@@ -2259,6 +2332,10 @@ def route_knowledge(start_response):
     </form>
   </header>
   <section class="knowledge-toolbar">
+    <div class="knowledge-search-mode" role="tablist" aria-label="Search index" data-knowledge-search-mode>
+      <button class="button" type="button" role="tab" aria-selected="true" data-knowledge-mode="pages">Wiki pages</button>
+      <button class="button" type="button" role="tab" aria-selected="false" data-knowledge-mode="web">Web links</button>
+    </div>
     <form class="knowledge-search" data-knowledge-search>
       <label>Search
         <input name="q" placeholder="strategy, memory, routing">
@@ -2714,6 +2791,97 @@ def route_protected(environ, start_response, path):
             "rawPayloadExposed": False,
         }
         store.record_idempotency(workspace_id, idem, "project-upsert", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
+    if path in ("/api/matm/external-links", "/api/matm/internet-search") and method == "GET":
+        filters = _external_link_filters(query)
+        active_filters = {key: value for key, value in filters.items() if value}
+        items = store.external_links(workspace_id, filters, query.get("limit") or "50")
+        _audit_read(
+            store,
+            workspace_id,
+            auth,
+            "external_links.search",
+            path,
+            {"resultCount": len(items), "filterKeys": sorted(active_filters.keys()), "searchMode": "curated_external_links"},
+        )
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.external_link_search.v1",
+                "items": items,
+                "count": len(items),
+                "filters": active_filters,
+                "searchMode": "curated_external_links",
+                "knowledgeSource": "database_external_links",
+                "filesystemLinksIncluded": False,
+                "operatorSummary": _external_link_operator_summary(items, active_filters),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path in ("/api/matm/external-links", "/api/matm/external-links/upsert") and method == "POST":
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "external-link-upsert", body)
+        if replay:
+            return replay
+        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
+        if not actor_agent_id:
+            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "External link upsert requires actorAgentId.", "actor_agent_id_required")
+        if not str(body.get("url") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "URL required", "External link upsert requires an HTTP or HTTPS URL.", "external_url_required")
+        if not str(body.get("siteName") or body.get("site_name") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Site name required", "External link upsert requires the site's human-readable name.", "external_link_site_name_required")
+        if not str(body.get("pageTitle") or body.get("page_title") or body.get("title") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Page title required", "External link upsert requires the linked page title.", "external_link_page_title_required")
+        if not str(body.get("description") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Description required", "External link upsert requires a useful search-result description.", "external_link_description_required")
+        if not _listish_values(body.get("keywords") or body.get("keyword") or body.get("tags")):
+            return problem(start_response, "422 Unprocessable Entity", "Keywords required", "External link upsert requires at least one search keyword.", "external_link_keywords_required")
+        document_id = body.get("knowledgeDocumentId") or body.get("knowledge_document_id") or body.get("documentId") or body.get("document_id") or ""
+        if document_id and not str(body.get("contextDescription") or body.get("context_description") or "").strip():
+            return problem(start_response, "422 Unprocessable Entity", "Citation context required", "A link attached to a knowledge document requires contextDescription explaining why the page cites it.", "external_link_context_required")
+        if not store.has_quota_for(workspace_id, body):
+            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this external link.", "quota_exceeded")
+        link, error = store.upsert_external_link(workspace_id, actor_agent_id, body)
+        error_details = {
+            "external_url_invalid": ("Invalid URL", "The external link URL is invalid."),
+            "external_url_scheme_unsupported": ("Unsupported URL scheme", "External links must use HTTP or HTTPS."),
+            "external_url_credentials_forbidden": ("Credentials forbidden", "External link URLs cannot contain credentials."),
+            "external_url_host_invalid": ("Invalid host", "The external link host is invalid."),
+            "external_url_not_public": ("Public host required", "External links must target a public internet host."),
+            "external_url_port_invalid": ("Invalid port", "The external link port is invalid."),
+            "external_link_relationship_unsupported": ("Unsupported relationship", "The external link relationship type is unsupported."),
+            "external_link_review_status_unsupported": ("Unsupported review status", "The external link review status is unsupported."),
+            "external_link_crawl_status_unsupported": ("Unsupported crawl status", "The external link crawl status is unsupported."),
+            "external_link_citation_order_invalid": ("Invalid citation order", "citationOrder must be a non-negative integer."),
+            "knowledge_document_not_found": ("Knowledge document not found", "The cited knowledge document does not exist in this workspace."),
+        }
+        if error:
+            title, detail = error_details.get(error, ("External link rejected", "The external link could not be stored."))
+            status = "404 Not Found" if error == "knowledge_document_not_found" else "422 Unprocessable Entity"
+            return problem(start_response, status, title, detail, error)
+        confirmation = _external_link_confirmation(store, workspace_id, link, document_id)
+        if not confirmation["persisted"]:
+            return problem(start_response, "500 Internal Server Error", "External link was not persisted", "The link could not be confirmed in search, citation, and audit readback after write.", "external_link_not_persisted")
+        payload = {
+            "ok": True,
+            "link": link,
+            "persisted": confirmation["persisted"],
+            "visibleInInternetSearch": confirmation["visibleInInternetSearch"],
+            "visibleOnKnowledgeDocument": confirmation["visibleOnKnowledgeDocument"],
+            "visibleInAuditLog": confirmation["visibleInAuditLog"],
+            "canonicalExternalLinkId": confirmation["canonicalExternalLinkId"],
+            "linkQueryUrl": confirmation["linkQueryUrl"],
+            "internetSearchQueryUrl": confirmation["internetSearchQueryUrl"],
+            "knowledgeDocumentLinksQueryUrl": confirmation["knowledgeDocumentLinksQueryUrl"],
+            "confirmation": confirmation,
+            "operatorSummary": _external_link_operator_summary([link], {"externalLinkId": link.get("externalLinkId")}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "external-link-upsert", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/knowledge-tree" and method == "GET":
         filters = _knowledge_filters(query)

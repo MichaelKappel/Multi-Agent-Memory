@@ -18,6 +18,9 @@ Current architecture state:
 - Public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`.
 - Protected MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, redacted receipts, and redacted audit-log readback.
 - Protected knowledge wiki routes cover project upsert/list, database-backed company/workspace/project tree retrieval, and one-document wiki indexing through `matm_crawl_sources` and `matm_search_documents`.
+- Reviewed report ingestion preserves one canonical source record and can create multiple semantically bounded knowledge pages from that source. Each page has independent title, description, keywords, hierarchy placement, route, content hash, and source-line provenance.
+- External web links are first-class `matm_external_links` records, not text-only URL fragments. `matm_external_link_mentions` provides many-to-many citation context between canonical links and knowledge pages.
+- `/api/matm/internet-search` and `/api/matm/external-links` search reviewed URL, host, site name, page title, description, keywords, crawl/review state, and citing-page context. Link indexing does not automatically fetch or execute the target.
 - The authenticated human `/knowledge` wiki and AI swarm knowledge routes must read the same database records. Do not create generated filesystem wiki trees as the source of truth.
 - `docs/` must not become a permanent knowledge store. After its knowledge is reviewed and moved one item at a time into the database-backed wiki/memory system, the repository should no longer retain `docs/` as a parallel documentation hierarchy.
 - File storage remains the default local backend.

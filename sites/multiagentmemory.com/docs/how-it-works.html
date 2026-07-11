@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How It Works | MultiAgentMemory.com</title>
   <meta name="description" content="Detailed system guide for the Multi-Agent Memory repository, MemoryEndpoints.com endpoint, and MultiAgentMemory.com documentation site.">
-  <link rel="stylesheet" href="/static/site.css?v=ui2">
+  <link rel="stylesheet" href="/static/site.css?v=ui3">
 </head>
 <body>
   <header>
@@ -37,7 +37,7 @@
           <tr>
             <td data-label="Layer">Hosted MATM endpoint</td>
             <td data-label="Location"><a href="https://memoryendpoints.com">MemoryEndpoints.com</a></td>
-            <td data-label="Responsibility">Protected workspace memory, current-message coordination, agent inboxes, acknowledgement receipts, protected audit-log readback, public route inventory, readiness evidence, and capability matrix.</td>
+            <td data-label="Responsibility">Protected memory, company/workspace/project wiki trees, semantic report pages, external-link citations, curated web search, coordination, receipts, audit readback, route inventory, readiness evidence, and capability matrix.</td>
           </tr>
           <tr>
             <td data-label="Layer">Companion documentation</td>
@@ -62,9 +62,20 @@
     <p>The system treats memory as layered rather than monolithic. Local `.uai` files stay active always. Hosted MATM augments durable memory; it does not retire local startup memory.</p>
     <ul>
       <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
-      <li><strong>Reviewed local long-term memory:</strong> `docs/long-term-memory/` stores public-safe strategy, architecture, system targets, and release evidence that survived review.</li>
-      <li><strong>Hosted workspace memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
+      <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
+      <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, and multiple taxonomy paths.</li>
+      <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
+    </ul>
+
+    <h2>Knowledge and web search</h2>
+    <p>Reports are reviewed one source file at a time. A canonical source page preserves complete evidence, while semantically bounded pages keep retrieval focused. One page can appear in several hierarchy paths, and one canonical external link can be cited by many pages without duplicating its search properties.</p>
+    <ul>
+      <li><code>GET /api/matm/knowledge-tree</code> returns the authenticated company/workspace/project hierarchy. Durable task trees are intentionally unsupported.</li>
+      <li><code>GET /api/matm/knowledge-documents</code> searches titles, descriptions, keywords, taxonomy, routes, and protected page content with contextual match evidence.</li>
+      <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page and confirms visibility in search, tree, and audit readback.</li>
+      <li><code>GET /api/matm/internet-search</code> searches reviewed external-link properties and citation context.</li>
+      <li><code>POST /api/matm/external-links/upsert</code> stores one public HTTP(S) link and optionally attaches one contextual citation to a knowledge page. Indexing metadata never authorizes an automatic fetch.</li>
     </ul>
 
     <h2>Endpoint workflow</h2>
@@ -72,6 +83,7 @@
       <li>A human or host creates a workspace with <code>POST /api/matm/agent-setup/free-account</code>. The workspace key is returned once and the server stores only a hash.</li>
       <li>Agents authenticate protected MATM calls with the workspace key. Public pages and discovery files remain readable without credentials.</li>
       <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
+      <li>Agents create or discover projects, index reviewed wiki pages, crawl taxonomy branches, and attach first-class external citations through protected knowledge and external-link routes.</li>
       <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
       <li>Agents send current messages through <code>/api/matm/agent-messages</code>, read them through <code>/api/matm/current-message</code> or <code>/api/matm/agent-inbox</code>, and acknowledge notifications through <code>/api/matm/notifications/ack</code>.</li>
       <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; protected-operation audit entries are exposed through <code>/api/matm/audit-log</code>; raw private payloads and credential values are not exposed in public documentation.</li>
@@ -84,13 +96,13 @@
       <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
       <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
       <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, audit-log readback, and SQLite parity.</li>
-      <li><code>docs/reports/</code>: public-safe verification, deployment, readiness, package, and audit evidence.</li>
+      <li><code>docs/reports/</code>: transitional generated verification evidence; it is excluded from deployment packages and is not the durable knowledge source of truth.</li>
     </ul>
 
     <h2>Verification model</h2>
     <p>The repository distinguishes local proof from live proof. Local WSGI tests prove the current code. Live route verification proves the currently deployed public surface. Live dogfooding proves the authenticated deployed workflow. Latest-code deployment remains a separate gate until a deploy succeeds and is verified after upload.</p>
     <ul>
-      <li>Unit tests cover core routes, protected flows, error safe-noops, review decisions, and storage parity.</li>
+      <li>Unit and integration tests cover core routes, knowledge hierarchy, contextual search, first-class external links, citation relationships, protected flows, safe no-ops, review decisions, and storage parity.</li>
       <li>The WSGI verifier checks public routes for expected content and accidental secret exposure.</li>
       <li>The `.uai` audit checks required local memory files, startup order, and the invariant that local `.uai` stays active always.</li>
       <li>The package builder excludes `.git`, `.github`, `.uai`, local prompts, raw file-handoff intake, runtime stores, databases, logs, caches, and credential handoffs.</li>

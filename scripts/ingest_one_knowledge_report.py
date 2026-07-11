@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
-DEFAULT_REPORT = ROOT / "docs" / "reports" / "single-knowledge-report-ingest.json"
+DEFAULT_REPORT = ROOT / "var" / "reports" / "single-knowledge-report-ingest.json"
 
 
 def sha256_text(value):
@@ -42,6 +42,98 @@ def first_heading(text, fallback):
             if title:
                 return title[:240]
     return fallback
+
+
+def clean_heading(value):
+    text = re.sub(r"\s+#+\s*$", "", str(value or "").strip())
+    text = re.sub(r"^[*_`~]+|[*_`~]+$", "", text).strip()
+    return text
+
+
+def markdown_sections(text):
+    lines = text.splitlines()
+    headings = []
+    for index, line in enumerate(lines):
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line.strip())
+        if not match:
+            continue
+        headings.append(
+            {
+                "lineIndex": index,
+                "lineStart": index + 1,
+                "level": len(match.group(1)),
+                "title": clean_heading(match.group(2)),
+            }
+        )
+    for position, heading in enumerate(headings):
+        end_index = len(lines)
+        for candidate in headings[position + 1 :]:
+            if candidate["level"] <= heading["level"]:
+                end_index = candidate["lineIndex"]
+                break
+        section_lines = lines[heading["lineIndex"] : end_index]
+        while section_lines and not section_lines[-1].strip():
+            section_lines.pop()
+        heading["lineEnd"] = heading["lineIndex"] + len(section_lines)
+        heading["text"] = "\n".join(section_lines).strip() + "\n"
+        heading["ordinal"] = position + 1
+    return headings
+
+
+def select_knowledge_unit(text, source_path, section_heading="", stop_heading=""):
+    report_title = first_heading(text, source_path.stem.replace("-", " ").replace("_", " ").title())
+    requested = clean_heading(section_heading)
+    if not requested:
+        knowledge_text = text
+        unit = {
+            "kind": "whole_report",
+            "reportTitle": clean_heading(report_title),
+            "sectionHeading": "",
+            "sectionLevel": None,
+            "sectionOrdinal": None,
+            "lineStart": 1,
+            "lineEnd": len(text.splitlines()),
+        }
+    else:
+        matches = [item for item in markdown_sections(text) if item["title"].casefold() == requested.casefold()]
+        if not matches:
+            raise RuntimeError("section heading not found in source report: %s" % section_heading)
+        if len(matches) > 1:
+            raise RuntimeError("section heading is ambiguous in source report: %s" % section_heading)
+        section = matches[0]
+        knowledge_text = section["text"]
+        unit = {
+            "kind": "report_section",
+            "reportTitle": clean_heading(report_title),
+            "sectionHeading": section["title"],
+            "sectionLevel": section["level"],
+            "sectionOrdinal": section["ordinal"],
+            "lineStart": section["lineStart"],
+            "lineEnd": section["lineEnd"],
+        }
+    requested_stop = clean_heading(stop_heading)
+    if requested_stop:
+        boundaries = [
+            item
+            for item in markdown_sections(text)
+            if item["title"].casefold() == requested_stop.casefold()
+            and item["lineStart"] > unit["lineStart"]
+            and item["lineStart"] <= unit["lineEnd"]
+        ]
+        if not boundaries:
+            raise RuntimeError("stop heading not found inside selected knowledge unit: %s" % stop_heading)
+        if len(boundaries) > 1:
+            raise RuntimeError("stop heading is ambiguous inside selected knowledge unit: %s" % stop_heading)
+        boundary = boundaries[0]
+        selected_lines = text.splitlines()[unit["lineStart"] - 1 : boundary["lineStart"] - 1]
+        while selected_lines and not selected_lines[-1].strip():
+            selected_lines.pop()
+        knowledge_text = "\n".join(selected_lines).strip() + "\n"
+        unit["lineEnd"] = unit["lineStart"] + len(selected_lines) - 1
+        unit["stopHeading"] = boundary["title"]
+    else:
+        unit["stopHeading"] = ""
+    return knowledge_text, unit
 
 
 def call_json(base_url, path, method="GET", body=None, token=None, idempotency_key=None, query=None):
@@ -89,11 +181,13 @@ def workspace_context(base_url, token, configured_workspace_id=None):
     }
 
 
-def build_body(args, context, actor_agent_id, source_path, text):
-    title = args.title or first_heading(text, source_path.stem.replace("-", " ").replace("_", " ").title())
-    content_hash = sha256_text(text)
-    source_uri = args.source_uri or "report://%s-%s" % (slug(source_path.stem), content_hash[:12])
+def build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit):
+    title = clean_heading(args.title or knowledge_unit.get("sectionHeading") or first_heading(source_text, source_path.stem.replace("-", " ").replace("_", " ").title()))
+    source_content_hash = sha256_text(source_text)
+    knowledge_content_hash = sha256_text(knowledge_text)
+    source_uri = args.source_uri or "report://%s-%s" % (slug(source_path.stem), source_content_hash[:12])
     route_or_path = args.route_or_path or "/knowledge/%s/%s/%s" % (args.scope, args.category, slug(title))
+    document_type = args.document_type or ("reviewed-report-section" if knowledge_unit.get("kind") == "report_section" else "reviewed-report")
     body = {
         "workspaceId": context["workspaceId"],
         "actorAgentId": actor_agent_id,
@@ -102,9 +196,9 @@ def build_body(args, context, actor_agent_id, source_path, text):
         "description": args.description,
         "keywords": args.keyword,
         "taxonomyPaths": args.taxonomy_path,
-        "searchableText": text,
+        "searchableText": knowledge_text,
         "category": args.category,
-        "documentType": args.document_type,
+        "documentType": document_type,
         "sourceUri": source_uri,
         "sourceType": args.source_type,
         "routeOrPath": route_or_path,
@@ -113,8 +207,18 @@ def build_body(args, context, actor_agent_id, source_path, text):
         "tags": [tag for tag in args.tag if tag],
         "metadata": {
             "sourceFileName": source_path.name,
-            "sourceContentHash": "sha256:" + content_hash,
-            "ingestMode": "single_report_reviewed",
+            "sourceContentHash": "sha256:" + source_content_hash,
+            "knowledgeUnitContentHash": "sha256:" + knowledge_content_hash,
+            "ingestMode": "single_report_reviewed_section" if knowledge_unit.get("kind") == "report_section" else "single_report_reviewed",
+            "knowledgeUnitKind": knowledge_unit.get("kind"),
+            "sourceReportTitle": knowledge_unit.get("reportTitle"),
+            "sourceReportRoute": args.source_report_route or "",
+            "sourceSectionHeading": knowledge_unit.get("sectionHeading") or "",
+            "sourceSectionLevel": knowledge_unit.get("sectionLevel"),
+            "sourceSectionOrdinal": knowledge_unit.get("sectionOrdinal"),
+            "sourceStopHeading": knowledge_unit.get("stopHeading") or "",
+            "sourceLineStart": knowledge_unit.get("lineStart"),
+            "sourceLineEnd": knowledge_unit.get("lineEnd"),
             "absoluteSourcePathStored": False,
             "classificationNote": args.classification_note or "",
             "description": args.description,
@@ -148,9 +252,12 @@ def main(argv=None):
     parser.add_argument("--project-id", default="")
     parser.add_argument("--project-label", default="")
     parser.add_argument("--title", default="")
-    parser.add_argument("--document-type", default="reviewed-report")
+    parser.add_argument("--document-type", default="")
     parser.add_argument("--source-type", default="reviewed_markdown_report")
     parser.add_argument("--source-uri", default="")
+    parser.add_argument("--source-report-route", default="")
+    parser.add_argument("--section-heading", default="", help="Exact Markdown heading to ingest as one reviewed knowledge page. Nested subsections are included.")
+    parser.add_argument("--stop-heading", default="", help="Optional exact nested heading that ends the selected knowledge page before that heading.")
     parser.add_argument("--route-or-path", default="")
     parser.add_argument("--classification-note", default="")
     parser.add_argument("--description", required=True)
@@ -173,18 +280,20 @@ def main(argv=None):
         raise RuntimeError("applied single-report ingest requires --memory-summary so wiki content and durable MATM memory are both updated")
 
     source_path = Path(args.source_file)
-    text = source_path.read_text(encoding="utf-8", errors="replace")
+    source_text = source_path.read_text(encoding="utf-8", errors="replace")
+    knowledge_text, knowledge_unit = select_knowledge_unit(source_text, source_path, args.section_heading, args.stop_heading)
     secret = read_json(args.secret)
     token = secret.get("apiKeySecret") or ""
     if not token:
         raise RuntimeError("secret file does not contain apiKeySecret")
     actor_agent_id = args.agent_id or secret.get("backendAgentId") or "MemoryEndpoints-Backend-Agent"
     context = workspace_context(args.base_url, token, secret.get("workspaceId"))
-    body = build_body(args, context, actor_agent_id, source_path, text)
-    idempotency_key = "single-knowledge-report-" + sha256_text(body["sourceUri"] + body["scope"] + body.get("scopeId", ""))[:24]
+    body = build_body(args, context, actor_agent_id, source_path, source_text, knowledge_text, knowledge_unit)
+    idempotency_material = body["sourceUri"] + body["scope"] + body.get("scopeId", "") + body["routeOrPath"]
+    idempotency_key = "single-knowledge-page-" + sha256_text(idempotency_material)[:24]
 
     result = {
-        "schemaVersion": "memoryendpoints.single_knowledge_report_ingest.v1",
+        "schemaVersion": "memoryendpoints.single_knowledge_report_ingest.v2",
         "mode": "live_apply" if args.apply else "dry_run",
         "baseUrl": args.base_url.rstrip("/"),
         "sourceFileName": source_path.name,
@@ -199,6 +308,12 @@ def main(argv=None):
         "taxonomyPaths": body["taxonomyPaths"],
         "sourceUri": body["sourceUri"],
         "routeOrPath": body["routeOrPath"],
+        "knowledgeUnitKind": knowledge_unit.get("kind"),
+        "sourceReportTitle": knowledge_unit.get("reportTitle"),
+        "sourceSectionHeading": knowledge_unit.get("sectionHeading"),
+        "sourceLineStart": knowledge_unit.get("lineStart"),
+        "sourceLineEnd": knowledge_unit.get("lineEnd"),
+        "knowledgeUnitContentHash": body["metadata"]["knowledgeUnitContentHash"],
         "databaseSourceOfTruth": True,
         "filesystemKnowledgeTree": False,
         "bulkImport": False,
@@ -266,7 +381,7 @@ def main(argv=None):
             method="POST",
             body=memory_body,
             token=token,
-            idempotency_key="single-knowledge-memory-" + sha256_text(body["sourceUri"] + body["scope"] + body.get("scopeId", ""))[:24],
+            idempotency_key="single-knowledge-memory-" + sha256_text(idempotency_material)[:24],
         )
         memory_payload = require_ok(status, memory_payload, "submit durable memory summary")
         event = memory_payload.get("event") or {}

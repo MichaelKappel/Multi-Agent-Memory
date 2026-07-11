@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "multiagentmemory.ai_manifest.v1",
+  "schemaVersion": "multiagentmemory.ai_manifest.v2",
   "name": "MultiAgentMemory.com",
   "url": "https://multiagentmemory.com",
   "role": "github_companion_documentation_site",
@@ -36,6 +36,11 @@
     "agentSetup": "POST /api/matm/agent-setup/free-account",
     "memorySubmit": "POST /api/matm/memory-events/submit",
     "memorySearch": "GET /api/matm/search",
+    "knowledgeTree": "GET /api/matm/knowledge-tree",
+    "knowledgeSearch": "GET /api/matm/knowledge-documents",
+    "knowledgeUpsert": "POST /api/matm/knowledge-documents/upsert",
+    "internetSearch": "GET /api/matm/internet-search",
+    "externalLinkUpsert": "POST /api/matm/external-links/upsert",
     "reviewQueue": "GET /api/matm/review-queue",
     "reviewDecision": "POST /api/matm/review-queue/decide",
     "currentMessage": "GET /api/matm/current-message",
@@ -47,7 +52,7 @@
     "runtime": "memoryendpoints/",
     "companionSite": "sites/multiagentmemory.com/",
     "startupMemory": ".uai/",
-    "longTermMemoryDocs": "docs/long-term-memory/",
+    "durableKnowledge": "MemoryEndpoints.com database wiki and memory routes",
     "verificationScripts": "scripts/",
     "tests": "tests/"
   },
@@ -55,6 +60,8 @@
     "noCertificationClaimed": true,
     "noHiddenCredentialValidation": true,
     "noAutomaticRepositoryWrites": true,
-    "secretsAcceptedInPublicDocs": false
+    "secretsAcceptedInPublicDocs": false,
+    "externalLinkIndexingAutomaticallyFetchesTargets": false,
+    "credentialBearingExternalUrlsAccepted": false
   }
 }

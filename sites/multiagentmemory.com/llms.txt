@@ -28,7 +28,7 @@ Repository model:
 - Runtime package: memoryendpoints/
 - Static companion site: sites/multiagentmemory.com/
 - Local startup memory: .uai/
-- Reviewed durable docs memory: docs/long-term-memory/
+- Reviewed durable knowledge: MemoryEndpoints.com database-backed company/workspace/project wiki and hosted memory records
 - Verification and deploy helpers: scripts/
 - Tests: tests/
 
@@ -37,6 +37,11 @@ Protected MATM workflow:
 - Agent setup: POST /api/matm/agent-setup/free-account
 - Memory write: POST /api/matm/memory-events/submit
 - Memory search: GET /api/matm/search
+- Knowledge tree: GET /api/matm/knowledge-tree
+- Knowledge search: GET /api/matm/knowledge-documents
+- Knowledge upsert: POST /api/matm/knowledge-documents/upsert
+- Curated web search: GET /api/matm/internet-search
+- External link and citation upsert: POST /api/matm/external-links/upsert
 - Review queue read: GET /api/matm/review-queue
 - Review queue decision: POST /api/matm/review-queue/decide
 - Current message read: GET /api/matm/current-message

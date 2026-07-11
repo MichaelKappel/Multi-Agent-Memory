@@ -12,6 +12,13 @@ import uuid
 from urllib.parse import unquote, urlparse
 
 from .config import PUBLIC_STORAGE_BYTES, ROOT, utc_now
+from .external_links import (
+    ExternalLinkValidationError,
+    normalize_external_url,
+    normalize_relationship_type,
+    stable_external_link_id,
+    stable_external_link_mention_id,
+)
 from .security import evaluate_memory_firewall, redact_text
 
 
@@ -377,40 +384,60 @@ def _sort_taxonomy(nodes):
         _sort_taxonomy(node.get("children") or [])
 
 
+def _knowledge_text_match(query, document):
+    query_text = str(query or "").strip().lower()
+    if not query_text:
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
+    metadata = document.get("metadata") or {}
+    taxonomy = " ".join(
+        " ".join(path)
+        for path in _normalize_taxonomy_paths(
+            document.get("taxonomyPaths")
+            or metadata.get("taxonomyPaths")
+            or document.get("taxonomyPath")
+            or metadata.get("taxonomyPath")
+        )
+    )
+    fields = [
+        (document.get("title") or "", 15),
+        (taxonomy, 13),
+        (" ".join(document.get("keywords") or metadata.get("keywords") or []), 12),
+        (document.get("description") or metadata.get("description") or "", 10),
+        (document.get("category") or "", 8),
+        (document.get("documentType") or "", 6),
+        (document.get("searchableText") or "", 4),
+        (" ".join(document.get("tags") or metadata.get("tags") or []), 4),
+        (" ".join([document.get("sourceUri") or "", document.get("routeOrPath") or ""]), 2),
+    ]
+    score = 0
+    combined = " ".join(value.lower() for value, _weight in fields)
+    if query_text in combined:
+        score += 60
+    query_terms = []
+    for token in _search_tokens(query_text):
+        root = _search_term_root(token)
+        if root and root not in query_terms:
+            query_terms.append(root)
+    matched = []
+    unmatched = []
+    for term in query_terms:
+        best = 0
+        for value, weight in fields:
+            field_terms = {_search_term_root(token) for token in _search_tokens(value)}
+            if term in field_terms:
+                best = max(best, weight)
+        if best:
+            matched.append(term)
+            score += best
+        else:
+            unmatched.append(term)
+    if matched and not unmatched:
+        score += 25
+    return {"score": score, "matchedTerms": matched, "unmatchedTerms": unmatched}
+
+
 def _knowledge_text_matches(query, document):
-    q = (query or "").lower().strip()
-    if not q:
-        return True
-    haystack = " ".join(
-        [
-            document.get("searchDocumentId", ""),
-            document.get("sourceId", ""),
-            document.get("sourceUri", ""),
-            document.get("scope", ""),
-            document.get("scopeId", ""),
-            document.get("category", ""),
-            document.get("description", ""),
-            " ".join(document.get("keywords", []) if isinstance(document.get("keywords"), list) else []),
-            (document.get("metadata") or {}).get("description", ""),
-            " ".join((document.get("metadata") or {}).get("keywords", []) if isinstance((document.get("metadata") or {}).get("keywords"), list) else []),
-            " ".join(
-                " ".join(path)
-                for path in _normalize_taxonomy_paths(
-                    document.get("taxonomyPaths")
-                    or (document.get("metadata") or {}).get("taxonomyPaths")
-                    or document.get("taxonomyPath")
-                    or (document.get("metadata") or {}).get("taxonomyPath")
-                )
-            ),
-            document.get("documentType", ""),
-            document.get("routeOrPath", ""),
-            document.get("title", ""),
-            document.get("searchableText", ""),
-            " ".join(document.get("tags", []) if isinstance(document.get("tags"), list) else []),
-            " ".join((document.get("metadata") or {}).get("tags", []) if isinstance((document.get("metadata") or {}).get("tags"), list) else []),
-        ]
-    ).lower()
-    return _memory_query_matches(q, haystack)
+    return not str(query or "").strip() or _knowledge_text_match(query, document)["score"] > 0
 
 
 def _knowledge_taxonomy_matches(prefix, document):
@@ -457,6 +484,7 @@ def _public_knowledge_document(document, include_text=False, query=""):
     taxonomy_path = taxonomy_paths[0] if taxonomy_paths else []
     keywords = _normalize_keywords(document.get("keywords") or metadata.get("keywords") or metadata.get("tags"))
     description = document.get("description") or metadata.get("description") or ""
+    match = _knowledge_text_match(query, document)
     item = {
         "searchDocumentId": document.get("searchDocumentId"),
         "workspaceId": document.get("workspaceId"),
@@ -487,12 +515,134 @@ def _public_knowledge_document(document, include_text=False, query=""):
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
         "protectedContentIncluded": bool(include_text),
+        "matchScore": match["score"],
+        "matchedTerms": match["matchedTerms"],
+        "unmatchedTerms": match["unmatchedTerms"],
     }
     if include_text:
         item["searchableText"] = document.get("searchableText") or ""
     else:
         item["excerpt"] = _knowledge_excerpt(document.get("searchableText") or "", query)
     return item
+
+
+def _search_term_root(value):
+    token = str(value or "").lower()
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 4 and token.endswith("es"):
+        return token[:-2]
+    if len(token) > 3 and token.endswith("s"):
+        return token[:-1]
+    return token
+
+
+def _external_link_search_match(link, mentions, query):
+    query_text = str(query or "").strip().lower()
+    if not query_text:
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
+    fields = [
+        (link.get("pageTitle") or "", 14),
+        (link.get("siteName") or "", 12),
+        (" ".join(link.get("keywords") or []), 11),
+        (link.get("description") or "", 9),
+        (link.get("host") or "", 7),
+        (link.get("url") or "", 5),
+    ]
+    for mention in mentions or []:
+        fields.extend(
+            [
+                (mention.get("anchorText") or "", 8),
+                (mention.get("contextDescription") or "", 8),
+                (mention.get("knowledgeDocumentTitle") or "", 7),
+                (" ".join(mention.get("taxonomyPathLabels") or []), 7),
+            ]
+        )
+    score = 0
+    combined = " ".join(value.lower() for value, _weight in fields)
+    if query_text in combined:
+        score += 60
+    query_tokens = []
+    for token in _search_tokens(query_text):
+        root = _search_term_root(token)
+        if root and root not in query_tokens:
+            query_tokens.append(root)
+    matched = []
+    unmatched = []
+    for token in query_tokens:
+        best = 0
+        for value, weight in fields:
+            field_tokens = {_search_term_root(item) for item in _search_tokens(value)}
+            if token in field_tokens:
+                best = max(best, weight)
+        if best:
+            matched.append(token)
+            score += best
+        else:
+            unmatched.append(token)
+    if matched and not unmatched:
+        score += 25
+    return {"score": score, "matchedTerms": matched, "unmatchedTerms": unmatched}
+
+
+def _public_external_link_mention(mention, document=None):
+    document = document or {}
+    return {
+        "externalLinkMentionId": mention.get("externalLinkMentionId"),
+        "externalLinkId": mention.get("externalLinkId"),
+        "knowledgeDocumentId": mention.get("knowledgeDocumentId"),
+        "knowledgeDocumentTitle": document.get("title") or mention.get("knowledgeDocumentTitle"),
+        "knowledgeDocumentRoute": document.get("routeOrPath") or mention.get("knowledgeDocumentRoute"),
+        "scope": document.get("scope") or mention.get("scope"),
+        "scopeId": document.get("scopeId") or mention.get("scopeId"),
+        "category": document.get("category") or mention.get("category"),
+        "taxonomyPathLabels": document.get("taxonomyPathLabels") or mention.get("taxonomyPathLabels") or [],
+        "relationshipType": mention.get("relationshipType"),
+        "anchorText": mention.get("anchorText"),
+        "contextDescription": mention.get("contextDescription"),
+        "citationLabel": mention.get("citationLabel"),
+        "citationOrder": mention.get("citationOrder"),
+        "createdAt": mention.get("createdAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_external_link(link, mentions=None, query=""):
+    public_mentions = list(mentions or [])
+    match = _external_link_search_match(link, public_mentions, query)
+    return {
+        "externalLinkId": link.get("externalLinkId"),
+        "workspaceId": link.get("workspaceId"),
+        "url": link.get("url"),
+        "normalizedUrl": link.get("normalizedUrl"),
+        "pageUrl": link.get("pageUrl"),
+        "fragment": link.get("fragment"),
+        "scheme": link.get("scheme"),
+        "host": link.get("host"),
+        "siteName": link.get("siteName"),
+        "pageTitle": link.get("pageTitle"),
+        "description": link.get("description"),
+        "keywords": _normalize_keywords(link.get("keywords")),
+        "language": link.get("language"),
+        "contentType": link.get("contentType"),
+        "reviewStatus": link.get("reviewStatus"),
+        "crawlStatus": link.get("crawlStatus"),
+        "crawlPolicy": link.get("crawlPolicy"),
+        "visibility": link.get("visibility"),
+        "metadata": link.get("metadata") or {},
+        "mentions": public_mentions,
+        "mentionCount": len(public_mentions),
+        "matchScore": match["score"],
+        "matchedTerms": match["matchedTerms"],
+        "unmatchedTerms": match["unmatchedTerms"],
+        "createdAt": link.get("createdAt"),
+        "updatedAt": link.get("updatedAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
 
 
 def _knowledge_tree_from_documents(documents):
@@ -572,6 +722,8 @@ def _blank_store():
         "memoryEvents": [],
         "crawlSources": {},
         "searchDocuments": {},
+        "externalLinks": {},
+        "externalLinkMentions": {},
         "reviewQueue": [],
         "messages": [],
         "notifications": [],
@@ -729,8 +881,9 @@ class FileStore(object):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
-        for key in ("memoryEvents", "crawlSources", "searchDocuments", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
-            for item in data.get(key, []):
+        for key in ("memoryEvents", "crawlSources", "searchDocuments", "externalLinks", "externalLinkMentions", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
+            collection = data.get(key, [])
+            for item in collection.values() if isinstance(collection, dict) else collection:
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
         for room in data.get("meetingRooms", {}).values():
@@ -1318,6 +1471,7 @@ class FileStore(object):
             route_or_path = "/knowledge/%s/%s/%s" % (scope, category, _slug(title, "document", 120))
         now = utc_now()
         source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
+        source_project_id = payload.get("sourceProjectId") or payload.get("source_project_id")
         document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
         metadata = _public_value(payload.get("metadata") or {})
         if not isinstance(metadata, dict):
@@ -1341,7 +1495,7 @@ class FileStore(object):
         source.update(
             {
                 "workspaceId": workspace_id,
-                "projectId": project_id,
+                "projectId": source_project_id,
                 "sourceUri": source_uri,
                 "sourceType": source_type,
                 "crawlPolicy": payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
@@ -1399,7 +1553,7 @@ class FileStore(object):
         self._save(data)
         return _public_knowledge_document(document, include_text=True), None
 
-    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False):
+    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False, _all=False):
         data = self._load()
         filters = filters or {}
         q = filters.get("q") or filters.get("query") or ""
@@ -1430,20 +1584,192 @@ class FileStore(object):
                 continue
             if _knowledge_text_matches(q, document):
                 items.append(document)
-        items.sort(key=lambda item: (item.get("scope") or "", item.get("category") or "", item.get("title") or "", item.get("searchDocumentId") or ""))
-        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in items[: _parse_limit(limit, 50, 500)]]
+        items.sort(
+            key=lambda item: (
+                -_knowledge_text_match(q, item)["score"] if q else 0,
+                item.get("scope") or "",
+                item.get("category") or "",
+                item.get("title") or "",
+                item.get("searchDocumentId") or "",
+            )
+        )
+        selected = items if _all else items[: _parse_limit(limit, 50, 500)]
+        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in selected]
 
     def knowledge_tree(self, workspace_id, filters=None):
         filters = dict(filters or {})
         filters["q"] = filters.get("q") or filters.get("query") or ""
-        documents = self.knowledge_documents(workspace_id, filters, limit=5000, include_text=False)
-        raw_documents = []
+        documents = self.knowledge_documents(workspace_id, filters, include_text=True, _all=True)
+        return _knowledge_tree_from_documents(documents)
+
+    def _external_link_mentions_public(self, data, workspace_id, external_link_id):
+        items = []
+        for mention in data.get("externalLinkMentions", {}).values():
+            if mention.get("workspaceId") != workspace_id or mention.get("externalLinkId") != external_link_id:
+                continue
+            document = data.get("searchDocuments", {}).get(mention.get("knowledgeDocumentId"))
+            public_document = _public_knowledge_document(document, include_text=False) if document else {}
+            items.append(_public_external_link_mention(mention, public_document))
+        items.sort(key=lambda item: (item.get("citationOrder") or 0, item.get("knowledgeDocumentTitle") or "", item.get("externalLinkMentionId") or ""))
+        return items
+
+    def upsert_external_link(self, workspace_id, actor_agent_id, payload):
         data = self._load()
-        public_ids = {item.get("searchDocumentId") for item in documents}
-        for document in data.get("searchDocuments", {}).values():
-            if document.get("workspaceId") == workspace_id and document.get("searchDocumentId") in public_ids:
-                raw_documents.append(document)
-        return _knowledge_tree_from_documents(raw_documents)
+        if workspace_id not in data.get("workspaces", {}):
+            return None, "workspace_not_found"
+        try:
+            normalized = normalize_external_url(payload.get("url"))
+            relationship_type = normalize_relationship_type(payload.get("relationshipType") or payload.get("relationship_type"))
+        except ExternalLinkValidationError as exc:
+            return None, exc.code
+        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
+        now = utc_now()
+        external_link_id = stable_external_link_id(workspace_id, normalized["normalizedUrl"])
+        link = data.setdefault("externalLinks", {}).get(external_link_id) or {
+            "externalLinkId": external_link_id,
+            "workspaceId": workspace_id,
+            "createdAt": now,
+        }
+        review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
+        if review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
+            return None, "external_link_review_status_unsupported"
+        crawl_status = _slug(payload.get("crawlStatus") or payload.get("crawl_status") or "not_requested", "not-requested", 32).replace("-", "_")
+        if crawl_status not in ("not_requested", "queued", "fetched", "failed", "blocked"):
+            return None, "external_link_crawl_status_unsupported"
+        metadata = _public_value(payload.get("metadata") or {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        link.update(
+            {
+                "workspaceId": workspace_id,
+                "url": normalized["url"],
+                "normalizedUrl": normalized["normalizedUrl"],
+                "normalizedUrlHash": normalized["normalizedUrlHash"],
+                "pageUrl": normalized["pageUrl"],
+                "fragment": normalized["fragment"],
+                "scheme": normalized["scheme"],
+                "host": normalized["host"],
+                "siteName": redact_text(payload.get("siteName") or payload.get("site_name") or ""),
+                "pageTitle": redact_text(payload.get("pageTitle") or payload.get("page_title") or payload.get("title") or ""),
+                "description": redact_text(payload.get("description") or ""),
+                "keywords": keywords,
+                "language": _slug(payload.get("language") or "und", "und", 16),
+                "contentType": redact_text(payload.get("contentType") or payload.get("content_type") or "text/html")[:128],
+                "reviewStatus": review_status,
+                "crawlStatus": crawl_status,
+                "crawlPolicy": _slug(payload.get("crawlPolicy") or payload.get("crawl_policy") or "metadata_only", "metadata-only", 64).replace("-", "_"),
+                "visibility": _slug(payload.get("visibility") or "workspace_private", "workspace-private", 32).replace("-", "_"),
+                "metadata": metadata,
+                "updatedAt": now,
+                "valuesRedacted": True,
+            }
+        )
+        data["externalLinks"][external_link_id] = link
+        document_id = payload.get("knowledgeDocumentId") or payload.get("knowledge_document_id") or payload.get("documentId") or payload.get("document_id") or ""
+        mention = None
+        if document_id:
+            document = data.get("searchDocuments", {}).get(document_id)
+            if not document or document.get("workspaceId") != workspace_id:
+                return None, "knowledge_document_not_found"
+            anchor_text = redact_text(payload.get("anchorText") or payload.get("anchor_text") or link.get("pageTitle") or link.get("url"))
+            citation_label = redact_text(payload.get("citationLabel") or payload.get("citation_label") or "")
+            mention_id = stable_external_link_mention_id(
+                workspace_id,
+                external_link_id,
+                document_id,
+                relationship_type,
+                citation_label,
+                anchor_text,
+            )
+            try:
+                citation_order = max(0, int(payload.get("citationOrder") or payload.get("citation_order") or 0))
+            except (TypeError, ValueError):
+                return None, "external_link_citation_order_invalid"
+            mention = data.setdefault("externalLinkMentions", {}).get(mention_id) or {
+                "externalLinkMentionId": mention_id,
+                "workspaceId": workspace_id,
+                "externalLinkId": external_link_id,
+                "knowledgeDocumentId": document_id,
+                "createdAt": now,
+            }
+            mention.update(
+                {
+                    "relationshipType": relationship_type,
+                    "anchorText": anchor_text,
+                    "contextDescription": redact_text(payload.get("contextDescription") or payload.get("context_description") or ""),
+                    "citationLabel": citation_label,
+                    "citationOrder": citation_order,
+                    "valuesRedacted": True,
+                }
+            )
+            data["externalLinkMentions"][mention_id] = mention
+        mentions = self._external_link_mentions_public(data, workspace_id, external_link_id)
+        public_link = _public_external_link(link, mentions)
+        self._append_outbox(data, workspace_id, "matm.external_link.upserted", "external_link", external_link_id, public_link)
+        self._append_storage_ledger(data, workspace_id, "external_link", external_link_id, public_link)
+        self.audit(
+            data,
+            "external_link.upsert",
+            actor_agent_id or "system",
+            external_link_id,
+            workspace_id,
+            {"host": normalized["host"], "knowledgeDocumentId": document_id, "relationshipType": relationship_type},
+        )
+        self._save(data)
+        return public_link, None
+
+    def external_links(self, workspace_id, filters=None, limit=50):
+        data = self._load()
+        filters = filters or {}
+        query = filters.get("q") or filters.get("query") or ""
+        requested_link_id = filters.get("externalLinkId") or filters.get("external_link_id") or ""
+        requested_document_id = filters.get("documentId") or filters.get("document_id") or filters.get("knowledgeDocumentId") or filters.get("knowledge_document_id") or ""
+        requested_host = str(filters.get("host") or "").strip().lower()
+        requested_site = str(filters.get("siteName") or filters.get("site_name") or "").strip().lower()
+        requested_review = str(filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
+        requested_crawl = str(filters.get("crawlStatus") or filters.get("crawl_status") or "").strip().lower()
+        requested_scope = str(filters.get("scope") or "").strip().lower()
+        requested_scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
+        requested_taxonomy = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
+        requested_relationship = str(filters.get("relationshipType") or filters.get("relationship_type") or "").strip().lower()
+        items = []
+        for link in data.get("externalLinks", {}).values():
+            if link.get("workspaceId") != workspace_id:
+                continue
+            if requested_link_id and link.get("externalLinkId") != requested_link_id:
+                continue
+            if requested_host and link.get("host", "").lower() != requested_host:
+                continue
+            if requested_site and requested_site not in link.get("siteName", "").lower():
+                continue
+            if requested_review and link.get("reviewStatus", "").lower() != requested_review:
+                continue
+            if requested_crawl and link.get("crawlStatus", "").lower() != requested_crawl:
+                continue
+            mentions = self._external_link_mentions_public(data, workspace_id, link.get("externalLinkId"))
+            if requested_document_id and not any(item.get("knowledgeDocumentId") == requested_document_id for item in mentions):
+                continue
+            if requested_relationship and not any(item.get("relationshipType") == requested_relationship for item in mentions):
+                continue
+            if requested_scope and not any(item.get("scope") == requested_scope for item in mentions):
+                continue
+            if requested_scope_id and not any(item.get("scopeId") == requested_scope_id for item in mentions):
+                continue
+            if requested_taxonomy:
+                matching_mention = False
+                for mention in mentions:
+                    document = data.get("searchDocuments", {}).get(mention.get("knowledgeDocumentId"))
+                    if document and _knowledge_taxonomy_matches(requested_taxonomy, document):
+                        matching_mention = True
+                        break
+                if not matching_mention:
+                    continue
+            public_link = _public_external_link(link, mentions, query)
+            if query and not public_link.get("matchScore"):
+                continue
+            items.append(public_link)
+        items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("siteName") or "", item.get("pageTitle") or "", item.get("externalLinkId") or ""))
+        return items[: _parse_limit(limit, 50, 500)]
 
     def has_quota_for(self, workspace_id, candidate):
         data = self._load()
@@ -2242,6 +2568,8 @@ class FileStore(object):
 
 class SQLiteStore(FileStore):
     DELETE_ORDER = [
+        "matm_external_link_mentions",
+        "matm_external_links",
         "matm_search_documents",
         "matm_crawl_sources",
         "matm_memory_revisions",
@@ -2470,6 +2798,53 @@ class SQLiteStore(FileStore):
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_visibility ON matm_search_documents (workspace_id, visibility);
             CREATE INDEX IF NOT EXISTS ix_sqlite_search_workspace_scope ON matm_search_documents (workspace_id, scope_type, scope_id);
+
+            CREATE TABLE IF NOT EXISTS matm_external_links (
+              external_link_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              url TEXT NOT NULL,
+              normalized_url TEXT NOT NULL,
+              normalized_url_hash TEXT NOT NULL,
+              page_url TEXT NOT NULL,
+              fragment TEXT,
+              scheme TEXT NOT NULL,
+              host TEXT NOT NULL,
+              site_name TEXT NOT NULL,
+              page_title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              keywords_json TEXT NOT NULL,
+              language TEXT NOT NULL DEFAULT 'und',
+              content_type TEXT NOT NULL DEFAULT 'text/html',
+              review_status TEXT NOT NULL DEFAULT 'unreviewed',
+              crawl_status TEXT NOT NULL DEFAULT 'not_requested',
+              crawl_policy TEXT NOT NULL DEFAULT 'metadata_only',
+              visibility TEXT NOT NULL DEFAULT 'workspace_private',
+              metadata_json TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE (workspace_id, normalized_url_hash),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_external_links_host ON matm_external_links (workspace_id, host);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_external_links_review ON matm_external_links (workspace_id, review_status, crawl_status);
+
+            CREATE TABLE IF NOT EXISTS matm_external_link_mentions (
+              external_link_mention_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              external_link_id TEXT NOT NULL,
+              search_document_id TEXT NOT NULL,
+              relationship_type TEXT NOT NULL DEFAULT 'reference',
+              anchor_text TEXT NOT NULL,
+              context_description TEXT NOT NULL,
+              citation_label TEXT,
+              citation_order INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              UNIQUE (workspace_id, external_link_id, search_document_id, relationship_type, citation_label),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (external_link_id) REFERENCES matm_external_links (external_link_id),
+              FOREIGN KEY (search_document_id) REFERENCES matm_search_documents (search_document_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_external_link_mentions_document ON matm_external_link_mentions (workspace_id, search_document_id, citation_order);
 
             CREATE TABLE IF NOT EXISTS matm_review_queue (
               review_id TEXT PRIMARY KEY,
@@ -3069,6 +3444,8 @@ class SQLiteStore(FileStore):
             "matm_agents",
             "matm_crawl_sources",
             "matm_search_documents",
+            "matm_external_links",
+            "matm_external_link_mentions",
             "matm_memory_records",
             "matm_review_queue",
             "matm_messages",
@@ -3342,6 +3719,8 @@ class SQLiteStore(FileStore):
             return None
         searchable_text = row["searchable_text"] or ""
         metadata = self._json_load(row.get("metadata_json") if isinstance(row, dict) else row["metadata_json"], {})
+        scope = row["scope_type"]
+        scope_id = row["scope_id"]
         return {
             "searchDocumentId": row["search_document_id"],
             "workspaceId": row["workspace_id"],
@@ -3349,9 +3728,9 @@ class SQLiteStore(FileStore):
             "sourceId": row["source_id"],
             "sourceUri": row.get("source_uri") if isinstance(row, dict) else row["source_uri"],
             "sourceType": row.get("source_type") if isinstance(row, dict) else row["source_type"],
-            "projectId": row.get("project_id") if isinstance(row, dict) else row["project_id"],
-            "scope": row["scope_type"],
-            "scopeId": row["scope_id"],
+            "projectId": scope_id if scope == "project" else None,
+            "scope": scope,
+            "scopeId": scope_id,
             "category": row["category"],
             "description": row.get("description") if isinstance(row, dict) else row["description"],
             "keywords": self._json_load(row.get("keywords_json") if isinstance(row, dict) else row["keywords_json"], []),
@@ -3392,6 +3771,7 @@ class SQLiteStore(FileStore):
         if not route_or_path:
             route_or_path = "/knowledge/%s/%s/%s" % (scope, category, _slug(title, "document", 120))
         source_id = payload.get("sourceId") or payload.get("source_id") or _stable_id("src", workspace_id, source_uri)
+        source_project_id = payload.get("sourceProjectId") or payload.get("source_project_id")
         document_id = payload.get("searchDocumentId") or payload.get("search_document_id") or _stable_id("doc", workspace_id, scope, scope_id, source_uri, route_or_path)
         metadata = _public_value(payload.get("metadata") or {})
         if not isinstance(metadata, dict):
@@ -3436,7 +3816,7 @@ class SQLiteStore(FileStore):
                             WHERE workspace_id = ? AND source_id = ?
                             """,
                             (
-                                project_id,
+                                source_project_id,
                                 source_uri,
                                 source_type,
                                 payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
@@ -3456,7 +3836,7 @@ class SQLiteStore(FileStore):
                             (
                                 source_id,
                                 workspace_id,
-                                project_id,
+                                source_project_id,
                                 source_uri,
                                 source_type,
                                 payload.get("crawlPolicy") or payload.get("crawl_policy") or "workspace_private",
@@ -3555,7 +3935,7 @@ class SQLiteStore(FileStore):
                     )
         return _public_knowledge_document(document, include_text=True), None
 
-    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False):
+    def knowledge_documents(self, workspace_id, filters=None, limit=50, include_text=False, _all=False):
         filters = filters or {}
         q = filters.get("q") or filters.get("query") or ""
         scope = (filters.get("scope") or "").strip().lower()
@@ -3604,12 +3984,303 @@ class SQLiteStore(FileStore):
             document = self._knowledge_document_from_row(row)
             if document and _knowledge_taxonomy_matches(taxonomy_prefix, document) and _knowledge_text_matches(q, document):
                 documents.append(document)
-        max_items = _parse_limit(limit, 50, 500)
-        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in documents[:max_items]]
+        documents.sort(
+            key=lambda item: (
+                -_knowledge_text_match(q, item)["score"] if q else 0,
+                item.get("scope") or "",
+                item.get("category") or "",
+                item.get("title") or "",
+                item.get("searchDocumentId") or "",
+            )
+        )
+        selected = documents if _all else documents[: _parse_limit(limit, 50, 500)]
+        return [_public_knowledge_document(item, include_text=include_text, query=q) for item in selected]
 
     def knowledge_tree(self, workspace_id, filters=None):
-        documents = self.knowledge_documents(workspace_id, filters or {}, limit=5000, include_text=True)
+        documents = self.knowledge_documents(workspace_id, filters or {}, include_text=True, _all=True)
         return _knowledge_tree_from_documents(documents)
+
+    def _external_link_from_row(self, row):
+        if not row:
+            return None
+        value = lambda name: row.get(name) if isinstance(row, dict) else row[name]
+        return {
+            "externalLinkId": value("external_link_id"),
+            "workspaceId": value("workspace_id"),
+            "url": value("url"),
+            "normalizedUrl": value("normalized_url"),
+            "normalizedUrlHash": value("normalized_url_hash"),
+            "pageUrl": value("page_url"),
+            "fragment": value("fragment"),
+            "scheme": value("scheme"),
+            "host": value("host"),
+            "siteName": value("site_name"),
+            "pageTitle": value("page_title"),
+            "description": value("description"),
+            "keywords": self._json_load(value("keywords_json"), []),
+            "language": value("language"),
+            "contentType": value("content_type"),
+            "reviewStatus": value("review_status"),
+            "crawlStatus": value("crawl_status"),
+            "crawlPolicy": value("crawl_policy"),
+            "visibility": value("visibility"),
+            "metadata": self._json_load(value("metadata_json"), {}),
+            "createdAt": value("created_at"),
+            "updatedAt": value("updated_at"),
+            "valuesRedacted": True,
+        }
+
+    def _external_link_mentions_sql(self, connection, workspace_id):
+        rows = list(
+            connection.execute(
+                """
+                SELECT m.*, d.title AS knowledge_document_title,
+                       d.route_or_path AS knowledge_document_route,
+                       d.scope_type AS knowledge_scope, d.scope_id AS knowledge_scope_id,
+                       d.category AS knowledge_category, d.taxonomy_paths_json
+                FROM matm_external_link_mentions m
+                LEFT JOIN matm_search_documents d
+                  ON d.workspace_id = m.workspace_id AND d.search_document_id = m.search_document_id
+                WHERE m.workspace_id = ?
+                ORDER BY m.citation_order, m.created_at, m.external_link_mention_id
+                """,
+                (workspace_id,),
+            )
+        )
+        by_link = {}
+        for row in rows:
+            value = lambda name: row.get(name) if isinstance(row, dict) else row[name]
+            mention = {
+                "externalLinkMentionId": value("external_link_mention_id"),
+                "workspaceId": value("workspace_id"),
+                "externalLinkId": value("external_link_id"),
+                "knowledgeDocumentId": value("search_document_id"),
+                "relationshipType": value("relationship_type"),
+                "anchorText": value("anchor_text"),
+                "contextDescription": value("context_description"),
+                "citationLabel": value("citation_label"),
+                "citationOrder": value("citation_order"),
+                "createdAt": value("created_at"),
+            }
+            document = {
+                "title": value("knowledge_document_title"),
+                "routeOrPath": value("knowledge_document_route"),
+                "scope": value("knowledge_scope"),
+                "scopeId": value("knowledge_scope_id"),
+                "category": value("knowledge_category"),
+                "taxonomyPaths": self._json_load(value("taxonomy_paths_json"), []),
+            }
+            public_document = _public_knowledge_document(document, include_text=False)
+            by_link.setdefault(mention["externalLinkId"], []).append(_public_external_link_mention(mention, public_document))
+        return by_link
+
+    def upsert_external_link(self, workspace_id, actor_agent_id, payload):
+        try:
+            normalized = normalize_external_url(payload.get("url"))
+            relationship_type = normalize_relationship_type(payload.get("relationshipType") or payload.get("relationship_type"))
+        except ExternalLinkValidationError as exc:
+            return None, exc.code
+        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
+        review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
+        if review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
+            return None, "external_link_review_status_unsupported"
+        crawl_status = _slug(payload.get("crawlStatus") or payload.get("crawl_status") or "not_requested", "not-requested", 32).replace("-", "_")
+        if crawl_status not in ("not_requested", "queued", "fetched", "failed", "blocked"):
+            return None, "external_link_crawl_status_unsupported"
+        metadata = _public_value(payload.get("metadata") or {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        external_link_id = stable_external_link_id(workspace_id, normalized["normalizedUrl"])
+        now = utc_now()
+        document_id = payload.get("knowledgeDocumentId") or payload.get("knowledge_document_id") or payload.get("documentId") or payload.get("document_id") or ""
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    workspace = connection.execute(
+                        "SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace:
+                        return None, "workspace_not_found"
+                    if document_id:
+                        document = connection.execute(
+                            "SELECT search_document_id FROM matm_search_documents WHERE workspace_id = ? AND search_document_id = ?",
+                            (workspace_id, document_id),
+                        ).fetchone()
+                        if not document:
+                            return None, "knowledge_document_not_found"
+                    existing = connection.execute(
+                        "SELECT external_link_id FROM matm_external_links WHERE workspace_id = ? AND normalized_url_hash = ?",
+                        (workspace_id, normalized["normalizedUrlHash"]),
+                    ).fetchone()
+                    values = (
+                        normalized["url"],
+                        normalized["normalizedUrl"],
+                        normalized["normalizedUrlHash"],
+                        normalized["pageUrl"],
+                        normalized["fragment"],
+                        normalized["scheme"],
+                        normalized["host"],
+                        redact_text(payload.get("siteName") or payload.get("site_name") or ""),
+                        redact_text(payload.get("pageTitle") or payload.get("page_title") or payload.get("title") or ""),
+                        redact_text(payload.get("description") or ""),
+                        self._json_dump(keywords),
+                        _slug(payload.get("language") or "und", "und", 16),
+                        redact_text(payload.get("contentType") or payload.get("content_type") or "text/html")[:128],
+                        review_status,
+                        crawl_status,
+                        _slug(payload.get("crawlPolicy") or payload.get("crawl_policy") or "metadata_only", "metadata-only", 64).replace("-", "_"),
+                        _slug(payload.get("visibility") or "workspace_private", "workspace-private", 32).replace("-", "_"),
+                        self._json_dump(metadata),
+                        now,
+                    )
+                    if existing:
+                        external_link_id = existing["external_link_id"]
+                        connection.execute(
+                            """
+                            UPDATE matm_external_links
+                            SET url = ?, normalized_url = ?, normalized_url_hash = ?, page_url = ?, fragment = ?,
+                                scheme = ?, host = ?, site_name = ?, page_title = ?, description = ?,
+                                keywords_json = ?, language = ?, content_type = ?, review_status = ?,
+                                crawl_status = ?, crawl_policy = ?, visibility = ?, metadata_json = ?, updated_at = ?
+                            WHERE workspace_id = ? AND external_link_id = ?
+                            """,
+                            values + (workspace_id, external_link_id),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_external_links (
+                              external_link_id, workspace_id, url, normalized_url, normalized_url_hash,
+                              page_url, fragment, scheme, host, site_name, page_title, description,
+                              keywords_json, language, content_type, review_status, crawl_status,
+                              crawl_policy, visibility, metadata_json, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (external_link_id, workspace_id) + values[:-1] + (now, now),
+                        )
+                    if document_id:
+                        anchor_text = redact_text(payload.get("anchorText") or payload.get("anchor_text") or payload.get("pageTitle") or payload.get("page_title") or payload.get("title") or normalized["url"])
+                        citation_label = redact_text(payload.get("citationLabel") or payload.get("citation_label") or "")
+                        mention_id = stable_external_link_mention_id(workspace_id, external_link_id, document_id, relationship_type, citation_label, anchor_text)
+                        try:
+                            citation_order = max(0, int(payload.get("citationOrder") or payload.get("citation_order") or 0))
+                        except (TypeError, ValueError):
+                            return None, "external_link_citation_order_invalid"
+                        existing_mention = connection.execute(
+                            "SELECT external_link_mention_id FROM matm_external_link_mentions WHERE workspace_id = ? AND external_link_mention_id = ?",
+                            (workspace_id, mention_id),
+                        ).fetchone()
+                        mention_values = (
+                            relationship_type,
+                            anchor_text,
+                            redact_text(payload.get("contextDescription") or payload.get("context_description") or ""),
+                            citation_label,
+                            citation_order,
+                        )
+                        if existing_mention:
+                            connection.execute(
+                                """
+                                UPDATE matm_external_link_mentions
+                                SET relationship_type = ?, anchor_text = ?, context_description = ?,
+                                    citation_label = ?, citation_order = ?
+                                WHERE workspace_id = ? AND external_link_mention_id = ?
+                                """,
+                                mention_values + (workspace_id, mention_id),
+                            )
+                        else:
+                            connection.execute(
+                                """
+                                INSERT INTO matm_external_link_mentions (
+                                  external_link_mention_id, workspace_id, external_link_id,
+                                  search_document_id, relationship_type, anchor_text,
+                                  context_description, citation_label, citation_order, created_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (mention_id, workspace_id, external_link_id, document_id) + mention_values + (now,),
+                            )
+                    row = connection.execute(
+                        "SELECT * FROM matm_external_links WHERE workspace_id = ? AND external_link_id = ?",
+                        (workspace_id, external_link_id),
+                    ).fetchone()
+                    mention_map = self._external_link_mentions_sql(connection, workspace_id)
+                    link = self._external_link_from_row(row)
+                    public_link = _public_external_link(link, mention_map.get(external_link_id, []))
+                    self._insert_outbox_sql(connection, workspace_id, "matm.external_link.upserted", "external_link", external_link_id, public_link)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "external_link", external_link_id, public_link)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "external_link.upsert",
+                        actor_agent_id or "system",
+                        external_link_id,
+                        {"host": normalized["host"], "knowledgeDocumentId": document_id, "relationshipType": relationship_type},
+                    )
+        return public_link, None
+
+    def external_links(self, workspace_id, filters=None, limit=50):
+        filters = filters or {}
+        query = filters.get("q") or filters.get("query") or ""
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        requested_link_id = filters.get("externalLinkId") or filters.get("external_link_id") or ""
+        requested_host = str(filters.get("host") or "").strip().lower()
+        requested_review = str(filters.get("reviewStatus") or filters.get("review_status") or "").strip().lower()
+        requested_crawl = str(filters.get("crawlStatus") or filters.get("crawl_status") or "").strip().lower()
+        if requested_link_id:
+            clauses.append("external_link_id = ?")
+            params.append(requested_link_id)
+        if requested_host:
+            clauses.append("LOWER(host) = ?")
+            params.append(requested_host)
+        if requested_review:
+            clauses.append("LOWER(review_status) = ?")
+            params.append(requested_review)
+        if requested_crawl:
+            clauses.append("LOWER(crawl_status) = ?")
+            params.append(requested_crawl)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        "SELECT * FROM matm_external_links WHERE %s ORDER BY site_name, page_title, external_link_id" % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+                mention_map = self._external_link_mentions_sql(connection, workspace_id)
+        requested_document_id = filters.get("documentId") or filters.get("document_id") or filters.get("knowledgeDocumentId") or filters.get("knowledge_document_id") or ""
+        requested_site = str(filters.get("siteName") or filters.get("site_name") or "").strip().lower()
+        requested_scope = str(filters.get("scope") or "").strip().lower()
+        requested_scope_id = filters.get("scopeId") or filters.get("scope_id") or ""
+        requested_taxonomy = filters.get("taxonomyPath") or filters.get("taxonomy_path") or filters.get("taxonomyPrefix") or filters.get("taxonomy_prefix") or ""
+        requested_relationship = str(filters.get("relationshipType") or filters.get("relationship_type") or "").strip().lower()
+        items = []
+        for row in rows:
+            link = self._external_link_from_row(row)
+            mentions = mention_map.get(link["externalLinkId"], [])
+            if requested_site and requested_site not in link.get("siteName", "").lower():
+                continue
+            if requested_document_id and not any(item.get("knowledgeDocumentId") == requested_document_id for item in mentions):
+                continue
+            if requested_relationship and not any(item.get("relationshipType") == requested_relationship for item in mentions):
+                continue
+            if requested_scope and not any(item.get("scope") == requested_scope for item in mentions):
+                continue
+            if requested_scope_id and not any(item.get("scopeId") == requested_scope_id for item in mentions):
+                continue
+            if requested_taxonomy:
+                wanted = [item.lower() for item in _normalize_taxonomy_path(requested_taxonomy)]
+                if not any(
+                    any([segment.lower() for segment in _normalize_taxonomy_path(label)][: len(wanted)] == wanted for label in mention.get("taxonomyPathLabels") or [])
+                    for mention in mentions
+                ):
+                    continue
+            public_link = _public_external_link(link, mentions, query)
+            if query and not public_link.get("matchScore"):
+                continue
+            items.append(public_link)
+        items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("siteName") or "", item.get("pageTitle") or "", item.get("externalLinkId") or ""))
+        return items[: _parse_limit(limit, 50, 500)]
 
     def workspace_usage_bytes(self, data, workspace_id=None):
         workspace_id = workspace_id or data

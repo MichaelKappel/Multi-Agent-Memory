@@ -4184,6 +4184,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "matm_memory_tags",
                     "matm_crawl_sources",
                     "matm_search_documents",
+                    "matm_external_links",
+                    "matm_external_link_mentions",
                     "matm_review_queue",
                     "matm_messages",
                     "matm_notifications",

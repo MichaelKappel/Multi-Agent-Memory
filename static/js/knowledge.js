@@ -5,11 +5,12 @@
   const authForm = app.querySelector("[data-knowledge-auth]");
   const searchForm = app.querySelector("[data-knowledge-search]");
   const refreshButton = app.querySelector("[data-knowledge-refresh]");
+  const modeButtons = Array.from(app.querySelectorAll("[data-knowledge-mode]"));
   const treeEl = app.querySelector("[data-knowledge-tree]");
   const articleEl = app.querySelector("[data-knowledge-article]");
   const resultsEl = app.querySelector("[data-knowledge-results]");
   const statusEl = app.querySelector("[data-knowledge-status]");
-  const state = { workspaceId: "", workspaceKey: "" };
+  const state = { workspaceId: "", workspaceKey: "", searchMode: "pages" };
 
   function setStatus(message, kind) {
     statusEl.textContent = message || "";
@@ -51,22 +52,77 @@
     });
   }
 
-  function documentButton(document) {
+  function documentButton(knowledgeDocument) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "knowledge-link";
-    button.dataset.documentId = document.searchDocumentId || "";
-    const title = appendText(button, "span", document.title || "Untitled", "knowledge-link-title");
-    title.title = document.routeOrPath || "";
-    if (document.description) appendText(button, "span", document.description, "knowledge-link-description");
-    if ((document.taxonomyPathLabels || []).length) appendText(button, "span", document.taxonomyPathLabels.join(" | "), "knowledge-link-path");
-    if ((document.keywords || []).length) appendText(button, "span", document.keywords.join(", "), "knowledge-link-keywords");
-    appendText(button, "span", document.routeOrPath || document.sourceUri || "", "knowledge-link-path");
-    if (document.excerpt) appendText(button, "span", document.excerpt, "knowledge-link-excerpt");
+    button.dataset.documentId = knowledgeDocument.searchDocumentId || "";
+    const title = appendText(button, "span", knowledgeDocument.title || "Untitled", "knowledge-link-title");
+    title.title = knowledgeDocument.routeOrPath || "";
+    if (knowledgeDocument.description) appendText(button, "span", knowledgeDocument.description, "knowledge-link-description");
+    if ((knowledgeDocument.taxonomyPathLabels || []).length) appendText(button, "span", knowledgeDocument.taxonomyPathLabels.join(" | "), "knowledge-link-path");
+    if ((knowledgeDocument.keywords || []).length) appendText(button, "span", knowledgeDocument.keywords.join(", "), "knowledge-link-keywords");
+    appendText(button, "span", knowledgeDocument.routeOrPath || knowledgeDocument.sourceUri || "", "knowledge-link-path");
+    if (knowledgeDocument.excerpt) appendText(button, "span", knowledgeDocument.excerpt, "knowledge-link-excerpt");
     button.addEventListener("click", function () {
-      loadDocument(document.searchDocumentId);
+      loadDocument(knowledgeDocument.searchDocumentId);
     });
     return button;
+  }
+
+  function externalLinkResult(link, compact) {
+    const item = document.createElement("article");
+    item.className = "external-link-result";
+    appendText(item, "span", link.siteName || link.host || "External site", "external-link-site");
+    const anchor = document.createElement("a");
+    anchor.className = "external-link-title";
+    anchor.href = link.url || link.pageUrl || "#";
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer external";
+    anchor.textContent = link.pageTitle || link.url || "Untitled link";
+    item.appendChild(anchor);
+    if (link.description) appendText(item, "p", link.description, "external-link-description");
+    appendText(item, "span", link.url || "", "external-link-url");
+    if ((link.keywords || []).length) appendText(item, "span", link.keywords.join(", "), "external-link-keywords");
+    if (!compact) {
+      (link.mentions || []).forEach(function (mention) {
+        const context = document.createElement("div");
+        context.className = "external-link-context";
+        appendText(context, "strong", mention.knowledgeDocumentTitle || mention.relationshipType || "Reference");
+        if (mention.contextDescription) appendText(context, "span", mention.contextDescription);
+        if (mention.knowledgeDocumentRoute) appendText(context, "span", mention.knowledgeDocumentRoute, "external-link-url");
+        item.appendChild(context);
+      });
+    }
+    return item;
+  }
+
+  function taxonomyDetails(node, depth) {
+    const details = document.createElement("details");
+    details.className = "knowledge-taxonomy-node";
+    const summary = document.createElement("summary");
+    summary.textContent = (node.label || "Untitled") + " (" + (node.documentCount || 0) + ")";
+    details.appendChild(summary);
+    let rendered = false;
+
+    function renderContents() {
+      if (rendered) return;
+      rendered = true;
+      const contents = document.createElement("div");
+      contents.className = "knowledge-taxonomy-contents";
+      (node.children || []).forEach(function (child) {
+        contents.appendChild(taxonomyDetails(child, depth + 1));
+      });
+      (node.documents || []).forEach(function (knowledgeDocument) {
+        contents.appendChild(documentButton(knowledgeDocument));
+      });
+      details.appendChild(contents);
+    }
+
+    details.addEventListener("toggle", function () {
+      if (details.open) renderContents();
+    });
+    return details;
   }
 
   function renderTree(tree) {
@@ -80,68 +136,191 @@
       const section = document.createElement("section");
       section.className = "knowledge-tree-level";
       appendText(section, "h2", (level.scope || "scope") + " / " + (level.scopeId || ""), "knowledge-tree-heading");
-      (level.categories || []).forEach(function (category) {
-        const details = document.createElement("details");
-        details.open = true;
-        const summary = document.createElement("summary");
-        summary.textContent = category.category + " (" + (category.documentCount || 0) + ")";
-        details.appendChild(summary);
-        (category.documents || []).forEach(function (document) {
-          details.appendChild(documentButton(document));
+      const taxonomy = level.taxonomy || [];
+      if (taxonomy.length) {
+        taxonomy.forEach(function (node) {
+          section.appendChild(taxonomyDetails(node, 0));
         });
-        section.appendChild(details);
-      });
+      } else {
+        (level.categories || []).forEach(function (category) {
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = category.category + " (" + (category.documentCount || 0) + ")";
+          details.appendChild(summary);
+          details.addEventListener("toggle", function () {
+            if (!details.open || details.dataset.rendered) return;
+            details.dataset.rendered = "true";
+            (category.documents || []).forEach(function (knowledgeDocument) {
+              details.appendChild(documentButton(knowledgeDocument));
+            });
+          });
+          section.appendChild(details);
+        });
+      }
       treeEl.appendChild(section);
     });
   }
 
-  function renderMarkdownish(text, parent) {
-    String(text || "")
-      .split(/\r?\n/)
-      .forEach(function (line) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          parent.appendChild(document.createElement("br"));
-          return;
-        }
-        const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
-        if (heading) {
-          appendText(parent, "h" + Math.min(4, heading[1].length + 1), heading[2]);
-          return;
-        }
-        if (/^[-*]\s+/.test(trimmed)) {
-          appendText(parent, "p", "\u2022 " + trimmed.replace(/^[-*]\s+/, ""), "knowledge-bullet");
-          return;
-        }
-        appendText(parent, "p", trimmed);
+  function appendInline(parent, source) {
+    const text = String(source || "");
+    const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*([^*]+)\*)/g;
+    let cursor = 0;
+    let match;
+    while ((match = pattern.exec(text))) {
+      if (match.index > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+      let element;
+      if (match[2]) {
+        element = document.createElement("strong");
+        element.textContent = match[2];
+      } else if (match[3]) {
+        element = document.createElement("code");
+        element.textContent = match[3];
+      } else if (match[4] && match[5]) {
+        element = document.createElement("a");
+        element.textContent = match[4];
+        element.href = match[5];
+        element.target = "_blank";
+        element.rel = "noopener noreferrer external";
+      } else {
+        element = document.createElement("em");
+        element.textContent = match[6] || "";
+      }
+      parent.appendChild(element);
+      cursor = pattern.lastIndex;
+    }
+    if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
+  }
+
+  function markdownCells(line) {
+    return line
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map(function (cell) {
+        return cell.trim();
       });
   }
 
-  function renderArticle(document) {
+  function renderMarkdownish(text, parent) {
+    const lines = String(text || "").split(/\r?\n/);
+    let index = 0;
+    while (index < lines.length) {
+      const trimmed = lines[index].trim();
+      if (!trimmed) {
+        index += 1;
+        continue;
+      }
+      const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+      if (heading) {
+        const headingElement = document.createElement("h" + Math.min(5, heading[1].length + 1));
+        appendInline(headingElement, heading[2]);
+        parent.appendChild(headingElement);
+        index += 1;
+        continue;
+      }
+      if (/^\|/.test(trimmed) && index + 1 < lines.length && /^\|?\s*:?-{3,}/.test(lines[index + 1].trim())) {
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        markdownCells(trimmed).forEach(function (cell) {
+          const th = document.createElement("th");
+          appendInline(th, cell);
+          headRow.appendChild(th);
+        });
+        head.appendChild(headRow);
+        table.appendChild(head);
+        const body = document.createElement("tbody");
+        index += 2;
+        while (index < lines.length && /^\|/.test(lines[index].trim())) {
+          const row = document.createElement("tr");
+          markdownCells(lines[index]).forEach(function (cell) {
+            const td = document.createElement("td");
+            appendInline(td, cell);
+            row.appendChild(td);
+          });
+          body.appendChild(row);
+          index += 1;
+        }
+        table.appendChild(body);
+        const wrapper = document.createElement("div");
+        wrapper.className = "knowledge-table-wrap";
+        wrapper.appendChild(table);
+        parent.appendChild(wrapper);
+        continue;
+      }
+      if (/^[-*]\s+/.test(trimmed)) {
+        const list = document.createElement("ul");
+        while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
+          const item = document.createElement("li");
+          appendInline(item, lines[index].trim().replace(/^[-*]\s+/, ""));
+          list.appendChild(item);
+          index += 1;
+        }
+        parent.appendChild(list);
+        continue;
+      }
+      if (/^\d+\.\s+/.test(trimmed)) {
+        const list = document.createElement("ol");
+        while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+          const item = document.createElement("li");
+          appendInline(item, lines[index].trim().replace(/^\d+\.\s+/, ""));
+          list.appendChild(item);
+          index += 1;
+        }
+        parent.appendChild(list);
+        continue;
+      }
+      if (/^>\s?/.test(trimmed)) {
+        const quote = document.createElement("blockquote");
+        appendInline(quote, trimmed.replace(/^>\s?/, ""));
+        parent.appendChild(quote);
+        index += 1;
+        continue;
+      }
+      const paragraph = document.createElement("p");
+      appendInline(paragraph, trimmed);
+      parent.appendChild(paragraph);
+      index += 1;
+    }
+  }
+
+  function renderArticle(knowledgeDocument) {
     clearNode(articleEl);
-    if (!document) {
+    if (!knowledgeDocument) {
       appendText(articleEl, "p", "Page not found.", "empty-state");
       return;
     }
-    appendText(articleEl, "h1", document.title || "Untitled");
-    if (document.description) appendText(articleEl, "p", document.description, "knowledge-article-description");
+    appendText(articleEl, "h1", knowledgeDocument.title || "Untitled");
+    if (knowledgeDocument.description) appendText(articleEl, "p", knowledgeDocument.description, "knowledge-article-description");
     const meta = appendText(
       articleEl,
       "p",
-      [document.scope, document.category, document.routeOrPath].filter(Boolean).join(" / "),
+      [knowledgeDocument.scope, knowledgeDocument.category, knowledgeDocument.routeOrPath].filter(Boolean).join(" / "),
       "knowledge-article-meta"
     );
-    meta.title = document.sourceUri || "";
-    if ((document.taxonomyPathLabels || []).length) {
-      appendText(articleEl, "p", document.taxonomyPathLabels.join(" | "), "knowledge-article-taxonomy");
+    meta.title = knowledgeDocument.sourceUri || "";
+    if ((knowledgeDocument.taxonomyPathLabels || []).length) {
+      appendText(articleEl, "p", knowledgeDocument.taxonomyPathLabels.join(" | "), "knowledge-article-taxonomy");
     }
-    if ((document.keywords || []).length) {
-      appendText(articleEl, "p", document.keywords.join(", "), "knowledge-article-keywords");
+    if ((knowledgeDocument.keywords || []).length) {
+      appendText(articleEl, "p", knowledgeDocument.keywords.join(", "), "knowledge-article-keywords");
     }
     const content = document.createElement("div");
     content.className = "knowledge-article-content";
-    renderMarkdownish(document.searchableText || "", content);
+    renderMarkdownish(knowledgeDocument.searchableText || "", content);
     articleEl.appendChild(content);
+  }
+
+  function renderDocumentLinks(items) {
+    if (!items.length) return;
+    const section = document.createElement("section");
+    section.className = "knowledge-article-links";
+    appendText(section, "h2", "External references");
+    items.forEach(function (item) {
+      section.appendChild(externalLinkResult(item, true));
+    });
+    articleEl.appendChild(section);
   }
 
   function renderResults(items) {
@@ -152,6 +331,17 @@
     }
     items.forEach(function (item) {
       resultsEl.appendChild(documentButton(item));
+    });
+  }
+
+  function renderExternalResults(items) {
+    clearNode(resultsEl);
+    if (!items.length) {
+      appendText(resultsEl, "p", "No matching web links.", "empty-state");
+      return;
+    }
+    items.forEach(function (item) {
+      resultsEl.appendChild(externalLinkResult(item, false));
     });
   }
 
@@ -175,7 +365,12 @@
     setStatus("Loading page...", "loading");
     api("/api/matm/knowledge-documents", { document_id: documentId, include_text: "1", limit: "1" })
       .then(function (payload) {
-        renderArticle((payload.items || [])[0]);
+        const document = (payload.items || [])[0];
+        renderArticle(document);
+        return api("/api/matm/external-links", { document_id: documentId, limit: "100" });
+      })
+      .then(function (payload) {
+        renderDocumentLinks(payload.items || []);
         setStatus("Page loaded.", "ok");
       })
       .catch(function (error) {
@@ -194,9 +389,11 @@
       limit: "50",
     };
     setStatus("Searching...", "loading");
-    api("/api/matm/knowledge-documents", params)
+    const endpoint = state.searchMode === "web" ? "/api/matm/internet-search" : "/api/matm/knowledge-documents";
+    api(endpoint, params)
       .then(function (payload) {
-        renderResults(payload.items || []);
+        if (state.searchMode === "web") renderExternalResults(payload.items || []);
+        else renderResults(payload.items || []);
         setStatus("Search complete.", "ok");
       })
       .catch(function (error) {
@@ -211,6 +408,7 @@
     const form = new FormData(authForm);
     state.workspaceId = String(form.get("workspaceId") || "").trim();
     state.workspaceKey = String(form.get("workspaceKey") || "").trim();
+    authForm.elements.workspaceKey.value = "";
     loadTree();
   });
 
@@ -221,5 +419,15 @@
 
   refreshButton.addEventListener("click", function () {
     loadTree();
+  });
+
+  modeButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      state.searchMode = button.dataset.knowledgeMode || "pages";
+      modeButtons.forEach(function (candidate) {
+        candidate.setAttribute("aria-selected", candidate === button ? "true" : "false");
+      });
+      runSearch();
+    });
   });
 })();

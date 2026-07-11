@@ -176,6 +176,53 @@ CREATE TABLE IF NOT EXISTS matm_search_documents (
   CONSTRAINT fk_matm_search_source FOREIGN KEY (source_id) REFERENCES matm_crawl_sources (source_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_external_links (
+  external_link_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  url TEXT NOT NULL,
+  normalized_url TEXT NOT NULL,
+  normalized_url_hash CHAR(64) NOT NULL,
+  page_url TEXT NOT NULL,
+  fragment TEXT NULL,
+  scheme VARCHAR(8) NOT NULL,
+  host VARCHAR(255) NOT NULL,
+  site_name VARCHAR(255) NOT NULL,
+  page_title VARCHAR(512) NOT NULL,
+  description TEXT NOT NULL,
+  keywords_json TEXT NOT NULL,
+  language VARCHAR(16) NOT NULL DEFAULT 'und',
+  content_type VARCHAR(128) NOT NULL DEFAULT 'text/html',
+  review_status VARCHAR(32) NOT NULL DEFAULT 'unreviewed',
+  crawl_status VARCHAR(32) NOT NULL DEFAULT 'not_requested',
+  crawl_policy VARCHAR(64) NOT NULL DEFAULT 'metadata_only',
+  visibility VARCHAR(32) NOT NULL DEFAULT 'workspace_private',
+  metadata_json TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_matm_external_links_url_hash (workspace_id, normalized_url_hash),
+  KEY ix_matm_external_links_host (workspace_id, host),
+  KEY ix_matm_external_links_review (workspace_id, review_status, crawl_status),
+  CONSTRAINT fk_matm_external_links_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_external_link_mentions (
+  external_link_mention_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  external_link_id VARCHAR(96) NOT NULL,
+  search_document_id VARCHAR(96) NOT NULL,
+  relationship_type VARCHAR(32) NOT NULL DEFAULT 'reference',
+  anchor_text TEXT NOT NULL,
+  context_description TEXT NOT NULL,
+  citation_label VARCHAR(64) NULL,
+  citation_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_matm_external_link_mention (workspace_id, external_link_id, search_document_id, relationship_type, citation_label),
+  KEY ix_matm_external_link_mentions_document (workspace_id, search_document_id, citation_order),
+  CONSTRAINT fk_matm_external_link_mentions_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_external_link_mentions_link FOREIGN KEY (external_link_id) REFERENCES matm_external_links (external_link_id),
+  CONSTRAINT fk_matm_external_link_mentions_document FOREIGN KEY (search_document_id) REFERENCES matm_search_documents (search_document_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_messages (
   message_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,
