@@ -1,15 +1,24 @@
 import argparse
 import json
-from urllib.error import HTTPError
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 
-def fetch_json(url):
-    try:
-        with urlopen(url, timeout=20) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode("utf-8", errors="replace"))
+def fetch_json(url, attempts=5, retry_delay_seconds=2):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urlopen(url, timeout=20) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode("utf-8", errors="replace"))
+        except URLError as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep(retry_delay_seconds)
+    raise last_error
 
 
 def main(argv=None):
