@@ -169,6 +169,13 @@ def _audit_detail_summary(details):
     return items[:8]
 
 
+def _current_message_attention_rank(item):
+    note = item.get("notification") or {}
+    if note.get("responseDisposition") == "required_response":
+        return 0
+    return 1
+
+
 def _public_memory_event(event):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
@@ -1608,8 +1615,16 @@ class FileStore(object):
                     break
             if message:
                 messages.append({"notification": note, "message": message})
-                if limit_value and len(messages) >= limit_value:
-                    break
+        messages.sort(
+            key=lambda item: (
+                ((item.get("notification") or {}).get("createdAt") or ""),
+                ((item.get("notification") or {}).get("notificationId") or ""),
+            ),
+            reverse=True,
+        )
+        messages.sort(key=_current_message_attention_rank)
+        if limit_value:
+            messages = messages[:limit_value]
         return messages
 
     def receipts(self, workspace_id, consumer_agent_id=None):
@@ -4005,7 +4020,10 @@ class SQLiteStore(FileStore):
                         FROM matm_notifications n
                         JOIN matm_messages m ON m.message_id = n.message_id
                         WHERE %s
-                        ORDER BY n.created_at DESC, n.notification_id DESC
+                        ORDER BY
+                          CASE WHEN n.response_disposition = 'required_response' THEN 0 ELSE 1 END,
+                          n.created_at DESC,
+                          n.notification_id DESC
                         %s
                         """ % (" AND ".join(clauses), limit_sql),
                         tuple(params),
