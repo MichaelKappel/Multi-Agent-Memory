@@ -301,6 +301,77 @@
     return "neutral";
   }
 
+  function filterHostedMemoryBySource(sourcePath) {
+    var form = pick("[data-console-search]");
+    if (form) {
+      var queryControl = formControl(form, "query");
+      var sourcePrefixControl = formControl(form, "sourcePrefix");
+      var tagControl = formControl(form, "tag");
+      if (queryControl) {
+        queryControl.value = longTermMemoryTag;
+      }
+      if (sourcePrefixControl) {
+        sourcePrefixControl.value = sourcePath || longTermMemorySourcePrefix;
+      }
+      if (tagControl) {
+        tagControl.value = longTermMemoryTag;
+      }
+      ["scope", "memoryType", "reviewStatus", "promotionState", "actorAgentId", "eventId"].forEach(function (field) {
+        if (form.elements[field]) {
+          form.elements[field].value = "";
+        }
+      });
+    }
+    return refreshMemory(longTermMemoryTag);
+  }
+
+  function renderLongTermMemorySourceLedger(parent, migration) {
+    var samples = (migration && migration.sourcePathSamples) || [];
+    if (!samples.length) {
+      return;
+    }
+    var sourceCount = migration.sourcePathCount || migration.canonicalSourceCount || samples.length;
+    var relatedCount = migration.relatedRecordCount || 0;
+    var summaryText = "Canonical source ledger: showing " + Math.min(samples.length, 6) + " of " + sourceCount + " source path(s).";
+    if (relatedCount) {
+      summaryText += " " + relatedCount + " related dogfood record(s) are excluded from canonical memory.";
+    }
+    parent.appendChild(el("div", "result-count long-term-source-ledger-summary", summaryText));
+    samples.slice(0, 6).forEach(function (sourcePath) {
+      var row = resultRow(
+        "Canonical long-term source",
+        sourcePath,
+        [
+          { text: "canonical", kind: "good" },
+          { text: formatStatusText(migration.status), kind: migration.status === "promoted" || migration.allPromoted ? "good" : "warn" },
+          { text: migration.filesystemDocsIncluded ? "filesystem review" : "hosted", kind: migration.filesystemDocsIncluded ? "warn" : "good" },
+        ],
+        [
+          "tag " + (migration.migrationTag || longTermMemoryTag),
+          "store " + (migration.memorySource || "hosted_workspace_store"),
+        ]
+      );
+      row.className += " long-term-source-row";
+      var actions = el("div", "row-actions");
+      var filterButton = el("button", "button compact", "Filter source");
+      var copyButton = el("button", "button compact", "Copy source");
+      filterButton.type = "button";
+      copyButton.type = "button";
+      filterButton.addEventListener("click", function () {
+        filterHostedMemoryBySource(sourcePath)
+          .then(function () { setStatus("Hosted memory filtered to " + shortId(sourcePath) + ".", false); })
+          .catch(function (error) { setStatus(error.message, true); });
+      });
+      copyButton.addEventListener("click", function () {
+        copySafeText(sourcePath, "Long-term memory source");
+      });
+      actions.appendChild(filterButton);
+      actions.appendChild(copyButton);
+      row.appendChild(actions);
+      parent.appendChild(row);
+    });
+  }
+
   function renderLongTermMemoryOperatorSummary(parent, migration) {
     if (!migration) {
       return;
@@ -325,6 +396,7 @@
     appendCountBadges(line, "Promotion", migration.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
     appendCountBadges(line, "Related reviews", migration.relatedReviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
     parent.appendChild(line);
+    renderLongTermMemorySourceLedger(parent, migration);
   }
 
   function isLongTermMemoryHealthPayload(payload) {
