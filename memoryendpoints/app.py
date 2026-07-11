@@ -1591,6 +1591,9 @@ def route_console(start_response):
           <option value="promoted">promoted</option>
         </select>
       </label>
+      <label>Source prefix
+        <input name="sourcePrefix" placeholder="docs/long-term-memory/">
+      </label>
       <label>Tag filter
         <input name="tag" placeholder="long-term-memory-migration">
       </label>

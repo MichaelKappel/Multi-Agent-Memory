@@ -3154,6 +3154,7 @@
       filters.memory_type = form.elements.memoryType ? form.elements.memoryType.value : "";
       filters.review_status = form.elements.reviewStatus ? form.elements.reviewStatus.value : "";
       filters.promotion_state = form.elements.promotionState ? form.elements.promotionState.value : "";
+      filters.source_prefix = form.elements.sourcePrefix ? form.elements.sourcePrefix.value.trim() : "";
       filters.tag = form.elements.tag ? form.elements.tag.value.trim() : "";
       filters.actor_agent_id = form.elements.actorAgentId ? form.elements.actorAgentId.value.trim() : "";
       filters.event_id = form.elements.eventId ? form.elements.eventId.value.trim() : "";
