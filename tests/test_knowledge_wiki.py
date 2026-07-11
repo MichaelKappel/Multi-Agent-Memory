@@ -214,28 +214,145 @@ class KnowledgeWikiTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_task_scoped_knowledge_tree_is_rejected(self):
+    def test_private_knowledge_shell_and_routes_require_workspace_authentication(self):
+        status, _headers, text = call_app("/knowledge")
+        self.assertEqual("200 OK", status)
+        self.assertIn("Private company knowledge", text)
+        self.assertIn("data-knowledge-private hidden", text)
+        self.assertNotIn("Company Wiki", text)
+        self.assertNotIn("localStorage", (Path(__file__).resolve().parents[1] / "static" / "js" / "knowledge.js").read_text(encoding="utf-8"))
+        self.assertNotIn("sessionStorage", (Path(__file__).resolve().parents[1] / "static" / "js" / "knowledge.js").read_text(encoding="utf-8"))
+
+        status, _headers, text = call_app("/api/matm/live-capability-matrix")
+        self.assertEqual("200 OK", status)
+        contract = json.loads(text)["data"]["knowledgeWiki"]
+        self.assertTrue(contract["authenticationRequired"])
+        self.assertFalse(contract["anonymousShellContainsKnowledge"])
+        self.assertFalse(contract["publicKnowledgeIndex"])
+        self.assertEqual(["company", "workspace", "project"], contract["supportedScopes"])
+        self.assertEqual([], contract["identityOwnedKnowledgeScopes"])
+        self.assertEqual("many_to_many", contract["accountCompanyMembership"])
+
+        for route in (
+            "/api/matm/projects",
+            "/api/matm/knowledge-tree",
+            "/api/matm/knowledge-documents",
+            "/api/matm/external-links",
+            "/api/matm/internet-search",
+        ):
+            with self.subTest(route=route):
+                status, _headers, text = call_app(route, query="workspace_id=workspace-anonymous-probe")
+                self.assertEqual("401 Unauthorized", status)
+                payload = json.loads(text)
+                self.assertEqual("auth_required", payload["error"]["code"])
+                self.assertTrue(payload["safeNoOp"])
+                self.assertNotIn("items", payload)
+                self.assertNotIn("tree", payload)
+
+        for route in ("/api/matm/knowledge-documents/upsert", "/api/matm/external-links/upsert"):
+            with self.subTest(route=route):
+                status, _headers, text = call_app(
+                    route,
+                    method="POST",
+                    body={"workspaceId": "workspace-anonymous-probe"},
+                )
+                self.assertEqual("401 Unauthorized", status)
+                self.assertEqual("auth_required", json.loads(text)["error"]["code"])
+
+    def test_workspace_key_cannot_cross_the_workspace_knowledge_boundary(self):
+        first, first_headers = self.setup_workspace()
+        second, _second_headers = self.setup_workspace()
+        for route in (
+            "/api/matm/projects",
+            "/api/matm/knowledge-tree",
+            "/api/matm/knowledge-documents",
+            "/api/matm/external-links",
+            "/api/matm/internet-search",
+        ):
+            with self.subTest(route=route):
+                status, _headers, text = call_app(
+                    route,
+                    headers=first_headers,
+                    query="workspace_id=%s" % second["workspaceId"],
+                )
+                self.assertEqual("401 Unauthorized", status)
+                payload = json.loads(text)
+                self.assertEqual("auth_required", payload["error"]["code"])
+                self.assertNotIn(first["apiKeySecret"], text)
+
+    def test_account_company_membership_is_many_to_many_but_not_a_knowledge_scope(self):
+        setup, headers = self.setup_workspace()
+        second_account_id = "account-membership-peer"
+        second_company_id = "company-membership-peer"
+        connection = sqlite3.connect(str(self.sqlite_path))
+        try:
+            connection.execute(
+                "INSERT INTO matm_accounts (account_id, label, status, created_at, updated_at) VALUES (?, ?, ?, ?, NULL)",
+                (second_account_id, "Membership Peer", "active", "membership-test"),
+            )
+            connection.execute(
+                "INSERT INTO matm_companies (company_id, label, status, created_at, updated_at) VALUES (?, ?, ?, ?, NULL)",
+                (second_company_id, "Membership Peer Company", "active", "membership-test"),
+            )
+            connection.execute(
+                "INSERT INTO matm_account_companies (membership_id, account_id, company_id, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                ("membership-account-second-company", setup["accountId"], second_company_id, "member", "active", "membership-test"),
+            )
+            connection.execute(
+                "INSERT INTO matm_account_companies (membership_id, account_id, company_id, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                ("membership-second-account-company", second_account_id, setup["companyId"], "member", "active", "membership-test"),
+            )
+            self.assertEqual(
+                2,
+                connection.execute(
+                    "SELECT COUNT(*) FROM matm_account_companies WHERE account_id = ?",
+                    (setup["accountId"],),
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                2,
+                connection.execute(
+                    "SELECT COUNT(*) FROM matm_account_companies WHERE company_id = ?",
+                    (setup["companyId"],),
+                ).fetchone()[0],
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        status, _headers, text = call_app(
+            "/api/matm/workspace",
+            headers=headers,
+            query="workspace_id=%s" % setup["workspaceId"],
+        )
+        self.assertEqual("200 OK", status)
+        account_ids = {item["accountId"] for item in json.loads(text)["workspace"]["accounts"]}
+        self.assertEqual({setup["accountId"], second_account_id}, account_ids)
+
+    def test_only_company_workspace_and_project_knowledge_scopes_are_allowed(self):
         setup, headers = self.setup_workspace()
         workspace_id = setup["workspaceId"]
-        status, _headers, text = call_app(
-            "/api/matm/knowledge-documents/upsert",
-            method="POST",
-            body={
-                "workspaceId": workspace_id,
-                "actorAgentId": "MemoryEndpoints-Backend-Agent",
-                "scope": "task",
-                "scopeId": "task-one",
-                "title": "Should Not Persist",
-                "description": "Rejected task-scoped knowledge test.",
-                "keywords": ["task scope"],
-                "taxonomyPaths": [["Task", "Rejected"]],
-                "searchableText": "Task trees are forbidden for durable knowledge.",
-            },
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="task-knowledge-rejected"),
-        )
-        self.assertEqual("422 Unprocessable Entity", status)
-        payload = json.loads(text)
-        self.assertEqual("unsupported_knowledge_scope", payload["error"]["code"])
+        for scope in ("account", "user", "goal", "task"):
+            with self.subTest(scope=scope):
+                status, _headers, text = call_app(
+                    "/api/matm/knowledge-documents/upsert",
+                    method="POST",
+                    body={
+                        "workspaceId": workspace_id,
+                        "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                        "scope": scope,
+                        "scopeId": scope + "-one",
+                        "title": "Should Not Persist",
+                        "description": "Rejected durable knowledge scope test.",
+                        "keywords": [scope + " scope"],
+                        "taxonomyPaths": [[scope, "Rejected"]],
+                        "searchableText": "Durable knowledge is limited to company, workspace, and project scopes.",
+                    },
+                    headers=dict(headers, HTTP_IDEMPOTENCY_KEY=scope + "-knowledge-rejected"),
+                )
+                self.assertEqual("422 Unprocessable Entity", status)
+                payload = json.loads(text)
+                self.assertEqual("unsupported_knowledge_scope", payload["error"]["code"])
 
     def test_knowledge_lifecycle_supersession_is_first_class_and_ranking_aware(self):
         setup, headers = self.setup_workspace()

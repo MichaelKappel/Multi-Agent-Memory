@@ -6,6 +6,7 @@
   const searchForm = app.querySelector("[data-knowledge-search]");
   const refreshButton = app.querySelector("[data-knowledge-refresh]");
   const modeButtons = Array.from(app.querySelectorAll("[data-knowledge-mode]"));
+  const privateEl = app.querySelector("[data-knowledge-private]");
   const treeEl = app.querySelector("[data-knowledge-tree]");
   const articleEl = app.querySelector("[data-knowledge-article]");
   const resultsEl = app.querySelector("[data-knowledge-results]");
@@ -19,6 +20,19 @@
 
   function clearNode(node) {
     while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function lockPrivateKnowledge(clearCredentials) {
+    privateEl.hidden = true;
+    clearNode(treeEl);
+    clearNode(articleEl);
+    clearNode(resultsEl);
+    appendText(articleEl, "p", "Select a page.", "empty-state");
+    appendText(resultsEl, "p", "Search results will appear here.", "empty-state");
+    if (clearCredentials) {
+      state.workspaceId = "";
+      state.workspaceKey = "";
+    }
   }
 
   function appendText(parent, tag, text, className) {
@@ -72,7 +86,9 @@
       });
       if (!response.ok || !payload.ok) {
         const error = payload.error || {};
-        throw new Error(error.title || error.detail || response.statusText || "Request failed.");
+        const requestError = new Error(error.title || error.detail || response.statusText || "Request failed.");
+        requestError.status = response.status;
+        throw requestError;
       }
       return payload;
     });
@@ -378,12 +394,12 @@
     return api("/api/matm/knowledge-tree", {})
       .then(function (payload) {
         renderTree(payload.tree || {});
+        privateEl.hidden = false;
         setStatus("Wiki loaded.", "ok");
         return payload;
       })
       .catch(function (error) {
-        clearNode(treeEl);
-        appendText(treeEl, "p", error.message, "empty-state");
+        lockPrivateKnowledge(true);
         setStatus(error.message, "error");
       });
   }
@@ -402,8 +418,9 @@
         setStatus("Page loaded.", "ok");
       })
       .catch(function (error) {
+        if (error.status === 401) lockPrivateKnowledge(true);
         clearNode(articleEl);
-        appendText(articleEl, "p", error.message, "empty-state");
+        if (!privateEl.hidden) appendText(articleEl, "p", error.message, "empty-state");
         setStatus(error.message, "error");
       });
   }
@@ -427,8 +444,9 @@
         setStatus("Search complete.", "ok");
       })
       .catch(function (error) {
+        if (error.status === 401) lockPrivateKnowledge(true);
         clearNode(resultsEl);
-        appendText(resultsEl, "p", error.message, "empty-state");
+        if (!privateEl.hidden) appendText(resultsEl, "p", error.message, "empty-state");
         setStatus(error.message, "error");
       });
   }
@@ -439,6 +457,7 @@
     state.workspaceId = String(form.get("workspaceId") || "").trim();
     state.workspaceKey = String(form.get("workspaceKey") || "").trim();
     authForm.elements.workspaceKey.value = "";
+    lockPrivateKnowledge(false);
     loadTree();
   });
 

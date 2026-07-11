@@ -22,6 +22,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
 - Protected workspace status, agent registration, memory submit/search, lifecycle-aware wiki documents, current-message, acknowledgement, and redacted receipt routes.
+- No anonymous tenant wiki: `/knowledge` is an empty authentication shell, and all company/workspace/project pages, search results, and external-link records require a workspace-bound key. Accounts/users are membership identities, not data scopes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
 

@@ -2328,7 +2328,7 @@ def route_knowledge(start_response):
 <section class="knowledge-app" data-knowledge-app>
   <header class="knowledge-header">
     <div>
-      <span class="section-kicker">Company Wiki</span>
+      <span class="section-kicker">Private company knowledge</span>
       <h1>Knowledge</h1>
     </div>
     <form class="knowledge-auth" data-knowledge-auth>
@@ -2341,61 +2341,61 @@ def route_knowledge(start_response):
       <button class="button primary" type="submit">Open wiki</button>
     </form>
   </header>
-  <section class="knowledge-toolbar">
-    <div class="knowledge-search-mode" role="tablist" aria-label="Search index" data-knowledge-search-mode>
-      <button class="button" type="button" role="tab" aria-selected="true" data-knowledge-mode="pages">Wiki pages</button>
-      <button class="button" type="button" role="tab" aria-selected="false" data-knowledge-mode="web">Web links</button>
-    </div>
-    <form class="knowledge-search" data-knowledge-search>
-      <label>Search
-        <input name="q" placeholder="strategy, memory, routing">
-      </label>
-      <label>Scope
-        <select name="scope">
-          <option value="">All scopes</option>
-          <option value="company">Company</option>
-          <option value="workspace">Workspace</option>
-          <option value="project">Project</option>
-        </select>
-      </label>
-      <label>Category
-        <input name="category" placeholder="coding-standards">
-      </label>
-      <label>Status
-        <select name="knowledgeStatus">
-          <option value="">All statuses</option>
-          <option value="current">Current</option>
-          <option value="proposed">Proposed</option>
-          <option value="historical">Historical</option>
-          <option value="superseded">Superseded</option>
-          <option value="archived">Archived</option>
-        </select>
-      </label>
-      <label>Authority
-        <select name="authorityLevel">
-          <option value="">All authority levels</option>
-          <option value="canonical">Canonical</option>
-          <option value="reviewed">Reviewed</option>
-          <option value="reference">Reference</option>
-          <option value="community">Community</option>
-          <option value="unverified">Unverified</option>
-        </select>
-      </label>
-      <button class="button" type="submit">Search</button>
-      <button class="button" type="button" data-knowledge-refresh>Refresh tree</button>
-    </form>
-  </section>
-  <section class="knowledge-layout">
-    <aside class="knowledge-tree" aria-label="Knowledge tree" data-knowledge-tree>
-      <p class="empty-state">Sign in to load the wiki.</p>
-    </aside>
-    <article class="knowledge-article" data-knowledge-article>
-      <p class="empty-state">Select a page.</p>
-    </article>
-    <aside class="knowledge-results" aria-label="Search results" data-knowledge-results>
-      <p class="empty-state">Search results will appear here.</p>
-    </aside>
-  </section>
+  <div class="knowledge-private" data-knowledge-private hidden>
+    <section class="knowledge-toolbar">
+      <div class="knowledge-search-mode" role="tablist" aria-label="Search index" data-knowledge-search-mode>
+        <button class="button" type="button" role="tab" aria-selected="true" data-knowledge-mode="pages">Wiki pages</button>
+        <button class="button" type="button" role="tab" aria-selected="false" data-knowledge-mode="web">Web links</button>
+      </div>
+      <form class="knowledge-search" data-knowledge-search>
+        <label>Search
+          <input name="q" placeholder="strategy, memory, routing">
+        </label>
+        <label>Scope
+          <select name="scope">
+            <option value="">All scopes</option>
+            <option value="company">Company</option>
+            <option value="workspace">Workspace</option>
+            <option value="project">Project</option>
+          </select>
+        </label>
+        <label>Category
+          <input name="category" placeholder="coding-standards">
+        </label>
+        <label>Status
+          <select name="knowledgeStatus">
+            <option value="">All statuses</option>
+            <option value="current">Current</option>
+            <option value="proposed">Proposed</option>
+            <option value="historical">Historical</option>
+            <option value="superseded">Superseded</option>
+            <option value="archived">Archived</option>
+          </select>
+        </label>
+        <label>Authority
+          <select name="authorityLevel">
+            <option value="">All authority levels</option>
+            <option value="canonical">Canonical</option>
+            <option value="reviewed">Reviewed</option>
+            <option value="reference">Reference</option>
+            <option value="community">Community</option>
+            <option value="unverified">Unverified</option>
+          </select>
+        </label>
+        <button class="button" type="submit">Search</button>
+        <button class="button" type="button" data-knowledge-refresh>Refresh tree</button>
+      </form>
+    </section>
+    <section class="knowledge-layout">
+      <aside class="knowledge-tree" aria-label="Knowledge tree" data-knowledge-tree></aside>
+      <article class="knowledge-article" data-knowledge-article>
+        <p class="empty-state">Select a page.</p>
+      </article>
+      <aside class="knowledge-results" aria-label="Search results" data-knowledge-results>
+        <p class="empty-state">Search results will appear here.</p>
+      </aside>
+    </section>
+  </div>
   <output class="knowledge-status" data-knowledge-status></output>
 </section>
 <script src="/static/js/knowledge.js?v=%s"></script>

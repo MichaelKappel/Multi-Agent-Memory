@@ -3,13 +3,16 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from scripts import build_deploy_attempt_report, ftp_deploy_memoryendpoints, ftp_deploy_static_site
+from scripts import build_deploy_attempt_report, ftp_deploy_memoryendpoints, ftp_deploy_static_site, package_memoryendpoints
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeployProtocolTests(unittest.TestCase):
+    def test_package_excludes_visual_studio_runtime_state(self):
+        self.assertFalse(package_memoryendpoints.should_include_rel(Path(".vs") / "solution" / "index.vsidx"))
+
     def test_transport_security_labels_are_explicit(self):
         self.assertEqual("explicit_ftps", ftp_deploy_memoryendpoints.transport_security("ftps"))
         self.assertEqual("plain_ftp", ftp_deploy_memoryendpoints.transport_security("ftp"))

@@ -16,6 +16,7 @@ BUILD_INFO = ROOT / "memoryendpoints" / "build_info.generated.json"
 EXCLUDE_DIRS = {
     ".git",
     ".github",
+    ".vs",
     ".uai",
     "__pycache__",
     ".pytest_cache",

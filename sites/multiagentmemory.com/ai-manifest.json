@@ -55,6 +55,14 @@
     "supersededReplacementRequired": true,
     "currentCanonicalRankingPreferred": true
   },
+  "knowledgeAccess": {
+    "authenticationRequired": true,
+    "anonymousShellContainsKnowledge": false,
+    "publicKnowledgeIndex": false,
+    "supportedScopes": ["company", "workspace", "project"],
+    "identityOwnedKnowledgeScopes": [],
+    "accountCompanyMembership": "many_to_many"
+  },
   "repositoryMap": {
     "runtime": "memoryendpoints/",
     "companionSite": "sites/multiagentmemory.com/",

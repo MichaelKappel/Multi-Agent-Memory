@@ -31,6 +31,8 @@ External evidence refresh:
 
 Coverage expectations:
 - Route handler integration tests must exercise public discovery and protected MATM workflows.
+- Private-knowledge tests must enumerate the wiki tree, document, external-link, internet-search, and project routes; prove anonymous requests are safe `401` no-ops; prove a valid key cannot select another workspace; and prove failed re-authentication clears the rendered private wiki.
+- Hierarchy tests must prove account-company membership is many-to-many while durable knowledge rejects account, user, goal, and task scopes and accepts only company, workspace, and project.
 - Public route and companion-site verifiers must report zero secret hits and zero public leak hits for local filesystem paths, file URIs, or raw traceback fragments.
 - Repository boundary audit must prove there are no duplicate MemoryEndpoints.com or MultiAgentMemory.com active site folders at the drive root and no root-level runtime artifacts such as local SQLite write checks or devserver logs.
 - Storage tests must prove one-time workspace keys are persisted only as hashes, raw keys are absent from file and SQLite storage, SQLite relational tables exist, memory revisions are represented, and the active tested path does not rely on a single JSON blob table.

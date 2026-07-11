@@ -841,6 +841,10 @@ pre {
   padding: 18px;
 }
 
+.knowledge-private[hidden] {
+  display: none;
+}
+
 .knowledge-header {
   align-items: end;
   display: grid;

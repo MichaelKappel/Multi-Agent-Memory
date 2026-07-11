@@ -29,6 +29,7 @@ Repository model:
 - Static companion site: sites/multiagentmemory.com/
 - Local startup memory: .uai/
 - Reviewed durable knowledge: MemoryEndpoints.com database-backed company/workspace/project wiki and hosted memory records
+- Tenant knowledge is never anonymous: /knowledge is an empty authentication shell until a workspace-bound key succeeds; accounts/users are company-membership identities and do not own knowledge scopes
 - Verification and deploy helpers: scripts/
 - Tests: tests/
 

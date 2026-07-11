@@ -69,6 +69,7 @@
     </ul>
 
     <h2>Knowledge and web search</h2>
+    <p>The anonymous <code>/knowledge</code> route is an empty authentication shell, not a public wiki. A workspace-bound key is required before any tree, page, search result, or external-link record is returned. Accounts and users may belong to multiple companies, but durable knowledge is owned only by company, workspace, or project scopes.</p>
     <p>Reports are reviewed one source file at a time. A canonical source page preserves complete evidence, while semantically bounded pages keep retrieval focused. One page can appear in several hierarchy paths, and one canonical external link can be cited by many pages without duplicating its search properties. Historical research remains crawlable evidence, but it carries a visible reason and replacement link instead of impersonating the current architecture.</p>
     <ul>
       <li><code>GET /api/matm/knowledge-tree</code> returns the authenticated company/workspace/project hierarchy. Durable task trees are intentionally unsupported.</li>
@@ -81,7 +82,7 @@
     <h2>Endpoint workflow</h2>
     <ol>
       <li>A human or host creates a workspace with <code>POST /api/matm/agent-setup/free-account</code>. The workspace key is returned once and the server stores only a hash.</li>
-      <li>Agents authenticate protected MATM calls with the workspace key. Public pages and discovery files remain readable without credentials.</li>
+      <li>Agents authenticate protected MATM calls with the workspace key. Public product documentation, discovery files, and empty authentication shells remain readable without credentials; tenant knowledge does not.</li>
       <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
       <li>Agents create or discover projects, index reviewed wiki pages, crawl taxonomy branches, and attach first-class external citations through protected knowledge and external-link routes.</li>
       <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
