@@ -48,6 +48,9 @@
     inboxUnreadCount: null,
     inboxTotalUnreadCount: null,
     inboxCountLimited: false,
+    inboxNextCursor: "",
+    inboxHasMore: false,
+    inboxCursorAccepted: null,
     laneUnreadCount: null,
     messageDeliveryCounts: null,
     messageRequiredResponseCount: null,
@@ -566,7 +569,7 @@
 
   function inboxPayloadIsFilteredOrLimited(payload) {
     var filters = (payload && payload.filters) || {};
-    return Boolean(filters.limit || filters.messageId || filters.notificationId || filters.message_id || filters.notification_id);
+    return Boolean(filters.limit || filters.cursor || filters.messageId || filters.notificationId || filters.message_id || filters.notification_id);
   }
 
   function attentionFirstItems(items) {
@@ -1454,10 +1457,16 @@
       ? operatorSummary.totalUnreadCount
       : ((payload && payload.totalUnreadCount !== undefined) ? payload.totalUnreadCount : inboxUnreadCount);
     var limitedInboxView = inboxPayloadIsFilteredOrLimited(payload);
+    var inboxPagination = operatorSummary.pagination || {};
+    var inboxHasMore = Boolean((payload && payload.hasMore) || inboxPagination.hasMore);
+    var inboxNextCursor = (payload && payload.nextCursor) || inboxPagination.nextCursor || "";
     var inboxCountLabel = limitedInboxView ? "visible unread" : "unread";
     state.inboxUnreadCount = inboxUnreadCount;
     state.inboxTotalUnreadCount = inboxTotalUnreadCount;
     state.inboxCountLimited = limitedInboxView;
+    state.inboxHasMore = inboxHasMore;
+    state.inboxNextCursor = inboxNextCursor || "";
+    state.inboxCursorAccepted = payload && payload.cursorAccepted !== undefined ? payload.cursorAccepted : inboxPagination.cursorAccepted;
     state.messageDeliveryCounts = deliveryCounts;
     state.messageRequiredResponseCount = requiredResponseCountFromPayload(payload, items);
     renderOperatorMetrics();
@@ -1466,6 +1475,9 @@
     appendBadge(summaryLine, inboxUnreadCount + " " + inboxCountLabel, items.length ? "warn" : "good");
     if (limitedInboxView && inboxTotalUnreadCount !== inboxUnreadCount) {
       appendBadge(summaryLine, inboxTotalUnreadCount + " total unread", "neutral");
+    }
+    if (inboxHasMore) {
+      appendBadge(summaryLine, "older unread available", "neutral");
     }
     appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"]);
     appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
@@ -1482,6 +1494,25 @@
       countText += " " + (deliveryCounts.broadcast || 0) + " broadcast, " + (deliveryCounts.targeted || 0) + " targeted.";
     }
     node.appendChild(el("div", "result-count", countText));
+    if (inboxHasMore && inboxNextCursor) {
+      var inboxActions = el("div", "row-actions");
+      var olderButton = el("button", "button compact", "Load older messages");
+      olderButton.type = "button";
+      olderButton.addEventListener("click", function () {
+        var filters = inboxExactFilters();
+        var olderFilters = {
+          messageId: "",
+          notificationId: "",
+          limit: filters.limit,
+          cursor: inboxNextCursor,
+        };
+        refreshInbox(lane, olderFilters)
+          .then(function () { setStatus("Older inbox messages loaded.", false); })
+          .catch(function (error) { setStatus(error.message, true); });
+      });
+      inboxActions.appendChild(olderButton);
+      node.appendChild(inboxActions);
+    }
     items.forEach(function (item) {
       var message = item.message || {};
       var notification = item.notification || {};
@@ -3130,6 +3161,9 @@
     }
     if (filters && filters.limit) {
       params.limit = filters.limit;
+    }
+    if (filters && filters.cursor) {
+      params.cursor = filters.cursor;
     }
     var qs = query(params);
     return api("/api/matm/current-message?" + qs).then(function (payload) {
