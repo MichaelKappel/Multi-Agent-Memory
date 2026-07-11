@@ -1586,7 +1586,7 @@
         return;
       }
       var items = (result.payload && result.payload.items) || [];
-      items.forEach(function (item) {
+      items.slice(0, 2).forEach(function (item) {
         var row = {};
         Object.keys(item || {}).forEach(function (key) {
           row[key] = item[key];

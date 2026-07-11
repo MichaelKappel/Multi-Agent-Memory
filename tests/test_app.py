@@ -894,6 +894,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("operatorLaneLabel", js)
         self.assertIn("unread across lanes", js)
         self.assertIn("All checked lanes are clear.", js)
+        self.assertIn("items.slice(0, 2).forEach", js)
         self.assertIn("refreshLaneOverview", js)
         self.assertIn("refreshInbox(state.agentId)\n        .then(function () { return refreshLaneOverview(); })", js)
         self.assertIn("payload.deliveryCounts", js)
