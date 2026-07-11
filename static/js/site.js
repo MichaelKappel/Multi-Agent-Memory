@@ -1246,7 +1246,9 @@
     state.memoryCount = summary.count !== undefined ? summary.count : items.length;
     state.memoryScopeCounts = summary.scopeCounts || null;
     state.memoryFilesystemIncluded = Boolean(summary.filesystemDocsIncluded);
-    state.longTermMemoryHealth = summary.longTermMemoryMigration || null;
+    if (summary.longTermMemoryMigration) {
+      state.longTermMemoryHealth = summary.longTermMemoryMigration;
+    }
     renderOperatorMetrics();
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No hosted memory matched this search."));
@@ -2934,6 +2936,25 @@
     });
   }
 
+  function refreshLongTermMemoryHealth() {
+    if (!state.workspaceId) {
+      state.longTermMemoryHealth = null;
+      renderOperatorMetrics();
+      return Promise.resolve(null);
+    }
+    var qs = query({
+      workspace_id: state.workspaceId,
+      q: longTermMemoryTag,
+      tag: longTermMemoryTag,
+    });
+    return api("/api/matm/search?" + qs).then(function (payload) {
+      var summary = (payload && payload.operatorSummary) || {};
+      state.longTermMemoryHealth = summary.longTermMemoryMigration || null;
+      renderOperatorMetrics();
+      return payload;
+    });
+  }
+
   function showHostedLongTermMemory() {
     if (!state.key || !state.workspaceId) {
       setStatus("Load workspace before searching hosted long-term memory.", true);
@@ -3447,6 +3468,7 @@
     };
     return Promise.all([
       bootstrapRefresh("memory", function () { return refreshMemory("verification"); }),
+      bootstrapRefresh("long-term health", refreshLongTermMemoryHealth),
       bootstrapRefresh("reviews", function () { return refreshReviewQueue("pending"); }),
       bootstrapRefresh("meetings", meetingRefresh),
       bootstrapRefresh("routing", refreshRoutingDecisions),
