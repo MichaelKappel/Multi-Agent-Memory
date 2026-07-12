@@ -114,6 +114,26 @@ class MySQLStoreTests(unittest.TestCase):
                         0.9,
                         scope_id=project_id,
                     )
+                    linked_document, linked_error = store.upsert_knowledge_document(
+                        workspace_id,
+                        "search-agent",
+                        {
+                            "scope": "project",
+                            "scopeId": project_id,
+                            "projectId": project_id,
+                            "title": "Model Artifact and Browser Resource Estimation",
+                            "description": "Bounded browser model loading and resource estimation guidance.",
+                            "keywords": ["resource preflight", "streamed loading", "peak memory"],
+                            "taxonomyPaths": [
+                                ["TinyRustLM", "browser runtime", "resource estimation"],
+                                ["AI infrastructure", "model serving", "memory budgeting"],
+                            ],
+                            "sourceUri": "report://memory-search-linked-knowledge",
+                            "routeOrPath": "/knowledge/project/model-resource-estimation",
+                            "searchableText": "Reject a contiguous multi-gigabyte allocation. Stream bounded buffers and measure browser memory.",
+                        },
+                    )
+                    self.assertIsNone(linked_error)
                     behavior = store.submit_memory(
                         workspace_id,
                         "search-agent",
@@ -149,9 +169,12 @@ class MySQLStoreTests(unittest.TestCase):
                     self.assertEqual(resource["eventId"], resource_results[0]["eventId"])
                     self.assertIn("browser", resource_results[0]["matchedTerms"])
                     self.assertIn("memory", resource_results[0]["matchedTerms"])
-                    self.assertIn("contiguous", resource_results[0]["unmatchedTerms"])
+                    self.assertNotIn("contiguous", resource_results[0]["unmatchedTerms"])
                     self.assertGreater(resource_results[0]["matchScore"], 0)
                     self.assertEqual([resource["eventId"]], [item["eventId"] for item in resource_results])
+                    self.assertTrue(resource_results[0]["knowledgeAugmentedMatch"])
+                    self.assertTrue({"contiguous", "multi", "gigabyte", "allocation"}.issubset(set(resource_results[0]["linkedKnowledgeMatchedTerms"])))
+                    self.assertEqual(linked_document["searchDocumentId"], resource_results[0]["linkedKnowledgeDocument"]["searchDocumentId"])
 
                     behavior_results = store.search_memory(
                         workspace_id,

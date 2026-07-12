@@ -462,9 +462,9 @@ def capability_matrix():
         "memoryRecall": {
             "status": "live",
             "searchRoute": "/api/matm/search",
-            "ranking": "weighted_stem_aware_partial_terms",
-            "searchFields": ["title", "subject", "tags", "summary", "source", "memoryType", "actorAgentId", "identifiers"],
-            "matchEvidenceFields": ["matchScore", "matchedTerms", "unmatchedTerms"],
+            "ranking": "weighted_stem_aware_partial_terms_with_linked_knowledge_context",
+            "searchFields": ["title", "subject", "tags", "summary", "source", "memoryType", "actorAgentId", "identifiers", "linkedKnowledgeTitle", "linkedKnowledgeDescription", "linkedKnowledgeKeywords", "linkedKnowledgeTaxonomy", "linkedKnowledgeText"],
+            "matchEvidenceFields": ["matchScore", "matchedTerms", "unmatchedTerms", "linkedKnowledgeMatchedTerms", "knowledgeAugmentedMatch", "linkedKnowledgeDocument"],
             "structuredIdentifierRule": "Hyphenated event, review, message, and tag identifiers require an exact stored identifier match.",
         },
         "reviewPromotionQueue": {
@@ -731,8 +731,8 @@ def connector_contract():
             "updateRule": "Submit a new reviewed public-safe memory event with the same subject/source and an explicit update tag; do not overwrite history until a dedicated revision route is advertised.",
             "submitConfirmationRule": "Treat memory save as successful only when persisted=true and the response confirms visibleInSearch or visibleInReviewQueue plus visibleInAuditLog with memoryQueryUrl, reviewQueueUrl, and auditLogUrl.",
             "searchQueryFilters": ["q", "scope", "scope_id", "source_prefix", "tag", "actor_agent_id", "memory_type", "review_status", "promotion_state", "event_id"],
-            "searchRankingRule": "Non-empty q searches use weighted, stem-aware partial-term recall and deterministic relevance ordering while structured identifiers remain exact.",
-            "searchEvidenceFields": ["matchScore", "matchedTerms", "unmatchedTerms"],
+            "searchRankingRule": "Non-empty q searches use weighted, stem-aware partial-term recall over compact events plus source-linked protected wiki context, with deterministic relevance ordering while structured identifiers remain exact.",
+            "searchEvidenceFields": ["matchScore", "matchedTerms", "unmatchedTerms", "linkedKnowledgeMatchedTerms", "knowledgeAugmentedMatch", "linkedKnowledgeDocument"],
             "retrieveByScope": "Use /api/matm/search with scope, source_prefix, tag, actor_agent_id, memory_type, review_status, promotion_state, and event_id filters. For deterministic post-submit readback, set event_id to the returned memory event id. For goal or task retrieval, set scope to goal or task and use a stable scopeId chosen by the connector.",
             "reviewQueueFilters": ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"],
             "reviewQueueOperatorSummary": "Use operatorSummary.longTermMemoryReviews to monitor hosted long-term memory promotion health without parsing raw review JSON.",

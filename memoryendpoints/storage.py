@@ -297,7 +297,7 @@ def _meeting_transcript_page(messages, cursor, limit_value):
     }
 
 
-def _public_memory_event(event, query=""):
+def _public_memory_event(event, query="", linked_document=None):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
     if firewall:
@@ -307,10 +307,19 @@ def _public_memory_event(event, query=""):
     item["valuesRedacted"] = True
     item["rawPrivatePayloadStored"] = False
     if str(query or "").strip():
-        match = _memory_text_match(query, event or {})
+        match = _memory_text_match(query, event or {}, linked_document)
         item["matchScore"] = match["score"]
         item["matchedTerms"] = match["matchedTerms"]
         item["unmatchedTerms"] = match["unmatchedTerms"]
+        item["linkedKnowledgeMatchedTerms"] = match["linkedKnowledgeMatchedTerms"]
+        item["knowledgeAugmentedMatch"] = bool(match["linkedKnowledgeMatchedTerms"])
+        if linked_document:
+            item["linkedKnowledgeDocument"] = {
+                "searchDocumentId": linked_document.get("searchDocumentId"),
+                "routeOrPath": linked_document.get("routeOrPath"),
+                "title": linked_document.get("title"),
+                "valuesRedacted": True,
+            }
     return item
 
 
@@ -852,11 +861,11 @@ def _search_term_root(value):
     return token
 
 
-def _memory_text_match(query, event):
+def _memory_text_match(query, event, linked_document=None):
     query_text = str(query or "").strip().lower()
     if not query_text:
-        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
-    fields = [
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": [], "linkedKnowledgeMatchedTerms": []}
+    memory_fields = [
         (event.get("title") or "", 15),
         (event.get("subject") or "", 13),
         (" ".join(event.get("tags") or []), 12),
@@ -866,18 +875,42 @@ def _memory_text_match(query, event):
         (event.get("actorAgentId") or "", 3),
         (" ".join([event.get("eventId") or "", event.get("reviewId") or ""]), 2),
     ]
+    linked_document = linked_document or {}
+    linked_taxonomy = " ".join(
+        " ".join(path)
+        for path in _normalize_taxonomy_paths(
+            linked_document.get("taxonomyPaths")
+            or (linked_document.get("metadata") or {}).get("taxonomyPaths")
+        )
+    )
+    linked_fields = []
+    if linked_document:
+        linked_fields = [
+            (linked_document.get("title") or "", 12),
+            (" ".join(linked_document.get("keywords") or []), 11),
+            (linked_taxonomy, 10),
+            (linked_document.get("description") or "", 9),
+            (linked_document.get("searchableText") or "", 5),
+        ]
+    fields = memory_fields + linked_fields
+    memory_combined = " ".join(value.lower() for value, _weight in memory_fields)
     combined = " ".join(value.lower() for value, _weight in fields)
+    linked_terms = {
+        _search_term_root(token)
+        for value, _weight in linked_fields
+        for token in _search_tokens(value)
+    }
     if re.fullmatch(r"[a-z][a-z0-9]*-[a-z0-9][a-z0-9-]*", query_text):
-        if query_text in combined:
-            return {"score": 200, "matchedTerms": [query_text], "unmatchedTerms": []}
-        return {"score": 0, "matchedTerms": [], "unmatchedTerms": [query_text]}
+        if query_text in memory_combined:
+            return {"score": 200, "matchedTerms": [query_text], "unmatchedTerms": [], "linkedKnowledgeMatchedTerms": []}
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": [query_text], "linkedKnowledgeMatchedTerms": []}
     query_terms = []
     for token in _search_tokens(query_text):
         root = _search_term_root(token)
         if root and root not in _MEMORY_QUERY_STOP_WORDS and root not in query_terms:
             query_terms.append(root)
     if not query_terms:
-        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": [], "linkedKnowledgeMatchedTerms": []}
     score = 0
     if query_text in combined:
         score += 60
@@ -895,12 +928,17 @@ def _memory_text_match(query, event):
         else:
             unmatched.append(term)
     if len(query_terms) >= 3 and len(matched) < 2:
-        return {"score": 0, "matchedTerms": matched, "unmatchedTerms": unmatched}
+        return {"score": 0, "matchedTerms": matched, "unmatchedTerms": unmatched, "linkedKnowledgeMatchedTerms": [term for term in matched if term in linked_terms]}
     if matched:
         score += int(round(30.0 * len(matched) / len(query_terms)))
         if not unmatched:
             score += 25
-    return {"score": score, "matchedTerms": matched, "unmatchedTerms": unmatched}
+    return {
+        "score": score,
+        "matchedTerms": matched,
+        "unmatchedTerms": unmatched,
+        "linkedKnowledgeMatchedTerms": [term for term in matched if term in linked_terms],
+    }
 
 
 def _external_link_search_match(link, mentions, query):
@@ -3306,6 +3344,13 @@ class FileStore(object):
             or filters.get("memory_event_id")
             or ""
         ).strip()
+        linked_documents = {}
+        for document in sorted(
+            data.get("searchDocuments", {}).values(),
+            key=lambda item: item.get("searchDocumentId") or "",
+        ):
+            if document.get("workspaceId") == workspace_id and document.get("routeOrPath"):
+                linked_documents.setdefault(document["routeOrPath"], document)
         items = []
         for event in data["memoryEvents"]:
             if event.get("workspaceId") != workspace_id:
@@ -3330,9 +3375,10 @@ class FileStore(object):
                 continue
             if event_id_filter and event.get("eventId") != event_id_filter:
                 continue
-            match = _memory_text_match(q, event)
+            linked_document = linked_documents.get(event.get("source"))
+            match = _memory_text_match(q, event, linked_document)
             if not q or match["score"] > 0:
-                items.append(_public_memory_event(event, q))
+                items.append(_public_memory_event(event, q, linked_document))
         if q:
             items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("title") or "", item.get("eventId") or ""))
         return items
@@ -6869,40 +6915,40 @@ class SQLiteStore(FileStore):
             or filters.get("memory_event_id")
             or ""
         ).strip()
-        clauses = ["workspace_id = ?"]
+        clauses = ["r.workspace_id = ?"]
         params = [workspace_id]
         if not include_review_statuses:
-            clauses.append("status NOT IN ('rejected', 'quarantined')")
+            clauses.append("r.status NOT IN ('rejected', 'quarantined')")
         if event_id_filter:
-            clauses.append("memory_id = ?")
+            clauses.append("r.memory_id = ?")
             params.append(event_id_filter)
         if scope_filter:
-            clauses.append("LOWER(scope_type) = ?")
+            clauses.append("LOWER(r.scope_type) = ?")
             params.append(scope_filter)
         if scope_id_filter:
-            clauses.append("scope_id = ?")
+            clauses.append("r.scope_id = ?")
             params.append(scope_id_filter)
         if memory_type_filter:
-            clauses.append("LOWER(memory_type) = ?")
+            clauses.append("LOWER(r.memory_type) = ?")
             params.append(memory_type_filter)
         if review_status_filter:
-            clauses.append("LOWER(review_status) = ?")
+            clauses.append("LOWER(r.review_status) = ?")
             params.append(review_status_filter)
         if promotion_state_filter:
-            clauses.append("LOWER(promotion_state) = ?")
+            clauses.append("LOWER(r.promotion_state) = ?")
             params.append(promotion_state_filter)
         if source_prefix_filter:
-            clauses.append("source_uri LIKE ?")
+            clauses.append("r.source_uri LIKE ?")
             params.append(source_prefix_filter + "%")
         if actor_agent_filter:
-            clauses.append("LOWER(actor_agent_id) = ?")
+            clauses.append("LOWER(r.actor_agent_id) = ?")
             params.append(actor_agent_filter)
         if tag_filter:
             clauses.append(
                 """
                 EXISTS (
                   SELECT 1 FROM matm_memory_tags t
-                  WHERE t.memory_id = matm_memory_records.memory_id AND LOWER(t.tag) = ?
+                  WHERE t.memory_id = r.memory_id AND LOWER(t.tag) = ?
                 )
                 """
             )
@@ -6912,9 +6958,27 @@ class SQLiteStore(FileStore):
                 rows = list(
                     connection.execute(
                         """
-                        SELECT * FROM matm_memory_records
+                        SELECT r.*,
+                               d.search_document_id AS linked_search_document_id,
+                               d.route_or_path AS linked_route_or_path,
+                               d.title AS linked_title,
+                               d.description AS linked_description,
+                               d.keywords_json AS linked_keywords_json,
+                               d.taxonomy_paths_json AS linked_taxonomy_paths_json,
+                               d.searchable_text AS linked_searchable_text,
+                               d.metadata_json AS linked_metadata_json
+                        FROM matm_memory_records r
+                        LEFT JOIN matm_search_documents d
+                          ON d.workspace_id = r.workspace_id
+                         AND d.route_or_path = r.source_uri
+                         AND d.search_document_id = (
+                           SELECT MIN(d2.search_document_id)
+                           FROM matm_search_documents d2
+                           WHERE d2.workspace_id = r.workspace_id
+                             AND d2.route_or_path = r.source_uri
+                         )
                         WHERE %s
-                        ORDER BY created_at, memory_id
+                        ORDER BY r.created_at, r.memory_id
                         """ % " AND ".join(clauses),
                         tuple(params),
                     )
@@ -6971,9 +7035,21 @@ class SQLiteStore(FileStore):
                 event["updatedAt"] = row["updated_at"]
             if review_rows.get(row["memory_id"]):
                 event["reviewId"] = review_rows[row["memory_id"]]
-            match = _memory_text_match(q, event)
+            linked_document = None
+            if row["linked_search_document_id"]:
+                linked_document = {
+                    "searchDocumentId": row["linked_search_document_id"],
+                    "routeOrPath": row["linked_route_or_path"],
+                    "title": row["linked_title"],
+                    "description": row["linked_description"],
+                    "keywords": self._json_load(row["linked_keywords_json"], []),
+                    "taxonomyPaths": self._json_load(row["linked_taxonomy_paths_json"], []),
+                    "searchableText": row["linked_searchable_text"] or "",
+                    "metadata": self._json_load(row["linked_metadata_json"], {}),
+                }
+            match = _memory_text_match(q, event, linked_document)
             if not q or match["score"] > 0:
-                items.append(_public_memory_event(event, q))
+                items.append(_public_memory_event(event, q, linked_document))
         if q:
             items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("title") or "", item.get("eventId") or ""))
         return items
