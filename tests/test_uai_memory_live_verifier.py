@@ -29,9 +29,16 @@ class UaiMemoryLiveVerifierTests(unittest.TestCase):
                     "ok": True,
                     "data": {
                         "profile": "uaix.accountless-browser-memory.v1",
+                        "durableHomePath": "https://memoryendpoints.com",
+                        "startupReadOrder": [".uai/startup-packet.uai", ".uai/progress.uai"],
+                        "standardsPosture": {
+                            "uaixHostedImportClaimed": False,
+                            "uaixConformanceClaimed": False,
+                        },
                         "exceptionBoundary": {"anonymousStorageAllowed": False},
                         "localCollaborationOverlay": {
-                            "truthBoundary": {"localUaiContentsStored": False, "automaticMerge": False}
+                            "truthBoundary": {"localUaiContentsStored": False, "automaticMerge": False},
+                            "confirmationFields": ["persisted", "visibleToSender"],
                         },
                     },
                 }
@@ -53,6 +60,8 @@ class UaiMemoryLiveVerifierTests(unittest.TestCase):
             if path == "/api/matm/uai-memory/edit-claims":
                 return 201, {
                     "ok": True,
+                    "persisted": True,
+                    "visibleToSender": True,
                     "claimAcquired": True,
                     "localContentStored": False,
                     "canonicalClaimId": claim_id,
@@ -62,6 +71,7 @@ class UaiMemoryLiveVerifierTests(unittest.TestCase):
                 return 200, {
                     "ok": True,
                     "persisted": True,
+                    "visibleToSender": True,
                     "localContentStored": False,
                     "headRevision": 0,
                     "claim": {"status": "released"},

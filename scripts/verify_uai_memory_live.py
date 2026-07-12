@@ -85,17 +85,32 @@ def main(argv=None):
         status, contract_payload = request_json(base_url, "/api/matm/uai-memory/contract")
         contract = contract_payload.get("data") or {}
         overlay = contract.get("localCollaborationOverlay") or {}
+        standards_posture = contract.get("standardsPosture") or {}
+        startup_order = contract.get("startupReadOrder") or []
+        confirmation_fields = overlay.get("confirmationFields") or []
         report["checks"]["publicContract"] = {
             "ok": status == 200
             and contract.get("profile") == "uaix.accountless-browser-memory.v1"
+            and contract.get("durableHomePath") == "https://memoryendpoints.com"
             and contract.get("exceptionBoundary", {}).get("anonymousStorageAllowed") is False
+            and standards_posture.get("uaixHostedImportClaimed") is False
+            and standards_posture.get("uaixConformanceClaimed") is False
+            and startup_order[:1] == [".uai/startup-packet.uai"]
+            and ".uai/progress.uai" in startup_order
             and overlay.get("truthBoundary", {}).get("localUaiContentsStored") is False
-            and overlay.get("truthBoundary", {}).get("automaticMerge") is False,
+            and overlay.get("truthBoundary", {}).get("automaticMerge") is False
+            and "visibleToSender" in confirmation_fields,
             "httpStatus": status,
             "profile": contract.get("profile"),
+            "durableHomePathIsClean": contract.get("durableHomePath") == "https://memoryendpoints.com",
+            "startupPacketFirst": startup_order[:1] == [".uai/startup-packet.uai"],
+            "progressRoleRequired": ".uai/progress.uai" in startup_order,
             "virtualPackageIsAnonymous": contract.get("exceptionBoundary", {}).get("anonymousStorageAllowed"),
             "localUaiContentsStored": overlay.get("truthBoundary", {}).get("localUaiContentsStored"),
             "automaticMerge": overlay.get("truthBoundary", {}).get("automaticMerge"),
+            "hostedImportClaimed": standards_posture.get("uaixHostedImportClaimed"),
+            "conformanceClaimed": standards_posture.get("uaixConformanceClaimed"),
+            "senderVisibilityConfirmed": "visibleToSender" in confirmation_fields,
         }
 
         if not args.public_only:
@@ -200,10 +215,13 @@ def main(argv=None):
             claim_id = claim_payload.get("canonicalClaimId") or claim.get("claimId") or ""
             report["checks"]["claimAcquired"] = {
                 "ok": status == 201
+                and claim_payload.get("persisted") is True
+                and claim_payload.get("visibleToSender") is True
                 and claim_payload.get("claimAcquired") is True
                 and claim_payload.get("localContentStored") is False
                 and bool(claim_id),
                 "httpStatus": status,
+                "visibleToSender": claim_payload.get("visibleToSender"),
                 "claimIdHash": safe_hash(claim_id),
             }
 
@@ -223,9 +241,11 @@ def main(argv=None):
             report["checks"]["claimReleased"] = {
                 "ok": status == 200
                 and release_payload.get("persisted") is True
+                and release_payload.get("visibleToSender") is True
                 and (release_payload.get("claim") or {}).get("status") == "released"
                 and release_payload.get("localContentStored") is False,
                 "httpStatus": status,
+                "visibleToSender": release_payload.get("visibleToSender"),
                 "headRevision": release_payload.get("headRevision"),
             }
 
