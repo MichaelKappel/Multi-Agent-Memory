@@ -22,6 +22,9 @@ Current risks:
 - Shared-memory risk: concurrent destructive rewrites can silently discard another agent's contribution, while poisoned or over-broad shared context can amplify one error across every reader.
 - Governance risk: model classifiers, consensus, market signals, or attestation can be mistaken for authorization, policy, safety proof, or human accountability.
 - Resilience risk: scheduled backups, replication, health checks, container update tools, or confidential-computing products can be overclaimed as complete restore, safe automatic update, zero data loss, untamperability, or seamless failover.
+- Interoperability-layer risk: UAI-1, MCP, A2A, OpenAPI, JSON Schema, identity, tracing, transport, and runtime responsibilities can be collapsed into one unsupported universal protocol claim.
+- Identity and capability risk: declarations, schemas, signatures, credentials, capability tiers, public profiles, or validator success can be mistaken for truth, company membership, tenant authorization, or execution permission.
+- Product-boundary risk: unrelated APIs with a shared name, historical routes, custom JSON-LD, public exchange content, or first-party infrastructure claims can be mistaken for current LocalEndpoint, Carcinus, NeuralWikis, or MemoryEndpoints contracts.
 
 Mitigation:
 - Run local tests, route verifiers, `.uai` audit, package check, secret scan, dogfood, and readiness audit before handoff.
@@ -29,3 +32,5 @@ Mitigation:
 - Benchmark multi-agent topology against a simpler baseline, assign explicit owners and evidence, and require exact completion proof rather than accepting a coordination message as implementation.
 - Prefer read-only or append-safe shared memory, version mutable replacements, preserve provenance, and require individual promotion review before coordination evidence becomes durable knowledge.
 - Keep deterministic authorization and human escalation outside model judgment; define threat models, restore drills, rollback gates, and measured acceptance criteria for every resilience or confidential-computing control.
+- Pin current primary specifications and product contracts, assign each layer an owner, require route and authorization tests, and preserve historical or proposed claims under explicit lifecycle and authority labels.
+- Verify product identity rather than matching names, keep custom vocabularies explicitly application-specific, and require independent evidence before treating first-party implementation claims as enterprise assurance.

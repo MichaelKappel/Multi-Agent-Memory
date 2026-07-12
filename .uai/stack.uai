@@ -18,4 +18,6 @@ Current stack:
 - Stdlib SQLite relational storage is the unconfigured local default and is live for implemented MATM workflows.
 - MySQL/MariaDB relational storage is the verified production backend, selected by protected host configuration and a host-provided driver.
 - The legacy file store remains explicit-only compatibility infrastructure and is not the durable tenant knowledge source of truth.
+- UAI-1, MCP, A2A, DIDs, verifiable credentials, semantic glyphs, and product-specific adapters are not bundled MemoryEndpoints runtime dependencies. They remain external standards, companion layers, or proposed integrations until an approved implementation adds code and tests.
+- LocalEndpoints.com, Carcinus.org, NeuralWikis.com, and UAIX.org are separately governed external product or standards surfaces; MemoryEndpoints integration does not silently inherit their execution, identity, authorization, storage, or release contracts.
 - Packaging excludes `.uai`, raw handoff buckets, prompt drafts, local runtime state, databases, logs, and credential material.

@@ -20,3 +20,5 @@ Current coding standards:
 - Keep storage backends honest: unconfigured local runtime defaults to relational SQLite, production uses verified MySQL/MariaDB through a host-provided driver, and the legacy file backend is explicit-only compatibility infrastructure rather than the tenant-data source of truth.
 - Keep generated reports public-safe and bounded by evidence.
 - Keep prompt drafts out of source control.
+- Describe cross-product integrations from current implemented contracts and primary specifications. Keep runtime execution, MCP host/tool context, agent coordination, schemas, exchange evidence, identity, and authorization as separately owned layers unless code and tests prove a tighter contract.
+- Do not infer product behavior from unrelated APIs that share a class or property name, and do not present custom JSON-LD properties, capability labels, schemas, declarations, or signatures as standards or authorization without their governing contract.
