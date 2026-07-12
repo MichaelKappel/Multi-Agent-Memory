@@ -1,31 +1,30 @@
-# Release Verification Summary
+# Release Verification Contract
 
-MemoryEndpoints.com has a verified public surface as of 2026-07-09, and the latest deployed source SHA is proven live when `/api/version` matches the checked Git head.
+MemoryEndpoints releases are accepted by exact-revision evidence, not by a dated prose claim or a tracked generated report.
 
-Current verified state:
+## Required Gates
 
-- Live site: `https://memoryendpoints.com`
-- Public route verification: 21 checked routes, 0 failures for the deployed public surface.
-- `/docs` and `/docs/`: both valid documentation pages.
-- GitHub Actions is retained as a repository workflow but is not a required completion gate per human direction. MySQL/MariaDB runtime verification is required before production completion.
-- MultiAgentMemory.com source is populated locally under `sites/multiagentmemory.com/`, published through the FileZilla-backed explicit FTPS profile, and live-verified with zero route/discovery failures. The stale handoff section for this domain still fails login and is retained only as redacted diagnostic evidence.
-- Package check: excludes local stores, journals, logs, caches, `dist`, `.uai`, local prompts, raw Agent File Handoff bucket contents, and credential handoff files.
-- Storage: file backend and SQLite relational MATM tables are active locally; production completion requires live MySQL/MariaDB verification.
-- Secrets: package-eligible plus `.uai` secret scan passes with 0 hits; deploy reports are redacted.
+- GitHub `main` and the local checked head identify the same full source SHA.
+- The package report records that SHA, zero dirty source paths, excluded secrets/runtime state, file count, content hash, and package hash.
+- The explicit-FTPS dry run and connection check pass before upload.
+- The live upload requests Passenger restart and reports the package file count as uploaded.
+- [`/api/version`](https://memoryendpoints.com/api/version) reports the expected full source SHA and a verified MySQL/MariaDB backend.
+- The live MemoryEndpoints route verifier passes its public contract set with no secret or local-path leak findings.
+- Authenticated live dogfood passes workspace setup, agent registration, memory submit/search/review, meeting coordination, current-message delivery and acknowledgement, receipts, and audit readback.
+- The live [MultiAgentMemory.com](https://multiagentmemory.com) verifier passes every required HTML and discovery artifact.
+- Unit and integration tests, `.uai` audit, repository-boundary audit, documentation-freshness test, secret scan, package check, and diff check pass from the same checked revision.
 
-Durable evidence:
+## Current Evidence Sources
 
-- `docs/reports/final-readiness-report.md`
-- `docs/reports/local-verification-report.json`
-- `docs/reports/package-verification-report.json`
-- `docs/reports/local-route-verification.json`
-- `docs/reports/live-route-verification.json`
-- `docs/reports/deploy-attempt-20260709.json`
-- `docs/reports/deploy-connection-check-latest.json`
-- `docs/reports/deploy-connection-check-ftp-latest.json`
-- `docs/reports/multiagentmemory-deploy-live-attempt-latest.json`
-- `docs/reports/multiagentmemory-deploy-connection-check-latest.json`
-- `docs/reports/multiagentmemory-deploy-connection-check-ftp-latest.json`
-- `docs/reports/multiagentmemory-live-site-verification.json`
-- `docs/database-schema-canonical.sql`
-- `docs/storage-backends.md`
+- Runtime provenance: [`/api/version`](https://memoryendpoints.com/api/version)
+- Capability state: [`/api/matm/live-capability-matrix`](https://memoryendpoints.com/api/matm/live-capability-matrix)
+- Full route map: [`/api/matm/route-inventory`](https://memoryendpoints.com/api/matm/route-inventory)
+- Distributed-sync contract: [`/api/matm/sync/capabilities`](https://memoryendpoints.com/api/matm/sync/capabilities)
+- Bounded route schema: [`/api/matm/openapi.json`](https://memoryendpoints.com/api/matm/openapi.json)
+- Readiness boundary: [`/api/matm/readiness-result`](https://memoryendpoints.com/api/matm/readiness-result)
+- Human documentation: [MultiAgentMemory.com](https://multiagentmemory.com)
+- Complete companion route guide: [API and data reference](https://multiagentmemory.com/docs/api-reference.html)
+
+Fresh verifier output is written under ignored `var/reports/`. Existing files under `docs/reports/` are historical point-in-time snapshots; they do not prove a later commit and must not override exact-SHA live evidence.
+
+GitHub Actions remains optional by operator direction. It does not replace local tests, exact-SHA deployment proof, live MySQL verification, or authenticated dogfood.

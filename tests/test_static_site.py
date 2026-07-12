@@ -15,6 +15,7 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn(GITHUB_REPO, text)
         self.assertIn(ENDPOINT_SITE, text)
         self.assertIn("/docs/how-it-works.html", text)
+        self.assertIn("/docs/api-reference.html", text)
 
     def test_how_it_works_documents_static_site_and_matm_roles(self):
         text = (SITE_ROOT / "docs" / "how-it-works.html").read_text(encoding="utf-8")
@@ -23,6 +24,16 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn("MemoryEndpoints.com", text)
         self.assertIn(".uai/", text)
         self.assertIn("/api/matm/memory-events/submit", text)
+        self.assertIn("/api/matm/routing-decisions", text)
+        self.assertIn("/api/matm/sync/capabilities", text)
+
+    def test_api_reference_covers_current_advanced_contracts(self):
+        text = (SITE_ROOT / "docs" / "api-reference.html").read_text(encoding="utf-8")
+        self.assertIn("/api/matm/external-links/upsert", text)
+        self.assertIn("/api/matm/meeting-messages/promote", text)
+        self.assertIn("/api/matm/routing-decisions", text)
+        self.assertIn("/api/matm/sync/mutations", text)
+        self.assertIn("Tracked reports are point-in-time evidence", text)
 
     def test_mobile_tables_have_labels_and_fixed_hero_type(self):
         css = (SITE_ROOT / "static" / "site.css").read_text(encoding="utf-8")

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "multiagentmemory.ai_manifest.v2",
+  "schemaVersion": "multiagentmemory.ai_manifest.v3",
   "name": "MultiAgentMemory.com",
   "url": "https://multiagentmemory.com",
   "role": "github_companion_documentation_site",
@@ -8,6 +8,7 @@
   "humanRoutes": {
     "home": "https://multiagentmemory.com",
     "howItWorks": "https://multiagentmemory.com/docs/how-it-works.html",
+    "apiReference": "https://multiagentmemory.com/docs/api-reference.html",
     "memoryBoundary": "https://multiagentmemory.com/docs/memory-boundary.html",
     "githubRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory"
   },
@@ -28,6 +29,9 @@
   },
   "evidence": {
     "liveCapabilityMatrix": "https://memoryendpoints.com/api/matm/live-capability-matrix",
+    "version": "https://memoryendpoints.com/api/version",
+    "syncCapabilities": "https://memoryendpoints.com/api/matm/sync/capabilities",
+    "openApi": "https://memoryendpoints.com/api/matm/openapi.json",
     "routeInventory": "https://memoryendpoints.com/api/matm/route-inventory",
     "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result",
     "redactedExampleReceipts": "https://memoryendpoints.com/api/matm/redacted-example-receipts"
@@ -43,10 +47,24 @@
     "externalLinkUpsert": "POST /api/matm/external-links/upsert",
     "reviewQueue": "GET /api/matm/review-queue",
     "reviewDecision": "POST /api/matm/review-queue/decide",
+    "meetingRooms": "GET, POST /api/matm/meeting-rooms",
+    "meetingMessages": "GET, POST /api/matm/meeting-messages",
+    "meetingMemoryPromotion": "POST /api/matm/meeting-messages/promote",
+    "routingDecisions": "GET, POST /api/matm/routing-decisions",
+    "currentMessageWrite": "POST /api/matm/agent-messages",
     "currentMessage": "GET /api/matm/current-message",
+    "agentInbox": "GET /api/matm/agent-inbox",
     "notificationAck": "POST /api/matm/notifications/ack",
     "redactedReceipts": "GET /api/matm/receipts",
-    "redactedAuditLog": "GET /api/matm/audit-log"
+    "redactedAuditLog": "GET /api/matm/audit-log",
+    "syncDeviceRegister": "POST /api/matm/sync/devices",
+    "syncDeviceRotate": "POST /api/matm/sync/devices/rotate",
+    "syncDeviceRevoke": "POST /api/matm/sync/devices/revoke",
+    "syncMutation": "POST /api/matm/sync/mutations",
+    "syncReceipt": "GET /api/matm/sync/receipts",
+    "syncChanges": "GET /api/matm/sync/changes",
+    "syncHeads": "GET /api/matm/sync/heads",
+    "syncRetention": "GET /api/matm/sync/retention"
   },
   "knowledgeLifecycle": {
     "statuses": ["current", "proposed", "historical", "superseded", "archived"],
@@ -78,5 +96,13 @@
     "secretsAcceptedInPublicDocs": false,
     "externalLinkIndexingAutomaticallyFetchesTargets": false,
     "credentialBearingExternalUrlsAccepted": false
+  },
+  "documentationFreshness": {
+    "checkedInRouteTable": "memoryendpoints/site_data.py ROUTE_TABLE",
+    "githubRouteInventory": "docs/route-inventory.md",
+    "githubApiContract": "docs/api-contract.md",
+    "companionApiReference": "https://multiagentmemory.com/docs/api-reference.html",
+    "testEnforced": true,
+    "trackedReportsArePointInTime": true
   }
 }

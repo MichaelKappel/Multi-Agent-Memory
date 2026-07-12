@@ -8,19 +8,18 @@ Memory scope: local test gates, integration proof, report refresh order, and com
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when required verification changes; submit durable public-safe test summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
 Source of truth: `tests/`, `scripts/verify_memoryendpoints.py`, `scripts/dogfood_memoryendpoints.py`, `scripts/enterprise_readiness_audit.py`, and `docs/verification.md`.
-Next action for agents: run the full local gate after material code or memory changes and refresh reports before committing.
+Next action for agents: run the full local gate after material code, documentation, or memory changes and write fresh point-in-time reports under ignored `var/reports/`.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, raw one-time keys, private handoff payloads, raw logs, or local runtime database contents.
 
 Current local gate:
 - `python -m unittest discover -s tests`
-- `python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out docs\reports\local-route-verification.json`
-- `python scripts\verify_static_site.py --json-out docs\reports\multiagentmemory-static-site-verification.json`
-- `python scripts\audit_uai_memory.py --json-out docs\reports\uai-memory-audit.json`
-- `python scripts\audit_repository_boundary.py --json-out docs\reports\repository-boundary-audit.json`
-- `python scripts\package_memoryendpoints.py --json-out docs\reports\package-verification-report.json`
-- `python scripts\secret_scan.py --json-out docs\reports\secret-scan-report.json`
-- `python scripts\enterprise_readiness_audit.py --run-checks --json-out docs\reports\enterprise-readiness-audit.json`
-- `python scripts\build_readiness_reports.py --write`
+- `python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out var\reports\local-route-verification.json`
+- `python scripts\verify_static_site.py --json-out var\reports\multiagentmemory-static-site-verification.json`
+- `python scripts\audit_uai_memory.py --json-out var\reports\uai-memory-audit.json`
+- `python scripts\audit_repository_boundary.py --json-out var\reports\repository-boundary-audit.json`
+- `python scripts\package_memoryendpoints.py --json-out var\reports\package-verification-report.json`
+- `python scripts\secret_scan.py --json-out var\reports\secret-scan-report.json`
+- `python scripts\enterprise_readiness_audit.py --run-checks --json-out var\reports\enterprise-readiness-audit.json`
 - `git diff --check`
 - Deploy dry-run evidence must match the package report and remain a no-upload safe no-op before any live deploy claim.
 
@@ -41,6 +40,7 @@ Coverage expectations:
 - Review-filter tests must prove source, tag, memory-type, and actor filters retain redacted metadata for pending, promoted, rejected, and quarantined review records while rejected and quarantined memory remains absent from normal search; file, SQLite, and production MySQL paths must preserve the same boundary.
 - Hierarchy tests must prove account-company membership is many-to-many while durable knowledge rejects account, user, goal, and task scopes and accepts only company, workspace, and project.
 - Public route and companion-site verifiers must report zero secret hits and zero public leak hits for local filesystem paths, file URIs, or raw traceback fragments.
+- Documentation tests must prove every source route and method is represented in the GitHub route inventory and MultiAgentMemory.com API reference, every source route appears in the detailed API contract, current operating commands avoid tracked report output, and the architecture guide covers tenancy, relational ownership, one-source ingestion, `.uai` continuity, citations, routing, sync, and readback evidence.
 - Public discovery and signed-out wiki checks must prove the home page, robots, LLM orientation, manifests, and unauthenticated deep-route shell contain no protected title, source prefix, tenant identifier, or company/workspace/project deep route.
 - Repository boundary audit must prove there are no duplicate MemoryEndpoints.com or MultiAgentMemory.com active site folders at the drive root and no root-level runtime artifacts such as local SQLite write checks or devserver logs.
 - Storage tests must prove one-time workspace keys are persisted only as hashes, raw keys are absent from file and SQLite storage, SQLite relational tables exist, memory revisions are represented, and the active tested path does not rely on a single JSON blob table.

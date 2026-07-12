@@ -2,6 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://multiagentmemory.com/</loc></url>
   <url><loc>https://multiagentmemory.com/docs/how-it-works.html</loc></url>
+  <url><loc>https://multiagentmemory.com/docs/api-reference.html</loc></url>
   <url><loc>https://multiagentmemory.com/docs/memory-boundary.html</loc></url>
   <url><loc>https://multiagentmemory.com/llms.txt</loc></url>
   <url><loc>https://multiagentmemory.com/ai-manifest.json</loc></url>

@@ -7,7 +7,7 @@ Verification status: active operational memory; verify against code, docs, and r
 Memory scope: governing decisions that should steer future agents until explicitly changed.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when governing decisions change; submit durable public-safe decision summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
-Source of truth: current repository state, `.uai/totem.uai`, `AGENTS.md`, `docs/reports/final-readiness-report.md`, and user instructions.
+Source of truth: current repository state, `.uai/totem.uai`, `AGENTS.md`, `docs/system-architecture.md`, exact-SHA live evidence, and user instructions.
 Next action for agents: preserve these decisions unless current code, reports, or direct human instruction supersedes them.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
@@ -16,12 +16,13 @@ Current governing decisions:
 - Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
 - Keep active `.uai` date-free active operational memory only.
 - Do not add `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation.
-- Store deep detail in docs, reports, MATM records, or other durable targets, then point to those from typed `.uai` files.
+- Store checked-in implementation detail in current engineering docs, reviewed durable knowledge in protected MATM records, and point-in-time verifier output under ignored `var/reports/`; then point to those from typed `.uai` files.
 - Store company, workspace, and project knowledge trees as protected database records, not as generated filesystem trees. Filesystem reports can be temporary evidence or source input, but crawlable/searchable company knowledge belongs in the database source of truth.
 - Never expose a password-free public wiki or public knowledge index. The `/knowledge` page is an empty authentication shell until a workspace key succeeds; wiki trees, pages, search results, and external-link records remain protected and tenant-isolated.
 - Use the MemoryEndpoints.com home page as the public inbound address. Public discovery files may describe public-safe capabilities and authentication orientation, but they must not enumerate tenant knowledge, private deep routes, workspace identifiers, or protected full-context exports.
 - Treat accounts/users as identity and company-membership principals only, never as knowledge ownership scopes. Account-company membership is many-to-many; companies own workspaces, workspaces own projects, and durable knowledge is scoped only to company, workspace, or project.
 - Treat `docs/` as transitional migration/evidence material only. After the knowledge is moved deliberately into MemoryEndpoints.com, `docs/` should not remain as a parallel source-of-truth documentation tree.
+- While checked-in engineering docs remain, require complete source-tested public explanation for every route group and major architecture boundary. Treat `docs/reports/` as historical snapshots, never current release proof.
 - Do not bulk-import report archives into company knowledge. Ingest reports deliberately through reviewed, source-notated database document writes so scope, category, project placement, and context are correct.
 - Process one source report at a time, but do not force a multi-topic report into one oversized page. Preserve the canonical source, then create semantically bounded pages with explicit source provenance so retrieval remains focused without losing evidence.
 - When a source mixes durable principles with stale, unsafe, vendor-specific, or overclaimed guidance, write a reviewer-authored current synthesis with preserved source hashes instead of labeling the raw source section current.

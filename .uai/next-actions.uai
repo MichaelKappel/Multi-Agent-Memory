@@ -3,17 +3,18 @@ Next actions
 Purpose:
 - Ordered current next actions for MemoryEndpoints.com without becoming a dated task log.
 
-Verification status: active operational memory; verify with `.uai/progress.uai`, readiness reports, and current human instructions before relying on it.
+Verification status: active operational memory; verify with `.uai/progress.uai`, exact-SHA live evidence, and current human instructions before relying on it.
 Memory scope: next work, acceptance conditions, blockers, and verification targets.
 Public-safe status: safe for source control; contains no credential values.
-Update route: replace this file's current list when priority or blocker state changes; keep detailed history in durable reports.
-Source of truth: `.uai/progress.uai`, `.uai/open-questions.uai`, `.uai/test-plan.uai`, and final readiness reports.
+Update route: replace this file's current list when priority or blocker state changes; keep detailed history in protected MATM and point-in-time evidence under ignored `var/reports/`.
+Source of truth: `.uai/progress.uai`, `.uai/open-questions.uai`, `.uai/test-plan.uai`, current source, and exact-SHA live evidence.
 Next action for agents: perform the highest unblocked action that matches the current user request.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current ordered actions:
-- Close the `AI Agent Sprint Plan for NeuralWikis.md` revision through `.uai` audit, commit and push, package, explicit FTPS deployment, exact live SHA, route, MySQL, dogfood, secret, repository, companion-site, and readiness checks.
-- Treat this source cycle as complete only while production retains ten protected pages, 48 canonical external links, 59 contextual mentions, ten promoted memories, one exact source identity and hash, valid company/workspace/project scopes, and no anonymous title, source-prefix, or tenant-data leak.
+- Close the comprehensive documentation refresh through full tests, documentation freshness, `.uai` audit, secret and repository checks, commit/push, exact MemoryEndpoints deployment, MultiAgentMemory.com static deployment, live SHA/MySQL/dogfood checks, and desktop/mobile companion QA.
+- Create the detailed Git-ignored external-review prompt only after the documentation commit exists, bind it to the exact GitHub commit, require six evidence-based reports from checked-in code and live public documentation, and never add the prompt to source control.
+- Preserve the completed sprint-plan source cycle while production retains ten protected pages, 48 canonical external links, 59 contextual mentions, ten promoted memories, one exact source identity and hash, valid company/workspace/project scopes, and no anonymous title, source-prefix, or tenant-data leak.
 - After exact-revision closure, select the next unprocessed `D:\DownloadArchive` report only through canonical source-provenance preflight; never infer unprocessed state from `.uai` alone.
 - For each report, preserve one canonical source, split distinct knowledge into focused pages, choose the narrowest durable scope, add multiple useful taxonomy paths, and classify non-current claims before they enter durable memory.
 - Review every external citation independently as a first-class web record. Distinguish primary authority, vendor material, community discussion, preprints, blocked or stale paths, citation-to-claim mismatches, and jurisdiction errors.

@@ -13,6 +13,7 @@ DEFAULT_SITE_ROOT = ROOT / "sites" / "multiagentmemory.com"
 REQUIRED_FILES = [
     "index.html",
     "docs/how-it-works.html",
+    "docs/api-reference.html",
     "docs/memory-boundary.html",
     "llms.txt",
     "ai.txt",
@@ -29,6 +30,7 @@ REQUIRED_STRINGS = {
         "https://github.com/MichaelKappel/Multi-Agent-Memory",
         "https://memoryendpoints.com",
         "/docs/how-it-works.html",
+        "/docs/api-reference.html",
     ],
     "docs/how-it-works.html": [
         "static companion documentation site",
@@ -36,6 +38,16 @@ REQUIRED_STRINGS = {
         "https://memoryendpoints.com",
         ".uai/",
         "/api/matm/memory-events/submit",
+        "/api/matm/routing-decisions",
+        "/api/matm/sync/capabilities",
+    ],
+    "docs/api-reference.html": [
+        "https://github.com/MichaelKappel/Multi-Agent-Memory",
+        "https://memoryendpoints.com/api/matm/route-inventory",
+        "/api/matm/external-links/upsert",
+        "/api/matm/routing-decisions",
+        "/api/matm/sync/mutations",
+        "Tracked reports are point-in-time evidence",
     ],
     "docs/memory-boundary.html": [
         "https://github.com/MichaelKappel/Multi-Agent-Memory",
@@ -49,7 +61,10 @@ REQUIRED_STRINGS = {
         '"sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory"',
         '"primaryEndpointSite": "https://memoryendpoints.com"',
     ],
-    "sitemap.xml": ["https://multiagentmemory.com/docs/how-it-works.html"],
+    "sitemap.xml": [
+        "https://multiagentmemory.com/docs/how-it-works.html",
+        "https://multiagentmemory.com/docs/api-reference.html",
+    ],
 }
 
 SECRET_PATTERNS = [

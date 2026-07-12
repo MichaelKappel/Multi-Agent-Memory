@@ -2,6 +2,8 @@ MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.c
 
 Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
 Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
+API and data reference: https://multiagentmemory.com/docs/api-reference.html
+Live route inventory: https://memoryendpoints.com/api/matm/route-inventory
 
 Agents should use the full repository `.uai/` suite as active startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication.
 

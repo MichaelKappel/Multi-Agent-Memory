@@ -19,6 +19,8 @@ Current coding standards:
 - Use deterministic integration tests for real route handlers whenever workflow behavior changes.
 - Keep storage backends honest: unconfigured local runtime defaults to relational SQLite, production uses verified MySQL/MariaDB through a host-provided driver, and the legacy file backend is explicit-only compatibility infrastructure rather than the tenant-data source of truth.
 - Keep generated reports public-safe and bounded by evidence.
+- Write generated verifier output under ignored `var/reports/`; checked-in `docs/reports/` snapshots are historical evidence and never prove a later revision.
+- Keep `memoryendpoints.site_data.ROUTE_TABLE`, `docs/route-inventory.md`, `docs/api-contract.md`, and the MultiAgentMemory.com API reference aligned through tests. Public documentation must explain request, tenancy, storage, lifecycle, coordination, sync, readback, and claim boundaries deeply enough for independent review.
 - Keep prompt drafts out of source control.
 - Describe cross-product integrations from current implemented contracts and primary specifications. Keep runtime execution, MCP host/tool context, agent coordination, schemas, exchange evidence, identity, and authorization as separately owned layers unless code and tests prove a tighter contract.
 - Do not infer product behavior from unrelated APIs that share a class or property name, and do not present custom JSON-LD properties, capability labels, schemas, declarations, or signatures as standards or authorization without their governing contract.

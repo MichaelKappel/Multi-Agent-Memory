@@ -1,15 +1,13 @@
 # Deployment
 
-Date: 2026-07-09
-
-Deployment is intentionally conservative and secret-safe. Credentials stay outside Git in `E:\ftp_Deploy.txt` and must never be printed, committed, copied into reports, or included in final answers.
+Deployment is intentionally conservative and secret-safe. Credentials stay outside Git in ignored local handoffs or the operator's FileZilla profile and must never be printed, committed, copied into reports, or included in final answers.
 
 ## Package
 
 Build the production package:
 
 ```powershell
-python scripts\package_memoryendpoints.py --json-out docs\reports\package-verification-report.json
+python scripts\package_memoryendpoints.py --json-out var\reports\package-verification-report.json
 ```
 
 The package builder excludes local runtime state and credential surfaces, including:
@@ -33,7 +31,7 @@ The package builder writes ignored public-safe build provenance to `memoryendpoi
 The FileZilla MemoryEndpoints.com profile logs into the MemoryEndpoints.com deployment root, so the deploy script can use the login root without printing credential values:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-dry-run-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps --json-out var\reports\deploy-dry-run-latest.json
 ```
 
 The dry run must resolve host, user, password, package, and remote directory without printing credential values.
@@ -43,7 +41,7 @@ The dry run must resolve host, user, password, package, and remote directory wit
 Before a live upload, verify the selected transport and remote directory without uploading files:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --connection-check --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-connection-check-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --connection-check --filezilla-site-match memoryendpoints --protocol ftps --json-out var\reports\deploy-connection-check-latest.json
 ```
 
 The default protocol is explicit FTPS. If the hosting handoff explicitly requires plain FTP, rerun the connection check with `--protocol ftp` before attempting upload. Connection-check reports are redacted and always use `uploadedCount: 0`.
@@ -53,18 +51,18 @@ The default protocol is explicit FTPS. If the hosting handoff explicitly require
 Run only after the local gate and dry run pass:
 
 ```powershell
-python scripts\ftp_deploy_memoryendpoints.py --filezilla-site-match memoryendpoints --protocol ftps --json-out docs\reports\deploy-live-attempt-latest.json
+python scripts\ftp_deploy_memoryendpoints.py --filezilla-site-match memoryendpoints --protocol ftps --json-out var\reports\deploy-live-attempt-latest.json
 ```
 
-Current status: live upload succeeds through the FileZilla-backed explicit FTPS path. The latest recorded publish uploaded 81 files, requested Passenger restart, and `/api/version` reports the expected source SHA. Plain FTP remains rejected and should not be used while explicit FTPS works.
+Current status: live upload succeeds through the FileZilla-backed explicit FTPS path and requests Passenger restart. The package file count changes with the checked-in source and must be read from the current package and deploy reports rather than copied into documentation. Plain FTP is not the verified publish route.
 
 ## Post-Deploy Gate
 
 After a successful upload:
 
 ```powershell
-python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --json-out docs\reports\live-route-verification.json
-python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head --json-out docs\reports\live-latest-code-verification.json
+python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --json-out var\reports\live-route-verification.json
+python scripts\verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head --json-out var\reports\live-latest-code-verification.json
 python scripts\build_deploy_attempt_report.py
 python scripts\build_readiness_reports.py --write
 ```
@@ -74,7 +72,7 @@ Do not claim the newest code is live until the live upload succeeds, Passenger r
 Production database verification is a separate hard gate. Configure `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus an ignored `.local-secrets/mysql.json` file on the host, `MEMORYENDPOINTS_MYSQL_*`, or `MEMORYENDPOINTS_MYSQL_URL`, then run:
 
 ```powershell
-python scripts\verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out docs\reports\live-mysql-backend-verification.json
+python scripts\verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out var\reports\live-mysql-backend-verification.json
 ```
 
 The verifier must report `storeBackend` as `mysql` or `mariadb` and `storeBackendVerified` as `true` before live dogfood or the human-verifier account should be created.
@@ -100,27 +98,27 @@ MultiAgentMemory.com is a static documentation companion site, not the Python WS
 Dry-run the target-specific static deploy:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --dry-run --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-dry-run-latest.json
+python scripts\ftp_deploy_static_site.py --dry-run --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-deploy-dry-run-latest.json
 ```
 
 Verify login and the target directory without uploading:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --connection-check --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-connection-check-latest.json
+python scripts\ftp_deploy_static_site.py --connection-check --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-deploy-connection-check-latest.json
 ```
 
-The stale `E:\ftp_Deploy.txt` MultiAgentMemory section is not the working credential source. The current working publish path uses the local FileZilla site profile matched by `multiagentmemory`; reports record only redacted FileZilla profile metadata and never print host, user, or password values.
+A legacy credential-handoff section is not the working MultiAgentMemory.com source. The verified publish path uses the local FileZilla site profile matched by `multiagentmemory`; reports record only redacted FileZilla profile metadata and never print host, user, or password values.
 
 Publish to the target login root only after the FileZilla-backed dry run and connection check pass:
 
 ```powershell
-python scripts\ftp_deploy_static_site.py --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out docs\reports\multiagentmemory-deploy-live-attempt-latest.json
+python scripts\ftp_deploy_static_site.py --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-deploy-live-attempt-latest.json
 ```
 
-Current status: live upload succeeded through the FileZilla-backed explicit FTPS path. The latest recorded publish uploaded 12 static files and wrote a deployment marker. The live site verifier reports zero failures for the expected companion pages and discovery files.
+Current status: live upload succeeds through the FileZilla-backed explicit FTPS path and writes a deployment marker. The current static file count comes from the deploy and live-verifier reports.
 
 After a successful static upload, verify the public domain:
 
 ```powershell
-python scripts\verify_static_site.py --base-url https://multiagentmemory.com --json-out docs\reports\multiagentmemory-live-site-verification.json
+python scripts\verify_static_site.py --base-url https://multiagentmemory.com --json-out var\reports\multiagentmemory-live-site-verification.json
 ```

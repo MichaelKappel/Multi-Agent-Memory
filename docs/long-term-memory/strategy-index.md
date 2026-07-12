@@ -1,10 +1,10 @@
-# Strategy Memory Index
+# Historical Strategy Index
 
-Purpose: deep-linked entry point for strategy reports distilled from local Agent File Handoff intake.
+Purpose: deep-linked entry point for checked-in strategy notes distilled during early Agent File Handoff intake. Current reviewed strategy is stored one source at a time in protected MemoryEndpoints wiki and memory records.
 
 Source intake batch: 14 local-only improvement reports under `agent-file-handoff/Improvement`.
 
-Source-control boundary: raw intake reports remain ignored local source material. This file preserves reviewed, public-safe strategy memory only.
+Source-control boundary: raw intake reports remain ignored local source material. These notes preserve public-safe migration history; they are not a second durable memory tree and do not override current code, tests, or hosted reviewed knowledge.
 
 ## Deep Links
 
@@ -40,6 +40,6 @@ MATM, hierarchical memory, and timestamp-free retrieval:
 - Timestamp-Free Multi-Agent Transactive Memory Systems
 - Timestampless Transactive Memory Systems
 
-## Promotion Rule
+## Use Rule
 
-Treat this index as a routing surface, not as the whole memory body. Load the linked records before making architecture, testing, storage, or MATM memory-ranking changes.
+Treat this index as historical context. Use [System Architecture](../system-architecture.md) for the current implementation, then crawl protected MemoryEndpoints knowledge for reviewed source-linked strategy before making architecture, testing, storage, or MATM ranking changes.

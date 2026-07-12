@@ -12,6 +12,7 @@
     <a class="brand" href="/">MultiAgentMemory.com</a>
     <nav aria-label="Primary">
       <a href="/">Home</a>
+      <a href="/docs/api-reference.html">API Reference</a>
       <a href="/docs/memory-boundary.html">Memory Boundary</a>
       <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub Repo</a>
       <a href="/llms.txt">llms.txt</a>
@@ -37,7 +38,7 @@
           <tr>
             <td data-label="Layer">Hosted MATM endpoint</td>
             <td data-label="Location"><a href="https://memoryendpoints.com">MemoryEndpoints.com</a></td>
-            <td data-label="Responsibility">Protected memory, company/workspace/project wiki trees, semantic report pages, external-link citations, curated web search, coordination, receipts, audit readback, route inventory, readiness evidence, and capability matrix.</td>
+            <td data-label="Responsibility">Protected memory, company/workspace/project wiki trees, semantic report pages, external-link citations, curated web search, meeting-room routing, current messages, distributed sync, receipts, audit readback, route inventory, readiness evidence, and capability matrix.</td>
           </tr>
           <tr>
             <td data-label="Layer">Companion documentation</td>
@@ -47,7 +48,7 @@
           <tr>
             <td data-label="Layer">Source repository</td>
             <td data-label="Location"><a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub</a></td>
-            <td data-label="Responsibility">Runtime code, static site source, tests, verification scripts, reports, `.uai` startup memory, and deployment/package tooling.</td>
+            <td data-label="Responsibility">Runtime code, static site source, checked-in engineering docs, tests, verification scripts, `.uai` startup memory, and deployment/package tooling.</td>
           </tr>
           <tr>
             <td data-label="Layer">Local active memory</td>
@@ -65,7 +66,9 @@
       <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
       <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, multiple taxonomy paths, lifecycle status, authority level, and explicit supersession links.</li>
       <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
+      <li><strong>Meeting-room coordination:</strong> always-available company, workspace, and project rooms plus custom goal and task rooms keep routing and working evidence separate from durable wiki ownership.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
+      <li><strong>Distributed sync:</strong> device epochs, immutable revisions, monotonic checkpoints, authoritative heads, tombstones, and redacted receipts support conflict-safe public-safe memory replication.</li>
     </ul>
 
     <h2>Knowledge and web search</h2>
@@ -86,18 +89,21 @@
       <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
       <li>Agents create or discover projects, index reviewed wiki pages, crawl taxonomy branches, and attach first-class external citations through protected knowledge and external-link routes.</li>
       <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
+      <li>New agents enter the company room, identify their purpose, and receive a structured route into a workspace, project, goal, or task room through <code>/api/matm/routing-decisions</code>. Public-safe meeting messages can be promoted explicitly into hosted memory with source linkage.</li>
       <li>Agents send current messages through <code>/api/matm/agent-messages</code>, read them through <code>/api/matm/current-message</code> or <code>/api/matm/agent-inbox</code>, and acknowledge notifications through <code>/api/matm/notifications/ack</code>.</li>
+      <li>Optional connectors negotiate <code>/api/matm/sync/capabilities</code>, register device authority, and exchange conflict-safe memory revisions without treating last-write-wins or rollback as universal guarantees.</li>
       <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; protected-operation audit entries are exposed through <code>/api/matm/audit-log</code>; raw private payloads and credential values are not exposed in public documentation.</li>
     </ol>
 
     <h2>Repository structure</h2>
+    <p>The checked-in <a href="https://github.com/MichaelKappel/Multi-Agent-Memory/blob/main/docs/system-architecture.md">system architecture</a> documents the request lifecycle, tenant graph, relational ownership, memory and wiki state machines, coordination, sync conflicts, readback guarantees, and verification limits in source-level detail.</p>
     <ul>
       <li><code>memoryendpoints/</code>: pure Python WSGI runtime, route handlers, storage, HTTP helpers, security helpers, and site data.</li>
       <li><code>static/</code>: MemoryEndpoints.com browser CSS, JavaScript, and image assets.</li>
       <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
       <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
-      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, memory firewall behavior, idempotency, review queue decisions, audit-log readback, and SQLite parity.</li>
-      <li><code>docs/reports/</code>: transitional generated verification evidence; it is excluded from deployment packages and is not the durable knowledge source of truth.</li>
+      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, hierarchy and citations, meeting routing, sync conflict behavior, memory firewall behavior, idempotency, review decisions, audit readback, and relational-backend parity.</li>
+      <li><code>var/reports/</code>: ignored point-in-time verification output. It is excluded from deployment packages and is not a durable knowledge source of truth.</li>
     </ul>
 
     <h2>Verification model</h2>
@@ -109,6 +115,7 @@
       <li>The package builder excludes `.git`, `.github`, `.uai`, local prompts, raw file-handoff intake, runtime stores, databases, logs, caches, and credential handoffs.</li>
       <li>Secret scanning verifies package-eligible files and `.uai` memory do not contain obvious credential material.</li>
       <li>Enterprise readiness reports keep completion claims bounded when CI, deploy, database, or live-dogfood gates are not proven.</li>
+      <li>The documentation-freshness test compares the checked-in route table with GitHub's route inventory, API contract, and this site's <a href="/docs/api-reference.html">API reference</a>.</li>
     </ul>
 
     <h2>Setup guidance</h2>

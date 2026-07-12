@@ -16,6 +16,12 @@
       "route": "/docs/memory-boundary.html"
     },
     {
+      "uri": "multiagentmemory://docs/api-reference",
+      "name": "MemoryEndpoints API And Data Reference",
+      "mimeType": "text/html",
+      "route": "/docs/api-reference.html"
+    },
+    {
       "uri": "multiagentmemory://docs/llms",
       "name": "LLM-readable Documentation Summary",
       "mimeType": "text/plain",

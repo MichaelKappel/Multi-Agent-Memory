@@ -6,6 +6,7 @@ Primary links:
 
 - Documentation site: https://multiagentmemory.com
 - Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
+- API and data reference: https://multiagentmemory.com/docs/api-reference.html
 - Memory boundary: https://multiagentmemory.com/docs/memory-boundary.html
 - Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
 - Hosted endpoint: https://memoryendpoints.com
@@ -19,6 +20,9 @@ Memory boundary:
 Primary live endpoint evidence:
 
 - https://memoryendpoints.com/api/matm/live-capability-matrix
+- https://memoryendpoints.com/api/version
+- https://memoryendpoints.com/api/matm/sync/capabilities
+- https://memoryendpoints.com/api/matm/openapi.json
 - https://memoryendpoints.com/api/matm/route-inventory
 - https://memoryendpoints.com/api/matm/readiness-result
 - https://memoryendpoints.com/api/matm/redacted-example-receipts
@@ -46,10 +50,24 @@ Protected MATM workflow:
 - External link and citation upsert: POST /api/matm/external-links/upsert
 - Review queue read: GET /api/matm/review-queue
 - Review queue decision: POST /api/matm/review-queue/decide
+- Meeting rooms: GET, POST /api/matm/meeting-rooms
+- Meeting transcripts and posts: GET, POST /api/matm/meeting-messages
+- Meeting-to-memory promotion: POST /api/matm/meeting-messages/promote
+- Structured routing: GET, POST /api/matm/routing-decisions
+- Current message write: POST /api/matm/agent-messages
 - Current message read: GET /api/matm/current-message
+- Agent inbox: GET /api/matm/agent-inbox
 - Notification acknowledgement: POST /api/matm/notifications/ack
 - Redacted receipts: GET /api/matm/receipts
 - Redacted audit log: GET /api/matm/audit-log
+- Sync device authority: POST /api/matm/sync/devices, /api/matm/sync/devices/rotate, /api/matm/sync/devices/revoke
+- Conflict-safe sync mutation: POST /api/matm/sync/mutations
+- Sync readback: GET /api/matm/sync/receipts, /api/matm/sync/changes, /api/matm/sync/heads, /api/matm/sync/retention
+
+Documentation evidence rule:
+
+- The checked-in route table, GitHub route inventory, GitHub API contract, and companion API reference are kept aligned by tests.
+- Checked-in reports are point-in-time evidence. Use code and tests for revision behavior, /api/version for the deployed source SHA, and live verifiers for deployment claims.
 
 Setup references:
 

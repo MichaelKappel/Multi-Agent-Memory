@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API And Data Reference | MultiAgentMemory.com</title>
+  <meta name="description" content="Complete public and protected route map, tenancy model, persistence boundary, and evidence contract for MemoryEndpoints.com.">
+  <link rel="stylesheet" href="/static/site.css?v=ui3">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">MultiAgentMemory.com</a>
+    <nav aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/docs/how-it-works.html">How It Works</a>
+      <a href="/docs/api-reference.html" aria-current="page">API Reference</a>
+      <a href="/docs/memory-boundary.html">Memory Boundary</a>
+      <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub Repo</a>
+      <a href="/llms.txt">llms.txt</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>API And Data Reference</h1>
+    <p>This page mirrors the checked-in route table and is protected by a documentation-freshness test. For a deployed revision, the machine-readable <a href="https://memoryendpoints.com/api/matm/route-inventory">live route inventory</a>, <a href="https://memoryendpoints.com/api/matm/openapi.json">bounded OpenAPI contract</a>, and <a href="https://memoryendpoints.com/api/version">version record</a> are the runtime evidence.</p>
+
+    <h2>Trust and tenancy boundary</h2>
+    <ul>
+      <li>Public routes expose product documentation and redacted capability evidence, never tenant knowledge.</li>
+      <li>Protected routes require a workspace bearer key. The setup response reveals the raw key once; persistence stores only its hash.</li>
+      <li>The durable hierarchy is project to workspace to company. Accounts and users join companies through many-to-many membership and do not own knowledge trees.</li>
+      <li>Protected mutations use <code>Idempotency-Key</code>. Exact retries replay; key reuse with a different body returns a conflict-safe no-op.</li>
+      <li>Public-safe summaries, citations, receipts, and audit metadata may persist. Raw credentials, private payloads, hidden prompts, private model assets, and credential-bearing URLs do not.</li>
+    </ul>
+
+    <h2>Public routes</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Route</th><th>Methods</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Route"><code>/</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Human home page.</td></tr>
+          <tr><td data-label="Route"><code>/docs</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Human documentation.</td></tr>
+          <tr><td data-label="Route"><code>/docs/</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Trailing-slash documentation alias.</td></tr>
+          <tr><td data-label="Route"><code>/agent-setup</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Agent setup instructions.</td></tr>
+          <tr><td data-label="Route"><code>/agent-coordination</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Authenticated coordination quickstart.</td></tr>
+          <tr><td data-label="Route"><code>/console</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Human verification console.</td></tr>
+          <tr><td data-label="Route"><code>/knowledge</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Authenticated wiki shell; anonymous responses contain no tenant tree.</td></tr>
+          <tr><td data-label="Route"><code>/memory-lifecycle</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Memory lifecycle explanation.</td></tr>
+          <tr><td data-label="Route"><code>/transparency</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Authority, support, and no-op boundaries.</td></tr>
+          <tr><td data-label="Route"><code>/api/version</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Runtime build and storage provenance.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/live-capability-matrix</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Live, planned, and gated capability state.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/agent-compatibility</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">L0-L7 agent ability and fallback contract.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/capabilities</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Distributed-sync v1 negotiation.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/connector-contract</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Optional public-safe connector contract.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/openapi.json</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Bounded golden-path schema.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/route-inventory</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Machine-readable route and access map.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/readiness-result</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Bounded readiness evidence.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/redacted-example-receipts</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Public-safe receipt examples.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/agent-setup/free-account</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Free workspace setup and one-time key response.</td></tr>
+          <tr><td data-label="Route"><code>/mcp/resources</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">MCP-style public resource list.</td></tr>
+          <tr><td data-label="Route"><code>/robots.txt</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Crawler policy, not authorization.</td></tr>
+          <tr><td data-label="Route"><code>/sitemap.xml</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Human-page sitemap.</td></tr>
+          <tr><td data-label="Route"><code>/llms.txt</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Compact AI-readable summary.</td></tr>
+          <tr><td data-label="Route"><code>/llms-full.txt</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Expanded AI-readable public summary.</td></tr>
+          <tr><td data-label="Route"><code>/ai.txt</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Plain-text agent pointer.</td></tr>
+          <tr><td data-label="Route"><code>/ai-manifest.json</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">AI-ready site manifest.</td></tr>
+          <tr><td data-label="Route"><code>/.well-known/mcp.json</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">MCP discovery pointer.</td></tr>
+          <tr><td data-label="Route"><code>/.well-known/ai-agent.json</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Agent discovery pointer.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Protected knowledge and memory</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Route</th><th>Methods</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Route"><code>/api/matm/workspace</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Quota, hierarchy, projects, memberships, and default rooms.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/projects</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Project list and idempotent project upsert.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/knowledge-tree</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Company, workspace, and project wiki hierarchy.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/knowledge-documents</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Search, retrieve, and upsert protected wiki documents.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/knowledge-documents/upsert</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Explicit idempotent document-upsert alias.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/external-links</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Canonical external links and contextual citation mentions.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/external-links/upsert</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Explicit idempotent link-and-mention upsert alias.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/internet-search</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Curated workspace web-index search.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/agents/register</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Agent registration and status.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/memory-events/submit</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Firewall-reviewed public-safe memory write.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/memory-events</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Memory-event search and exact readback.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/search</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Hosted memory recall with scope and lifecycle filters.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/review-queue</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Pending and resolved memory review records.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/review-queue/decide</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Promote, reject, or quarantine with digest-only notes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Protected coordination and evidence</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Route</th><th>Methods</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Route"><code>/api/matm/meeting-rooms</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Default hierarchy rooms plus custom goal and task rooms.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/meeting-messages</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Paginated transcripts and confirmed public-safe posts.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/meeting-messages/promote</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Explicit source-linked promotion into hosted memory.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/meeting-rooms/read</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Per-agent room read cursor.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/routing-decisions</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Structured lane, room, goal, evidence, and next-action routing.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/agent-messages</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Targeted or workspace-broadcast current messages.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/current-message</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Current work and required-response lane.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/agent-inbox</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Unread current-message pagination.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/notifications/ack</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Per-recipient acknowledgement and receipt creation.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/receipts</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Redacted receipt readback.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/audit-log</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Redacted protected-operation audit readback.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Protected distributed sync</h2>
+    <p>Sync v1 accepts public-safe memory summaries, uses device epochs and immutable revisions, assigns a monotonic server sequence, and records redacted receipts. It rejects stale parents, revoked devices, wrong authority epochs, and blocked tombstone resurrection instead of silently choosing a winner.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Route</th><th>Methods</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Route"><code>/api/matm/sync/devices</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Register a device authority.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/devices/rotate</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Advance a device authority epoch.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/devices/revoke</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Revoke a device authority.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/mutations</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Conflict-safe upsert or tombstone mutation.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/receipts</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Redacted mutation receipt lookup.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/changes</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Incremental immutable revisions after a checkpoint.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/heads</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Authoritative logical-memory heads.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/sync/retention</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Tombstone and hard-forget policy.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Relational persistence</h2>
+    <p>Production uses the verified MySQL/MariaDB backend. SQLite is the stdlib local relational backend; file storage is an explicit development fallback. The schema separates tenant hierarchy, key hashes, memory and revisions, wiki sources and documents, canonical external links and mentions, meeting rooms and routing decisions, current-message notifications, sync devices and revisions, review state, idempotency, quota, receipts, and audit evidence.</p>
+
+    <h2>Evidence rules</h2>
+    <ul>
+      <li>Checked-in code and tests prove what a revision implements locally.</li>
+      <li><code>/api/version</code> proves which source SHA a live endpoint serves.</li>
+      <li>The route verifier proves the public surface; authenticated dogfood proves protected workflows; the MySQL verifier proves the production backend.</li>
+      <li>Tracked reports are point-in-time evidence and must never be mistaken for proof of a later commit.</li>
+    </ul>
+  </main>
+  <footer>
+    <p>Detailed checked-in contract: <a href="https://github.com/MichaelKappel/Multi-Agent-Memory/blob/main/docs/api-contract.md">docs/api-contract.md</a>. Runtime: <a href="https://memoryendpoints.com">MemoryEndpoints.com</a>.</p>
+  </footer>
+</body>
+</html>

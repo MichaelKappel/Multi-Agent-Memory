@@ -1,7 +1,5 @@
 # Multi-Agent Memory
 
-[![CI](https://github.com/MichaelKappel/Multi-Agent-Memory/actions/workflows/ci.yml/badge.svg)](https://github.com/MichaelKappel/Multi-Agent-Memory/actions/workflows/ci.yml)
-
 Production-grade, source-available reference implementation for Multi-Agent Transactive Memory (MATM).
 
 This repository contains two coordinated surfaces:
@@ -9,7 +7,7 @@ This repository contains two coordinated surfaces:
 | Surface | Role | Status |
 | --- | --- | --- |
 | [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Live-verified and deployed from the pushed source SHA |
-| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public memory model | Live-published companion documentation |
+| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site, including the complete [API and data reference](https://multiagentmemory.com/docs/api-reference.html) | Live-published companion documentation |
 
 The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no package-managed third-party runtime dependencies.
 
@@ -21,7 +19,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Free agent workspace setup with a 200 MB quota.
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
-- Protected workspace status, agent registration, memory submit/search, lifecycle-aware wiki documents, current-message, acknowledgement, and redacted receipt routes.
+- Protected workspace status, agent registration, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipt and audit routes.
 - No anonymous tenant wiki: `/knowledge` is an empty authentication shell, and all company/workspace/project pages, search results, and external-link records require a workspace-bound key. Accounts/users are membership identities, not data scopes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
@@ -51,30 +49,36 @@ UAIX setup reference: use the [MemoryEndpoints.com MATM setup option](https://ua
 |-- .github/                    # CI and PR hygiene
 |-- .uai/                       # Agent startup memory, totem invariant, and pointer ledgers
 |-- agent-file-handoff/         # Local-only intake buckets, tracked as empty inboxes
-|-- docs/                       # API, storage, schema, reports, prompts, and architecture docs
+|-- docs/                       # Checked-in engineering docs, schema, and historical snapshots
 |-- examples/                   # Public-safe request examples
 |-- memoryendpoints/            # Pure Python stdlib WSGI application package
 |-- scripts/                    # Verification, packaging, migration, and deploy helpers
 |-- sites/multiagentmemory.com/ # Companion documentation site
 |-- static/                     # MemoryEndpoints.com CSS, JS, and image assets
 |-- tests/                      # stdlib unittest suite
+|-- var/reports/                # Ignored point-in-time verification output
 |-- app.py                      # WSGI app export for local/import use
 `-- passenger_wsgi.py           # Passenger/cPanel WSGI entry point
 ```
 
 See [docs/repository-structure.md](docs/repository-structure.md) for ownership and publishing boundaries.
+See [docs/system-architecture.md](docs/system-architecture.md) for the request lifecycle, tenancy model, relational ownership, memory/wiki/coordination/sync flows, and evidence boundaries.
 See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/deployment.md) for rerunnable operating checks.
 
 ## Public Evidence
 
 - [Version](https://memoryendpoints.com/api/version)
 - [Capability matrix](https://memoryendpoints.com/api/matm/live-capability-matrix)
+- [Agent compatibility](https://memoryendpoints.com/api/matm/agent-compatibility)
+- [Sync capabilities](https://memoryendpoints.com/api/matm/sync/capabilities)
+- [Bounded OpenAPI contract](https://memoryendpoints.com/api/matm/openapi.json)
 - [Route inventory](https://memoryendpoints.com/api/matm/route-inventory)
 - [Readiness result](https://memoryendpoints.com/api/matm/readiness-result)
 - [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
 - [AI manifest](https://memoryendpoints.com/ai-manifest.json)
+- [Companion API and data reference](https://multiagentmemory.com/docs/api-reference.html)
 
-Current bounded readiness status is recorded in [docs/reports/final-readiness-report.md](docs/reports/final-readiness-report.md). Tracked reports are point-in-time evidence; rerun the verification commands after source changes before claiming the live site is current.
+Current deployed provenance comes from `/api/version`; current bounded capability and readiness claims come from the live evidence routes above. Files under `docs/reports/` are historical point-in-time snapshots and must not be treated as proof of a later commit. Fresh local and live verification output belongs under ignored `var/reports/`.
 
 ## Quick Start
 
@@ -88,7 +92,7 @@ Default local storage is the stdlib SQLite relational database under `var/`. Ove
 
 ```powershell
 $env:MEMORYENDPOINTS_STORE_BACKEND='sqlite'
-$env:MEMORYENDPOINTS_SQLITE_PATH='E:\MemoryEndpoints.com\var\matm_store.sqlite3'
+$env:MEMORYENDPOINTS_SQLITE_PATH='.\var\matm_store.sqlite3'
 python run_dev.py
 ```
 
@@ -109,7 +113,7 @@ python scripts\build_readiness_reports.py --write
 
 ## Deployment
 
-Deployment credentials stay outside this repository. The local `E:\ftp_Deploy.txt` handoff is read only by deploy tooling and must never be committed or printed.
+Deployment credentials stay outside this repository in ignored local handoffs or the operator's FileZilla profile. They must never be committed or printed.
 
 ```powershell
 python scripts\package_memoryendpoints.py

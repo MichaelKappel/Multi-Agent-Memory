@@ -15,7 +15,7 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 - Keep the local test suite fast, hermetic, and runnable with `python -m unittest discover -s tests`.
 - Preserve layered verification: unit/integration tests, WSGI route verification, live public-route verification, package verification, `.uai` audit, secret scan, enterprise readiness audit, and deployment reports.
 - Separate local proof from live proof. Local WSGI checks prove current code behavior; live public-route and live dogfood checks prove the deployed surface; `/api/version` SHA verification proves whether that deployed surface is the expected Git commit.
-- Treat dogfooding as an integration test, not as marketing evidence. It must exercise workspace creation, agent registration, memory submit/search, current message, acknowledgement, receipt readback, protected audit-log readback, redaction, and `.uai` progress behavior.
+- Treat dogfooding as an integration test, not as marketing evidence. It must exercise workspace creation, agent registration, memory submit/search/review, meeting-room coordination and promotion, current-message delivery, acknowledgement, receipt readback, protected audit-log readback, redaction, and local `.uai` continuity.
 - Track optional route gaps separately from required workflow failures. An optional live route missing from the deployed site should not erase a verified required workflow, but it should remain visible as deploy drift.
 
 ## MySQL And Database Operations
@@ -28,6 +28,6 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 
 ## Governance
 
-- Promote facts into active memory only after they are represented in code, docs, tests, reports, or `.uai` records.
+- Promote facts into durable hosted memory or wiki only after source-linked review. Code and tests prove implementation; documentation explains it; reports prove only the exact revision and environment they record.
 - Keep raw intake reports local-only unless a human explicitly approves publication.
-- Record each intake distribution in `.uai/intake-outcome-ledger.uai`.
+- Process intake one source at a time into the narrowest protected company/workspace/project scope, attach citations individually, promote compact memories individually, and record only concise startup pointers in `.uai`.

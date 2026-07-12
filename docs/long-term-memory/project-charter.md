@@ -8,5 +8,7 @@ The project prioritizes:
 - Deterministic AI discovery.
 - Public-safe redacted receipts.
 - Clear authority boundaries.
-- File-backed bootstrap memory before hosted memory promotion.
-- No third-party runtime dependencies.
+- Typed `.uai` startup continuity that stays active when hosted memory is unavailable.
+- Protected database-backed company/workspace/project wiki and hosted memory.
+- First-class meeting coordination, explicit promotion, and conflict-safe public-safe sync.
+- Standard-library runtime with an explicit host-provided MySQL/MariaDB adapter in production.

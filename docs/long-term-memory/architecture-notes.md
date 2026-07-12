@@ -1,13 +1,11 @@
 # Architecture Notes
 
-The first implementation uses a Python stdlib WSGI app with a JSON file store by default.
+This file is a compact historical entry point. The current detailed source is [System Architecture](../system-architecture.md).
 
-The app also supports a stdlib SQLite backend by setting `MEMORYENDPOINTS_STORE_BACKEND=sqlite`. SQLite gives MemoryEndpoints a relational database-backed durable mode for the implemented MATM workflows without adding third-party runtime dependencies.
+The implementation uses a Python standard-library WSGI application. SQLite is the default local relational backend; file storage is an explicit development/test fallback. The MySQL/MariaDB production adapter requires a host-provided compatible Python driver and is considered active only when `/api/version` reports a verified MySQL/MariaDB backend.
 
-The MySQL/MariaDB production adapter exists through `memoryendpoints.storage.MySQLStore` and requires a configured Python MySQL driver plus `MEMORYENDPOINTS_STORE_BACKEND=mysql` or `mariadb`. The live site is not using real MySQL unless `/api/version` reports `storeBackend` as `mysql` or `mariadb`.
+The canonical schema at `docs/database-schema-canonical.sql` separates tenant hierarchy, key hashes, durable memory and revisions, wiki sources and documents, canonical external links and citation mentions, meeting rooms and routing decisions, current-message notifications, distributed-sync authority and revisions, review state, idempotency, receipts, quota, and redacted audit evidence.
 
-The canonical database structure is `docs/database-schema-canonical.sql`. It separates account hierarchy, durable memory, crawl/search records, current-message delivery, receipts, review promotion, idempotency, outbox events, quota ledger, and audit log.
+Protected knowledge and memory live in database records. Files under `docs/long-term-memory/` preserve migration and decision history; they are not the protected workspace search source and do not replace one-source-at-a-time database ingestion.
 
-Long-term memory is promoted into hosted MemoryEndpoints MATM storage once deployment and authority gates are proven. Files under `docs/long-term-memory` are migration seeds and source-controlled evidence, not the protected workspace search source.
-
-The local `.uai` folder remains active even after hosted MATM is verified. `.uai/totem.uai` is the invariant record: hosted MATM augments durable memory, but it does not retire local startup continuity or offline recovery memory.
+The local `.uai` suite remains active after hosted MATM is verified. Hosted MATM augments durable recall but cannot retire local startup continuity or offline recovery memory.
