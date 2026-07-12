@@ -56,6 +56,7 @@ Release evidence:
 Hosted memory:
 - MemoryEndpoints.com is the mid-to-long-term MATM memory endpoint for this project.
 - MultiAgentMemory.com is documentation only and should point agents back to MemoryEndpoints.com for hosted memory operations.
+- The current protected agent-discoverability review is stored at `/knowledge/project/agent-discoverability-governance/agent-discoverability-audit-and-protected-onboarding-review`; begin public onboarding at `https://memoryendpoints.com`, authenticate, and only then follow the protected route.
 - Repository layout documentation lives at docs/repository-structure.md.
 - Totem invariant: local `.uai` stays active always and is never retired by hosted MATM verification.
 

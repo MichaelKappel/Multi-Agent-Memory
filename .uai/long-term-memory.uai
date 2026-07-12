@@ -25,6 +25,16 @@ Review status: live_verified
 Review evidence: docs/reports/final-verification-report.md and https://memoryendpoints.com/api/matm/readiness-result
 Truth boundary: workspace memory requires authentication; public docs and public evidence routes do not grant hidden authority. Never place raw API keys or credential values in .uai files.
 
+Stable id: protected-agent-discoverability-review
+Path: https://memoryendpoints.com
+Protected knowledge route: /knowledge/project/agent-discoverability-governance/agent-discoverability-audit-and-protected-onboarding-review
+Label: Agent discoverability audit and protected onboarding review
+Routing summary: Start at the MemoryEndpoints.com home page, authenticate, then use the protected project knowledge route for current discovery, representation, crawler-policy, CORS, OpenAPI, MCP, A2A, and HTTP decision boundaries.
+Authority/source: reviewed protected database knowledge derived from `AI Agent Discoverability Report.md` plus independent primary standards
+Review status: current_reviewed
+Review evidence: exact source hash, protected production readback, contextual external-link readback, individual memory review, and anonymous denial checks
+Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL or password-free wiki. Historical NeuralWikis content and product conventions remain separately lifecycle-labeled.
+
 Stable id: multiagentmemory-docs
 Path: sites/multiagentmemory.com/
 Label: MultiAgentMemory.com documentation companion
