@@ -7,6 +7,7 @@
   const refreshButton = app.querySelector("[data-knowledge-refresh]");
   const modeButtons = Array.from(app.querySelectorAll("[data-knowledge-mode]"));
   const privateEl = app.querySelector("[data-knowledge-private]");
+  const layoutEl = app.querySelector(".knowledge-layout");
   const treeEl = app.querySelector("[data-knowledge-tree]");
   const articleEl = app.querySelector("[data-knowledge-article]");
   const resultsEl = app.querySelector("[data-knowledge-results]");
@@ -27,8 +28,27 @@
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  function setActiveArticle(active) {
+    layoutEl.classList.toggle("knowledge-layout-has-article", Boolean(active));
+    if (!active) articleEl.removeAttribute("tabindex");
+  }
+
+  function setActiveResults(active) {
+    layoutEl.classList.toggle("knowledge-layout-has-results", Boolean(active));
+  }
+
+  function revealArticle() {
+    articleEl.setAttribute("tabindex", "-1");
+    articleEl.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 780px)").matches) {
+      articleEl.scrollIntoView({ block: "start" });
+    }
+  }
+
   function lockPrivateKnowledge(clearCredentials) {
     privateEl.hidden = true;
+    setActiveArticle(false);
+    setActiveResults(false);
     clearNode(treeEl);
     clearNode(articleEl);
     clearNode(resultsEl);
@@ -346,9 +366,11 @@
   function renderArticle(knowledgeDocument) {
     clearNode(articleEl);
     if (!knowledgeDocument) {
+      setActiveArticle(false);
       appendText(articleEl, "p", "Page not found.", "empty-state");
       return;
     }
+    setActiveArticle(true);
     appendText(articleEl, "h1", knowledgeDocument.title || "Untitled");
     lifecycleSummary(articleEl, knowledgeDocument, true);
     if (knowledgeDocument.description) appendText(articleEl, "p", knowledgeDocument.description, "knowledge-article-description");
@@ -384,6 +406,7 @@
 
   function renderResults(items) {
     clearNode(resultsEl);
+    setActiveResults(true);
     if (!items.length) {
       appendText(resultsEl, "p", "No matching pages.", "empty-state");
       return;
@@ -395,6 +418,7 @@
 
   function renderExternalResults(items) {
     clearNode(resultsEl);
+    setActiveResults(true);
     if (!items.length) {
       appendText(resultsEl, "p", "No matching web links.", "empty-state");
       return;
@@ -438,11 +462,15 @@
       .then(function (payload) {
         renderDocumentLinks(payload.items || []);
         setStatus("Page loaded.", "ok");
+        revealArticle();
       })
       .catch(function (error) {
         if (error.status === 401) lockPrivateKnowledge(true);
         clearNode(articleEl);
-        if (!privateEl.hidden) appendText(articleEl, "p", error.message, "empty-state");
+        if (!privateEl.hidden) {
+          setActiveArticle(true);
+          appendText(articleEl, "p", error.message, "empty-state");
+        }
         setStatus(error.message, "error");
       });
   }
@@ -529,6 +557,7 @@
     }
     if (route === "/knowledge") {
       clearNode(articleEl);
+      setActiveArticle(false);
       appendText(articleEl, "p", "Select a page.", "empty-state");
       setStatus("Wiki loaded.", "ok");
     }

@@ -295,8 +295,15 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertIn("loadDocumentByRoute(linkHref)", knowledge_js)
         self.assertNotIn("loadDocumentByRoute(match[5])", knowledge_js)
         self.assertIn("if (!payload) return", knowledge_js)
+        self.assertIn('layoutEl.classList.toggle("knowledge-layout-has-article"', knowledge_js)
+        self.assertIn('layoutEl.classList.toggle("knowledge-layout-has-results"', knowledge_js)
+        self.assertIn('articleEl.scrollIntoView({ block: "start" })', knowledge_js)
         self.assertIn('window.addEventListener("popstate"', knowledge_js)
         self.assertNotIn("innerHTML", knowledge_js)
+
+        knowledge_css = (Path(__file__).resolve().parents[1] / "static" / "css" / "site.css").read_text(encoding="utf-8")
+        self.assertIn(".knowledge-layout.knowledge-layout-has-article .knowledge-article", knowledge_css)
+        self.assertIn(".knowledge-layout.knowledge-layout-has-results .knowledge-results", knowledge_css)
 
         for route in (
             "/api/matm/projects",

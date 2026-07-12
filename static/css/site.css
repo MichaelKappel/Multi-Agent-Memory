@@ -1486,4 +1486,19 @@ footer {
   .knowledge-article {
     max-height: none;
   }
+
+  .knowledge-tree {
+    max-height: 52vh;
+    overscroll-behavior: contain;
+  }
+
+  .knowledge-layout.knowledge-layout-has-article .knowledge-article {
+    order: -2;
+    scroll-margin-top: 12px;
+  }
+
+  .knowledge-layout.knowledge-layout-has-results .knowledge-results {
+    order: -1;
+    scroll-margin-top: 12px;
+  }
 }
