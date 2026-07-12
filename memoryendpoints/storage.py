@@ -702,6 +702,14 @@ def _public_external_link(link, mentions=None, query=""):
     }
 
 
+def _merge_external_link_review_status(existing_status, requested_status):
+    existing = str(existing_status or "").strip().lower()
+    requested = str(requested_status or "unreviewed").strip().lower()
+    if requested == "unreviewed" and existing in ("reviewed", "quarantined", "rejected"):
+        return existing
+    return requested
+
+
 def _knowledge_tree_from_documents(documents):
     scopes = []
     scope_map = {}
@@ -1748,9 +1756,10 @@ class FileStore(object):
             "workspaceId": workspace_id,
             "createdAt": now,
         }
-        review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
-        if review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
+        requested_review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
+        if requested_review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
             return None, "external_link_review_status_unsupported"
+        review_status = _merge_external_link_review_status(link.get("reviewStatus"), requested_review_status)
         crawl_status = _slug(payload.get("crawlStatus") or payload.get("crawl_status") or "not_requested", "not-requested", 32).replace("-", "_")
         if crawl_status not in ("not_requested", "queued", "fetched", "failed", "blocked"):
             return None, "external_link_crawl_status_unsupported"
@@ -4306,8 +4315,8 @@ class SQLiteStore(FileStore):
         except ExternalLinkValidationError as exc:
             return None, exc.code
         keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
-        review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
-        if review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
+        requested_review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
+        if requested_review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
             return None, "external_link_review_status_unsupported"
         crawl_status = _slug(payload.get("crawlStatus") or payload.get("crawl_status") or "not_requested", "not-requested", 32).replace("-", "_")
         if crawl_status not in ("not_requested", "queued", "fetched", "failed", "blocked"):
@@ -4335,9 +4344,13 @@ class SQLiteStore(FileStore):
                         if not document:
                             return None, "knowledge_document_not_found"
                     existing = connection.execute(
-                        "SELECT external_link_id FROM matm_external_links WHERE workspace_id = ? AND normalized_url_hash = ?",
+                        "SELECT external_link_id, review_status FROM matm_external_links WHERE workspace_id = ? AND normalized_url_hash = ?",
                         (workspace_id, normalized["normalizedUrlHash"]),
                     ).fetchone()
+                    review_status = _merge_external_link_review_status(
+                        existing["review_status"] if existing else "",
+                        requested_review_status,
+                    )
                     values = (
                         normalized["url"],
                         normalized["normalizedUrl"],

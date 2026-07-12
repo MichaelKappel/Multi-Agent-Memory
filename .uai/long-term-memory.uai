@@ -65,6 +65,16 @@ Review status: current_reviewed
 Review evidence: exact source hash, eleven protected pages, 56 canonical links, 75 contextual mentions, eleven individual memory reviews, anonymous denial, authenticated internal navigation, and desktop/mobile geometry checks
 Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL, execution endpoint, password-free wiki, or safety certification. MemoryEndpoints does not execute arbitrary agent code; historical source claims and proposed runtime controls retain their own lifecycle and authority labels.
 
+Stable id: protected-agent-callable-integration-review
+Path: https://memoryendpoints.com
+Protected knowledge route: /knowledge/project/agent-integration-governance/agent-callable-integration-discovery-and-sprint-planning-decision-boundaries
+Label: Agent-callable integration, discovery, and sprint-planning decision boundaries
+Routing summary: Start at the MemoryEndpoints.com home page, authenticate, then use the protected project route for current human/agent representation, crawler discovery, AI Manifest, HTTP API, MCP authorization, idempotency, rollback, and hybrid delivery guidance.
+Authority/source: reviewed protected database knowledge derived from `AI Agent Sprint Plan for NeuralWikis.md` plus current primary standards, protocol guidance, and first-party NeuralWikis contracts
+Review status: current_reviewed
+Review evidence: exact source hash, ten protected pages, 48 canonical links, 59 contextual mentions, ten individual memory reviews, anonymous denial, authenticated internal navigation, and desktop/mobile geometry checks
+Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL or password-free wiki. Historical outage, metadata-authority, discovery-format, security, autonomy, and rollback claims retain their own lifecycle and authority labels.
+
 Stable id: multiagentmemory-docs
 Path: sites/multiagentmemory.com/
 Label: MultiAgentMemory.com documentation companion

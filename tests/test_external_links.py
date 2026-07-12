@@ -177,6 +177,57 @@ class ExternalLinkTests(unittest.TestCase):
         with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
             self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM matm_external_links").fetchone()[0])
 
+    def test_unreviewed_citation_preserves_existing_canonical_review(self):
+        setup, headers = self.setup_workspace()
+        document_id = self.create_knowledge_document(setup, headers)
+        base_body = {
+            "workspaceId": setup["workspaceId"],
+            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "url": "https://example.com/guides/reviewed-agent-api",
+            "siteName": "Example Research",
+            "pageTitle": "Reviewed Agent API Guidance",
+            "description": "Canonical reviewed API guidance cited by more than one report section.",
+            "keywords": ["agent API", "canonical review"],
+            "crawlStatus": "fetched",
+            "crawlPolicy": "manual_review",
+            "knowledgeDocumentId": document_id,
+            "relationshipType": "citation",
+            "anchorText": "Reviewed Agent API Guidance",
+            "contextDescription": "Primary reviewed evidence for the current contract.",
+            "citationLabel": "Primary evidence",
+            "citationOrder": 1,
+        }
+        status, _headers, text = call_app(
+            "/api/matm/external-links/upsert",
+            method="POST",
+            body=dict(base_body, reviewStatus="reviewed"),
+            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="reviewed-link-first"),
+        )
+        self.assertEqual("201 Created", status)
+        self.assertEqual("reviewed", json.loads(text)["link"]["reviewStatus"])
+
+        source_citation = dict(
+            base_body,
+            reviewStatus="unreviewed",
+            contextDescription="Unreviewed source citation reuses the reviewed canonical page.",
+            citationLabel="Works cited 1",
+            citationOrder=2,
+        )
+        status, _headers, text = call_app(
+            "/api/matm/external-links/upsert",
+            method="POST",
+            body=source_citation,
+            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="unreviewed-link-mention"),
+        )
+        self.assertEqual("201 Created", status)
+        payload = json.loads(text)
+        self.assertEqual("reviewed", payload["link"]["reviewStatus"])
+        self.assertEqual(2, payload["link"]["mentionCount"])
+        self.assertEqual(
+            {"Primary evidence", "Works cited 1"},
+            {item["citationLabel"] for item in payload["link"]["mentions"]},
+        )
+
     def test_external_link_search_is_workspace_isolated(self):
         first, first_headers = self.setup_workspace()
         document_id = self.create_knowledge_document(first, first_headers)

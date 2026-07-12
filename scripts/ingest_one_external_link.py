@@ -1,6 +1,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 from urllib.parse import urlencode
 
@@ -29,6 +30,19 @@ def canonical_language(value):
 
 def canonical_content_type(value):
     return str(value or "text/html").strip().lower() or "text/html"
+
+
+def canonical_crawl_policy(value):
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "metadata_only").lower()).strip("_")
+    return (text or "metadata_only")[:64].rstrip("_") or "metadata_only"
+
+
+def review_status_readback_satisfies(actual_status, requested_status):
+    actual = str(actual_status or "").strip().lower()
+    requested = str(requested_status or "unreviewed").strip().lower()
+    if actual == requested:
+        return True
+    return requested == "unreviewed" and actual in ("reviewed", "quarantined", "rejected")
 
 
 def external_link_request_fingerprint(body):
@@ -73,9 +87,9 @@ def external_link_readback_matches(link, body):
             actual_keywords == expected_keywords,
             canonical_language(link.get("language")) == canonical_language(body.get("language")),
             canonical_content_type(link.get("contentType")) == canonical_content_type(body.get("contentType")),
-            link.get("reviewStatus") == body.get("reviewStatus"),
+            review_status_readback_satisfies(link.get("reviewStatus"), body.get("reviewStatus")),
             link.get("crawlStatus") == body.get("crawlStatus"),
-            link.get("crawlPolicy") == body.get("crawlPolicy"),
+            canonical_crawl_policy(link.get("crawlPolicy")) == canonical_crawl_policy(body.get("crawlPolicy")),
             link.get("visibility") == body.get("visibility"),
         )
     )
@@ -174,7 +188,7 @@ def main(argv=None):
         "contentType": canonical_content_type(args.content_type),
         "reviewStatus": args.review_status,
         "crawlStatus": args.crawl_status,
-        "crawlPolicy": args.crawl_policy,
+        "crawlPolicy": canonical_crawl_policy(args.crawl_policy),
         "visibility": "workspace_private",
         "metadata": {
             "ingestMode": "single_external_link_reviewed",
@@ -229,6 +243,13 @@ def main(argv=None):
         "existingMentionCount": preflight["existingMentionCount"],
         "existingReviewStatus": preflight["existingReviewStatus"],
         "existingCrawlStatus": preflight["existingCrawlStatus"],
+        "requestedReviewStatus": args.review_status,
+        "expectedEffectiveReviewStatus": (
+            preflight["existingReviewStatus"]
+            if args.review_status == "unreviewed"
+            and preflight["existingReviewStatus"] in ("reviewed", "quarantined", "rejected")
+            else args.review_status
+        ),
         "databaseSourceOfTruth": True,
         "firstClassExternalLink": True,
         "bulkImport": False,
@@ -274,6 +295,12 @@ def main(argv=None):
                 "readbackMentionCount": readback["existingMentionCount"],
                 "readbackMatchesReviewedMetadata": readback_matches["metadataMatches"],
                 "readbackCitationMatches": readback_matches["citationMatches"],
+                "effectiveReviewStatus": (readback.get("link") or {}).get("reviewStatus"),
+                "reviewStatusPreservedFromExisting": bool(
+                    preflight["existingReviewStatus"]
+                    and preflight["existingReviewStatus"] != args.review_status
+                    and (readback.get("link") or {}).get("reviewStatus") == preflight["existingReviewStatus"]
+                ),
             }
         )
     else:

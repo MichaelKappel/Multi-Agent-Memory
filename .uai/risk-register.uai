@@ -27,6 +27,9 @@ Current risks:
 - Product-boundary risk: unrelated APIs with a shared name, historical routes, custom JSON-LD, public exchange content, or first-party infrastructure claims can be mistaken for current LocalEndpoint, Carcinus, NeuralWikis, or MemoryEndpoints contracts.
 - Execution-boundary risk: a memory, file-handoff, UAI, MCP, schema, or profile surface can be mistaken for permission to run untrusted code inside the MemoryEndpoints application or credential boundary.
 - Isolation and snapshot risk: a sandbox brand can be overclaimed as absolute safety, while mounts, egress, ambient credentials, host integrations, resource exhaustion, side channels, restored compromise, and unreviewed outputs remain exposed.
+- Canonical-link downgrade risk: adding a low-authority source mention can erase an existing reviewed, quarantined, or rejected canonical disposition unless storage preserves explicit review state and readback reports the effective state.
+- Discovery-authority risk: metadata density, hidden instructions, hashes, manifests, CSS selectors, crawler labels, draft formats, or first-party route inventories can be mistaken for publisher authority, interoperability, authorization, or complete supply-chain security.
+- Representation risk: a public full-context export or machine-only surface can leak protected knowledge, create stale duplicates, or degrade accessibility and accountable human review.
 
 Mitigation:
 - Run local tests, route verifiers, `.uai` audit, package check, secret scan, dogfood, and readiness audit before handoff.
@@ -38,3 +41,5 @@ Mitigation:
 - Verify product identity rather than matching names, keep custom vocabularies explicitly application-specific, and require independent evidence before treating first-party implementation claims as enterprise assurance.
 - Keep any future execution plane separately owned and threat-modeled; authorize exact actions before dispatch, use task-specific credentials and capabilities, deny ambient secrets and egress, bound resources and outputs, return typed reviewable failures, and test cleanup on every terminal path.
 - Treat snapshots as revocable supply-chain artifacts with provenance, quarantine, policy and malware checks, retention, versioning, and restore evidence; persist only allowlisted, redacted outcomes into durable memory.
+- Preserve explicit canonical review dispositions across incidental citations, canonicalize link metadata consistently, and expose requested versus effective review state in redacted single-link evidence.
+- Keep discovery files public-safe and advisory, require protected query-bounded retrieval for tenant knowledge, preserve accessible human representations, and reverify changing draft or product status from primary sources.

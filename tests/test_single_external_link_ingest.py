@@ -3,11 +3,13 @@ from unittest.mock import patch
 
 from memoryendpoints.external_links import stable_external_link_id
 from scripts.ingest_one_external_link import (
+    canonical_crawl_policy,
     canonical_content_type,
     canonical_language,
     external_link_preflight,
     external_link_readback_matches,
     external_link_request_fingerprint,
+    review_status_readback_satisfies,
 )
 
 
@@ -76,6 +78,7 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
         self.assertEqual("en-us", canonical_language(" en-US "))
         self.assertEqual("und", canonical_language(""))
         self.assertEqual("text/html", canonical_content_type(" Text/HTML "))
+        self.assertEqual("manual_source_citation_review", canonical_crawl_policy("Manual source-citation review"))
 
         body = self.body()
         body["language"] = "en-US"
@@ -83,6 +86,8 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
         link = self.persisted_link()
         link["language"] = "en-us"
         link["contentType"] = "text/html"
+        body["crawlPolicy"] = "Manual source-citation review"
+        link["crawlPolicy"] = "manual_source_citation_review"
 
         self.assertEqual(
             {"metadataMatches": True, "citationMatches": True},
@@ -121,6 +126,20 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
         link["mentions"][0]["contextDescription"] = "Stale context."
         self.assertEqual(
             {"metadataMatches": True, "citationMatches": False},
+            external_link_readback_matches(link, body),
+        )
+
+    def test_unreviewed_mention_accepts_preserved_explicit_review_status(self):
+        body = self.body()
+        body["reviewStatus"] = "unreviewed"
+        link = self.persisted_link()
+
+        self.assertTrue(review_status_readback_satisfies("reviewed", "unreviewed"))
+        self.assertTrue(review_status_readback_satisfies("quarantined", "unreviewed"))
+        self.assertTrue(review_status_readback_satisfies("rejected", "unreviewed"))
+        self.assertFalse(review_status_readback_satisfies("unreviewed", "reviewed"))
+        self.assertEqual(
+            {"metadataMatches": True, "citationMatches": True},
             external_link_readback_matches(link, body),
         )
 
