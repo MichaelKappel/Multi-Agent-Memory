@@ -17,6 +17,6 @@ Current coding standards:
 - Redact secret-like material before persistence, reports, receipts, audit logs, or public output.
 - Tests must not require network access, local secrets, or live deployment state.
 - Use deterministic integration tests for real route handlers whenever workflow behavior changes.
-- Keep storage backends honest: file backend is default, SQLite relational backend is optional and live locally, MySQL/MariaDB remains adapter-gated.
+- Keep storage backends honest: unconfigured local runtime defaults to relational SQLite, production uses verified MySQL/MariaDB through a host-provided driver, and the legacy file backend is explicit-only compatibility infrastructure rather than the tenant-data source of truth.
 - Keep generated reports public-safe and bounded by evidence.
 - Keep prompt drafts out of source control.

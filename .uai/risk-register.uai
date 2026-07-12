@@ -13,12 +13,19 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Current risks:
 - Live deployment risk: latest local code is not proven live until deployment and live route verification pass.
-- Companion site risk: MultiAgentMemory.com source is ready locally but live domain does not yet prove the expected companion routes.
+- Companion drift risk: MultiAgentMemory.com is live, but every release must continue verifying that the companion routes and links match the current MemoryEndpoints boundary.
 - CI risk: GitHub Actions is not a passing health signal while account or billing state blocks job execution.
-- Database claim risk: MySQL/MariaDB must remain gated until a runtime adapter is approved and tested.
+- Database drift risk: production MySQL/MariaDB and local relational SQLite are verified, but every storage change must re-prove migrations, tenant isolation, read-after-write behavior, backup coverage, and restoration; JSON files are never a tenant-data source of truth.
 - Memory setup risk: active `.uai` must stay complete, date-free, typed, and free of README/intake substitutes.
 - Secret risk: credentials must stay out of `.uai`, docs, reports, packages, audit logs, and public routes.
+- Multi-agent coordination risk: additional agents can increase cost, latency, duplicated work, shared-state conflicts, cascading errors, premature consensus, and incorrect termination instead of improving results.
+- Shared-memory risk: concurrent destructive rewrites can silently discard another agent's contribution, while poisoned or over-broad shared context can amplify one error across every reader.
+- Governance risk: model classifiers, consensus, market signals, or attestation can be mistaken for authorization, policy, safety proof, or human accountability.
+- Resilience risk: scheduled backups, replication, health checks, container update tools, or confidential-computing products can be overclaimed as complete restore, safe automatic update, zero data loss, untamperability, or seamless failover.
 
 Mitigation:
 - Run local tests, route verifiers, `.uai` audit, package check, secret scan, dogfood, and readiness audit before handoff.
 - Keep completion claims bounded by the final readiness report.
+- Benchmark multi-agent topology against a simpler baseline, assign explicit owners and evidence, and require exact completion proof rather than accepting a coordination message as implementation.
+- Prefer read-only or append-safe shared memory, version mutable replacements, preserve provenance, and require individual promotion review before coordination evidence becomes durable knowledge.
+- Keep deterministic authorization and human escalation outside model judgment; define threat models, restore drills, rollback gates, and measured acceptance criteria for every resilience or confidential-computing control.

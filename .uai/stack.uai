@@ -13,9 +13,9 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Current stack:
 - Python standard library WSGI runtime.
-- No third-party runtime dependency is approved for production code.
+- No third-party package is bundled as an application runtime dependency; production MySQL/MariaDB uses the hosting environment's database driver.
 - HTML, CSS, and browser JavaScript for public pages and static companion site assets.
-- File storage is the default local backend.
-- Stdlib SQLite relational storage is optional and live for implemented MATM workflows.
-- MySQL/MariaDB schema and design are documented, but runtime adapter support remains gated.
+- Stdlib SQLite relational storage is the unconfigured local default and is live for implemented MATM workflows.
+- MySQL/MariaDB relational storage is the verified production backend, selected by protected host configuration and a host-provided driver.
+- The legacy file store remains explicit-only compatibility infrastructure and is not the durable tenant knowledge source of truth.
 - Packaging excludes `.uai`, raw handoff buckets, prompt drafts, local runtime state, databases, logs, and credential material.

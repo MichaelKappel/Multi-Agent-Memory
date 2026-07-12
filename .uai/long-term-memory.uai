@@ -35,6 +35,16 @@ Review status: current_reviewed
 Review evidence: exact source hash, protected production readback, contextual external-link readback, individual memory review, and anonymous denial checks
 Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL or password-free wiki. Historical NeuralWikis content and product conventions remain separately lifecycle-labeled.
 
+Stable id: protected-agent-ecosystem-participation-review
+Path: https://memoryendpoints.com
+Protected knowledge route: /knowledge/project/multi-agent-ecosystem-governance/agent-ecosystem-participation-risk-and-human-governance-review
+Label: Agent ecosystem participation, risk, and human-governance review
+Routing summary: Start at the MemoryEndpoints.com home page, authenticate, then use the protected project knowledge route for current multi-agent participation, coordination, shared-memory concurrency, protocol, security, governance, confidential-computing, moderation, and resilience boundaries.
+Authority/source: reviewed protected database knowledge derived from `AI Agent Ecosystem Participation Guide.md` plus independent primary research, specifications, government guidance, and current first-party documentation
+Review status: current_reviewed
+Review evidence: exact source hash, ten protected pages, protected production readback, contextual external-link readback, ten individual memory reviews, anonymous denial, and authenticated desktop/mobile wiki checks
+Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL or password-free wiki. Historical source claims and proposed architectures retain their own lifecycle and authority labels.
+
 Stable id: multiagentmemory-docs
 Path: sites/multiagentmemory.com/
 Label: MultiAgentMemory.com documentation companion

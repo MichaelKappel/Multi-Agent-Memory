@@ -12,9 +12,9 @@ Next action for agents: perform the highest unblocked action that matches the cu
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current ordered actions:
-- Confirm the current agent-discoverability active-memory changes through exact-source commit and push, FTPS deployment, live SHA, route, MySQL, dogfood, package, secret, and readiness checks before selecting another source.
-- Treat `AI Agent Discoverability Report.md` as complete only while production readback retains nine protected pages, 27 canonical external links, 45 contextual mentions, nine promoted source memories, one source identity, the exact source hash, valid workspace/project scopes, and no anonymous title, source-prefix, or tenant-data leak.
-- Select the next unprocessed `D:\DownloadArchive` report only through canonical source-provenance preflight after the completed source's exact-revision deployment evidence passes; never infer unprocessed state from `.uai` alone.
+- Confirm the current ecosystem-participation active-memory changes through exact-source commit and push, FTPS deployment, live SHA, route, MySQL, dogfood, package, secret, and readiness checks before selecting another source.
+- Treat `AI Agent Ecosystem Participation Guide.md` as complete only while production readback retains ten protected pages, 43 canonical external links, 59 contextual mentions, ten promoted source memories, one source identity, the exact source hash, valid workspace/project scopes, and no anonymous title, source-prefix, or tenant-data leak.
+- Select the next unprocessed `D:\DownloadArchive` report only through canonical source-provenance preflight after the ecosystem source's exact-revision deployment evidence passes; never infer unprocessed state from `.uai` alone.
 - For each report, preserve one canonical source, split distinct knowledge into focused pages, choose the narrowest durable scope, add multiple useful taxonomy paths, and classify non-current claims before they enter durable memory.
 - Review every external citation independently as a first-class web record. Distinguish primary authority, vendor material, community discussion, preprints, blocked or stale paths, citation-to-claim mismatches, and jurisdiction errors.
 - Keep relational SQLite and production MySQL behavior covered by integration, migration, route, and read-after-write tests.

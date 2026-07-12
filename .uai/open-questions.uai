@@ -12,10 +12,10 @@ Next action for agents: do not silently assume answers to unresolved authority, 
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, private contact data, raw one-time keys, or credential inventory values.
 
 Current open questions:
-- What approved runtime adapter path should be used before claiming live MySQL/MariaDB support?
+- None at current scope. New storage, protocol, moderation, confidential-computing, or resilience candidates still require an explicit architecture decision and evidence before adoption.
 
 Safe assumptions:
 - Keep local `.uai` active always.
-- Keep MySQL runtime support gated.
+- Treat relational SQLite as the unconfigured local default and verified MySQL/MariaDB as the production backend; re-prove both after storage-contract changes.
 - Treat GitHub Actions as not required unless the human re-enables it; treat live deployment evidence as current only after the pushed commit is deployed and `/api/version` matches that commit.
 - Treat deployed UAIX wizard guidance as possibly behind the human-approved rule: `.uai/short-term-memory.uai` and `.uai/current-state.uai` are forbidden filenames under any purpose or interpretation.
