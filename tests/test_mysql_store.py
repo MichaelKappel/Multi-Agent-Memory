@@ -130,7 +130,7 @@ class MySQLStoreTests(unittest.TestCase):
                             ],
                             "sourceUri": "report://memory-search-linked-knowledge",
                             "routeOrPath": "/knowledge/project/model-resource-estimation",
-                            "searchableText": "Reject a contiguous multi-gigabyte allocation. Stream bounded buffers and measure browser memory.",
+                            "searchableText": "Reject a 1.5 GiB contiguous allocation. Stream bounded buffers and measure browser memory.",
                         },
                     )
                     self.assertIsNone(linked_error)
@@ -147,6 +147,36 @@ class MySQLStoreTests(unittest.TestCase):
                         0.9,
                         scope_id=project_id,
                     )
+                    broad_gate = store.submit_memory(
+                        workspace_id,
+                        "search-agent",
+                        "project",
+                        "Base-Model Go/No-Go Acceptance Criteria",
+                        "Technical gates require bounded browser loading and memory safety.",
+                        ["acceptance criteria", "browser matrix"],
+                        "/knowledge/project/base-model-go-no-go",
+                        "decision",
+                        "base-model release gate",
+                        0.9,
+                        scope_id=project_id,
+                    )
+                    broad_document, broad_error = store.upsert_knowledge_document(
+                        workspace_id,
+                        "search-agent",
+                        {
+                            "scope": "project",
+                            "scopeId": project_id,
+                            "projectId": project_id,
+                            "title": "Base-Model Go/No-Go Acceptance Criteria",
+                            "description": "Broad release-gate checklist.",
+                            "keywords": ["go no-go", "browser matrix", "rollback"],
+                            "taxonomyPaths": [["TinyRustLM", "release governance", "base-model gates"]],
+                            "sourceUri": "report://memory-search-linked-knowledge",
+                            "routeOrPath": "/knowledge/project/base-model-go-no-go",
+                            "searchableText": "No contiguous multi-gigabyte allocation is required. Browser memory and rollback gates must pass.",
+                        },
+                    )
+                    self.assertIsNone(broad_error)
                     store.submit_memory(
                         workspace_id,
                         "search-agent",
@@ -171,10 +201,12 @@ class MySQLStoreTests(unittest.TestCase):
                     self.assertIn("memory", resource_results[0]["matchedTerms"])
                     self.assertNotIn("contiguous", resource_results[0]["unmatchedTerms"])
                     self.assertGreater(resource_results[0]["matchScore"], 0)
-                    self.assertEqual([resource["eventId"]], [item["eventId"] for item in resource_results])
                     self.assertTrue(resource_results[0]["knowledgeAugmentedMatch"])
-                    self.assertTrue({"contiguous", "multi", "gigabyte", "allocation"}.issubset(set(resource_results[0]["linkedKnowledgeMatchedTerms"])))
+                    self.assertTrue({"contiguous", "gigabyte", "allocation"}.issubset(set(resource_results[0]["linkedKnowledgeMatchedTerms"])))
+                    self.assertNotIn("multi", resource_results[0]["unmatchedTerms"])
                     self.assertEqual(linked_document["searchDocumentId"], resource_results[0]["linkedKnowledgeDocument"]["searchDocumentId"])
+                    self.assertIn(broad_gate["eventId"], [item["eventId"] for item in resource_results])
+                    self.assertNotEqual(broad_document["searchDocumentId"], resource_results[0]["linkedKnowledgeDocument"]["searchDocumentId"])
 
                     behavior_results = store.search_memory(
                         workspace_id,

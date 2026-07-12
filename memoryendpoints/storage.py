@@ -95,6 +95,8 @@ _MEMORY_QUERY_STOP_WORDS = {
     "into",
     "is",
     "it",
+    "multi",
+    "multiple",
     "of",
     "on",
     "or",
@@ -102,6 +104,17 @@ _MEMORY_QUERY_STOP_WORDS = {
     "to",
     "with",
     "without",
+}
+
+_SEARCH_TERM_ALIASES = {
+    "gb": "gigabyte",
+    "gib": "gigabyte",
+    "kb": "kilobyte",
+    "kib": "kilobyte",
+    "mb": "megabyte",
+    "mib": "megabyte",
+    "tb": "terabyte",
+    "tib": "terabyte",
 }
 
 
@@ -852,6 +865,8 @@ def _public_knowledge_document(document, include_text=False, query=""):
 
 def _search_term_root(value):
     token = str(value or "").lower()
+    if token in _SEARCH_TERM_ALIASES:
+        return _SEARCH_TERM_ALIASES[token]
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
     if len(token) > 4 and token.endswith("es"):

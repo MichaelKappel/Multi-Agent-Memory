@@ -465,6 +465,7 @@ def capability_matrix():
             "ranking": "weighted_stem_aware_partial_terms_with_linked_knowledge_context",
             "searchFields": ["title", "subject", "tags", "summary", "source", "memoryType", "actorAgentId", "identifiers", "linkedKnowledgeTitle", "linkedKnowledgeDescription", "linkedKnowledgeKeywords", "linkedKnowledgeTaxonomy", "linkedKnowledgeText"],
             "matchEvidenceFields": ["matchScore", "matchedTerms", "unmatchedTerms", "linkedKnowledgeMatchedTerms", "knowledgeAugmentedMatch", "linkedKnowledgeDocument"],
+            "termNormalization": "Stem-aware terms plus KB/KiB, MB/MiB, GB/GiB, and TB/TiB concept normalization; low-information connector words and quantifiers are ignored.",
             "structuredIdentifierRule": "Hyphenated event, review, message, and tag identifiers require an exact stored identifier match.",
         },
         "reviewPromotionQueue": {

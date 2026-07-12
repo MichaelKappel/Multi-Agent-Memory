@@ -13,7 +13,7 @@
 - Preserved explicit canonical external-link review state when later unreviewed citations reuse the same URL.
 - Preserved and extended canonical external-link keywords across later citations instead of allowing last-write-wins vocabulary loss.
 - Moved source-report provenance from mutable canonical-link metadata into each citation mention, with startup schema migration and exact readback verification.
-- Added weighted, stem-aware partial-term memory recall augmented by source-linked protected wiki context, with deterministic relevance ordering and explicit memory/knowledge match evidence.
+- Added weighted, stem-aware partial-term memory recall augmented by source-linked protected wiki context and byte-unit normalization, with deterministic relevance ordering and explicit memory/knowledge match evidence.
 - Added a protected, registered-agent virtual UAIX package for accountless browser AI without durable local filesystem access, including date-free structured records, immutable revisions, optimistic concurrency, deterministic startup readiness, and public integration discovery.
 - Added hash-only project `.uai` file heads and bounded edit claims so simultaneous local agents can coordinate intent and detect stale or overlapping edits without uploading active-memory file bodies or claiming automatic merges.
 
