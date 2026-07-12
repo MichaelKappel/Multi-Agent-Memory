@@ -105,6 +105,7 @@ class ExternalLinkTests(unittest.TestCase):
             "contextDescription": "Supports the page's distinction between bounded working context and durable typed memory.",
             "citationLabel": "14",
             "citationOrder": 14,
+            "sourceReportName": "Agent Memory Architecture Research.md",
         }
         status, _headers, text = call_app(
             "/api/matm/external-links/upsert",
@@ -122,6 +123,8 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertEqual("Example Research", payload["link"]["siteName"])
         self.assertEqual(1, payload["link"]["mentionCount"])
         self.assertEqual(document_id, payload["link"]["mentions"][0]["knowledgeDocumentId"])
+        self.assertEqual("Agent Memory Architecture Research.md", payload["link"]["mentions"][0]["sourceReportName"])
+        self.assertNotIn("sourceReportName", payload["link"]["metadata"])
 
         status, _headers, text = call_app(
             "/api/matm/internet-search",
@@ -137,6 +140,16 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertIn("budget", search["items"][0]["matchedTerms"])
 
         status, _headers, text = call_app(
+            "/api/matm/internet-search",
+            headers=headers,
+            query="workspace_id=%s&q=Agent%%20Memory%%20Architecture%%20Research" % setup["workspaceId"],
+        )
+        self.assertEqual("200 OK", status)
+        provenance_search = json.loads(text)
+        self.assertEqual(1, provenance_search["count"])
+        self.assertIn("research", provenance_search["items"][0]["matchedTerms"])
+
+        status, _headers, text = call_app(
             "/api/matm/external-links",
             headers=headers,
             query="workspace_id=%s&document_id=%s" % (setup["workspaceId"], document_id),
@@ -147,6 +160,10 @@ class ExternalLinkTests(unittest.TestCase):
         with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_external_links").fetchone()[0])
             self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM matm_external_link_mentions").fetchone()[0])
+            self.assertEqual(
+                "Agent Memory Architecture Research.md",
+                connection.execute("SELECT source_report_name FROM matm_external_link_mentions").fetchone()[0],
+            )
 
     def test_external_link_rejects_credentials_and_private_hosts(self):
         setup, headers = self.setup_workspace()
@@ -196,6 +213,7 @@ class ExternalLinkTests(unittest.TestCase):
             "contextDescription": "Primary reviewed evidence for the current contract.",
             "citationLabel": "Primary evidence",
             "citationOrder": 1,
+            "sourceReportName": "Primary Architecture Review.md",
         }
         status, _headers, text = call_app(
             "/api/matm/external-links/upsert",
@@ -213,6 +231,7 @@ class ExternalLinkTests(unittest.TestCase):
             contextDescription="Unreviewed source citation reuses the reviewed canonical page.",
             citationLabel="Works cited 1",
             citationOrder=2,
+            sourceReportName="Follow-up Research.md",
         )
         status, _headers, text = call_app(
             "/api/matm/external-links/upsert",
@@ -232,6 +251,40 @@ class ExternalLinkTests(unittest.TestCase):
             {"Primary evidence", "Works cited 1"},
             {item["citationLabel"] for item in payload["link"]["mentions"]},
         )
+        self.assertEqual(
+            {
+                "Primary evidence": "Primary Architecture Review.md",
+                "Works cited 1": "Follow-up Research.md",
+            },
+            {item["citationLabel"]: item["sourceReportName"] for item in payload["link"]["mentions"]},
+        )
+        self.assertNotIn("sourceReportName", payload["link"]["metadata"])
+
+    def test_existing_external_link_mention_table_is_migrated(self):
+        with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+            connection.execute(
+                """
+                CREATE TABLE matm_external_link_mentions (
+                  external_link_mention_id TEXT PRIMARY KEY,
+                  workspace_id TEXT NOT NULL,
+                  external_link_id TEXT NOT NULL,
+                  search_document_id TEXT NOT NULL,
+                  relationship_type TEXT NOT NULL DEFAULT 'reference',
+                  anchor_text TEXT NOT NULL,
+                  context_description TEXT NOT NULL,
+                  citation_label TEXT,
+                  citation_order INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.commit()
+
+        self.setup_workspace()
+
+        with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(matm_external_link_mentions)")}
+        self.assertIn("source_report_name", columns)
 
     def test_external_link_search_is_workspace_isolated(self):
         first, first_headers = self.setup_workspace()

@@ -110,6 +110,7 @@ def external_link_readback_matches(link, body):
         citation
         and citation.get("contextDescription") == body.get("contextDescription")
         and int(citation.get("citationOrder") or 0) == int(body.get("citationOrder") or 0)
+        and (citation.get("sourceReportName") or "") == (body.get("sourceReportName") or "")
     )
     return {
         "metadataMatches": metadata_matches,
@@ -204,7 +205,6 @@ def main(argv=None):
         "visibility": "workspace_private",
         "metadata": {
             "ingestMode": "single_external_link_reviewed",
-            "sourceReportName": args.source_report_name,
             "automaticFetchRequested": False,
             "valuesRedacted": True,
         },
@@ -218,6 +218,7 @@ def main(argv=None):
                 "contextDescription": args.context_description,
                 "citationLabel": args.citation_label,
                 "citationOrder": args.citation_order,
+                "sourceReportName": args.source_report_name,
             }
         )
     preflight = external_link_preflight(

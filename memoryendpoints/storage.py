@@ -849,6 +849,7 @@ def _external_link_search_match(link, mentions, query):
             [
                 (mention.get("anchorText") or "", 8),
                 (mention.get("contextDescription") or "", 8),
+                (mention.get("sourceReportName") or "", 8),
                 (mention.get("knowledgeDocumentTitle") or "", 7),
                 (" ".join(mention.get("taxonomyPathLabels") or []), 7),
             ]
@@ -892,6 +893,7 @@ def _public_external_link_mention(mention, document=None):
         "scopeId": document.get("scopeId") or mention.get("scopeId"),
         "category": document.get("category") or mention.get("category"),
         "taxonomyPathLabels": document.get("taxonomyPathLabels") or mention.get("taxonomyPathLabels") or [],
+        "sourceReportName": mention.get("sourceReportName"),
         "relationshipType": mention.get("relationshipType"),
         "anchorText": mention.get("anchorText"),
         "contextDescription": mention.get("contextDescription"),
@@ -2048,6 +2050,7 @@ class FileStore(object):
                 return None, "knowledge_document_not_found"
             anchor_text = redact_text(payload.get("anchorText") or payload.get("anchor_text") or link.get("pageTitle") or link.get("url"))
             citation_label = redact_text(payload.get("citationLabel") or payload.get("citation_label") or "")
+            source_report_name = redact_text(payload.get("sourceReportName") or payload.get("source_report_name") or "")[:512]
             mention_id = stable_external_link_mention_id(
                 workspace_id,
                 external_link_id,
@@ -2074,6 +2077,7 @@ class FileStore(object):
                     "contextDescription": redact_text(payload.get("contextDescription") or payload.get("context_description") or ""),
                     "citationLabel": citation_label,
                     "citationOrder": citation_order,
+                    "sourceReportName": source_report_name,
                     "valuesRedacted": True,
                 }
             )
@@ -3852,6 +3856,7 @@ class SQLiteStore(FileStore):
               context_description TEXT NOT NULL,
               citation_label TEXT,
               citation_order INTEGER NOT NULL DEFAULT 0,
+              source_report_name TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               UNIQUE (workspace_id, external_link_id, search_document_id, relationship_type, citation_label),
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
@@ -4151,6 +4156,7 @@ class SQLiteStore(FileStore):
             """
         )
         self._ensure_knowledge_schema_columns(connection)
+        self._ensure_external_link_mention_schema_columns(connection)
         connection.commit()
 
     def _ensure_knowledge_schema_columns(self, connection):
@@ -4191,6 +4197,18 @@ class SQLiteStore(FileStore):
         except Exception as exc:
             message = str(exc).lower()
             if "duplicate" not in message and "already exists" not in message:
+                raise
+
+    def _ensure_external_link_mention_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        definition = "VARCHAR(512) NOT NULL DEFAULT ''" if mysql else "TEXT NOT NULL DEFAULT ''"
+        try:
+            connection.execute(
+                "ALTER TABLE matm_external_link_mentions ADD COLUMN source_report_name %s" % definition
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate column" not in message and "already exists" not in message:
                 raise
 
     def _json_load(self, value, fallback):
@@ -5177,6 +5195,7 @@ class SQLiteStore(FileStore):
                 "contextDescription": value("context_description"),
                 "citationLabel": value("citation_label"),
                 "citationOrder": value("citation_order"),
+                "sourceReportName": value("source_report_name"),
                 "createdAt": value("created_at"),
             }
             document = {
@@ -5287,6 +5306,7 @@ class SQLiteStore(FileStore):
                     if document_id:
                         anchor_text = redact_text(payload.get("anchorText") or payload.get("anchor_text") or payload.get("pageTitle") or payload.get("page_title") or payload.get("title") or normalized["url"])
                         citation_label = redact_text(payload.get("citationLabel") or payload.get("citation_label") or "")
+                        source_report_name = redact_text(payload.get("sourceReportName") or payload.get("source_report_name") or "")[:512]
                         mention_id = stable_external_link_mention_id(workspace_id, external_link_id, document_id, relationship_type, citation_label, anchor_text)
                         try:
                             citation_order = max(0, int(payload.get("citationOrder") or payload.get("citation_order") or 0))
@@ -5302,13 +5322,14 @@ class SQLiteStore(FileStore):
                             redact_text(payload.get("contextDescription") or payload.get("context_description") or ""),
                             citation_label,
                             citation_order,
+                            source_report_name,
                         )
                         if existing_mention:
                             connection.execute(
                                 """
                                 UPDATE matm_external_link_mentions
                                 SET relationship_type = ?, anchor_text = ?, context_description = ?,
-                                    citation_label = ?, citation_order = ?
+                                    citation_label = ?, citation_order = ?, source_report_name = ?
                                 WHERE workspace_id = ? AND external_link_mention_id = ?
                                 """,
                                 mention_values + (workspace_id, mention_id),
@@ -5319,8 +5340,8 @@ class SQLiteStore(FileStore):
                                 INSERT INTO matm_external_link_mentions (
                                   external_link_mention_id, workspace_id, external_link_id,
                                   search_document_id, relationship_type, anchor_text,
-                                  context_description, citation_label, citation_order, created_at
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  context_description, citation_label, citation_order, source_report_name, created_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 (mention_id, workspace_id, external_link_id, document_id) + mention_values + (now,),
                             )
@@ -9759,4 +9780,5 @@ class MySQLStore(SQLiteStore):
         schema = (Path(__file__).resolve().parents[1] / "docs" / "database-schema-canonical.sql").read_text(encoding="utf-8")
         connection.executescript(schema)
         self._ensure_knowledge_schema_columns(connection)
+        self._ensure_external_link_mention_schema_columns(connection)
         connection.commit()

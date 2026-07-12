@@ -36,6 +36,7 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
             "contextDescription": "Supports the reviewed retrieval architecture.",
             "citationLabel": "primary",
             "citationOrder": 1,
+            "sourceReportName": "Agent Memory Research.md",
             "metadata": {"ingestMode": "single_external_link_reviewed"},
         }
 
@@ -63,6 +64,7 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
                     "contextDescription": body["contextDescription"],
                     "citationLabel": body["citationLabel"],
                     "citationOrder": body["citationOrder"],
+                    "sourceReportName": body["sourceReportName"],
                 }
             ],
         }
@@ -134,6 +136,12 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
             external_link_readback_matches(link, body),
         )
         link["mentions"][0]["contextDescription"] = "Stale context."
+        self.assertEqual(
+            {"metadataMatches": True, "citationMatches": False},
+            external_link_readback_matches(link, body),
+        )
+        link = self.persisted_link()
+        link["mentions"][0]["sourceReportName"] = "Wrong Research.md"
         self.assertEqual(
             {"metadataMatches": True, "citationMatches": False},
             external_link_readback_matches(link, body),

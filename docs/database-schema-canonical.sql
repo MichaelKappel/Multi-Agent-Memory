@@ -345,6 +345,7 @@ CREATE TABLE IF NOT EXISTS matm_external_link_mentions (
   context_description TEXT NOT NULL,
   citation_label VARCHAR(64) NULL,
   citation_order INT NOT NULL DEFAULT 0,
+  source_report_name VARCHAR(512) NOT NULL DEFAULT '',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY ux_matm_external_link_mention (workspace_id, external_link_id, search_document_id, relationship_type, citation_label),
   KEY ix_matm_external_link_mentions_document (workspace_id, search_document_id, citation_order),

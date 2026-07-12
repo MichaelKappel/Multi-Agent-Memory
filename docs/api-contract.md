@@ -272,11 +272,11 @@ Searches canonical external-link records and their per-document mentions inside 
 
 Query filters include `workspace_id`, protected text `q`, exact `external_link_id`, exact `document_id`, `host`, `review_status`, `crawl_status`, and bounded `limit`.
 
-Each canonical record can contain normalized URL, host, site name, page title, description, keywords, review state, crawl state, crawl policy, and contextual mentions. A mention preserves the citing knowledge document, relationship type, anchor text, context description, citation label, and citation order.
+Each canonical record can contain normalized URL, host, site name, page title, description, keywords, review state, crawl state, crawl policy, and contextual mentions. A mention preserves the citing knowledge document, relationship type, anchor text, context description, citation label, citation order, and its own `sourceReportName`. Report provenance is mention-owned so reusing a canonical URL cannot overwrite which source supplied an earlier citation.
 
 ### POST `/api/matm/external-links` or `/api/matm/external-links/upsert`
 
-Stores exactly one public HTTP(S) canonical link and optionally one citation mention. Required fields are `workspaceId`, `actorAgentId`, `url`, `siteName`, `pageTitle`, `description`, and non-empty `keywords`. Citation fields are optional and include `knowledgeDocumentId`, `relationshipType`, `anchorText`, `contextDescription`, `citationLabel`, and `citationOrder`.
+Stores exactly one public HTTP(S) canonical link and optionally one citation mention. Required fields are `workspaceId`, `actorAgentId`, `url`, `siteName`, `pageTitle`, `description`, and non-empty `keywords`. Citation fields are optional and include `knowledgeDocumentId`, `relationshipType`, `anchorText`, `contextDescription`, `citationLabel`, `citationOrder`, and `sourceReportName`.
 
 Credential-bearing URLs, private or loopback hosts, and unsupported URL schemes are rejected before persistence. Link metadata never grants authorization to fetch the target. Crawl state records evidence; it does not silently start a crawl.
 
