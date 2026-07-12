@@ -55,6 +55,16 @@ Review status: current_reviewed
 Review evidence: exact source hash, nine protected pages, 33 reviewed canonical links, 49 contextual mentions, nine individual memory reviews, anonymous denial, and authenticated desktop/mobile wiki checks
 Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL or password-free wiki. Historical source claims and proposed adapters retain their own lifecycle and authority labels; UAI-1, capability declarations, schemas, and signatures do not grant authorization.
 
+Stable id: protected-agent-execution-sandbox-review
+Path: https://memoryendpoints.com
+Protected knowledge route: /knowledge/project/agent-execution-security/agent-execution-sandboxing-control-plane-and-evidence-decision-boundaries
+Label: Agent execution sandboxing, control-plane, and evidence decision boundaries
+Routing summary: Start at the MemoryEndpoints.com home page, authenticate, then use the protected project knowledge route for current product ownership, zero-trust execution, isolation selection, UAIX and MCP boundaries, typed no-op, loop budgets, snapshot provenance, and evidence-handling guidance.
+Authority/source: reviewed protected database knowledge derived from `AI Agent Sandbox Security Specification.md` plus current primary specifications, standards, and first-party runtime and product contracts
+Review status: current_reviewed
+Review evidence: exact source hash, eleven protected pages, 56 canonical links, 75 contextual mentions, eleven individual memory reviews, anonymous denial, authenticated internal navigation, and desktop/mobile geometry checks
+Truth boundary: this is a protected tenant-memory pointer, not a public inbound URL, execution endpoint, password-free wiki, or safety certification. MemoryEndpoints does not execute arbitrary agent code; historical source claims and proposed runtime controls retain their own lifecycle and authority labels.
+
 Stable id: multiagentmemory-docs
 Path: sites/multiagentmemory.com/
 Label: MultiAgentMemory.com documentation companion

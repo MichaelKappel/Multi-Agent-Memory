@@ -25,6 +25,8 @@ Current risks:
 - Interoperability-layer risk: UAI-1, MCP, A2A, OpenAPI, JSON Schema, identity, tracing, transport, and runtime responsibilities can be collapsed into one unsupported universal protocol claim.
 - Identity and capability risk: declarations, schemas, signatures, credentials, capability tiers, public profiles, or validator success can be mistaken for truth, company membership, tenant authorization, or execution permission.
 - Product-boundary risk: unrelated APIs with a shared name, historical routes, custom JSON-LD, public exchange content, or first-party infrastructure claims can be mistaken for current LocalEndpoint, Carcinus, NeuralWikis, or MemoryEndpoints contracts.
+- Execution-boundary risk: a memory, file-handoff, UAI, MCP, schema, or profile surface can be mistaken for permission to run untrusted code inside the MemoryEndpoints application or credential boundary.
+- Isolation and snapshot risk: a sandbox brand can be overclaimed as absolute safety, while mounts, egress, ambient credentials, host integrations, resource exhaustion, side channels, restored compromise, and unreviewed outputs remain exposed.
 
 Mitigation:
 - Run local tests, route verifiers, `.uai` audit, package check, secret scan, dogfood, and readiness audit before handoff.
@@ -34,3 +36,5 @@ Mitigation:
 - Keep deterministic authorization and human escalation outside model judgment; define threat models, restore drills, rollback gates, and measured acceptance criteria for every resilience or confidential-computing control.
 - Pin current primary specifications and product contracts, assign each layer an owner, require route and authorization tests, and preserve historical or proposed claims under explicit lifecycle and authority labels.
 - Verify product identity rather than matching names, keep custom vocabularies explicitly application-specific, and require independent evidence before treating first-party implementation claims as enterprise assurance.
+- Keep any future execution plane separately owned and threat-modeled; authorize exact actions before dispatch, use task-specific credentials and capabilities, deny ambient secrets and egress, bound resources and outputs, return typed reviewable failures, and test cleanup on every terminal path.
+- Treat snapshots as revocable supply-chain artifacts with provenance, quarantine, policy and malware checks, retention, versioning, and restore evidence; persist only allowlisted, redacted outcomes into durable memory.

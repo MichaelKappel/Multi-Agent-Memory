@@ -59,6 +59,7 @@ Hosted memory:
 - The current protected agent-discoverability review is stored at `/knowledge/project/agent-discoverability-governance/agent-discoverability-audit-and-protected-onboarding-review`; begin public onboarding at `https://memoryendpoints.com`, authenticate, and only then follow the protected route.
 - The current protected agent-ecosystem participation review is stored at `/knowledge/project/multi-agent-ecosystem-governance/agent-ecosystem-participation-risk-and-human-governance-review`; begin public onboarding at `https://memoryendpoints.com`, authenticate, and only then follow the protected route.
 - The current protected UAIX product-integration review is stored at `/knowledge/company/portfolio-interoperability-governance/uaix-product-integration-and-trust-boundary-review`; begin public onboarding at `https://memoryendpoints.com`, authenticate, and only then follow the protected route.
+- The current protected agent-execution sandbox review is stored at `/knowledge/project/agent-execution-security/agent-execution-sandboxing-control-plane-and-evidence-decision-boundaries`; begin public onboarding at `https://memoryendpoints.com`, authenticate, and only then follow the protected route. The page is guidance and evidence, not an execution endpoint or safety certification.
 - Repository layout documentation lives at docs/repository-structure.md.
 - Totem invariant: local `.uai` stays active always and is never retired by hosted MATM verification.
 

@@ -20,4 +20,5 @@ Current stack:
 - The legacy file store remains explicit-only compatibility infrastructure and is not the durable tenant knowledge source of truth.
 - UAI-1, MCP, A2A, DIDs, verifiable credentials, semantic glyphs, and product-specific adapters are not bundled MemoryEndpoints runtime dependencies. They remain external standards, companion layers, or proposed integrations until an approved implementation adds code and tests.
 - LocalEndpoints.com, Carcinus.org, NeuralWikis.com, and UAIX.org are separately governed external product or standards surfaces; MemoryEndpoints integration does not silently inherit their execution, identity, authorization, storage, or release contracts.
+- MemoryEndpoints has no bundled arbitrary-code, shell, container, microVM, WebAssembly, V8, eBPF, or MCP-tool execution runtime. Firecracker, gVisor, WebAssembly, hardened containers, and hosted sandboxes are external design candidates until a separately approved runtime adds code, ownership, tests, and deployment evidence.
 - Packaging excludes `.uai`, raw handoff buckets, prompt drafts, local runtime state, databases, logs, and credential material.
