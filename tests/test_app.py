@@ -135,6 +135,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "/api/matm/live-capability-matrix",
             "/api/matm/agent-compatibility",
             "/api/matm/connector-contract",
+            "/api/matm/uai-memory/contract",
             "/api/matm/openapi.json",
             "/api/matm/readiness-result",
             "/ai-manifest.json",
@@ -183,6 +184,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual([("L%d" % index) for index in range(8)], agent_compatibility["supportedAbilityLevels"])
         self.assertTrue(agent_compatibility["routeInventoryIncludesCompatibilityGuidance"])
         self.assertEqual("downgrade_to_L0_or_L1", agent_compatibility["unknownClientDefault"])
+        uai_memory = payload["data"]["virtualUaiMemory"]
+        self.assertEqual("/api/matm/uai-memory/packages", uai_memory["routes"]["packages"])
+        self.assertFalse(uai_memory["exceptionBoundary"]["anonymousStorageAllowed"])
+        self.assertFalse(uai_memory["localCollaborationOverlay"]["truthBoundary"]["localUaiContentsStored"])
 
     def test_home_page_prioritizes_operational_entry_points(self):
         status, _headers, text = call_app("/")
@@ -263,6 +268,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Authorization", data["browserCors"]["allowedHeaders"])
         self.assertIn("Idempotency-Key", data["browserCors"]["allowedHeaders"])
         self.assertIn("/api/matm/agents/register", [item["route"] for item in data["setupFlow"]])
+        self.assertEqual("/api/matm/uai-memory/contract", data["uaiMemoryFlow"]["routes"]["contract"])
+        self.assertFalse(data["uaiMemoryFlow"]["exceptionBoundary"]["anonymousStorageAllowed"])
+        self.assertFalse(data["uaiMemoryFlow"]["localCollaborationOverlay"]["truthBoundary"]["localUaiContentsStored"])
         self.assertEqual("/api/matm/memory-events/submit", data["memoryFlow"]["submitRoute"])
         self.assertEqual("/api/matm/meeting-messages/promote", data["memoryFlow"]["promoteMeetingMessageRoute"])
         self.assertIn("meeting transcript note", data["memoryFlow"]["meetingPromotionRule"])
@@ -304,6 +312,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("memoryQueryUrl", data["responseContract"]["postConfirmationFields"])
         self.assertIn("reviewQueueUrl", data["responseContract"]["postConfirmationFields"])
         self.assertIn("canonicalMemoryEventId", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("canonicalPackageId", data["responseContract"]["postConfirmationFields"])
+        self.assertIn("canonicalClaimId", data["responseContract"]["postConfirmationFields"])
         self.assertIn("visibleInSearch", data["responseContract"]["postConfirmationFields"])
         self.assertIn("visibleInReviewQueue", data["responseContract"]["postConfirmationFields"])
         self.assertIn("visibleInAuditLog", data["responseContract"]["postConfirmationFields"])
@@ -321,6 +331,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(any("project-room status note" in item for item in data["evidenceToPostBack"]))
         self.assertEqual("/api/matm/openapi.json", data["publicDiscovery"]["openApi"])
         self.assertEqual("/api/matm/agent-compatibility", data["publicDiscovery"]["agentCompatibility"])
+        self.assertEqual("/api/matm/uai-memory/contract", data["publicDiscovery"]["uaiMemoryContract"])
         self.assertIn("/mcp/resources", data["publicDiscovery"]["mcpResources"])
         self.assertNotIn("apiKeySecret", text)
         self.assertNotIn("Bearer me_", text)
@@ -332,6 +343,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/api/matm/connector-contract", routes)
         self.assertIn("/api/matm/agent-compatibility", routes)
         self.assertIn("/api/matm/openapi.json", routes)
+        self.assertIn("/api/matm/uai-memory/contract", routes)
 
     def test_agent_compatibility_contract_covers_l0_l7_and_fallbacks(self):
         status, _headers, text = call_app("/api/matm/agent-compatibility")
@@ -349,10 +361,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/ai-manifest.json", levels["L1"]["memoryEndpointsPath"])
         self.assertIn("/console", levels["L2"]["memoryEndpointsPath"])
         self.assertIn("/api/matm/openapi.json", levels["L3"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/uai-memory/records", levels["L3"]["memoryEndpointsPath"])
         self.assertIn("/api/matm/workspace", levels["L4"]["memoryEndpointsPath"])
         self.assertIn("/api/matm/current-message", levels["L5"]["memoryEndpointsPath"])
         self.assertIn("/api/matm/routing-decisions", levels["L6"]["memoryEndpointsPath"])
         self.assertIn("/api/matm/sync/capabilities", levels["L7"]["memoryEndpointsPath"])
+        self.assertIn("/api/matm/uai-memory/contract", levels["L7"]["memoryEndpointsPath"])
         self.assertTrue(data["routeRecordContract"]["everyRouteIncludesAgentCompatibilityGuidance"])
         self.assertIn("lowestSafeAbilityLevel", data["routeRecordContract"]["fields"])
         self.assertIn("authUnavailableFallback", data["routeRecordContract"]["fields"])
@@ -383,6 +397,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         paths = data["paths"]
         self.assertIn("/api/matm/agent-compatibility", paths)
         self.assertIn("/api/matm/agent-setup/free-account", paths)
+        self.assertIn("/api/matm/uai-memory/contract", paths)
+        self.assertIn("/api/matm/uai-memory/packages", paths)
+        self.assertIn("/api/matm/uai-memory/records", paths)
+        self.assertIn("/api/matm/uai-memory/edit-claims/complete", paths)
         self.assertIn("/api/matm/memory-events/submit", paths)
         self.assertIn("/api/matm/current-message", paths)
         self.assertIn("/api/matm/notifications/ack", paths)
@@ -3823,6 +3841,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/docs/", routes)
         self.assertIn("/api/matm/agent-compatibility", routes)
         self.assertIn("/api/matm/connector-contract", routes)
+        self.assertIn("/api/matm/uai-memory/contract", routes)
         self.assertIn("/api/matm/openapi.json", routes)
         self.assertIn("/api/matm/readiness-result", routes)
         self.assertIn("/api/matm/review-queue/decide", routes)
@@ -3839,6 +3858,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["GET"], routes["/api/matm/audit-log"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/agent-compatibility"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/connector-contract"]["methods"])
+        self.assertEqual(["GET"], routes["/api/matm/uai-memory/contract"]["methods"])
+        self.assertEqual(["GET", "POST"], routes["/api/matm/uai-memory/edit-claims"]["methods"])
+        self.assertEqual(["POST"], routes["/api/matm/uai-memory/edit-claims/complete"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/openapi.json"]["methods"])
         self.assertEqual("L0", routes["/llms.txt"]["agentCompatibility"]["lowestSafeAbilityLevel"])
         self.assertEqual("L1", routes["/api/matm/agent-compatibility"]["agentCompatibility"]["lowestSafeAbilityLevel"])
@@ -4285,6 +4307,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "matm_projects",
                     "matm_api_keys",
                     "matm_agents",
+                    "matm_uai_packages",
+                    "matm_uai_records",
+                    "matm_uai_record_revisions",
+                    "matm_uai_collaboration_heads",
+                    "matm_uai_edit_claims",
                     "matm_memory_records",
                     "matm_memory_revisions",
                     "matm_memory_tags",

@@ -25,7 +25,8 @@ Owned scope:
 Collision rule:
 - This file is an owned startup lane, not a turn-by-turn work log.
 - Shared core `.uai` files hold stable contracts only.
-- When a shared `.uai` file needs a real policy correction, post a public-safe project-room note before editing and name the intended file scope, reason, tests, and blockers.
+- When a shared `.uai` file needs a real policy correction, read its protected project/path head, acquire a bounded hash-only edit claim, post a public-safe project-room note, and name the intended file scope, reason, tests, and blockers before editing.
+- On another active owner or stale base hash, do not edit. Coordinate and refresh through the project room and source control. Claim completion never proves an automatic merge or file distribution.
 - Working status, questions, routing, and handoff between active agents belong in MemoryEndpoints meeting rooms, not in shared `.uai` scratch changes.
 
 Current lane pointers:

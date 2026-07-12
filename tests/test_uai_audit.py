@@ -21,7 +21,8 @@ class UaiAuditContractTests(unittest.TestCase):
         self.assertIn("current-state.uai", forbidden)
         self.assertIn("short-term-memory.uai", forbidden)
         self.assertFalse(read_order_names & forbidden)
-        self.assertEqual(".uai/memory-maintenance.uai", audit_uai_memory.STARTUP_READ_ORDER[0])
+        self.assertEqual(".uai/startup-packet.uai", audit_uai_memory.STARTUP_READ_ORDER[0])
+        self.assertEqual(".uai/memory-maintenance.uai", audit_uai_memory.STARTUP_READ_ORDER[1])
         self.assertIn(".uai/totem.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertIn(".uai/taboo.uai", audit_uai_memory.STARTUP_READ_ORDER)
         self.assertIn(".uai/talisman.uai", audit_uai_memory.STARTUP_READ_ORDER)
@@ -49,7 +50,8 @@ class UaiAuditContractTests(unittest.TestCase):
             },
             forbidden_paths,
         )
-        self.assertIn("forbidden under any purpose", audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_POLICY)
+        self.assertIn("actual local files", audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_POLICY)
+        self.assertIn("creates no local file", audit_uai_memory.FORBIDDEN_ACTIVE_MEMORY_POLICY)
 
     def test_active_uai_files_are_date_free_and_typed(self):
         items = [audit_uai_memory.audit_file(path) for path in sorted((ROOT / ".uai").rglob("*.uai"))]

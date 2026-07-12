@@ -19,3 +19,4 @@ Current operations state:
 - GitHub Actions is not a required completion gate per human direction; keep the workflow but do not keep retrying the billing-locked runner unless re-enabled.
 - Live public route verification plus `/api/version` SHA verification proves the currently deployed public surface and deployed source SHA.
 - Live authenticated dogfood with protected audit-log readback is verified for the deployed route/storage tranche.
+- The virtual UAIX package and hash-only local edit-claim tranche is locally verified but not yet deployed. After commit and FTPS publication, run `scripts/verify_uai_memory_live.py` with the ignored TinyRustLM auth file; the verifier resolves the package, acquires and releases a synthetic claim, stores no virtual record body, and emits hashed identifiers only.

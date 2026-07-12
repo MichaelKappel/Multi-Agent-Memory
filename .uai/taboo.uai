@@ -15,6 +15,10 @@ Taboo rules:
 - Do not commit secrets, prompt drafts, raw local handoff payloads, runtime stores, databases, logs, package zips, or deployment credential files.
 - Do not treat README files as active `.uai` memory, handoff-bucket guidance, or intake completion proof.
 - Do not create files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent anywhere under `.uai`; those names are forbidden.
+- Do not discourage, disable, or replace correctly structured local `.uai` active memory for ordinary filesystem agents. Follow `https://uaix.org/en-us/ai-memory/`, `https://uaix.org/en-us/ai-memory/uai-files/`, and `https://uaix.org/en-us/tools/ai-memory-package-wizard/` for current short-term and active-memory setup guidance.
+- Do not apply the accountless-browser exception to a client that has durable local filesystem access. The full protected virtual package requires a registered stable agent, a workspace bearer key, and an explicit no-local-filesystem client capability.
+- Do not upload ordinary local `.uai` file bodies merely to coordinate two agents in one codebase. Use protected hash-only file heads, bounded edit claims, public-safe intent and completion summaries, and the project meeting room.
+- Do not edit a local `.uai` path held by another active claim, continue from a stale file hash, treat an expired lease as proof that content is merged, or claim that the overlay performs automatic conflict resolution.
 - Do not put calendar dates, timestamps, dated headings, or date-bearing verification fields in active `.uai`.
 - Do not claim full completion, live deployment of latest code, live MultiAgentMemory.com readiness, live dogfood, CI pass, or MySQL runtime support without current evidence.
 - Do not copy NeuralWikis public wiki content, branding, or public claims.

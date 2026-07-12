@@ -26,7 +26,8 @@ Expected current local state:
 - Tracked route and package reports are point-in-time snapshots. When used as standalone evidence they must record the target Git SHA; after any commit or push, rerun no-write WSGI/package/live/CI checks for current-commit proof rather than treating the containing commit's tracked reports as self-proving.
 - MultiAgentMemory.com static-site verifier checks the companion HTML, discovery files, GitHub repository links, MemoryEndpoints.com links, sitemap, secret-safety boundary, and public leak boundary.
 - Documentation freshness tests compare `memoryendpoints.site_data.ROUTE_TABLE` with `docs/route-inventory.md`, `docs/api-contract.md`, and the MultiAgentMemory.com API reference so new routes cannot ship without checked-in public documentation.
-- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap index, `.uai/memory-maintenance.uai` first in the required memory order, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard filename ban on `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, `.uai/current-state.uai`, `.uai/project-state.uai`, `.uai/working-state.uai`, and equivalents.
+- `.uai` audit passes with `.uai/startup-packet.uai` as the bootstrap read-order index, `.uai/memory-maintenance.uai` as the first policy record after that index, `localUaiStaysActiveAlways=true`, date-free active `.uai`, and a hard actual-local-filename ban on `.uai/short-term-memory.uai`, `.uai/active-memory.uai`, `.uai/current-state.uai`, `.uai/project-state.uai`, `.uai/working-state.uai`, and equivalents. The accountless-browser virtual package may represent its configuration-specific short-term logical role because no local file is created.
+- Virtual UAIX integration tests prove registered-agent ownership, tenant isolation, date/secret/structure rejection, immutable revisions, optimistic concurrency, complete startup ordering, and raw-key absence on file and SQLite backends. Collaboration tests prove overlapping claims and stale base hashes fail while only hash metadata is retained.
 - Repository boundary audit passes with the configured repository root as the source of truth, `sites/multiagentmemory.com/` as the only companion docs source, no duplicate MemoryEndpoints/MultiAgentMemory site folders at the drive root, and no root-level runtime artifacts such as local SQLite write checks or devserver logs.
 - Package check excludes `.git`, `.github`, `.uai`, local prompt drafts, raw Agent File Handoff bucket contents, `var`, `dist`, logs, databases, caches, and credential handoff files.
 - Deploy dry-run evidence must match the package report file count and source SHA, and dry-run reports must be marked `safeNoOp=true`.
@@ -65,6 +66,22 @@ python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memorye
 ```
 
 Live dogfood proves the deployed MemoryEndpoints.com API workflow. The report distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`; full live dogfood requires protected audit-log readback as part of the deployed contract.
+
+## Live UAIX Memory Gate
+
+After the new routes are deployed, verify the public contract plus the existing
+TinyRustLM registered-agent package and a synthetic hash-only claim/release:
+
+```powershell
+python scripts\verify_uai_memory_live.py --base-url https://memoryendpoints.com --auth-file .local-secrets\tinyrustlm-memoryendpoints-auth.json --json-out var\reports\uai-memory-live.json
+```
+
+The verifier never writes a virtual record body. It creates or resolves the
+stable TinyRustLM package, reads the project, acquires a synthetic local-path
+claim from the current head hash, and releases it without advancing the head.
+Its report contains hashes of workspace, agent, package, project, and claim
+identifiers rather than raw credentials or raw protected content. A public-only
+contract probe is available with `--public-only`.
 
 ## Point-In-Time Reports
 

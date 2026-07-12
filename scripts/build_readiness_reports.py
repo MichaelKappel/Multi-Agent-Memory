@@ -965,7 +965,7 @@ def build_final_markdown(local_report):
             live_mysql_backend.get("configuredStoreBackend"),
             str(bool(live_mysql_backend.get("storeBackendVerified"))).lower(),
         ),
-        "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the bootstrap index, `.uai/memory-maintenance.uai` is first in the read order, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and forbidden active-memory filenames are absent.",
+        "- `.uai` memory audit: pass; `.uai/startup-packet.uai` is the first bootstrap index and `.uai/memory-maintenance.uai` is the first policy record after it, local `.uai` stays active always, Totem/Taboo/Talisman anchors are present, active `.uai` is date-free, active handoff buckets are empty or placeholder-only, and forbidden active-memory filenames are absent.",
         "- Local dogfooding: %s through WSGI; live core dogfooding on current deployed API: %s; latest live dogfood contract: %s." % (
             str(local_dogfood_ok).lower(),
             str(live_core_dogfood).lower(),

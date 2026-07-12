@@ -22,6 +22,7 @@ Public routes are readable without credentials. Protected MATM routes require a 
 | `/api/matm/agent-compatibility` | GET | L0-L7 agent ability contract, fallbacks, and route-record guidance. |
 | `/api/matm/sync/capabilities` | GET | Public distributed-sync v1 capability negotiation. |
 | `/api/matm/connector-contract` | GET | Public-safe optional connector integration contract for external agents and apps. |
+| `/api/matm/uai-memory/contract` | GET | Public contract for protected database-backed UAIX active memory used by accountless browser agents. |
 | `/api/matm/openapi.json` | GET | Bounded OpenAPI-style golden-path route schema. |
 | `/api/matm/route-inventory` | GET | Route inventory with access boundaries. |
 | `/api/matm/readiness-result` | GET | AI-ready web readiness evidence. |
@@ -52,6 +53,14 @@ Protected mutations require `Idempotency-Key` unless the route explicitly return
 | `/api/matm/external-links/upsert` | POST | Idempotent protected external-link and knowledge-citation upsert alias. |
 | `/api/matm/internet-search` | GET | Search the workspace's reviewed curated-web link index. |
 | `/api/matm/agents/register` | POST | Agent registration. |
+| `/api/matm/uai-memory/packages` | GET, POST | Create or inspect a registered agent's protected virtual UAIX active-memory package. |
+| `/api/matm/uai-memory/records` | GET, POST | Read or revision-safely write one date-free public-safe virtual UAIX record at a time. |
+| `/api/matm/uai-memory/startup` | GET | Read an agent-bound virtual UAIX package in deterministic startup order with readiness evidence. |
+| `/api/matm/uai-memory/file-heads` | GET | Read hash-only project file heads for local .uai multi-agent edit coordination without file content. |
+| `/api/matm/uai-memory/edit-claims` | GET, POST | Inspect or acquire bounded project-scoped claims before editing a local .uai path. |
+| `/api/matm/uai-memory/edit-claims/heartbeat` | POST | Extend an owned active local .uai edit claim within the bounded lease window. |
+| `/api/matm/uai-memory/edit-claims/complete` | POST | Complete an owned claim and compare-and-swap the hash-only local .uai file head. |
+| `/api/matm/uai-memory/edit-claims/release` | POST | Release an owned local .uai edit claim without changing the observed file head. |
 | `/api/matm/memory-events/submit` | POST | Workspace memory summary write with hosted search and review-queue readback confirmation. |
 | `/api/matm/memory-events` | GET | Workspace memory event search. |
 | `/api/matm/search` | GET | Hosted workspace memory search. |

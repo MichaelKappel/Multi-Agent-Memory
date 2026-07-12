@@ -11,6 +11,8 @@
 - Added exact-build packaging, FTPS deployment, live source-SHA verification, authenticated dogfood, secret scanning, repository-boundary auditing, and enterprise readiness checks.
 - Added the MultiAgentMemory.com companion site, complete API and data reference, AI-readable discovery files, and test-enforced documentation freshness.
 - Preserved explicit canonical external-link review state when later unreviewed citations reuse the same URL.
+- Added a protected, registered-agent virtual UAIX package for accountless browser AI without durable local filesystem access, including date-free structured records, immutable revisions, optimistic concurrency, deterministic startup readiness, and public integration discovery.
+- Added hash-only project `.uai` file heads and bounded edit claims so simultaneous local agents can coordinate intent and detect stale or overlapping edits without uploading active-memory file bodies or claiming automatic merges.
 
 ## 0.1.0 - 2026-07-09
 

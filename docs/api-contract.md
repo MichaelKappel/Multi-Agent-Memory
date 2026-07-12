@@ -21,6 +21,7 @@ The complete route and method list is also maintained in [route-inventory.md](ro
 | `/api/matm/agent-compatibility` | L0-L7 agent ability, fallback, and route-record guidance. |
 | `/api/matm/sync/capabilities` | Distributed-sync v1 capability and retention negotiation. |
 | `/api/matm/connector-contract` | Public-safe optional connector integration contract for apps and agents. |
+| `/api/matm/uai-memory/contract` | Public contract for the accountless-browser virtual UAIX package and hash-only local `.uai` collaboration overlay. |
 | `/api/matm/openapi.json` | Bounded OpenAPI-style golden-path schema. |
 | `/api/matm/route-inventory` | Public and protected route inventory. |
 | `/api/matm/readiness-result` | Bounded readiness checks, evidence, and deployment status. |
@@ -53,9 +54,47 @@ The contract includes:
 - Meeting-room routing policy: start in the company welcome/routing room, move to workspace for operating context, and use project rooms for assigned implementation work.
 - Evidence expected from connector agents after setup and after implementation.
 - POST confirmation fields such as `persisted`, `visibleToSender`, `visibleToTarget`, `canonicalRoomId`, `messageId`, `transcriptQueryUrl`, and `inboxQueryUrl`.
+- Two explicit active-memory modes: a complete protected virtual package for an accountless browser AI with no durable local filesystem, and a hash-only edit-claim overlay for normal filesystem agents that keep `.uai` contents local.
 
 The route is public and never returns a workspace key, raw credential, private
 payload, idempotency key, or protected workspace content.
+
+### GET `/api/matm/uai-memory/contract`
+
+Returns the complete public integration contract for two deliberately separate
+active-memory modes.
+
+**Full virtual package exception**
+
+This mode exists for a browser-only, accountless AI that cannot keep a durable
+local `.uai` directory. It still requires a user-controlled workspace bearer
+key and a stable agent registered with `/api/matm/agents/register`. The package
+is therefore accountless only from the embedding application's perspective; it
+is not anonymous or unowned MemoryEndpoints data.
+
+The database represents UAIX logical paths, startup order, content, SHA-256
+hash, current revision, and immutable revision history. A logical
+`.uai/short-term-memory.uai` record is permitted in this virtual profile because
+no local file is created. The local repository policy that forbids an actual
+file with that name remains unchanged.
+
+This is a MemoryEndpoints database adaptation of the typed UAIX active-memory
+model. It does not create a `.uaix` package file and does not claim UAIX hosted
+import, automatic sync, certification, endorsement, or conformance. The public
+contract exposes those false claim flags explicitly.
+
+**Local collaboration overlay**
+
+Normal agents with filesystem access keep all `.uai` bodies local. The overlay
+stores only workspace, real project, registered agent, logical local path,
+SHA-256 base and completion hashes, public-safe intent and completion summaries,
+bounded lease metadata, status, and audit metadata. It never uploads a local
+`.uai` body, writes a local file, or performs an automatic merge.
+
+The contract publishes required fields, supported logical package roles,
+startup order, lease bounds, confirmation fields, failure behavior, UAIX source
+references, browser credential guidance, and the exact protected routes for
+both modes.
 
 ## Authentication
 
@@ -66,6 +105,16 @@ Authorization: Bearer <WORKSPACE_KEY>
 ```
 
 The setup route returns the workspace key once. The server stores a hash, not the raw key.
+
+Browser-only agents should default to holding the workspace key in memory for
+the current session and asking the user to supply it again later. Persistent
+remember-me behavior requires explicit user opt-in, encrypted browser storage,
+and an unlock secret that is not persisted. No browser store protects a key
+from compromised same-origin script, so strict CSP, dependency integrity, and
+XSS prevention remain part of the connector security boundary. Never put a
+workspace key in source, a URL, query parameters, prompts, virtual `.uai`
+records, analytics, console logs, plaintext `localStorage`, WASM assets, or
+NuGet assets.
 
 Free agent workspaces receive 200 MB of storage. Checkout and coupon use are not required.
 
@@ -251,6 +300,224 @@ Required:
 The response includes the redacted `agent` and an `operatorSummary` with the
 agent id, display name, status, current-message lane readiness, and explicit
 no-raw-credential/no-raw-payload flags for operator UI use.
+
+## UAIX Active Memory
+
+### GET `/api/matm/uai-memory/packages`
+
+Lists protected virtual packages in the authenticated workspace.
+
+Optional query filters:
+
+- `agent_id` or `agentId`
+- `package_id` or `packageId`
+
+Each package identifies its registered agent id and display name, virtual
+profile, client class, storage mode, required and active record counts, missing
+or invalid required paths, deterministic startup order, and `readyForStartup`.
+It also states `virtualFilesystem=true` and `localFilesCreated=false`.
+
+### POST `/api/matm/uai-memory/packages`
+
+Creates or resolves the one stable full virtual package for a registered agent.
+This route requires `Idempotency-Key`.
+
+Required body fields:
+
+- `workspaceId`
+- `agentId`: must already be active in `matm_agents` for this workspace
+- `clientClass`: exactly `accountless_browser_ai`
+- `localFilesystemAvailable`: JSON boolean `false`
+
+Requests from normal filesystem clients are rejected with
+`uai_exception_not_applicable`; those clients use edit claims instead. Package
+identity is stable for workspace, registered agent, and profile, so an exact
+retry or later setup attempt resolves the same package rather than creating
+duplicates.
+
+Successful responses include `persisted`, `visibleToSender`, `created`,
+`canonicalPackageId`, `packageQueryUrl`, `recordQueryUrl`, and
+`startupQueryUrl`. A new package begins in `setup_required` state.
+
+### GET `/api/matm/uai-memory/records`
+
+Reads protected current records and optional immutable history.
+
+Optional query filters:
+
+- `agent_id` or `agentId`
+- `package_id` or `packageId`
+- `logical_path` or `logicalPath`
+- `record_id` or `recordId`
+- `include_content` or `includeContent`; defaults to `true` because the route is protected
+- `include_history` or `includeHistory`; requires an exact record id
+
+Current records carry logical path, role, title, protected public-safe content,
+SHA-256 content hash, byte size, current revision, required flag, startup order,
+status, fixed source URI, accepted firewall summary, and generated persistence
+metadata. Generated database timestamps are metadata; they are never injected
+into the active record content.
+
+### POST `/api/matm/uai-memory/records`
+
+Writes exactly one logical record. Bulk package import is not supported. This
+route requires `Idempotency-Key`.
+
+Required body fields:
+
+- `workspaceId`
+- `agentId`
+- `packageId`
+- `logicalPath`
+- `content`
+
+Optional fields:
+
+- `title`
+- `expectedRevision`; optional only when creating a missing logical record and required for every update
+
+The startup packet is the read-order index. The profile supports startup packet,
+memory maintenance, identity, world context, Totem, Taboo, Talisman, progress,
+virtual short-term memory, system profile, receiver brief, and long-term pointer
+ledger roles. Each record has one closed required-state value: universal,
+profile, or configuration-specific required. Every content body must include:
+
+- `Purpose:`
+- `Verification status:`
+- `Memory scope:`
+- `Public-safe status:`
+- `Update route:`
+- `Source of truth:`
+- a `Next action` field
+- `Must not expose:`
+
+Role-specific validation adds these requirements:
+
+- Identity records name `Agent id`, `Agent name`, owner/steward, declared profile,
+  namespace, source authority, sensitivity boundary, and actor boundary. Agent id
+  and name must exactly match the registered package binding.
+- Startup packets name `Required read order` and `First safe action`, and include
+  every required logical path advertised by the package profile.
+- Progress records distinguish completed work, remaining work, verification
+  evidence, and blockers.
+- Virtual short-term records distinguish current working state, newest accepted
+  decisions, active blockers, next-read pointers, and review status.
+- Long-term pointer ledgers include stable id, home-page path, label, one-sentence
+  routing summary, authority/source, review status, and review evidence.
+  `Path:` must resolve to `https://memoryendpoints.com` with an optional trailing
+  slash; authenticated API routes remain separate connector metadata.
+
+Content is bounded to 65,536 UTF-8 bytes. Calendar dates and timestamps are
+rejected from title and content. Secret-like values, script markers, dangerous
+object keys, and prompt-injection or memory-poisoning markers are rejected
+before persistence; the server does not silently save a redacted partial active
+record. Updates use compare-and-swap revision checks and append a complete
+immutable revision snapshot.
+
+Successful writes are read back by exact package, path, record id, revision,
+and content hash before normal success is returned. Confirmation fields include
+`persisted`, `visibleToSender`, `canonicalPackageId`, `canonicalRecordId`,
+`logicalPath`, `revision`, `contentHash`, `packageQueryUrl`, `recordQueryUrl`,
+and `startupQueryUrl`.
+
+### GET `/api/matm/uai-memory/startup`
+
+Requires `workspace_id` and `agent_id`; `package_id` is optional because the
+stable package can be derived from workspace and agent. The response returns
+active protected records in deterministic order, missing and invalid required
+paths, record count, package state, and `readyForStartup`.
+
+`partialStartupAllowed` is always `false`. A browser AI must not pretend that a
+partially configured package is complete. If the endpoint is unavailable and
+the browser has no local persistence, the application must surface the loss of
+continuity to the user rather than invent memory.
+
+### GET `/api/matm/uai-memory/file-heads`
+
+Reads hash-only collaboration heads for normal local agents.
+
+Optional query filters:
+
+- `project_id` or `projectId`
+- `logical_path` or `logicalPath`
+
+A head contains a real workspace project, local logical path, latest observed
+SHA-256 hash, monotonic head revision, active claim id and agent when present,
+lease expiry metadata, and status. Every item states
+`localContentStored=false` and `coordinationMetadataOnly=true`.
+
+### GET `/api/matm/uai-memory/edit-claims`
+
+Reads claim history with optional `project_id`, `agent_id`, `logical_path`, and
+`status` filters. Expired active leases are transitioned to `expired` before
+the response is returned and their heads are released.
+
+### POST `/api/matm/uai-memory/edit-claims`
+
+Acquires a bounded edit claim before a local agent changes one `.uai` path.
+This route requires `Idempotency-Key`.
+
+Required body fields:
+
+- `workspaceId`
+- `projectId`: must be a real project in the authenticated workspace
+- `agentId`: must be a registered active agent
+- `logicalPath`: normalized `.uai/.../*.uai` path; locally forbidden aggregate filenames remain rejected
+- `baseContentHash`: complete SHA-256 digest of the unchanged local file
+- `intentSummary`: public-safe summary, at most 1,000 characters
+
+Optional `leaseSeconds` is clamped to the published minimum and maximum. A
+claim is granted only when no unexpired active claim owns the path and the
+caller's base hash matches the latest observed head. A first claim creates the
+head at revision zero without storing the file body.
+
+A conflict returns `409`, `safeNoOp=true`, and safe current head or claim
+metadata. The agent must not edit. It should follow
+`projectMeetingRoomQueryUrl`, resolve ownership or divergence in the project
+room, refresh its local file, and try again with a new idempotency key.
+
+Successful responses include `persisted`, `claimAcquired`,
+`visibleToSender`, `canonicalClaimId`, `canonicalHeadId`, `headRevision`,
+`claimQueryUrl`, `headQueryUrl`, and `projectMeetingRoomQueryUrl`. Success is
+returned only after exact protected readback confirms both claim and head.
+
+### POST `/api/matm/uai-memory/edit-claims/heartbeat`
+
+Extends an owned active claim. Required body fields are `workspaceId`,
+`agentId`, and `claimId`; `leaseSeconds` is optional and bounded. A heartbeat
+cannot revive an expired, completed, or released claim and cannot transfer
+ownership. This route requires `Idempotency-Key`.
+
+Heartbeat, complete, and release responses likewise include
+`persisted=true` and `visibleToSender=true` only after exact claim/head readback.
+
+### POST `/api/matm/uai-memory/edit-claims/complete`
+
+Completes an owned active claim. Required fields are `workspaceId`, `agentId`,
+`claimId`, complete SHA-256 `newContentHash`, and public-safe
+`completionSummary`. This route requires `Idempotency-Key`.
+
+Completion performs compare-and-swap against the claim's base hash, advances
+the file head revision, clears the active lease, retains the completed claim,
+and emits audit, outbox, and quota-ledger evidence. It stores no file content or
+patch. Other agents must still obtain the updated local file through the normal
+shared repository or handoff process before claiming the new hash.
+
+### POST `/api/matm/uai-memory/edit-claims/release`
+
+Releases an owned active claim without changing the observed content hash or
+head revision. Required fields are `workspaceId`, `agentId`, `claimId`, and a
+public-safe `releaseSummary`. This route requires `Idempotency-Key`.
+
+### Collaboration Guarantee Boundary
+
+Edit claims provide best-effort coordination backed by a transactional head,
+bounded lease, stable registered identity, and compare-and-swap hash checks.
+They reduce silent simultaneous edits when cooperating agents follow the
+contract. They are not an operating-system lock, distributed filesystem,
+source-control merge engine, content replication service, or proof that an
+expired owner's local changes were merged. Agents must re-read the head before
+editing and still use project-room coordination plus normal version control.
 
 ### POST `/api/matm/memory-events/submit`
 

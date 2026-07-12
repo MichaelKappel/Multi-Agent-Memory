@@ -55,6 +55,16 @@
             <td data-label="Location"><code>.uai/</code></td>
             <td data-label="Responsibility">Active startup continuity, totem invariants, progress state, pointer ledgers, intake outcomes, and offline fallback when hosted MATM is unreachable.</td>
           </tr>
+          <tr>
+            <td data-label="Layer">Accountless-browser exception</td>
+            <td data-label="Location">Protected MemoryEndpoints virtual UAIX package</td>
+            <td data-label="Responsibility">Complete registered-agent active-memory package only when durable local filesystem continuity is impossible.</td>
+          </tr>
+          <tr>
+            <td data-label="Layer">Local collaboration overlay</td>
+            <td data-label="Location">Protected project/path heads and edit claims</td>
+            <td data-label="Responsibility">Hash-only coordination for simultaneous local agents; no local <code>.uai</code> body, patch, merge, or file write.</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -63,6 +73,8 @@
     <p>The system treats memory as layered rather than monolithic. Local `.uai` files stay active always. Hosted MATM augments durable memory; it does not retire local startup memory.</p>
     <ul>
       <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
+      <li><strong>Accountless-browser active memory:</strong> a browser AI with no durable local filesystem may use a complete protected virtual UAIX package bound to a registered stable agent and workspace key.</li>
+      <li><strong>Concurrent local-agent coordination:</strong> project/path content hashes and bounded edit claims prevent cooperative agents from silently starting on the same local `.uai` revision without centralizing file bodies.</li>
       <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
       <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, multiple taxonomy paths, lifecycle status, authority level, and explicit supersession links.</li>
       <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
@@ -86,6 +98,7 @@
     <ol>
       <li>A human or host creates a workspace with <code>POST /api/matm/agent-setup/free-account</code>. The workspace key is returned once and the server stores only a hash.</li>
       <li>Agents authenticate protected MATM calls with the workspace key. Public product documentation, discovery files, and empty authentication shells remain readable without credentials; tenant knowledge does not.</li>
+      <li>After registration, the connector reads <code>/api/matm/uai-memory/contract</code>. An accountless browser with no durable filesystem creates a full virtual package and fills one validated record at a time. A filesystem agent reads hash heads and acquires a project/path claim before changing local <code>.uai</code>.</li>
       <li>Agents submit public-safe memory summaries to <code>/api/matm/memory-events/submit</code>. A memory firewall redacts secret-like content before persistence and sends risky records to review.</li>
       <li>Agents create or discover projects, index reviewed wiki pages, crawl taxonomy branches, and attach first-class external citations through protected knowledge and external-link routes.</li>
       <li>Reviewers inspect <code>/api/matm/review-queue</code> and make idempotent decisions through <code>/api/matm/review-queue/decide</code>.</li>
@@ -98,11 +111,11 @@
     <h2>Repository structure</h2>
     <p>The checked-in <a href="https://github.com/MichaelKappel/Multi-Agent-Memory/blob/main/docs/system-architecture.md">system architecture</a> documents the request lifecycle, tenant graph, relational ownership, memory and wiki state machines, coordination, sync conflicts, readback guarantees, and verification limits in source-level detail.</p>
     <ul>
-      <li><code>memoryendpoints/</code>: pure Python WSGI runtime, route handlers, storage, HTTP helpers, security helpers, and site data.</li>
+      <li><code>memoryendpoints/</code>: pure Python WSGI runtime, route handlers, storage, HTTP helpers, security helpers, site data, and the explicit virtual-UAIX/local-collaboration contract in <code>uai_memory.py</code>.</li>
       <li><code>static/</code>: MemoryEndpoints.com browser CSS, JavaScript, and image assets.</li>
       <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
       <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
-      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, protected MATM workflows, hierarchy and citations, meeting routing, sync conflict behavior, memory firewall behavior, idempotency, review decisions, audit readback, and relational-backend parity.</li>
+      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, virtual UAIX startup and revision behavior, hash-only local edit conflicts, protected MATM workflows, hierarchy and citations, meeting routing, sync conflict behavior, memory firewall behavior, idempotency, review decisions, audit readback, and relational-backend parity.</li>
       <li><code>var/reports/</code>: ignored point-in-time verification output. It is excluded from deployment packages and is not a durable knowledge source of truth.</li>
     </ul>
 
@@ -119,7 +132,7 @@
     </ul>
 
     <h2>Setup guidance</h2>
-    <p>The intended UAIX setup option is <a href="https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints">MemoryEndpoints.com MATM</a>. UAIX uses setup-option fragments because the wizard has multiple modes. Inbound links to MemoryEndpoints.com should use <a href="https://memoryendpoints.com">the home page</a> because MemoryEndpoints.com currently has one setup surface.</p>
+    <p>Start with the <a href="https://uaix.org/en-us/ai-memory/">UAIX AI memory guidance</a> and <a href="https://uaix.org/en-us/ai-memory/uaix-package-format/">package format</a>. The intended wizard option is <a href="https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints">MemoryEndpoints.com MATM</a>. UAIX uses setup-option fragments because the wizard has multiple modes. Inbound links to MemoryEndpoints.com should use <a href="https://memoryendpoints.com">the home page</a> because MemoryEndpoints.com currently has one setup surface.</p>
 
     <h2>Safety boundary</h2>
     <p>This documentation does not claim certification, endorsement, hidden credential validation, automatic repository writes, or authority to store secrets. Unsupported actions should return safe no-op behavior and route back to human review.</p>

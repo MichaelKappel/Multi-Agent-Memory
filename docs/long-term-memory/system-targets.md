@@ -22,7 +22,7 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 - Keep file storage and SQLite relational MATM tables active for local development and verification only.
 - Require MySQL/MariaDB for production completion, with `/api/version` proving `storeBackendVerified: true`.
-- Preserve canonical schema coverage for tenant hierarchy, memory revisions, wiki sources/documents, canonical external links/mentions, meeting/routing state, current messages, distributed sync, receipts, review queue, idempotency, outbox, quota ledger, and audit.
+- Preserve canonical schema coverage for tenant hierarchy, virtual UAIX packages/revisions, hash-only local `.uai` collaboration heads/claims, memory revisions, wiki sources/documents, canonical external links/mentions, meeting/routing state, current messages, distributed sync, receipts, review queue, idempotency, outbox, quota ledger, and audit.
 - Before any MySQL production claim, require migration dry runs, restore drills, least-privilege role review, TLS/encryption review, observability, and RPO/RTO documentation.
 - Avoid database topology overclaims. Distinguish single instance, source/replica, managed HA, InnoDB Cluster, cross-region DR, and sharding.
 
@@ -30,7 +30,9 @@ Purpose: durable target memory for MemoryEndpoints.com engineering strategy.
 
 - Keep MemoryEndpoints.com as the mid-to-long-term MATM endpoint and MultiAgentMemory.com as companion documentation with direct links to the GitHub repository and detailed architecture guidance.
 - Keep `.uai/totem.uai` as a non-retirement invariant: local `.uai` stays active always.
-- Keep `.uai` as a typed active suite. Do not add files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation.
+- Keep `.uai` as a typed active suite. Do not add actual local files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent. A protected virtual package for an accountless browser may represent its configuration-specific short-term logical role because it creates no local file.
+- Keep the accountless-browser virtual package narrow, registered-agent-bound, authenticated, date-free, revision-safe, and visibly incomplete until every required startup role exists.
+- Give simultaneous filesystem agents hash-only project/path heads and bounded edit claims. Never centralize their local `.uai` bodies or claim automatic merge, file distribution, or operating-system locking.
 - Make every protected mutation idempotent where retries are realistic.
 - Keep public evidence routes current and bounded: readiness, capability matrix, route inventory, redacted receipts, AI manifest, and discovery files.
 - Improve hosted MATM toward deeper source-linked graph traversal, contradiction analysis, lifecycle-aware supersession, restore evidence, and authenticated retrieval without exposing secrets.

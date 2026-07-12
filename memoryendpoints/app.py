@@ -14,6 +14,7 @@ from .runtime import backend_error_code, configured_store_backend, store_backend
 from .security import redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
+from .uai_memory import virtual_uai_contract
 
 
 STATIC_ROOT = ROOT / "static"
@@ -1451,6 +1452,7 @@ def route_home(start_response):
       <a class="button" href="/agent-coordination">Agent coordination quickstart</a>
       <a class="button" href="/console">Open human console</a>
       <a class="button" href="/api/matm/connector-contract">Connector contract</a>
+      <a class="button" href="/api/matm/uai-memory/contract">UAIX active memory</a>
       <a class="button" href="/api/matm/agent-compatibility">Agent compatibility</a>
       <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
       <a class="button" href="{companion_docs_url}">Read companion docs</a>
@@ -1461,6 +1463,7 @@ def route_home(start_response):
     <a href="/agent-coordination"><strong>Agent coordination</strong><span>register, rooms, memory, inbox, ack</span></a>
     <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
     <a href="/api/matm/connector-contract"><strong>Connector contract</strong><span>settings, routes, redaction, routing</span></a>
+    <a href="/api/matm/uai-memory/contract"><strong>UAIX active memory</strong><span>browser exception and local edit claims</span></a>
     <a href="/api/matm/agent-compatibility"><strong>Agent compatibility</strong><span>L0-L7 ability paths and fallbacks</span></a>
     <a href="/api/matm/readiness-result"><strong>Readiness</strong><span>deployment and capability evidence</span></a>
     <a href="/memory-lifecycle"><strong>Memory lifecycle</strong><span>review, promotion, acknowledgement</span></a>
@@ -1490,6 +1493,7 @@ def route_docs(start_response):
     <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a> exposes route inventory and support boundaries.</li>
     <li><a href="/api/matm/agent-compatibility"><code>/api/matm/agent-compatibility</code></a> maps L0-L7 agent ability levels to safe routes, fallbacks, and no-op behavior.</li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a> gives optional connectors one stable setup, API, UI, and routing contract.</li>
+    <li><a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> separates the accountless-browser virtual package from hash-only local <code>.uai</code> edit coordination.</li>
     <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a> gives agents and connectors a bounded OpenAPI-style golden path.</li>
     <li><a href="/agent-coordination"><code>/agent-coordination</code></a> gives authenticated agents one copy-safe coordination quickstart.</li>
     <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a> exposes current local readiness and deployment blockers.</li>
@@ -1507,6 +1511,7 @@ def route_agent_setup(start_response):
   <p>Agents create a free workspace with <code>POST /api/matm/agent-setup/free-account</code>. The returned key is shown once and must be saved by the human or host. MemoryEndpoints stores only a hash.</p>
   <p>The free workspace quota is <strong>200 MB</strong>. Checkout, coupon use, and human-only setup are not required.</p>
   <p>The <a href="/agent-coordination">Agent Coordination Quickstart</a> continues from the one-time key into registration, meeting rooms, memory, current messages, acknowledgements, and evidence.</p>
+  <p>After registration, inspect the <a href="/api/matm/uai-memory/contract">UAIX active-memory contract</a>. A browser AI with no durable filesystem can use the protected virtual package. Normal filesystem agents keep local <code>.uai</code> bodies local and use hash-only project edit claims when several agents share a codebase.</p>
   <p>The <a href="/console">human verification console</a> lets a human-side agent enter a saved key, inspect the company/workspace/project boundary, read memory, send current messages to all agents or a particular agent, acknowledge notifications, and see redacted receipts.</p>
   <h2>Copy-Safe Setup</h2>
   <p>These examples use placeholder labels only. Save the returned workspace key outside source control, logs, prompts, and public chat.</p>
@@ -1536,6 +1541,8 @@ def route_agent_coordination(start_response):
 <section class="page">
   <h1>Agent Coordination Quickstart</h1>
   <p>This is the shortest public path from a one-time workspace key to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+  <h2>Choose The Active-Memory Mode</h2>
+  <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after registering. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the workspace key and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
   <h2>Inputs</h2>
   <ul>
     <li><code>MEMORYENDPOINTS_BASE_URL</code>: <code>https://memoryendpoints.com</code></li>
@@ -1607,7 +1614,7 @@ Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/searc
   <pre><code>$messageBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
   senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
-  targetAgentId = "codex-coordinator"
+  targetAgentId = "memoryendpoints-backend-agent"
   safeSummary = "Public-safe current-message check from example-agent."
   responseRequired = $true
 } | ConvertTo-Json
@@ -1633,6 +1640,7 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
     <li><a href="/agent-setup"><code>/agent-setup</code></a></li>
     <li><a href="/console"><code>/console</code></a></li>
     <li><a href="/api/matm/connector-contract"><code>/api/matm/connector-contract</code></a></li>
+    <li><a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a></li>
     <li><a href="/api/matm/agent-compatibility"><code>/api/matm/agent-compatibility</code></a></li>
     <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a></li>
     <li><a href="/api/matm/live-capability-matrix"><code>/api/matm/live-capability-matrix</code></a></li>
@@ -2465,6 +2473,7 @@ def text_discovery(name):
         "Agent coordination quickstart: /agent-coordination.",
         "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
+        "UAIX active memory: /api/matm/uai-memory/contract separates the accountless-browser virtual-package exception from hash-only local .uai edit coordination.",
         "Readiness evidence: /api/matm/readiness-result.",
         "Authority boundary: no certification, endorsement, hidden credential validation, or automatic memory promotion.",
     ]
@@ -2503,6 +2512,8 @@ def route_public_json(path, start_response):
         return json_response(start_response, {"ok": True, "data": sync_capabilities()})
     if path == "/api/matm/connector-contract":
         return json_response(start_response, {"ok": True, "data": connector_contract()})
+    if path == "/api/matm/uai-memory/contract":
+        return json_response(start_response, {"ok": True, "data": virtual_uai_contract()})
     if path == "/api/matm/openapi.json":
         return json_response(start_response, openapi_spec())
     if path == "/api/matm/route-inventory":
@@ -2543,11 +2554,14 @@ def route_public_json(path, start_response):
                     "redacted_receipts",
                     "workspace_quota",
                     "connector_contract",
+                    "virtual_uai_active_memory",
+                    "local_uai_edit_claims",
                     "agent_compatibility",
                     "readiness_evidence",
                 ],
                 "manifest": "%s/ai-manifest.json" % SITE_URL,
                 "agentCompatibility": "%s/api/matm/agent-compatibility" % SITE_URL,
+                "uaiMemoryContract": "%s/api/matm/uai-memory/contract" % SITE_URL,
                 "companionDocumentation": COMPANION_DOCS_URL,
                 "sourceRepository": GITHUB_REPO_URL,
             },
@@ -2576,6 +2590,12 @@ def route_public_json(path, start_response):
                 "name": "MemoryEndpoints Connector Contract",
                 "mimeType": "application/json",
                 "route": "/api/matm/connector-contract",
+            },
+            {
+                "uri": "memoryendpoints://matm/uai-memory-contract",
+                "name": "MemoryEndpoints UAIX Active-Memory Contract",
+                "mimeType": "application/json",
+                "route": "/api/matm/uai-memory/contract",
             },
             {
                 "uri": "memoryendpoints://matm/agent-compatibility",
@@ -2744,6 +2764,102 @@ def _audit_read(store, workspace_id, auth, action, route, details=None):
     audit_details = {"route": route, "method": "GET"}
     audit_details.update(details or {})
     store.record_audit(workspace_id, action, auth.get("keyId") or "workspace-key", route, audit_details)
+
+
+def _uai_claim_readback_visible(store, workspace_id, claim, head):
+    claims = store.uai_edit_claims(
+        workspace_id,
+        claim.get("projectId"),
+        claim.get("agentId"),
+        claim.get("logicalPath"),
+    )
+    heads = store.uai_collaboration_heads(
+        workspace_id,
+        head.get("projectId"),
+        head.get("logicalPath"),
+    )
+    claim_visible = any(
+        item.get("claimId") == claim.get("claimId")
+        and item.get("status") == claim.get("status")
+        for item in claims
+    )
+    head_visible = any(
+        item.get("headId") == head.get("headId")
+        and item.get("revision") == head.get("revision")
+        and item.get("observedContentHash") == head.get("observedContentHash")
+        and item.get("activeClaimId") == head.get("activeClaimId")
+        for item in heads
+    )
+    return claim_visible and head_visible
+
+
+def _uai_error_response(start_response, code, details=None):
+    details = details or {}
+    status = "422 Unprocessable Entity"
+    if code in ("uai_package_not_found", "uai_edit_claim_not_found", "project_not_found", "workspace_not_found"):
+        status = "404 Not Found"
+    elif code in (
+        "uai_package_agent_mismatch",
+        "uai_revision_conflict",
+        "uai_edit_claim_conflict",
+        "uai_base_hash_mismatch",
+        "uai_edit_claim_agent_mismatch",
+        "uai_edit_claim_not_active",
+    ):
+        status = "409 Conflict"
+    elif code == "quota_exceeded":
+        status = "413 Payload Too Large"
+    messages = {
+        "registered_agent_required": "Register the stable agent in this workspace before creating memory packages or edit claims.",
+        "unsupported_uai_client_class": "The full virtual package is only available to the accountless_browser_ai client class.",
+        "uai_exception_not_applicable": "Clients with durable local filesystem access must keep local .uai active memory and use the collaboration overlay instead.",
+        "uai_package_not_found": "No matching virtual UAIX package exists in the authenticated workspace.",
+        "uai_package_agent_mismatch": "The package belongs to a different registered agent in this workspace.",
+        "unsupported_uai_logical_path": "The requested logical path is not part of the supported virtual UAIX startup profile.",
+        "unsupported_local_uai_path": "The requested local .uai path is invalid or locally forbidden.",
+        "uai_content_required": "A virtual UAIX record requires non-empty content.",
+        "uai_content_too_large": "The virtual UAIX record exceeds the bounded content size.",
+        "uai_content_must_be_date_free": "Active UAIX record content and titles must not contain calendar dates or timestamps.",
+        "uai_content_structure_invalid": "The virtual UAIX record is missing required active-memory fields.",
+        "uai_content_role_invalid": "The virtual UAIX record is missing role-specific fields, omits required startup paths, or does not match its registered agent binding.",
+        "uai_content_rejected_by_memory_firewall": "The virtual UAIX record was rejected before persistence because it is not safe active memory.",
+        "expected_revision_required": "Updating an existing virtual UAIX record requires expectedRevision.",
+        "expected_revision_invalid": "expectedRevision must be a non-negative integer.",
+        "uai_revision_conflict": "The virtual UAIX record changed after the caller read it; reload before retrying.",
+        "uai_base_content_hash_invalid": "baseContentHash must be a complete SHA-256 digest.",
+        "uai_completion_content_hash_invalid": "newContentHash must be a complete SHA-256 digest.",
+        "uai_edit_claim_conflict": "Another active claim owns this local .uai path; do not edit until it is completed, released, or expired.",
+        "uai_base_hash_mismatch": "The caller's local file hash does not match the latest observed project head; reconcile before editing.",
+        "uai_edit_claim_not_found": "No matching local .uai edit claim exists in the authenticated workspace.",
+        "uai_edit_claim_agent_mismatch": "Only the registered agent that owns the claim can change it.",
+        "uai_edit_claim_not_active": "The claim is no longer active and cannot be changed.",
+        "uai_collaboration_summary_rejected_by_memory_firewall": "The public-safe coordination summary was rejected before persistence.",
+        "intent_summary_required": "An edit claim requires a public-safe intentSummary.",
+        "completion_summary_required": "Completing a claim requires a public-safe completionSummary.",
+        "release_summary_required": "Releasing a claim requires a public-safe releaseSummary.",
+        "project_not_found": "A real project in the authenticated workspace is required for local .uai collaboration.",
+        "quota_exceeded": "The workspace does not have enough remaining storage for this operation.",
+    }
+    detail = messages.get(code, "The virtual UAIX memory operation was safely rejected.")
+    return json_response(
+        start_response,
+        {
+            "ok": False,
+            "safeNoOp": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+            "error": {
+                "code": code,
+                "title": "Virtual UAIX memory operation rejected",
+                "detail": detail,
+                "safeNoOp": True,
+                "valuesRedacted": True,
+                "details": details,
+            },
+        },
+        status,
+    )
 
 
 def route_protected(environ, start_response, path):
@@ -3288,6 +3404,271 @@ def route_protected(environ, start_response, path):
         }
         store.record_idempotency(workspace_id, idem, "agent-register", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
+    if path == "/api/matm/uai-memory/packages" and method == "GET":
+        agent_id = query.get("agent_id") or query.get("agentId") or ""
+        package_id = query.get("package_id") or query.get("packageId") or ""
+        items = store.uai_packages(workspace_id, agent_id, package_id)
+        _audit_read(store, workspace_id, auth, "uai_packages.read", path, {"count": len(items), "agentId": agent_id})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.virtual_uai_packages.v1",
+                "items": items,
+                "count": len(items),
+                "filters": {key: value for key, value in {"agentId": agent_id, "packageId": package_id}.items() if value},
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/uai-memory/packages" and method == "POST":
+        if not idem:
+            return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Virtual UAIX package creation requires Idempotency-Key for exact browser retries.", "idempotency_key_required")
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-package-create", body)
+        if replay:
+            return replay
+        agent_id = body.get("agentId") or body.get("agent_id")
+        if not agent_id:
+            return _uai_error_response(start_response, "registered_agent_required")
+        if "workspaceId" not in body and "workspace_id" not in body:
+            return problem(start_response, "422 Unprocessable Entity", "Workspace id required", "Virtual UAIX package creation requires workspaceId in the authenticated request body.", "workspace_id_required")
+        if "clientClass" not in body and "client_class" not in body:
+            return problem(start_response, "422 Unprocessable Entity", "Client class required", "Set clientClass to accountless_browser_ai for the full virtual-package exception.", "client_class_required")
+        if "localFilesystemAvailable" not in body and "local_filesystem_available" not in body:
+            return problem(start_response, "422 Unprocessable Entity", "Filesystem capability required", "Set localFilesystemAvailable explicitly so the exception boundary can be evaluated.", "local_filesystem_available_required")
+        local_filesystem_available = body.get("localFilesystemAvailable") if "localFilesystemAvailable" in body else body.get("local_filesystem_available")
+        if not isinstance(local_filesystem_available, bool):
+            return problem(start_response, "422 Unprocessable Entity", "Filesystem capability invalid", "localFilesystemAvailable must be a JSON boolean.", "local_filesystem_available_invalid")
+        package, created, error, details = store.create_uai_package(
+            workspace_id,
+            agent_id,
+            body.get("clientClass") or body.get("client_class"),
+            local_filesystem_available,
+        )
+        if error:
+            return _uai_error_response(start_response, error, details)
+        package_id = package.get("packageId")
+        payload = {
+            "ok": True,
+            "package": package,
+            "created": bool(created),
+            "persisted": True,
+            "visibleToSender": True,
+            "canonicalPackageId": package_id,
+            "packageQueryUrl": _protected_query_url("/api/matm/uai-memory/packages", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id}),
+            "recordQueryUrl": _protected_query_url("/api/matm/uai-memory/records", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id}),
+            "startupQueryUrl": _protected_query_url("/api/matm/uai-memory/startup", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        http_status = "201 Created" if created else "200 OK"
+        store.record_idempotency(workspace_id, idem, "uai-package-create", body, payload, http_status)
+        return json_response(start_response, payload, http_status)
+    if path == "/api/matm/uai-memory/records" and method == "GET":
+        agent_id = query.get("agent_id") or query.get("agentId") or ""
+        package_id = query.get("package_id") or query.get("packageId") or ""
+        logical_path = query.get("logical_path") or query.get("logicalPath") or ""
+        record_id = query.get("record_id") or query.get("recordId") or ""
+        include_content = str(query.get("include_content") or query.get("includeContent") or "true").lower() not in ("0", "false", "no")
+        include_history = str(query.get("include_history") or query.get("includeHistory") or "false").lower() in ("1", "true", "yes")
+        items = store.uai_records(workspace_id, agent_id, package_id, logical_path, include_content)
+        if record_id:
+            items = [item for item in items if item.get("recordId") == record_id]
+        revisions = store.uai_record_revisions(workspace_id, record_id, include_content) if include_history and record_id else []
+        _audit_read(store, workspace_id, auth, "uai_records.read", path, {"count": len(items), "agentId": agent_id, "packageId": package_id, "includeHistory": include_history})
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": "memoryendpoints.virtual_uai_records.v1",
+                "items": items,
+                "count": len(items),
+                "revisions": revisions,
+                "revisionCount": len(revisions),
+                "protectedContentIncluded": include_content,
+                "filters": {key: value for key, value in {"agentId": agent_id, "packageId": package_id, "logicalPath": logical_path, "recordId": record_id}.items() if value},
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if path == "/api/matm/uai-memory/records" and method == "POST":
+        if not idem:
+            return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Virtual UAIX record writes require Idempotency-Key for exact browser retries.", "idempotency_key_required")
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-record-upsert", body)
+        if replay:
+            return replay
+        agent_id = body.get("agentId") or body.get("agent_id")
+        package_id = body.get("packageId") or body.get("package_id")
+        logical_path = body.get("logicalPath") or body.get("logical_path")
+        content = body.get("content")
+        if not agent_id:
+            return _uai_error_response(start_response, "registered_agent_required")
+        if not package_id:
+            return _uai_error_response(start_response, "uai_package_not_found")
+        if not logical_path:
+            return _uai_error_response(start_response, "unsupported_uai_logical_path")
+        if content is None:
+            return _uai_error_response(start_response, "uai_content_required")
+        result, error, details = store.upsert_uai_record(
+            workspace_id,
+            agent_id,
+            package_id,
+            logical_path,
+            body.get("title"),
+            content,
+            body.get("expectedRevision") if "expectedRevision" in body else body.get("expected_revision"),
+        )
+        if error:
+            return _uai_error_response(start_response, error, details)
+        record = result["record"]
+        readback = store.uai_records(workspace_id, agent_id, package_id, record.get("logicalPath"), True)
+        visible = any(
+            item.get("recordId") == record.get("recordId")
+            and item.get("revision") == record.get("revision")
+            and item.get("contentHash") == record.get("contentHash")
+            for item in readback
+        )
+        if not visible:
+            return problem(start_response, "500 Internal Server Error", "Virtual UAIX record was not confirmed", "The write could not be confirmed by exact protected readback.", "uai_record_not_persisted")
+        payload = {
+            "ok": True,
+            "record": record,
+            "package": result["package"],
+            "created": result["created"],
+            "changed": result["changed"],
+            "persisted": True,
+            "visibleToSender": True,
+            "canonicalPackageId": package_id,
+            "canonicalRecordId": record.get("recordId"),
+            "logicalPath": record.get("logicalPath"),
+            "revision": record.get("revision"),
+            "contentHash": record.get("contentHash"),
+            "packageQueryUrl": _protected_query_url("/api/matm/uai-memory/packages", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id}),
+            "recordQueryUrl": _protected_query_url("/api/matm/uai-memory/records", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id, "logical_path": record.get("logicalPath"), "record_id": record.get("recordId")}),
+            "startupQueryUrl": _protected_query_url("/api/matm/uai-memory/startup", {"workspace_id": workspace_id, "agent_id": agent_id, "package_id": package_id}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        http_status = "201 Created" if result["created"] else "200 OK"
+        store.record_idempotency(workspace_id, idem, "uai-record-upsert", body, payload, http_status)
+        return json_response(start_response, payload, http_status)
+    if path == "/api/matm/uai-memory/startup" and method == "GET":
+        agent_id = query.get("agent_id") or query.get("agentId") or ""
+        package_id = query.get("package_id") or query.get("packageId") or ""
+        if not agent_id:
+            return _uai_error_response(start_response, "registered_agent_required")
+        startup, error = store.uai_startup(workspace_id, agent_id, package_id or None)
+        if error:
+            return _uai_error_response(start_response, error)
+        _audit_read(store, workspace_id, auth, "uai_startup.read", path, {"agentId": agent_id, "packageId": startup["package"].get("packageId"), "count": startup["recordCount"], "readyForStartup": startup["readyForStartup"]})
+        return json_response(start_response, {"ok": True, "startup": startup, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
+    if path == "/api/matm/uai-memory/file-heads" and method == "GET":
+        project_id = query.get("project_id") or query.get("projectId") or ""
+        logical_path = query.get("logical_path") or query.get("logicalPath") or ""
+        items = store.uai_collaboration_heads(workspace_id, project_id, logical_path)
+        _audit_read(store, workspace_id, auth, "uai_file_heads.read", path, {"count": len(items), "projectId": project_id, "logicalPath": logical_path})
+        return json_response(start_response, {"ok": True, "schemaVersion": "memoryendpoints.uai_collaboration_heads.v1", "items": items, "count": len(items), "localContentStored": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
+    if path == "/api/matm/uai-memory/edit-claims" and method == "GET":
+        filters = {
+            "projectId": query.get("project_id") or query.get("projectId") or "",
+            "agentId": query.get("agent_id") or query.get("agentId") or "",
+            "logicalPath": query.get("logical_path") or query.get("logicalPath") or "",
+            "status": query.get("status") or "",
+        }
+        items = store.uai_edit_claims(workspace_id, filters["projectId"], filters["agentId"], filters["logicalPath"], filters["status"])
+        _audit_read(store, workspace_id, auth, "uai_edit_claims.read", path, {"count": len(items), "projectId": filters["projectId"], "agentId": filters["agentId"]})
+        return json_response(start_response, {"ok": True, "schemaVersion": "memoryendpoints.uai_edit_claims.v1", "items": items, "count": len(items), "filters": {key: value for key, value in filters.items() if value}, "localContentStored": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
+    if path == "/api/matm/uai-memory/edit-claims" and method == "POST":
+        if not idem:
+            return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Local .uai edit-claim acquisition requires Idempotency-Key.", "idempotency_key_required")
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-edit-claim-acquire", body)
+        if replay:
+            return replay
+        project_id = body.get("projectId") or body.get("project_id")
+        agent_id = body.get("agentId") or body.get("agent_id")
+        result, error, details = store.acquire_uai_edit_claim(
+            workspace_id,
+            project_id,
+            agent_id,
+            body.get("logicalPath") or body.get("logical_path"),
+            body.get("baseContentHash") or body.get("base_content_hash"),
+            body.get("intentSummary") or body.get("intent_summary"),
+            body.get("leaseSeconds") or body.get("lease_seconds"),
+        )
+        if error:
+            return _uai_error_response(start_response, error, details)
+        claim = result["claim"]
+        head = result["head"]
+        visible_to_sender = _uai_claim_readback_visible(store, workspace_id, claim, head)
+        if not visible_to_sender:
+            return problem(start_response, "500 Internal Server Error", "Edit claim was not confirmed", "The acquired claim and canonical head could not be confirmed by exact protected readback.", "uai_edit_claim_not_persisted")
+        payload = {
+            "ok": True,
+            "claim": claim,
+            "head": head,
+            "persisted": True,
+            "visibleToSender": True,
+            "claimAcquired": True,
+            "canonicalClaimId": claim.get("claimId"),
+            "canonicalHeadId": head.get("headId"),
+            "headRevision": head.get("revision"),
+            "claimQueryUrl": _protected_query_url("/api/matm/uai-memory/edit-claims", {"workspace_id": workspace_id, "project_id": project_id, "logical_path": claim.get("logicalPath"), "status": "active"}),
+            "headQueryUrl": _protected_query_url("/api/matm/uai-memory/file-heads", {"workspace_id": workspace_id, "project_id": project_id, "logical_path": claim.get("logicalPath")}),
+            "projectMeetingRoomQueryUrl": _protected_query_url("/api/matm/meeting-rooms", {"workspace_id": workspace_id, "agent_id": agent_id, "scope": "project", "scope_id": project_id}),
+            "localContentStored": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, "uai-edit-claim-acquire", body, payload, "201 Created")
+        return json_response(start_response, payload, "201 Created")
+    if path in ("/api/matm/uai-memory/edit-claims/heartbeat", "/api/matm/uai-memory/edit-claims/complete", "/api/matm/uai-memory/edit-claims/release") and method == "POST":
+        if not idem:
+            return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Local .uai edit-claim changes require Idempotency-Key.", "idempotency_key_required")
+        operation = path.rsplit("/", 1)[-1]
+        idem_operation = "uai-edit-claim-%s" % operation
+        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, idem_operation, body)
+        if replay:
+            return replay
+        agent_id = body.get("agentId") or body.get("agent_id")
+        claim_id = body.get("claimId") or body.get("claim_id")
+        if operation == "heartbeat":
+            result, error, details = store.heartbeat_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("leaseSeconds") or body.get("lease_seconds"))
+        elif operation == "complete":
+            result, error, details = store.complete_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("newContentHash") or body.get("new_content_hash"), body.get("completionSummary") or body.get("completion_summary"))
+        else:
+            result, error, details = store.release_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("releaseSummary") or body.get("release_summary"))
+        if error:
+            return _uai_error_response(start_response, error, details)
+        claim = result["claim"]
+        head = result["head"]
+        visible_to_sender = _uai_claim_readback_visible(store, workspace_id, claim, head)
+        if not visible_to_sender:
+            return problem(start_response, "500 Internal Server Error", "Edit claim change was not confirmed", "The claim change and canonical head could not be confirmed by exact protected readback.", "uai_edit_claim_not_persisted")
+        payload = {
+            "ok": True,
+            "operation": operation,
+            "claim": claim,
+            "head": head,
+            "persisted": True,
+            "visibleToSender": True,
+            "canonicalClaimId": claim.get("claimId"),
+            "canonicalHeadId": head.get("headId"),
+            "headRevision": head.get("revision"),
+            "claimQueryUrl": _protected_query_url("/api/matm/uai-memory/edit-claims", {"workspace_id": workspace_id, "project_id": claim.get("projectId"), "logical_path": claim.get("logicalPath")}),
+            "headQueryUrl": _protected_query_url("/api/matm/uai-memory/file-heads", {"workspace_id": workspace_id, "project_id": claim.get("projectId"), "logical_path": claim.get("logicalPath")}),
+            "projectMeetingRoomQueryUrl": _protected_query_url("/api/matm/meeting-rooms", {"workspace_id": workspace_id, "agent_id": agent_id, "scope": "project", "scope_id": claim.get("projectId")}),
+            "localContentStored": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(workspace_id, idem, idem_operation, body, payload, "200 OK")
+        return json_response(start_response, payload)
     if path == "/api/matm/memory-events/submit" and method == "POST":
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "memory-submit", body)
         if replay:

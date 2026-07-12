@@ -19,7 +19,7 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 - Free agent workspace setup with a 200 MB quota.
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
-- Protected workspace status, agent registration, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipt and audit routes.
+- Protected workspace status, agent registration, accountless-browser virtual UAIX active memory, hash-only local `.uai` edit coordination, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipt and audit routes.
 - No anonymous tenant wiki: `/knowledge` is an empty authentication shell, and all company/workspace/project pages, search results, and external-link records require a workspace-bound key. Accounts/users are membership identities, not data scopes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
@@ -33,10 +33,14 @@ MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the archi
 | Layer | Location | Purpose |
 | --- | --- | --- |
 | Active startup memory | `.uai/` | Current instructions, constraints, progress state, pointer ledgers, and all files in the startup read order |
+| Accountless-browser active-memory exception | Protected MemoryEndpoints virtual UAIX package | Complete registered-agent startup package only when the browser AI has no durable local filesystem |
+| Concurrent local-agent overlay | Protected MemoryEndpoints file heads and edit claims | Project/path hashes, bounded ownership leases, and public-safe summaries; no local `.uai` body is uploaded |
 | Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory, current messages, notifications, receipts, and redacted audit trails |
 | Public documentation | [MultiAgentMemory.com](https://multiagentmemory.com) and `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
+
+There are two explicit exceptions/augmentations, not a new default. An accountless browser AI with no durable filesystem may bind a complete virtual UAIX package to a registered agent and workspace bearer key. Normal filesystem agents keep `.uai` bodies local; when several agents work in one codebase, they use hash-only project/path edit claims and project-room coordination to reduce simultaneous conflicting edits.
 
 No single catch-all `.uai` file is "the" active memory. Every `.uai/*.uai` file in `.uai/startup-packet.uai` read order is active memory, and active `.uai` stays date-free operational memory.
 
@@ -71,6 +75,7 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 - [Capability matrix](https://memoryendpoints.com/api/matm/live-capability-matrix)
 - [Agent compatibility](https://memoryendpoints.com/api/matm/agent-compatibility)
 - [Sync capabilities](https://memoryendpoints.com/api/matm/sync/capabilities)
+- [UAIX active-memory and local collaboration contract](https://memoryendpoints.com/api/matm/uai-memory/contract)
 - [Bounded OpenAPI contract](https://memoryendpoints.com/api/matm/openapi.json)
 - [Route inventory](https://memoryendpoints.com/api/matm/route-inventory)
 - [Readiness result](https://memoryendpoints.com/api/matm/readiness-result)

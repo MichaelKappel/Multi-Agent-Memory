@@ -63,6 +63,12 @@ class DocumentationFreshnessTests(unittest.TestCase):
             "matm_external_link_mentions",
             "matm_routing_decisions",
             "matm_sync_revisions",
+            "matm_uai_packages",
+            "matm_uai_record_revisions",
+            "matm_uai_collaboration_heads",
+            "matm_uai_edit_claims",
+            "Accountless Browser Exception",
+            "Local Multi-Agent Collaboration Overlay",
             "Readback And Evidence",
             "Local `.uai` remains active startup memory",
             "Bulk archive import is not the dogfood path",
@@ -79,6 +85,9 @@ class DocumentationFreshnessTests(unittest.TestCase):
         )
         self.assertTrue(manifest["documentationFreshness"]["testEnforced"])
         self.assertTrue(manifest["documentationFreshness"]["trackedReportsArePointInTime"])
+        self.assertFalse(manifest["supportBoundary"]["accountlessBrowserVirtualMemoryIsAnonymous"])
+        self.assertFalse(manifest["supportBoundary"]["localUaiContentsStoredForCollaboration"])
+        self.assertFalse(manifest["supportBoundary"]["uaiEditClaimsPerformAutomaticMerge"])
 
     def test_checked_in_engineering_markdown_links_resolve(self):
         excluded_parts = {"reports", "prompts"}

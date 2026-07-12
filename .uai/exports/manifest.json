@@ -1,12 +1,12 @@
 {
   "activeReadOrder": [
+    ".uai/startup-packet.uai",
     ".uai/memory-maintenance.uai",
     ".uai/identity.uai",
     ".uai/world-context.uai",
     ".uai/totem.uai",
     ".uai/taboo.uai",
     ".uai/talisman.uai",
-    ".uai/startup-packet.uai",
     ".uai/system-profile.uai",
     ".uai/receiver-brief.uai",
     ".uai/index.uai",

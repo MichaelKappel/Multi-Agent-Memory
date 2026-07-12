@@ -6,6 +6,8 @@ The schema is organized around MATM responsibilities:
 
 - Account and organization boundary: `matm_accounts`, `matm_companies`, `matm_account_companies`, `matm_workspaces`, `matm_projects`
 - Access boundary: `matm_api_keys`, `matm_agents`
+- Accountless-browser virtual UAIX package: `matm_uai_packages`, `matm_uai_records`, `matm_uai_record_revisions`
+- Local `.uai` collaboration overlay: `matm_uai_collaboration_heads`, `matm_uai_edit_claims`
 - Durable memory: `matm_memory_records`, `matm_memory_revisions`, `matm_memory_tags`
 - Crawlable/searchable knowledge wiki: `matm_crawl_sources`, `matm_search_documents`
 - Curated web index and citations: `matm_external_links`, `matm_external_link_mentions`
@@ -26,6 +28,10 @@ Design rules:
 
 - Store public-safe summaries instead of raw private payloads.
 - Store token hashes, never raw API keys.
+- Bind every full virtual UAIX package to one authenticated workspace and one registered stable agent. Do not provide anonymous or unowned active-memory storage.
+- Store immutable virtual-record revisions and require compare-and-swap `expectedRevision` on updates. Derive package startup readiness from required active records.
+- Keep ordinary local `.uai` bodies out of the database. For simultaneous local agents, store only real project, logical path, SHA-256 head, bounded claim, public-safe intent/completion summaries, and generated lease/audit metadata.
+- Treat an edit claim as cooperating-agent coordination, not an operating-system lock, content transport, or merge result. Completion advances a hash head but never claims that other local copies were updated.
 - Model `project -> workspace -> company`, and model accounts as many-to-many company memberships.
 - Keep current messages separate from promoted durable memory.
 - Model company, workspace, project, goal, and task meeting rooms as first-class durable objects, not as ad hoc current-message broadcasts or UI-only labels.
@@ -38,3 +44,23 @@ Design rules:
 - Reject task-level durable wiki trees. Tasks can have meeting rooms, but durable wiki knowledge must live at company, workspace, or project level.
 - Ingest research reports one file at a time with reviewed title, description, keywords, source URI, category, project placement, and one-or-more taxonomy paths. Pair each wiki document with a compact MATM memory summary so agents can recall the right page without loading full reports into active context.
 - Allow one knowledge document to appear in multiple contextual hierarchies without duplicating the report body. Hierarchy paths are part of the document contract because exact keyword search is insufficient for concepts such as prompt budgets, tokenization, prompt optimization, cost governance, and context management.
+
+## UAIX Table Ownership
+
+`matm_uai_packages` is unique by workspace, agent, and profile. It carries the
+registered agent record relation, client capability declaration, storage mode,
+and derived setup status. `matm_uai_records` is unique by package and logical
+path. `matm_uai_record_revisions` keeps complete immutable protected snapshots
+for conflict recovery and audit.
+
+`matm_uai_collaboration_heads` is unique by workspace, real project, and local
+logical path. It stores only the latest observed SHA-256 hash, monotonic
+revision, and optional active claim pointer. `matm_uai_edit_claims` retains
+owner, base hash, intent, bounded lease, status, and optional completion hash
+and summary. Generated timestamps are relational coordination metadata and are
+not written into active `.uai` content.
+
+All five tables carry `workspace_id`; project claims also carry a foreign key to
+`matm_projects`, and packages or claims carry a foreign key to the registered
+agent record. They participate in workspace quota, outbox, storage-ledger, and
+redacted audit behavior.

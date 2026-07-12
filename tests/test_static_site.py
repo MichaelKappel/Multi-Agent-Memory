@@ -26,6 +26,9 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn("/api/matm/memory-events/submit", text)
         self.assertIn("/api/matm/routing-decisions", text)
         self.assertIn("/api/matm/sync/capabilities", text)
+        self.assertIn("/api/matm/uai-memory/contract", text)
+        self.assertIn("Accountless-browser exception", text)
+        self.assertIn("Local collaboration overlay", text)
 
     def test_api_reference_covers_current_advanced_contracts(self):
         text = (SITE_ROOT / "docs" / "api-reference.html").read_text(encoding="utf-8")
@@ -33,6 +36,9 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn("/api/matm/meeting-messages/promote", text)
         self.assertIn("/api/matm/routing-decisions", text)
         self.assertIn("/api/matm/sync/mutations", text)
+        self.assertIn("/api/matm/uai-memory/records", text)
+        self.assertIn("/api/matm/uai-memory/edit-claims/complete", text)
+        self.assertIn("stores no file body", text)
         self.assertIn("Tracked reports are point-in-time evidence", text)
 
     def test_mobile_tables_have_labels_and_fixed_hero_type(self):
@@ -51,6 +57,10 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertEqual(GITHUB_REPO, manifest["sourceRepository"])
         self.assertEqual(ENDPOINT_SITE, manifest["primaryEndpointSite"])
         self.assertEqual("sites/multiagentmemory.com/", manifest["repositoryMap"]["companionSite"])
+        self.assertEqual(
+            "https://memoryendpoints.com/api/matm/uai-memory/contract",
+            manifest["evidence"]["uaiMemoryContract"],
+        )
 
 
 if __name__ == "__main__":

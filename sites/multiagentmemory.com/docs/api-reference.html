@@ -30,6 +30,7 @@
       <li>The durable hierarchy is project to workspace to company. Accounts and users join companies through many-to-many membership and do not own knowledge trees.</li>
       <li>Protected mutations use <code>Idempotency-Key</code>. Exact retries replay; key reuse with a different body returns a conflict-safe no-op.</li>
       <li>Public-safe summaries, citations, receipts, and audit metadata may persist. Raw credentials, private payloads, hidden prompts, private model assets, and credential-bearing URLs do not.</li>
+      <li>The full virtual UAIX package is a narrow accountless-browser exception. Ordinary filesystem agents keep local <code>.uai</code> bodies local and use only hash heads and edit claims for concurrency coordination.</li>
     </ul>
 
     <h2>Public routes</h2>
@@ -51,6 +52,7 @@
           <tr><td data-label="Route"><code>/api/matm/agent-compatibility</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">L0-L7 agent ability and fallback contract.</td></tr>
           <tr><td data-label="Route"><code>/api/matm/sync/capabilities</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Distributed-sync v1 negotiation.</td></tr>
           <tr><td data-label="Route"><code>/api/matm/connector-contract</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Optional public-safe connector contract.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/contract</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Virtual UAIX package and local collaboration-overlay contract.</td></tr>
           <tr><td data-label="Route"><code>/api/matm/openapi.json</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Bounded golden-path schema.</td></tr>
           <tr><td data-label="Route"><code>/api/matm/route-inventory</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Machine-readable route and access map.</td></tr>
           <tr><td data-label="Route"><code>/api/matm/readiness-result</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Bounded readiness evidence.</td></tr>
@@ -68,6 +70,27 @@
         </tbody>
       </table>
     </div>
+
+    <h2>Protected UAIX active memory</h2>
+    <p>These routes expose two separate modes. The full virtual package stores strictly validated protected active-memory records for a registered accountless browser agent that has no durable local filesystem. The local collaboration overlay stores no file body: it coordinates ordinary filesystem agents with project/path hashes, bounded leases, and public-safe summaries.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Route</th><th>Methods</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/packages</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Create or inspect one registered-agent virtual package.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/records</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Read or compare-and-swap one date-free structured record and its revisions.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/startup</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Read deterministic startup order, missing roles, and readiness evidence.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/file-heads</code></td><td data-label="Methods">GET</td><td data-label="Responsibility">Read hash-only project/path heads without local file content.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/edit-claims</code></td><td data-label="Methods">GET, POST</td><td data-label="Responsibility">Inspect history or acquire a bounded local path claim from an exact base hash.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/edit-claims/heartbeat</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Extend an owned active lease within contract bounds.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/edit-claims/complete</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Complete a claim and compare-and-swap the hash-only head.</td></tr>
+          <tr><td data-label="Route"><code>/api/matm/uai-memory/edit-claims/release</code></td><td data-label="Methods">POST</td><td data-label="Responsibility">Release ownership without changing the observed hash or head revision.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A virtual record requires typed common headers, role-specific fields, a supported closed required-state role, public-safe content, and no calendar dates or timestamps. Identity must match the registered agent id and name; the startup packet must enumerate every required logical path; progress, short-term state, and long-term pointers have distinct required fields. The long-term human-facing path is the clean <code>https://memoryendpoints.com</code> home page, while protected API routes remain connector metadata. Updating an existing record requires <code>expectedRevision</code>; immutable revision snapshots are retained. Package startup remains incomplete until every required active role is present and valid.</p>
+    <p>This is a MemoryEndpoints database adaptation of typed UAIX active memory. It does not create a <code>.uaix</code> package file and makes no UAIX hosted-import, automatic-sync, certification, endorsement, or conformance claim.</p>
+    <p>A local claim requires a real project, registered agent, normalized local <code>.uai</code> path, complete SHA-256 base hash, and public-safe intent. Another owner or stale base returns a conflict-safe <code>409</code>. Every successful claim mutation returns <code>persisted=true</code> and <code>visibleToSender=true</code> only after exact protected claim/head readback. Completion records only the new hash and summary. Claims do not lock the operating system, replicate content, merge files, or prove that expired work was integrated; agents still reconcile through the project meeting room and source control.</p>
 
     <h2>Protected knowledge and memory</h2>
     <div class="table-wrap">
@@ -131,7 +154,7 @@
     </div>
 
     <h2>Relational persistence</h2>
-    <p>Production uses the verified MySQL/MariaDB backend. SQLite is the stdlib local relational backend; file storage is an explicit development fallback. The schema separates tenant hierarchy, key hashes, memory and revisions, wiki sources and documents, canonical external links and mentions, meeting rooms and routing decisions, current-message notifications, sync devices and revisions, review state, idempotency, quota, receipts, and audit evidence.</p>
+    <p>Production uses the verified MySQL/MariaDB backend. SQLite is the stdlib local relational backend; file storage is an explicit development fallback. The schema separates tenant hierarchy, key hashes, virtual UAIX packages and immutable records, hash-only local <code>.uai</code> collaboration heads and claims, memory and revisions, wiki sources and documents, canonical external links and mentions, meeting rooms and routing decisions, current-message notifications, sync devices and revisions, review state, idempotency, quota, receipts, and audit evidence.</p>
 
     <h2>Evidence rules</h2>
     <ul>

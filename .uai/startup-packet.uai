@@ -18,13 +18,13 @@ Bootstrap:
 - Do not use README files, bucket-local guidance, status files, or index files as memory-package substitutes.
 
 Read order:
-1. .uai/memory-maintenance.uai
-2. .uai/identity.uai
-3. .uai/world-context.uai
-4. .uai/totem.uai
-5. .uai/taboo.uai
-6. .uai/talisman.uai
-7. .uai/startup-packet.uai
+1. .uai/startup-packet.uai
+2. .uai/memory-maintenance.uai
+3. .uai/identity.uai
+4. .uai/world-context.uai
+5. .uai/totem.uai
+6. .uai/taboo.uai
+7. .uai/talisman.uai
 8. .uai/system-profile.uai
 9. .uai/receiver-brief.uai
 10. .uai/index.uai

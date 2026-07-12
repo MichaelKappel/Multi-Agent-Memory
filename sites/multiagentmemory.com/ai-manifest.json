@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "multiagentmemory.ai_manifest.v3",
+  "schemaVersion": "multiagentmemory.ai_manifest.v4",
   "name": "MultiAgentMemory.com",
   "url": "https://multiagentmemory.com",
   "role": "github_companion_documentation_site",
@@ -14,10 +14,15 @@
   },
   "memoryBoundary": {
     "activeStartup": "full repository .uai suite listed by startup-packet.uai",
+    "accountlessBrowserException": "protected registered-agent virtual UAIX package when no durable local filesystem exists",
+    "localCollaborationOverlay": "project/path hashes and bounded edit claims only; local .uai contents are not stored",
     "midToLongTerm": "MemoryEndpoints.com protected MATM routes",
     "publicDocumentation": "MultiAgentMemory.com"
   },
   "setupReferences": [
+    "https://uaix.org/en-us/ai-memory/",
+    "https://uaix.org/en-us/ai-memory/uaix-package-format/",
+    "https://uaix.org/en-us/ai-memory/uai-files/",
     "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints",
     "https://memoryendpoints.com"
   ],
@@ -31,6 +36,7 @@
     "liveCapabilityMatrix": "https://memoryendpoints.com/api/matm/live-capability-matrix",
     "version": "https://memoryendpoints.com/api/version",
     "syncCapabilities": "https://memoryendpoints.com/api/matm/sync/capabilities",
+    "uaiMemoryContract": "https://memoryendpoints.com/api/matm/uai-memory/contract",
     "openApi": "https://memoryendpoints.com/api/matm/openapi.json",
     "routeInventory": "https://memoryendpoints.com/api/matm/route-inventory",
     "readinessResult": "https://memoryendpoints.com/api/matm/readiness-result",
@@ -38,6 +44,14 @@
   },
   "protectedRoutePurposes": {
     "agentSetup": "POST /api/matm/agent-setup/free-account",
+    "uaiPackages": "GET, POST /api/matm/uai-memory/packages",
+    "uaiRecords": "GET, POST /api/matm/uai-memory/records",
+    "uaiStartup": "GET /api/matm/uai-memory/startup",
+    "uaiFileHeads": "GET /api/matm/uai-memory/file-heads",
+    "uaiEditClaims": "GET, POST /api/matm/uai-memory/edit-claims",
+    "uaiEditClaimHeartbeat": "POST /api/matm/uai-memory/edit-claims/heartbeat",
+    "uaiEditClaimComplete": "POST /api/matm/uai-memory/edit-claims/complete",
+    "uaiEditClaimRelease": "POST /api/matm/uai-memory/edit-claims/release",
     "memorySubmit": "POST /api/matm/memory-events/submit",
     "memorySearch": "GET /api/matm/search",
     "knowledgeTree": "GET /api/matm/knowledge-tree",
@@ -95,7 +109,10 @@
     "noAutomaticRepositoryWrites": true,
     "secretsAcceptedInPublicDocs": false,
     "externalLinkIndexingAutomaticallyFetchesTargets": false,
-    "credentialBearingExternalUrlsAccepted": false
+    "credentialBearingExternalUrlsAccepted": false,
+    "accountlessBrowserVirtualMemoryIsAnonymous": false,
+    "localUaiContentsStoredForCollaboration": false,
+    "uaiEditClaimsPerformAutomaticMerge": false
   },
   "documentationFreshness": {
     "checkedInRouteTable": "memoryendpoints/site_data.py ROUTE_TABLE",

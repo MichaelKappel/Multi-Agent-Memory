@@ -92,6 +92,8 @@ The canonical SQL schema separates responsibilities instead of storing one opaqu
 
 - Tenant graph: `matm_accounts`, `matm_companies`, `matm_account_companies`, `matm_workspaces`, `matm_projects`.
 - Access: `matm_api_keys`, `matm_agents`.
+- Accountless-browser UAIX packages: `matm_uai_packages`, `matm_uai_records`, `matm_uai_record_revisions`.
+- Local `.uai` collaboration metadata: `matm_uai_collaboration_heads`, `matm_uai_edit_claims`.
 - Durable memory: `matm_memory_records`, `matm_memory_revisions`, `matm_memory_tags`.
 - Knowledge wiki: `matm_crawl_sources`, `matm_search_documents`.
 - Curated web index: `matm_external_links`, `matm_external_link_mentions`.
@@ -116,6 +118,91 @@ Memory submission is review-aware rather than an unconditional append:
 Memory types include fact, decision, status, procedure, risk, evidence, handoff, and note. Scope, source reference, lifecycle, review state, tags, and actor remain separately queryable.
 
 Local `.uai` remains active startup memory regardless of hosted availability. Hosted memory augments recall; it does not erase the offline startup contract.
+
+## UAIX Active-Memory Modes
+
+MemoryEndpoints supports two active-memory modes with different ownership and
+persistence boundaries. They share workspace authentication and registered
+agent identity, but they must never be silently interchanged.
+
+### Accountless Browser Exception
+
+The normal architecture keeps `.uai` on the local filesystem. A browser-only AI
+without durable filesystem access cannot satisfy that continuity rule, so it may
+create one protected virtual package bound to:
+
+- Authenticated workspace.
+- Stable registered agent ID and display name.
+- `accountless_browser_ai` client class.
+- Explicit `localFilesystemAvailable=false` capability.
+- Versioned UAIX virtual-package profile.
+
+The package stores supported logical UAIX records, protected public-safe body,
+SHA-256 body hash, byte count, revision, role, startup order, status, accepted
+firewall evidence, and immutable revision snapshots. The virtual logical
+`.uai/short-term-memory.uai` role creates no local file. It therefore does not
+change the repository rule that forbids an actual local file with that name.
+
+The startup packet is the read-order index. Universal startup roles include
+startup packet, memory maintenance, identity, world context, Totem, Taboo,
+Talisman, and progress. The accountless-browser short-term role and durable
+pointer ledger are configuration-specific. Identity content is bound to the
+current registered agent id and display name; a rename makes startup incomplete
+until the identity record is revision-safely updated. Startup packet content
+must enumerate every required logical path.
+
+Package creation begins in `setup_required`. Readiness is derived from current
+active records rather than a caller-supplied flag. Startup returns records in a
+deterministic order and refuses to describe partial setup as complete. Active
+record bodies must be date-free, structurally typed, bounded, and accepted by
+the memory firewall before persistence. Updates require compare-and-swap
+revision checks and exact protected readback.
+
+This is a MemoryEndpoints database adaptation, not a `.uaix` package file or a
+claim of UAIX hosted import, automatic sync, certification, or conformance.
+
+This exception is not anonymous storage. The embedding product may have no user
+account system of its own, but the MemoryEndpoints workspace bearer key remains
+the authorization boundary and the registered agent remains the memory owner
+inside that workspace.
+
+### Local Multi-Agent Collaboration Overlay
+
+Filesystem agents keep their `.uai` bodies local. MemoryEndpoints stores only a
+coordination overlay for a real project and logical local path:
+
+- Latest observed SHA-256 content hash and monotonic head revision.
+- Active claim owner and bounded lease metadata.
+- Public-safe edit intent.
+- Completion hash and completion or release summary.
+- Status, audit, outbox, and quota-ledger evidence.
+
+An agent hashes the unchanged local file and acquires a claim before editing.
+The storage transaction creates or locks the project/path head, expires stale
+leases, checks for an active owner, compares the caller's base hash, and grants
+one claim. Another cooperating agent receives a conflict-safe `409` with the
+safe owner and head metadata. Completion compares the original base again,
+advances only the hash head, clears the lease, and retains claim history.
+
+The overlay never receives file content or a patch. It does not write local
+files, distribute an updated file, merge changes, or prove that work from an
+expired lease was integrated. Agents still use source control, file handoff,
+and the protected project meeting room to exchange and reconcile content. The
+claim is a transactional coordination protocol for cooperating agents, not an
+operating-system lock.
+
+### Credential And Failure Boundary
+
+Browser connectors default to an in-memory bearer key. Persistent key storage
+requires explicit opt-in and encryption with an unlock secret that is not
+persisted. Same-origin script compromise remains outside what browser storage
+can prevent, so CSP, dependency integrity, and XSS controls are required.
+
+The workspace key is never package content, collaboration metadata, a URL,
+query parameter, prompt, console value, analytics field, or compiled asset. If
+the accountless browser cannot reach MemoryEndpoints, it must surface that its
+continuity source is unavailable rather than fabricate remembered state. A
+filesystem agent continues from local `.uai` during the same outage.
 
 ## Knowledge Wiki
 
@@ -213,7 +300,7 @@ The retention route advertises tombstone and hard-forget policy. Sync does not c
 
 ## Readback And Evidence
 
-Mutation success is not defined as “the storage call returned.” Important writes confirm visibility in the relevant read model:
+Mutation success is not defined as "the storage call returned." Important writes confirm visibility in the relevant read model:
 
 - Memory submit: search, review queue, and audit log.
 - Knowledge upsert: document query, semantic search, wiki tree, and audit log.
@@ -222,12 +309,14 @@ Mutation success is not defined as “the storage call returned.” Important wr
 - Routing decision: decision query plus source and destination transcript metadata.
 - Current message: target inbox/current-message visibility.
 - Sync mutation: immutable revision, head, receipt, and checkpoint sequence.
+- Virtual UAIX record: package, logical path, record ID, revision, and content hash.
+- Local `.uai` edit claim: claim ID, project/path head, lease owner, and head revision; completion confirms the new hash-only head.
 
 Confirmation fields such as `persisted`, canonical IDs, visibility booleans, and safe query URLs are part of the contract. A route must not return normal success when required readback fails.
 
 ## Privacy And No-Op Boundary
 
-The system stores public-safe summaries rather than arbitrary private payloads. It rejects or redacts secret-like material and prevents credential values from appearing in reports, public pages, receipts, audit details, or error envelopes.
+The system stores public-safe summaries rather than arbitrary private payloads. It rejects or redacts secret-like material and prevents credential values from appearing in reports, public pages, receipts, audit details, or error envelopes. The accountless-browser exception stores a protected active record body only after strict date, structure, size, and memory-firewall validation. The local collaboration overlay never stores the local file body.
 
 Unsupported, unauthorized, malformed, quota-blocked, and conflict-gated actions return stable redacted failures. Safe no-op means the system reports that it did not perform the requested action; it does not mean an error is hidden or treated as success.
 
@@ -269,6 +358,7 @@ GitHub Actions is retained but is not the operator-required completion gate. Loc
 - `memoryendpoints/storage.py`: file, SQLite, and MySQL/MariaDB storage behavior and read models.
 - `memoryendpoints/site_data.py`: route table, discovery records, compatibility, connector contract, and public evidence models.
 - `memoryendpoints/security.py`: memory firewall and redaction helpers.
+- `memoryendpoints/uai_memory.py`: UAIX virtual-package roles, date-free validation, accountless-browser exception, and local collaboration contract.
 - `docs/database-schema-canonical.sql`: canonical relational schema.
 - `scripts/`: package, deploy, route, MySQL, dogfood, secret, `.uai`, repository, and readiness verifiers.
 - `tests/`: contract, integration, parity, concurrency, UI-source, documentation, and verifier tests.

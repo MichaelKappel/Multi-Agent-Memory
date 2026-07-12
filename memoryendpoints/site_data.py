@@ -1,6 +1,7 @@
 from . import __version__
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, SITE_NAME, SITE_URL, utc_now
 from .runtime import configured_store_backend, mysql_backend_name, store_backend_health
+from .uai_memory import virtual_uai_contract
 
 
 ROUTE_TABLE = [
@@ -18,6 +19,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/agent-compatibility", "access": "public", "methods": ["GET"], "purpose": "L0-L7 agent ability contract, fallbacks, and route-record guidance."},
     {"route": "/api/matm/sync/capabilities", "access": "public", "methods": ["GET"], "purpose": "Public distributed-sync v1 capability negotiation."},
     {"route": "/api/matm/connector-contract", "access": "public", "methods": ["GET"], "purpose": "Public-safe optional connector integration contract for external agents and apps."},
+    {"route": "/api/matm/uai-memory/contract", "access": "public", "methods": ["GET"], "purpose": "Public contract for protected database-backed UAIX active memory used by accountless browser agents."},
     {"route": "/api/matm/openapi.json", "access": "public", "methods": ["GET"], "purpose": "Bounded OpenAPI-style golden-path route schema."},
     {"route": "/api/matm/route-inventory", "access": "public", "methods": ["GET"], "purpose": "Route inventory with access boundaries."},
     {"route": "/api/matm/readiness-result", "access": "public", "methods": ["GET"], "purpose": "AI-ready web readiness evidence."},
@@ -41,6 +43,14 @@ ROUTE_TABLE = [
     {"route": "/api/matm/external-links/upsert", "access": "protected", "methods": ["POST"], "purpose": "Idempotent protected external-link and knowledge-citation upsert alias."},
     {"route": "/api/matm/internet-search", "access": "protected", "methods": ["GET"], "purpose": "Search the workspace's reviewed curated-web link index."},
     {"route": "/api/matm/agents/register", "access": "protected", "methods": ["POST"], "purpose": "Agent registration."},
+    {"route": "/api/matm/uai-memory/packages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Create or inspect a registered agent's protected virtual UAIX active-memory package."},
+    {"route": "/api/matm/uai-memory/records", "access": "protected", "methods": ["GET", "POST"], "purpose": "Read or revision-safely write one date-free public-safe virtual UAIX record at a time."},
+    {"route": "/api/matm/uai-memory/startup", "access": "protected", "methods": ["GET"], "purpose": "Read an agent-bound virtual UAIX package in deterministic startup order with readiness evidence."},
+    {"route": "/api/matm/uai-memory/file-heads", "access": "protected", "methods": ["GET"], "purpose": "Read hash-only project file heads for local .uai multi-agent edit coordination without file content."},
+    {"route": "/api/matm/uai-memory/edit-claims", "access": "protected", "methods": ["GET", "POST"], "purpose": "Inspect or acquire bounded project-scoped claims before editing a local .uai path."},
+    {"route": "/api/matm/uai-memory/edit-claims/heartbeat", "access": "protected", "methods": ["POST"], "purpose": "Extend an owned active local .uai edit claim within the bounded lease window."},
+    {"route": "/api/matm/uai-memory/edit-claims/complete", "access": "protected", "methods": ["POST"], "purpose": "Complete an owned claim and compare-and-swap the hash-only local .uai file head."},
+    {"route": "/api/matm/uai-memory/edit-claims/release", "access": "protected", "methods": ["POST"], "purpose": "Release an owned local .uai edit claim without changing the observed file head."},
     {"route": "/api/matm/memory-events/submit", "access": "protected", "methods": ["POST"], "purpose": "Workspace memory summary write with hosted search and review-queue readback confirmation."},
     {"route": "/api/matm/memory-events", "access": "protected", "methods": ["GET"], "purpose": "Workspace memory event search."},
     {"route": "/api/matm/search", "access": "protected", "methods": ["GET"], "purpose": "Hosted workspace memory search."},
@@ -109,7 +119,7 @@ AGENT_ABILITY_LEVELS = [
         "label": "Browser-assisted form operator",
         "canUse": ["visible setup page", "console-assisted flow", "authenticated wiki shell", "copy-safe examples"],
         "memoryAuthority": "human-supplied workspace key only",
-        "memoryEndpointsPath": ["/agent-setup", "/agent-coordination", "/console", "/knowledge"],
+        "memoryEndpointsPath": ["/agent-setup", "/agent-coordination", "/console", "/knowledge", "/api/matm/uai-memory/contract"],
         "fallback": "Ask the human to complete setup or provide a workspace key through a secure local setting.",
     },
     {
@@ -117,7 +127,7 @@ AGENT_ABILITY_LEVELS = [
         "label": "Schema-capable HTTP JSON agent",
         "canUse": ["OpenAPI-style JSON", "structured POST", "safe no-op errors"],
         "memoryAuthority": "workspace-key protected public-safe summaries and protected knowledge rows",
-        "memoryEndpointsPath": ["/api/matm/openapi.json", "/api/matm/memory-events/submit", "/api/matm/search", "/api/matm/knowledge-documents", "/api/matm/internet-search"],
+        "memoryEndpointsPath": ["/api/matm/openapi.json", "/api/matm/uai-memory/packages", "/api/matm/uai-memory/records", "/api/matm/uai-memory/startup", "/api/matm/memory-events/submit", "/api/matm/search", "/api/matm/knowledge-documents", "/api/matm/internet-search"],
         "fallback": "Use idempotent POST only when the workspace key and required fields are explicit; otherwise no-op.",
     },
     {
@@ -125,7 +135,7 @@ AGENT_ABILITY_LEVELS = [
         "label": "Authenticated owner agent",
         "canUse": ["workspace boundary", "protected mutations", "database wiki tree", "audit and receipts"],
         "memoryAuthority": "owned workspace scope with redaction and audit",
-        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
+        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
         "fallback": "If auth, scope, idempotency, or provenance is missing, return auth_required or human_review_required.",
     },
     {
@@ -149,7 +159,7 @@ AGENT_ABILITY_LEVELS = [
         "label": "Site-specific capability negotiator",
         "canUse": ["manifest negotiation", "connector contract", "sync capability contract"],
         "memoryAuthority": "site-specific only when advertised by public manifest and protected auth",
-        "memoryEndpointsPath": ["/ai-manifest.json", "/api/matm/connector-contract", "/api/matm/live-capability-matrix", "/api/matm/sync/capabilities"],
+        "memoryEndpointsPath": ["/ai-manifest.json", "/api/matm/connector-contract", "/api/matm/uai-memory/contract", "/api/matm/live-capability-matrix", "/api/matm/sync/capabilities"],
         "fallback": "Downgrade to L0/L1 when a capability is not listed, auth is unavailable, or an unsupported operation is requested.",
     },
 ]
@@ -185,7 +195,7 @@ def _route_agent_guidance(item):
     has_post = "POST" in methods
     is_public_api = route.startswith("/api/")
     is_static_discovery = route in ("/", "/docs", "/docs/", "/agent-setup", "/agent-coordination", "/console", "/knowledge", "/memory-lifecycle", "/transparency", "/robots.txt", "/sitemap.xml", "/llms.txt", "/llms-full.txt", "/ai.txt")
-    is_json_discovery = route in ("/ai-manifest.json", "/.well-known/mcp.json", "/.well-known/ai-agent.json", "/mcp/resources", "/api/version", "/api/matm/live-capability-matrix", "/api/matm/agent-compatibility", "/api/matm/connector-contract", "/api/matm/openapi.json", "/api/matm/route-inventory", "/api/matm/readiness-result", "/api/matm/redacted-example-receipts", "/api/matm/sync/capabilities")
+    is_json_discovery = route in ("/ai-manifest.json", "/.well-known/mcp.json", "/.well-known/ai-agent.json", "/mcp/resources", "/api/version", "/api/matm/live-capability-matrix", "/api/matm/agent-compatibility", "/api/matm/connector-contract", "/api/matm/uai-memory/contract", "/api/matm/openapi.json", "/api/matm/route-inventory", "/api/matm/readiness-result", "/api/matm/redacted-example-receipts", "/api/matm/sync/capabilities")
 
     if access == "public" and is_static_discovery:
         return {
@@ -322,13 +332,13 @@ def agent_compatibility_contract():
             "staticHtml": {"lowestLevel": "L0", "routes": ["/", "/docs", "/agent-setup", "/agent-coordination", "/console", "/knowledge", "/transparency"]},
             "llmsTxt": {"lowestLevel": "L0", "routes": ["/llms.txt", "/llms-full.txt", "/ai.txt"]},
             "sitemap": {"lowestLevel": "L0", "routes": ["/sitemap.xml"]},
-            "jsonDiscovery": {"lowestLevel": "L1", "routes": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/route-inventory", "/api/matm/readiness-result"]},
+            "jsonDiscovery": {"lowestLevel": "L1", "routes": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/uai-memory/contract", "/api/matm/route-inventory", "/api/matm/readiness-result"]},
             "browserForms": {"lowestLevel": "L2", "routes": ["/agent-setup", "/agent-coordination", "/console", "/knowledge"]},
-            "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/memory-events/submit", "/api/matm/knowledge-documents", "/api/matm/external-links", "/api/matm/meeting-messages"]},
-            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log"]},
+            "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/uai-memory/packages", "/api/matm/uai-memory/records", "/api/matm/memory-events/submit", "/api/matm/knowledge-documents", "/api/matm/external-links", "/api/matm/meeting-messages"]},
+            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log"]},
             "restoreReadback": {"lowestLevel": "L5", "routes": ["/api/matm/search", "/api/matm/current-message", "/api/matm/sync/receipts", "/api/matm/sync/changes"]},
             "multiAgent": {"lowestLevel": "L6", "routes": ["/api/matm/meeting-rooms", "/api/matm/routing-decisions", "/api/matm/agent-messages"]},
-            "siteSpecificNegotiation": {"lowestLevel": "L7", "routes": ["/api/matm/live-capability-matrix", "/api/matm/connector-contract", "/api/matm/sync/capabilities"]},
+            "siteSpecificNegotiation": {"lowestLevel": "L7", "routes": ["/api/matm/live-capability-matrix", "/api/matm/connector-contract", "/api/matm/uai-memory/contract", "/api/matm/sync/capabilities"]},
         },
         "fallbackPolicy": {
             "postUnavailable": "Use /agent-coordination or /console for browser-assisted flow; otherwise stop with human_review_required.",
@@ -343,6 +353,7 @@ def agent_compatibility_contract():
             "Make route-record compatibility fields validator-addressable: lowest safe level, highest supported level, side-effect status, fetch class, required fields, readback URL, browser equivalent, fallbacks, human review URL, and no-op behavior.",
             "Make the wizard generate L0/L1 fallback routes beside OpenAPI or MCP output so low-capability agents are not stranded on POST-only or JavaScript-only flows.",
             "Require memory guidance to preserve local .uai active memory even when hosted memory endpoints are unavailable, then route public-safe durable memory to the hosted system.",
+            "Document the narrow accountless-browser exception separately from normal local .uai guidance, and recommend hash-only edit claims for concurrent local agents instead of centralizing every active file.",
             "Warn when examples and real credentials share the same prompt block; require machine-readable auth blocks with placeholder-only examples.",
         ],
         "truthBoundary": {
@@ -432,6 +443,8 @@ def capability_matrix():
         },
         "memoryLevels": [
             {"level": "active_startup_suite", "status": "live", "storage": ".uai/*.uai listed by .uai/startup-packet.uai"},
+            {"level": "accountless_browser_active_memory", "status": "live", "storage": "registered-agent virtual UAIX records in protected database tables; narrow no-local-filesystem exception only"},
+            {"level": "local_uai_collaboration_overlay", "status": "live", "storage": "project/path hashes, bounded edit claims, and public-safe summaries only; local .uai content remains local"},
             {"level": "account_company_membership", "status": "live", "storage": "account-company membership links; accounts and companies can be many-to-many"},
             {"level": "company", "status": "live", "storage": "company-owned workspaces"},
             {"level": "project", "status": "live", "storage": "hosted project-scoped MATM memory records"},
@@ -545,6 +558,7 @@ def capability_matrix():
                 "allowedHeaders": ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"],
             },
         },
+        "virtualUaiMemory": virtual_uai_contract(),
         "agentCompatibility": {
             "status": "live",
             "route": "/api/matm/agent-compatibility",
@@ -597,7 +611,7 @@ def connector_contract():
         "generatedAt": utc_now(),
         "status": "public_safe_contract",
         "purpose": "Stable public contract for optional MemoryEndpoints connectors in desktop apps, local runtimes, and agent tools.",
-        "audience": ["external_agent", "desktop_app_plugin", "local_runtime_connector", "operator_console"],
+        "audience": ["external_agent", "desktop_app_plugin", "local_runtime_connector", "accountless_browser_ai", "operator_console"],
         "truthBoundary": {
             "protectedWritesRequireWorkspaceKey": True,
             "rawWorkspaceKeysInPublicResponses": False,
@@ -647,7 +661,7 @@ def connector_contract():
             {"name": "label", "required": True, "example": "MemoryEndpoints.com"},
             {"name": "kind", "required": True, "example": "optional_memory_connector"},
             {"name": "baseUrl", "required": True, "example": SITE_URL},
-            {"name": "capabilities", "required": True, "example": ["save_memory", "search_memory", "knowledge_wiki", "meeting_rooms", "current_messages"]},
+            {"name": "capabilities", "required": True, "example": ["save_memory", "search_memory", "virtual_uai_active_memory", "local_uai_edit_claims", "knowledge_wiki", "meeting_rooms", "current_messages"]},
             {"name": "publicSafeOnly", "required": True, "example": True},
             {"name": "requiresUserWorkspaceKey", "required": True, "example": True},
             {"name": "secretStorage", "required": True, "example": "os_credential_vault_or_user_approved_secret_store"},
@@ -684,7 +698,15 @@ def connector_contract():
                 "auth": "workspace_key",
                 "query": ["workspace_id"],
             },
+            {
+                "step": "choose_active_memory_mode",
+                "route": "/api/matm/uai-memory/contract",
+                "method": "GET",
+                "auth": "public",
+                "result": "Choose the full virtual package only for an accountless browser AI with no durable local filesystem; normal local agents use the hash-only collaboration overlay.",
+            },
         ],
+        "uaiMemoryFlow": virtual_uai_contract(),
         "memoryFlow": {
             "submitRoute": "/api/matm/memory-events/submit",
             "searchRoute": "/api/matm/search",
@@ -745,6 +767,8 @@ def connector_contract():
         },
         "memoryClassificationRules": [
             "Active startup memory stays local in .uai and must remain usable when MemoryEndpoints.com is unreachable.",
+            "Narrow exception: an accountless browser AI with no durable local filesystem may bind a complete virtual UAIX active-memory package to its registered agent id and protected workspace key.",
+            "Normal local agents never upload .uai bodies for collaboration; they coordinate project/path hashes, edit intent, short leases, and completion hashes through the local .uai collaboration overlay.",
             "Short-term operational notes can be posted to meeting rooms or current messages when they are coordination, not durable memory.",
             "Short-term memory worth future retrieval should be submitted as memoryType=status or note with tags such as short-term, goal:<id>, or task:<id>.",
             "Long-term decisions, procedures, evidence, risks, and handoffs should be submitted as protected memory events and promoted through review.",
@@ -795,6 +819,7 @@ def connector_contract():
         },
         "recommendedConnectorUi": [
             "Settings: base URL, workspace id, agent id, masked workspace key, and a test-connection action.",
+            "Active memory: show either virtual UAIX startup readiness for the accountless-browser exception or local .uai file-head and edit-claim status for filesystem agents; never silently switch modes.",
             "Memory: save public-safe summary, search hosted workspace memory, and show review status.",
             "Meetings: list company/workspace/project/goal/task rooms, create goal or task rooms, post public-safe room notes, promote durable evidence to memory, and mark room read.",
             "Inbox: read current messages for the configured agent and acknowledge notifications.",
@@ -807,7 +832,7 @@ def connector_contract():
         ],
         "responseContract": {
             "successEnvelope": ["ok", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
-            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToRoutedAgent", "visibleToAgent", "visibleToAgents", "visibleInSearch", "visibleInReviewQueue", "visibleInAuditLog", "expectedRecipientCount", "visibleRecipientCount", "canonicalRoomId", "canonicalTargetAgentId", "canonicalRoutingDecisionId", "canonicalMemoryEventId", "messageId", "notificationId", "notificationIds", "roomQueryUrl", "routingDecisionQueryUrl", "transcriptQueryUrl", "destinationTranscriptQueryUrl", "memoryQueryUrl", "reviewQueueUrl", "auditLogUrl", "inboxQueryUrl"],
+            "postConfirmationFields": ["persisted", "visibleToSender", "visibleToTarget", "visibleToRoutedAgent", "visibleToAgent", "visibleToAgents", "visibleInSearch", "visibleInReviewQueue", "visibleInAuditLog", "expectedRecipientCount", "visibleRecipientCount", "canonicalRoomId", "canonicalTargetAgentId", "canonicalRoutingDecisionId", "canonicalMemoryEventId", "canonicalPackageId", "canonicalRecordId", "canonicalClaimId", "canonicalHeadId", "messageId", "notificationId", "notificationIds", "roomQueryUrl", "routingDecisionQueryUrl", "transcriptQueryUrl", "destinationTranscriptQueryUrl", "memoryQueryUrl", "reviewQueueUrl", "auditLogUrl", "inboxQueryUrl", "packageQueryUrl", "recordQueryUrl", "startupQueryUrl", "claimQueryUrl", "headQueryUrl"],
             "safeFailureEnvelope": ["ok=false", "safeNoOp=true", "valuesRedacted=true", "rawCredentialExposed=false", "rawPayloadExposed=false"],
             "operatorSummaries": "Protected API responses include compact operatorSummary objects where useful so connector UIs do not need to parse raw debug JSON.",
             "idempotency": "Protected mutation routes support Idempotency-Key except one-time setup.",
@@ -815,6 +840,7 @@ def connector_contract():
         "publicDiscovery": {
             "capabilityMatrix": "/api/matm/live-capability-matrix",
             "agentCompatibility": "/api/matm/agent-compatibility",
+            "uaiMemoryContract": "/api/matm/uai-memory/contract",
             "openApi": "/api/matm/openapi.json",
             "routeInventory": "/api/matm/route-inventory",
             "readiness": "/api/matm/readiness-result",
@@ -856,6 +882,7 @@ def openapi_spec():
                 "400": safe_problem,
                 "401": safe_problem,
                 "404": safe_problem,
+                "409": safe_problem,
                 "422": safe_problem,
             },
         }
@@ -879,6 +906,7 @@ def openapi_spec():
 
     paths = {
         "/api/matm/connector-contract": {"get": public_operation("Read connector contract", "Public-safe integration contract, browser key guidance, CORS boundary, and UI expectations.")},
+        "/api/matm/uai-memory/contract": {"get": public_operation("Read UAIX active-memory contract", "Read the narrow accountless-browser virtual-package exception and hash-only local .uai collaboration-overlay contract.")},
         "/api/matm/live-capability-matrix": {"get": public_operation("Read capability matrix", "Current public capability state and truth boundaries.")},
         "/api/matm/agent-compatibility": {"get": public_operation("Read agent compatibility contract", "L0-L7 agent ability levels, route-record guidance, fallback policy, and UAIX dogfood feedback.")},
         "/api/matm/sync/capabilities": {"get": public_operation("Read distributed sync capabilities", "Public-safe distributed-sync v1 routes, revision/conflict semantics, checkpoint fields, and retention policy.")},
@@ -914,6 +942,23 @@ def openapi_spec():
         "/api/matm/external-links/upsert": {"post": protected_operation("Upsert external link", "Idempotent protected alias for external-link and citation upsert.", "post", True)},
         "/api/matm/internet-search": {"get": protected_operation("Search curated web", "Search reviewed URL, site, page title, description, keywords, and citation context as an authenticated internet-search index.")},
         "/api/matm/agents/register": {"post": protected_operation("Register agent", "Register or refresh a stable public-safe agent id.", "post", True)},
+        "/api/matm/uai-memory/packages": {
+            "get": protected_operation("Read virtual UAIX packages", "Inspect registered-agent virtual UAIX package readiness without exposing a workspace key."),
+            "post": protected_operation("Create virtual UAIX package", "Create the full database-backed active-memory exception only for an accountless browser AI without durable local filesystem access.", "post", True),
+        },
+        "/api/matm/uai-memory/records": {
+            "get": protected_operation("Read virtual UAIX records", "Read protected date-free public-safe records or immutable revision history for one registered agent package."),
+            "post": protected_operation("Write one virtual UAIX record", "Create or compare-and-swap one supported logical UAIX record with exact protected readback.", "post", True),
+        },
+        "/api/matm/uai-memory/startup": {"get": protected_operation("Read virtual UAIX startup", "Return the protected virtual package in deterministic startup order with missing-record and readiness evidence.")},
+        "/api/matm/uai-memory/file-heads": {"get": protected_operation("Read local .uai file heads", "Read project/path SHA-256 heads and active claim metadata; local file contents are never stored.")},
+        "/api/matm/uai-memory/edit-claims": {
+            "get": protected_operation("Read local .uai edit claims", "Inspect project-scoped active, completed, released, and expired hash-only edit claims."),
+            "post": protected_operation("Acquire local .uai edit claim", "Acquire a bounded project/path lease only when the caller's local base hash matches the latest observed head.", "post", True),
+        },
+        "/api/matm/uai-memory/edit-claims/heartbeat": {"post": protected_operation("Heartbeat local .uai edit claim", "Extend an owned active claim within the bounded lease window.", "post", True)},
+        "/api/matm/uai-memory/edit-claims/complete": {"post": protected_operation("Complete local .uai edit claim", "Advance the hash-only file head using compare-and-swap and retain public-safe completion evidence.", "post", True)},
+        "/api/matm/uai-memory/edit-claims/release": {"post": protected_operation("Release local .uai edit claim", "Release an owned active claim without advancing the observed file hash.", "post", True)},
         "/api/matm/memory-events/submit": {"post": protected_operation("Submit memory event", "Save a public-safe hosted memory summary; raw private payloads and credentials are rejected/redacted.", "post", True)},
         "/api/matm/search": {"get": protected_operation("Search hosted memory", "Search scoped hosted workspace memory using query, exact event id, scope, source prefix, tag, memory type, review status, and promotion filters.")},
         "/api/matm/review-queue": {"get": protected_operation("Read review queue", "Read memory review and long-term-memory promotion health without parsing raw debug JSON.")},
@@ -1087,6 +1132,7 @@ def manifest():
             "capabilityMatrix": "%s/api/matm/live-capability-matrix" % SITE_URL,
             "agentCompatibility": "%s/api/matm/agent-compatibility" % SITE_URL,
             "connectorContract": "%s/api/matm/connector-contract" % SITE_URL,
+            "uaiMemoryContract": "%s/api/matm/uai-memory/contract" % SITE_URL,
             "openApi": "%s/api/matm/openapi.json" % SITE_URL,
             "sitemap": "%s/sitemap.xml" % SITE_URL,
             "llmsTxt": "%s/llms.txt" % SITE_URL,
@@ -1105,6 +1151,12 @@ def manifest():
             "contract": "%s/api/matm/agent-compatibility" % SITE_URL,
             "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],
             "unknownClientDefault": "downgrade_to_L0_or_L1",
+        },
+        "uaiMemory": {
+            "contract": "%s/api/matm/uai-memory/contract" % SITE_URL,
+            "fullVirtualPackageException": "accountless_browser_ai_without_durable_local_filesystem",
+            "localCollaborationOverlayStoresFileContent": False,
+            "registeredAgentAndWorkspaceKeyRequired": True,
         },
     }
 
@@ -1182,6 +1234,16 @@ def readiness_result():
                 "id": "optional_connector_contract",
                 "status": "pass_local",
                 "evidence": ["/api/matm/connector-contract", "public-safe connector setup, memory, meeting, inbox, receipt, and audit guidance"],
+            },
+            {
+                "id": "uaix_active_memory_modes",
+                "status": "pass_local",
+                "evidence": [
+                    "/api/matm/uai-memory/contract",
+                    "registered-agent accountless-browser virtual package with immutable record revisions",
+                    "hash-only project/path collaboration heads and bounded edit claims",
+                    "tests/test_uai_memory.py",
+                ],
             },
             {
                 "id": "protected_operation_audit_trail",

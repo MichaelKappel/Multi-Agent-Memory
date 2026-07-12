@@ -15,7 +15,9 @@ Current governing decisions:
 - Keep `E:\MemoryEndpoints.com` as the single source of truth for MemoryEndpoints.com and MultiAgentMemory.com content.
 - Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
 - Keep active `.uai` date-free active operational memory only.
-- Do not add `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent under any purpose or interpretation.
+- Do not add actual local `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent. An accountless-browser virtual package may represent its configuration-specific short-term logical role because it creates no local file.
+- Permit a complete database-backed virtual UAIX package only when a client explicitly has no durable local filesystem. It still requires a workspace bearer key, registered stable agent, one-record-at-a-time writes, date-free typed content, immutable revision history, and complete startup readiness.
+- For multiple local agents in one project, keep `.uai` contents local and coordinate each shared path through hash-only heads, bounded edit claims, and the project meeting room. Never claim that a lease automatically locks, distributes, or merges local files.
 - Store checked-in implementation detail in current engineering docs, reviewed durable knowledge in protected MATM records, and point-in-time verifier output under ignored `var/reports/`; then point to those from typed `.uai` files.
 - Store company, workspace, and project knowledge trees as protected database records, not as generated filesystem trees. Filesystem reports can be temporary evidence or source input, but crawlable/searchable company knowledge belongs in the database source of truth.
 - Never expose a password-free public wiki or public knowledge index. The `/knowledge` page is an empty authentication shell until a workspace key succeeds; wiki trees, pages, search results, and external-link records remain protected and tenant-isolated.

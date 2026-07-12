@@ -16,10 +16,11 @@ FORBIDDEN_ACTIVE_MEMORY_FILENAMES = {
     "working-state.uai",
 }
 FORBIDDEN_ACTIVE_MEMORY_POLICY = (
-    "The .uai folder is the active startup memory suite; files named "
+    "The local .uai folder is the active startup memory suite; actual local files named "
     "short-term-memory.uai, current-state.uai, active-memory.uai, "
-    "project-state.uai, or working-state.uai are forbidden under any purpose "
-    "or interpretation, even while public UAIX wizard guidance catches up."
+    "project-state.uai, or working-state.uai are forbidden. A protected virtual UAIX "
+    "package for an accountless browser may represent its configuration-specific short-term-memory "
+    "logical role in database records because it creates no local file."
 )
 REQUIRED_FIELDS = [
     "Purpose:",
@@ -32,13 +33,13 @@ REQUIRED_FIELDS = [
     "Must not expose:",
 ]
 STARTUP_READ_ORDER = [
+    ".uai/startup-packet.uai",
     ".uai/memory-maintenance.uai",
     ".uai/identity.uai",
     ".uai/world-context.uai",
     ".uai/totem.uai",
     ".uai/taboo.uai",
     ".uai/talisman.uai",
-    ".uai/startup-packet.uai",
     ".uai/system-profile.uai",
     ".uai/receiver-brief.uai",
     ".uai/index.uai",
@@ -260,13 +261,14 @@ def main(argv=None):
         "startupReadOrderMatchesExpected": read_order_matches,
         "manifestReadOrder": manifest_order,
         "manifestReadOrderMatchesExpected": manifest_read_order_matches,
-        "startupReadOrderMemoryMaintenanceFirst": bool(
-            read_order and read_order[0] == ".uai/memory-maintenance.uai"
+        "startupReadOrderBootstrapFirst": bool(
+            read_order and read_order[0] == BOOTSTRAP_FILE
         ),
         "anchorFilesPresent": all((UAI_DIR / name).exists() for name in ("totem.uai", "taboo.uai", "talisman.uai")),
         "localUaiStaysActiveAlways": local_uai_stays_active,
         "dateFreeHotMemory": all(item["dateFree"] for item in items),
         "noForbiddenActiveMemoryFilename": not forbidden_active_memory_files,
+        "accountlessBrowserVirtualLogicalRoleCreatesLocalFile": False,
         "handoffBucketsReady": handoff_buckets_ready,
         "handoffBucketItems": handoff_items,
         "items": items,

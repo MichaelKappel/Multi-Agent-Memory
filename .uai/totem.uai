@@ -18,6 +18,9 @@ Totem rule:
 - If an agent cannot connect to MemoryEndpoints.com, the agent must continue from the local `.uai` folder instead of forgetting the project context.
 - Local `.uai` files are not retired after live MATM verification.
 - Hosted MATM can augment, search, coordinate, and preserve durable memory, but `.uai` remains the local continuity anchor.
+- Narrow accountless-browser exception: an AI that has no durable local filesystem may bind a complete database-backed virtual UAIX active-memory package to its registered MemoryEndpoints agent id and workspace bearer key. This is still protected tenant memory, never anonymous memory.
+- The exception may use `.uai/short-term-memory.uai` as a virtual logical database path when the current UAIX package contract requires that role. It does not create that locally forbidden file and does not weaken the normal local startup suite policy.
+- Multiple filesystem agents working in one project must keep their `.uai` contents local and use the MemoryEndpoints hash-only collaboration overlay before editing the same path. The overlay stores project, path, content hash, edit intent, bounded lease, and completion hash, not the local file body.
 - This project is still in first-build quality mode: no legacy compromise, no compatibility debt, no shortcut architecture, and no jimmy-rigged one-off implementation is acceptable. A clean rewrite of a subsystem is better than preserving sloppy code or hiding a product concept behind ad hoc patches.
 
 Required agent behavior:
@@ -25,6 +28,8 @@ Required agent behavior:
 - Read every file in the startup-packet read order when local filesystem access is available.
 - Use `https://memoryendpoints.com/api/matm/memory-events/submit` for safe authenticated MATM memory updates when configured credentials and connectivity exist.
 - If hosted MATM is unavailable, record public-safe progress in `.uai/progress.uai` and continue from local memory.
+- For accountless browser AI setup, read `https://uaix.org/en-us/ai-memory/`, `https://uaix.org/en-us/ai-memory/uaix-package-format/`, and `https://uaix.org/en-us/tools/ai-memory-package-wizard/`, then inspect `https://memoryendpoints.com/api/matm/uai-memory/contract` before creating a virtual package.
+- For simultaneous local agents, read the protected file heads and acquire a project/path edit claim before changing a local `.uai` file. On conflict or stale hash, stop and coordinate in the project meeting room; do not assume an automatic merge.
 - Prefer first-class, tested, documented domain models across storage, API, UI, operations, and evidence. Rewrite weak early code when needed instead of layering shortcuts over it.
 - Model external links and their knowledge-page citations as first-class database entities with searchable properties. A URL buried only in Markdown is not an acceptable search-engine or provenance model.
 - Preserve historical research without letting it impersonate current truth. Store lifecycle status, authority, reason, and superseding-document relation as first-class database properties and prefer current canonical guidance in retrieval.
@@ -35,3 +40,4 @@ Truth boundary:
 - The full `.uai` suite is active startup continuity memory and break-glass local memory.
 - MemoryEndpoints.com is the durable MATM system of record when reachable and authenticated.
 - The two layers are additive. Neither layer silently deletes, retires, or invalidates the other.
+- The virtual package is a continuity substitute only when local filesystem continuity is impossible. The collaboration overlay is coordination metadata only and never substitutes for the local startup suite.

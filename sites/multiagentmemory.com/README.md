@@ -14,6 +14,8 @@ Primary links:
 Memory boundary:
 
 - Active startup memory: the full repository `.uai/` suite.
+- Accountless-browser exception: complete protected virtual UAIX records bound to a registered agent and workspace key when no durable local filesystem exists.
+- Concurrent local-agent overlay: project/path hashes and bounded edit claims; local `.uai` bodies remain local.
 - Mid-to-long-term hosted memory: MemoryEndpoints.com protected MATM routes.
 - Public documentation and GitHub-facing explanation: MultiAgentMemory.com.
 
@@ -22,7 +24,7 @@ How it works:
 - `memoryendpoints/` contains the pure stdlib WSGI MATM endpoint runtime.
 - `sites/multiagentmemory.com/` contains the static GitHub companion documentation site.
 - `scripts/` contains verification, packaging, secret scanning, dogfood, readiness, and deploy helpers.
-- `tests/` covers public discovery, protected MATM workflows, hierarchy navigation, contextual knowledge search, external-link citations, curated web search, meeting-room routing, current-message delivery, distributed-sync conflicts, memory firewall behavior, idempotency, review decisions, audit readback, documentation freshness, and relational-backend parity.
+- `tests/` covers public discovery, virtual UAIX startup and revision behavior, hash-only local edit claims, protected MATM workflows, hierarchy navigation, contextual knowledge search, external-link citations, curated web search, meeting-room routing, current-message delivery, distributed-sync conflicts, memory firewall behavior, idempotency, review decisions, audit readback, documentation freshness, and relational-backend parity.
 - `.uai/` remains active startup memory always; hosted MATM augments durable memory but does not replace local continuity.
 - MemoryEndpoints.com database records are the durable knowledge source of truth for reviewed company, workspace, and project wiki pages. Repository docs are not a second memory hierarchy.
 - MemoryEndpoints.com protected routes handle memory submit/search, hierarchy crawl, semantic page search, first-class external citations, curated web search, meeting-room routing, current-message coordination, conflict-safe distributed sync, notification acknowledgements, review decisions, receipts, and protected audit-log readback.
@@ -34,10 +36,13 @@ The documentation model follows the UAIX AI Memory Package Wizard MemoryEndpoint
 - Use `.uai/long-term-memory.uai` as a semantic pointer ledger.
 - Use a configured MATM update URL for reviewed medium and long-term memory.
 - Use MemoryEndpoints.com as a suggested MATM endpoint example.
+- Use the full virtual package only for an accountless browser AI with no durable local filesystem; ordinary local agents coordinate with hashes and claims without uploading file bodies.
 - Do not claim certification, endorsement, automatic sync, or hidden runtime authority.
 
 Setup references:
 
+- UAIX AI memory: https://uaix.org/en-us/ai-memory/
+- UAIX package format: https://uaix.org/en-us/ai-memory/uaix-package-format/
 - UAIX setup option: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
 - MemoryEndpoints.com inbound/home: https://memoryendpoints.com
 

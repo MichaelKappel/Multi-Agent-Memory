@@ -4,9 +4,9 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 
 ## Startup Order
 
-1. Read `.uai/memory-maintenance.uai`.
-2. Read `.uai/identity.uai`, `.uai/world-context.uai`, `.uai/totem.uai`, `.uai/taboo.uai`, and `.uai/talisman.uai`.
-3. Read `.uai/startup-packet.uai`, then follow its complete ordered manifest without inventing a catch-all active-memory file.
+1. Read `.uai/startup-packet.uai` as the bootstrap index, then follow its complete ordered manifest without inventing a catch-all active-memory file.
+2. Read `.uai/memory-maintenance.uai` as the first policy record after the index.
+3. Read `.uai/identity.uai`, `.uai/world-context.uai`, `.uai/totem.uai`, `.uai/taboo.uai`, and `.uai/talisman.uai`.
 4. Inspect active file handoff buckets one item at a time:
    - `agent-file-handoff/Content`
    - `agent-file-handoff/Improvement`
@@ -14,6 +14,7 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 6. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory boundary when reachable and authenticated.
 7. Use MultiAgentMemory.com as the GitHub companion documentation site.
 8. Coordinate active work through protected MemoryEndpoints meeting rooms. Record concise cold-start continuity in typed `.uai` files and point-in-time verifier output under ignored `var/reports/`.
+9. Before editing a local `.uai` path while another agent may share the codebase, read the protected project file head and acquire a bounded edit claim. On conflict or stale hash, stop and coordinate in the project room.
 
 ## Hard Rules
 
@@ -27,6 +28,8 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 - New agents enter through the company meeting room and receive a structured routing decision before project, goal, or task work. Durable wiki ownership remains company, workspace, or project only.
 - Check `/api/matm/workspace` before large writes. Free agent workspaces have a 200 MB quota.
 - Local `.uai` stays active always. Hosted MATM augments durable memory; it never replaces local startup continuity.
+- The full database-backed virtual UAIX package is permitted only for an accountless browser AI with no durable local filesystem, and still requires a registered agent plus workspace bearer key.
+- Normal local agents never upload `.uai` bodies for coordination. Use hash-only project/path heads and claims; completion is not an automatic merge or file distribution guarantee.
 
 ## Verification
 

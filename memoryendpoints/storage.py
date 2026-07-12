@@ -20,6 +20,24 @@ from .external_links import (
     stable_external_link_mention_id,
 )
 from .security import evaluate_memory_firewall, redact_text
+from .uai_memory import (
+    DEFAULT_UAI_EDIT_LEASE_SECONDS,
+    MAX_UAI_RECORD_CONTENT_BYTES,
+    MAX_UAI_EDIT_LEASE_SECONDS,
+    MIN_UAI_EDIT_LEASE_SECONDS,
+    VIRTUAL_UAI_PACKAGE_TYPE,
+    VIRTUAL_UAI_PROFILE,
+    VIRTUAL_UAI_RECORD_SPECS,
+    VIRTUAL_UAI_REQUIRED_PATHS,
+    VIRTUAL_UAI_SPEC_BY_PATH,
+    VIRTUAL_UAI_STARTUP_ORDER,
+    missing_uai_content_fields,
+    normalize_local_uai_collaboration_path,
+    normalize_sha256,
+    normalize_uai_logical_path,
+    uai_content_date_rules,
+    uai_content_role_errors,
+)
 
 
 _LOCK = threading.RLock()
@@ -279,6 +297,226 @@ def _public_memory_event(event):
 def _stable_id(prefix, *parts):
     raw = json.dumps(parts, sort_keys=True, separators=(",", ":"))
     return "%s-%s" % (prefix, _hash(raw)[:32])
+
+
+def _uai_package_id(workspace_id, agent_id):
+    return _stable_id("uaipkg", workspace_id, agent_id, VIRTUAL_UAI_PROFILE)
+
+
+def _uai_record_id(package_id, logical_path):
+    return _stable_id("uairec", package_id, logical_path)
+
+
+def _uai_revision_id(record_id, revision_number):
+    return _stable_id("uairev", record_id, int(revision_number))
+
+
+def _uai_content_hash(content):
+    return _hash(str(content or ""))
+
+
+def _uai_collaboration_head_id(workspace_id, project_id, logical_path):
+    return _stable_id("uaihead", workspace_id, project_id, logical_path)
+
+
+def _uai_lease_seconds(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = DEFAULT_UAI_EDIT_LEASE_SECONDS
+    return max(MIN_UAI_EDIT_LEASE_SECONDS, min(MAX_UAI_EDIT_LEASE_SECONDS, parsed))
+
+
+def _uai_lease_expires_at(seconds):
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=_uai_lease_seconds(seconds))
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _uai_lease_expired(value):
+    if not value:
+        return True
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return parsed <= datetime.datetime.now(datetime.timezone.utc)
+
+
+def _public_uai_collaboration_head(head):
+    item = dict(head or {})
+    for key in ("observedContentHash",):
+        value = str(item.get(key) or "")
+        if value and not value.startswith("sha256:"):
+            item[key] = "sha256:" + value
+    item.update(
+        {
+            "localContentStored": False,
+            "coordinationMetadataOnly": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    )
+    return item
+
+
+def _public_uai_edit_claim(claim):
+    item = dict(claim or {})
+    for key in ("baseContentHash", "completionContentHash"):
+        value = str(item.get(key) or "")
+        if value and not value.startswith("sha256:"):
+            item[key] = "sha256:" + value
+    item.update(
+        {
+            "localContentStored": False,
+            "coordinationMetadataOnly": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    )
+    return item
+
+
+def _validate_uai_collaboration_summary(value, field_name):
+    text = str(value or "").strip()
+    if not text:
+        return None, "%s_required" % field_name, {}
+    if len(text) > 1000:
+        return None, "%s_too_long" % field_name, {"maximumCharacters": 1000}
+    firewall = evaluate_memory_firewall({field_name: text})
+    if firewall.get("decision") != "accepted":
+        return None, "uai_collaboration_summary_rejected_by_memory_firewall", {
+            "firewallDecision": firewall.get("decision"),
+            "detectedThreats": firewall.get("detectedThreats") or [],
+            "riskScore": firewall.get("riskScore") or 0,
+        }
+    return text, None, {}
+
+
+def _public_uai_package(package, records=None):
+    item = dict(package or {})
+    records = list(records or [])
+    active_paths = {
+        record.get("logicalPath")
+        for record in records
+        if record.get("status", "active") == "active"
+    }
+    missing_paths = [path for path in VIRTUAL_UAI_REQUIRED_PATHS if path not in active_paths]
+    invalid_paths = []
+    for record in records:
+        logical_path = record.get("logicalPath")
+        if logical_path not in VIRTUAL_UAI_REQUIRED_PATHS or record.get("status", "active") != "active":
+            continue
+        role_errors = uai_content_role_errors(
+            logical_path,
+            record.get("content"),
+            item.get("agentId"),
+            item.get("agentName"),
+        )
+        if role_errors:
+            invalid_paths.append(logical_path)
+    item.update(
+        {
+            "requiredRecordCount": len(VIRTUAL_UAI_REQUIRED_PATHS),
+            "activeRecordCount": len(active_paths),
+            "missingRequiredPaths": missing_paths,
+            "invalidRequiredPaths": invalid_paths,
+            "readyForStartup": not missing_paths and not invalid_paths,
+            "status": "active" if not missing_paths and not invalid_paths else "setup_required",
+            "startupReadOrder": list(VIRTUAL_UAI_STARTUP_ORDER),
+            "virtualFilesystem": True,
+            "localFilesCreated": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    )
+    return item
+
+
+def _public_uai_record(record, include_content=True):
+    item = dict(record or {})
+    content_hash = str(item.get("contentHash") or "")
+    if content_hash and not content_hash.startswith("sha256:"):
+        item["contentHash"] = "sha256:" + content_hash
+    if not include_content:
+        item.pop("content", None)
+    item.update(
+        {
+            "protectedContentIncluded": bool(include_content),
+            "virtualFilesystem": True,
+            "localFileCreated": False,
+            "dateFree": True,
+            "publicSafe": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    )
+    return item
+
+
+def _public_uai_revision(revision, include_content=True):
+    item = dict(revision or {})
+    content_hash = str(item.get("contentHash") or "")
+    if content_hash and not content_hash.startswith("sha256:"):
+        item["contentHash"] = "sha256:" + content_hash
+    if not include_content:
+        item.pop("content", None)
+    item.update(
+        {
+            "protectedContentIncluded": bool(include_content),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+    )
+    return item
+
+
+def _validate_uai_record_content(logical_path, title, content, agent_id="", agent_name=""):
+    normalized_path = normalize_uai_logical_path(logical_path)
+    if not normalized_path or normalized_path not in VIRTUAL_UAI_SPEC_BY_PATH:
+        return None, "unsupported_uai_logical_path", {"supportedLogicalPaths": list(VIRTUAL_UAI_STARTUP_ORDER)}
+    text = str(content or "")
+    if not text.strip():
+        return None, "uai_content_required", {}
+    content_bytes = len(text.encode("utf-8"))
+    if content_bytes > MAX_UAI_RECORD_CONTENT_BYTES:
+        return None, "uai_content_too_large", {"maximumContentBytes": MAX_UAI_RECORD_CONTENT_BYTES}
+    date_rules = uai_content_date_rules("%s\n%s" % (title or "", text))
+    if date_rules:
+        return None, "uai_content_must_be_date_free", {"dateRules": date_rules}
+    missing_fields = missing_uai_content_fields(text)
+    if missing_fields:
+        return None, "uai_content_structure_invalid", {"missingRequiredFields": missing_fields}
+    role_errors = uai_content_role_errors(normalized_path, text, agent_id, agent_name)
+    if role_errors:
+        return None, "uai_content_role_invalid", role_errors
+    firewall = evaluate_memory_firewall({"title": title or normalized_path, "content": text})
+    if firewall.get("decision") != "accepted":
+        return None, "uai_content_rejected_by_memory_firewall", {
+            "firewallDecision": firewall.get("decision"),
+            "detectedThreats": firewall.get("detectedThreats") or [],
+            "riskScore": firewall.get("riskScore") or 0,
+        }
+    return {
+        "logicalPath": normalized_path,
+        "title": redact_text(title or normalized_path.rsplit("/", 1)[-1]),
+        "content": text,
+        "contentHash": _uai_content_hash(text),
+        "contentBytes": content_bytes,
+        "spec": VIRTUAL_UAI_SPEC_BY_PATH[normalized_path],
+        "firewall": {
+            "schemaVersion": firewall.get("schemaVersion"),
+            "decision": "accepted",
+            "riskScore": 0,
+            "detectedThreats": [],
+            "rawPrivatePayloadStored": False,
+        },
+    }, None, {}
 
 
 def _slug(value, fallback="item", limit=96):
@@ -792,6 +1030,11 @@ def _blank_store():
         "projects": {},
         "apiKeys": {},
         "agents": {},
+        "uaiMemoryPackages": {},
+        "uaiMemoryRecords": {},
+        "uaiMemoryRevisions": [],
+        "uaiCollaborationHeads": {},
+        "uaiEditClaims": {},
         "memoryEvents": [],
         "crawlSources": {},
         "searchDocuments": {},
@@ -950,11 +1193,11 @@ class FileStore(object):
         for project in data.get("projects", {}).values():
             if project.get("workspaceId") == workspace_id:
                 usage += _json_size(project)
-        for key in ("agents",):
+        for key in ("agents", "uaiMemoryPackages", "uaiMemoryRecords", "uaiCollaborationHeads", "uaiEditClaims"):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
-        for key in ("memoryEvents", "crawlSources", "searchDocuments", "externalLinks", "externalLinkMentions", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
+        for key in ("uaiMemoryRevisions", "memoryEvents", "crawlSources", "searchDocuments", "externalLinks", "externalLinkMentions", "reviewQueue", "messages", "notifications", "receipts", "meetingMessages", "meetingReads", "outboxEvents", "storageLedger"):
             collection = data.get(key, [])
             for item in collection.values() if isinstance(collection, dict) else collection:
                 if item.get("workspaceId") == workspace_id:
@@ -2337,16 +2580,522 @@ class FileStore(object):
     def register_agent(self, workspace_id, agent_id, display_name):
         data = self._load()
         agent_key = "%s:%s" % (workspace_id, agent_id)
+        existing = data["agents"].get(agent_key) or {}
         data["agents"][agent_key] = {
             "workspaceId": workspace_id,
             "agentId": agent_id,
-            "displayName": display_name or agent_id,
-            "registeredAt": utc_now(),
+            "displayName": redact_text(display_name or agent_id),
+            "registeredAt": existing.get("registeredAt") or utc_now(),
             "status": "active",
         }
+        for package in data.get("uaiMemoryPackages", {}).values():
+            if package.get("workspaceId") == workspace_id and package.get("agentId") == agent_id:
+                package["agentName"] = data["agents"][agent_key]["displayName"]
+                package["updatedAt"] = utc_now()
         self.audit(data, "agent.register", agent_id, workspace_id, workspace_id)
         self._save(data)
         return data["agents"][agent_key]
+
+    def _uai_records_for_package_data(self, data, package_id):
+        records = [
+            dict(record)
+            for record in data.get("uaiMemoryRecords", {}).values()
+            if record.get("packageId") == package_id
+        ]
+        records.sort(key=lambda item: (int(item.get("startupOrder") or 0), item.get("logicalPath") or ""))
+        return records
+
+    def uai_packages(self, workspace_id, agent_id=None, package_id=None):
+        data = self._load()
+        items = []
+        for package in data.get("uaiMemoryPackages", {}).values():
+            if package.get("workspaceId") != workspace_id:
+                continue
+            if agent_id and package.get("agentId") != agent_id:
+                continue
+            if package_id and package.get("packageId") != package_id:
+                continue
+            records = self._uai_records_for_package_data(data, package.get("packageId"))
+            items.append(_public_uai_package(package, records))
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("packageId") or ""))
+        return items
+
+    def create_uai_package(self, workspace_id, agent_id, client_class, local_filesystem_available):
+        data = self._load()
+        if workspace_id not in data.get("workspaces", {}):
+            return None, False, "workspace_not_found", {}
+        agent = data.get("agents", {}).get("%s:%s" % (workspace_id, agent_id))
+        if not agent or agent.get("status", "active") != "active":
+            return None, False, "registered_agent_required", {}
+        if client_class != "accountless_browser_ai":
+            return None, False, "unsupported_uai_client_class", {
+                "supportedClientClass": "accountless_browser_ai"
+            }
+        if local_filesystem_available is not False:
+            return None, False, "uai_exception_not_applicable", {
+                "normalRule": "Clients with durable local filesystem access keep local .uai active memory."
+            }
+        package_id = _uai_package_id(workspace_id, agent_id)
+        existing = data.setdefault("uaiMemoryPackages", {}).get(package_id)
+        if existing:
+            records = self._uai_records_for_package_data(data, package_id)
+            return _public_uai_package(existing, records), False, None, {}
+        now = utc_now()
+        package = {
+            "packageId": package_id,
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "agentName": agent.get("displayName") or agent_id,
+            "profile": VIRTUAL_UAI_PROFILE,
+            "packageType": VIRTUAL_UAI_PACKAGE_TYPE,
+            "clientClass": client_class,
+            "localFilesystemAvailable": False,
+            "storageMode": "protected_database_virtual_files",
+            "status": "setup_required",
+            "createdAt": now,
+            "updatedAt": None,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        workspace = data["workspaces"][workspace_id]
+        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+        if self.workspace_usage_bytes(data, workspace_id) + _json_size(package) > limit:
+            return None, False, "quota_exceeded", {},
+        data["uaiMemoryPackages"][package_id] = package
+        self._append_outbox(data, workspace_id, "uai_package.created", "uai_package", package_id, package)
+        self._append_storage_ledger(data, workspace_id, "uai_package", package_id, package)
+        self.audit(
+            data,
+            "uai_package.create",
+            agent_id,
+            package_id,
+            workspace_id,
+            {"profile": VIRTUAL_UAI_PROFILE, "clientClass": client_class, "requiredRecordCount": len(VIRTUAL_UAI_REQUIRED_PATHS)},
+        )
+        self._save(data)
+        return _public_uai_package(package, []), True, None, {}
+
+    def uai_records(self, workspace_id, agent_id=None, package_id=None, logical_path=None, include_content=True):
+        data = self._load()
+        normalized_path = normalize_uai_logical_path(logical_path) if logical_path else ""
+        items = []
+        for record in data.get("uaiMemoryRecords", {}).values():
+            if record.get("workspaceId") != workspace_id:
+                continue
+            if agent_id and record.get("agentId") != agent_id:
+                continue
+            if package_id and record.get("packageId") != package_id:
+                continue
+            if logical_path and record.get("logicalPath") != normalized_path:
+                continue
+            items.append(_public_uai_record(record, include_content))
+        items.sort(key=lambda item: (int(item.get("startupOrder") or 0), item.get("logicalPath") or ""))
+        return items
+
+    def uai_record_revisions(self, workspace_id, record_id, include_content=True):
+        data = self._load()
+        record = data.get("uaiMemoryRecords", {}).get(record_id)
+        if not record or record.get("workspaceId") != workspace_id:
+            return []
+        items = [
+            _public_uai_revision(revision, include_content)
+            for revision in data.get("uaiMemoryRevisions", [])
+            if revision.get("workspaceId") == workspace_id and revision.get("recordId") == record_id
+        ]
+        items.sort(key=lambda item: int(item.get("revision") or 0))
+        return items
+
+    def upsert_uai_record(self, workspace_id, agent_id, package_id, logical_path, title, content, expected_revision=None):
+        data = self._load()
+        package = data.get("uaiMemoryPackages", {}).get(package_id)
+        if not package or package.get("workspaceId") != workspace_id:
+            return None, "uai_package_not_found", {}
+        if package.get("agentId") != agent_id:
+            return None, "uai_package_agent_mismatch", {}
+        validated, error, details = _validate_uai_record_content(
+            logical_path,
+            title,
+            content,
+            agent_id,
+            package.get("agentName"),
+        )
+        if error:
+            return None, error, details
+        record_id = _uai_record_id(package_id, validated["logicalPath"])
+        existing = data.setdefault("uaiMemoryRecords", {}).get(record_id)
+        if existing:
+            if expected_revision in (None, ""):
+                return None, "expected_revision_required", {"currentRevision": int(existing.get("revision") or 0)}
+            try:
+                expected_value = int(expected_revision)
+            except (TypeError, ValueError):
+                return None, "expected_revision_invalid", {"currentRevision": int(existing.get("revision") or 0)}
+            current_revision = int(existing.get("revision") or 0)
+            if expected_value != current_revision:
+                return None, "uai_revision_conflict", {"currentRevision": current_revision}
+            if existing.get("contentHash") == validated["contentHash"] and existing.get("title") == validated["title"]:
+                records = self._uai_records_for_package_data(data, package_id)
+                return {
+                    "record": _public_uai_record(existing, True),
+                    "package": _public_uai_package(package, records),
+                    "created": False,
+                    "changed": False,
+                }, None, {}
+            revision_number = current_revision + 1
+            created = False
+        else:
+            if expected_revision not in (None, "", 0, "0"):
+                return None, "uai_revision_conflict", {"currentRevision": 0}
+            revision_number = 1
+            created = True
+        now = utc_now()
+        spec = validated["spec"]
+        record = {
+            "recordId": record_id,
+            "packageId": package_id,
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "logicalPath": validated["logicalPath"],
+            "role": spec["role"],
+            "title": validated["title"],
+            "content": validated["content"],
+            "contentHash": validated["contentHash"],
+            "contentBytes": validated["contentBytes"],
+            "revision": revision_number,
+            "required": bool(spec.get("required")),
+            "startupOrder": int(spec.get("startupOrder") or 0),
+            "status": "active",
+            "source": "memoryendpoints://uai-memory/accountless-browser-connector",
+            "firewall": validated["firewall"],
+            "createdAt": existing.get("createdAt") if existing else now,
+            "updatedAt": None if created else now,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        revision = {
+            "revisionId": _uai_revision_id(record_id, revision_number),
+            "recordId": record_id,
+            "packageId": package_id,
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "logicalPath": record["logicalPath"],
+            "revision": revision_number,
+            "title": record["title"],
+            "content": record["content"],
+            "contentHash": record["contentHash"],
+            "createdAt": now,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+        previous_size = _json_size(existing) if existing else 0
+        added_size = max(0, _json_size(record) - previous_size) + _json_size(revision)
+        if self.workspace_usage_bytes(data, workspace_id) + added_size > limit:
+            return None, "quota_exceeded", {}
+        data["uaiMemoryRecords"][record_id] = record
+        data.setdefault("uaiMemoryRevisions", []).append(revision)
+        package["updatedAt"] = now
+        records = self._uai_records_for_package_data(data, package_id)
+        public_package = _public_uai_package(package, records)
+        package["status"] = public_package["status"]
+        self._append_outbox(data, workspace_id, "uai_record.upserted", "uai_record", record_id, record)
+        self._append_storage_ledger(data, workspace_id, "uai_record_revision", revision["revisionId"], revision)
+        self.audit(
+            data,
+            "uai_record.upsert",
+            agent_id,
+            record_id,
+            workspace_id,
+            {
+                "packageId": package_id,
+                "logicalPath": record["logicalPath"],
+                "revision": revision_number,
+                "created": created,
+                "readyForStartup": public_package["readyForStartup"],
+            },
+        )
+        self._save(data)
+        return {
+            "record": _public_uai_record(record, True),
+            "package": public_package,
+            "created": created,
+            "changed": True,
+        }, None, {}
+
+    def uai_startup(self, workspace_id, agent_id, package_id=None):
+        data = self._load()
+        package_id = package_id or _uai_package_id(workspace_id, agent_id)
+        package = data.get("uaiMemoryPackages", {}).get(package_id)
+        if not package or package.get("workspaceId") != workspace_id:
+            return None, "uai_package_not_found"
+        if package.get("agentId") != agent_id:
+            return None, "uai_package_agent_mismatch"
+        records = self._uai_records_for_package_data(data, package_id)
+        active_records = [record for record in records if record.get("status", "active") == "active"]
+        public_package = _public_uai_package(package, active_records)
+        return {
+            "schemaVersion": "memoryendpoints.virtual_uai_startup.v1",
+            "package": public_package,
+            "records": [_public_uai_record(record, True) for record in active_records],
+            "recordCount": len(active_records),
+            "startupReadOrder": list(VIRTUAL_UAI_STARTUP_ORDER),
+            "missingRequiredPaths": public_package["missingRequiredPaths"],
+            "invalidRequiredPaths": public_package["invalidRequiredPaths"],
+            "readyForStartup": public_package["readyForStartup"],
+            "partialStartupAllowed": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }, None
+
+    def _expire_uai_edit_claims_data(self, data, workspace_id):
+        expired = []
+        now = utc_now()
+        for claim in data.get("uaiEditClaims", {}).values():
+            if claim.get("workspaceId") != workspace_id or claim.get("status") != "active":
+                continue
+            if not _uai_lease_expired(claim.get("leaseExpiresAt")):
+                continue
+            claim["status"] = "expired"
+            claim["closedAt"] = now
+            head = data.get("uaiCollaborationHeads", {}).get(claim.get("headId"))
+            if head and head.get("activeClaimId") == claim.get("claimId"):
+                head["activeClaimId"] = None
+                head["activeAgentId"] = None
+                head["leaseExpiresAt"] = None
+                head["updatedAt"] = now
+            expired.append(claim)
+        return expired
+
+    def uai_collaboration_heads(self, workspace_id, project_id=None, logical_path=None):
+        data = self._load()
+        expired = self._expire_uai_edit_claims_data(data, workspace_id)
+        if expired:
+            for claim in expired:
+                self.audit(data, "uai_edit_claim.expire", "system", claim.get("claimId"), workspace_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath")})
+            self._save(data)
+        normalized_path = normalize_local_uai_collaboration_path(logical_path) if logical_path else ""
+        items = []
+        for head in data.get("uaiCollaborationHeads", {}).values():
+            if head.get("workspaceId") != workspace_id:
+                continue
+            if project_id and head.get("projectId") != project_id:
+                continue
+            if logical_path and head.get("logicalPath") != normalized_path:
+                continue
+            items.append(_public_uai_collaboration_head(head))
+        items.sort(key=lambda item: (item.get("projectId") or "", item.get("logicalPath") or ""))
+        return items
+
+    def uai_edit_claims(self, workspace_id, project_id=None, agent_id=None, logical_path=None, status=None):
+        data = self._load()
+        expired = self._expire_uai_edit_claims_data(data, workspace_id)
+        if expired:
+            for claim in expired:
+                self.audit(data, "uai_edit_claim.expire", "system", claim.get("claimId"), workspace_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath")})
+            self._save(data)
+        normalized_path = normalize_local_uai_collaboration_path(logical_path) if logical_path else ""
+        items = []
+        for claim in data.get("uaiEditClaims", {}).values():
+            if claim.get("workspaceId") != workspace_id:
+                continue
+            if project_id and claim.get("projectId") != project_id:
+                continue
+            if agent_id and claim.get("agentId") != agent_id:
+                continue
+            if logical_path and claim.get("logicalPath") != normalized_path:
+                continue
+            if status and claim.get("status") != status:
+                continue
+            items.append(_public_uai_edit_claim(claim))
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("claimId") or ""), reverse=True)
+        return items
+
+    def acquire_uai_edit_claim(self, workspace_id, project_id, agent_id, logical_path, base_content_hash, intent_summary, lease_seconds=None):
+        path = normalize_local_uai_collaboration_path(logical_path)
+        if not path:
+            return None, "unsupported_local_uai_path", {}
+        base_hash = normalize_sha256(base_content_hash)
+        if not base_hash:
+            return None, "uai_base_content_hash_invalid", {}
+        safe_summary, error, details = _validate_uai_collaboration_summary(intent_summary, "intent_summary")
+        if error:
+            return None, error, details
+        lease_value = _uai_lease_seconds(lease_seconds)
+        data = self._load()
+        self._expire_uai_edit_claims_data(data, workspace_id)
+        project = data.get("projects", {}).get(project_id)
+        if not project or project.get("workspaceId") != workspace_id or project.get("status", "active") == "deleted":
+            return None, "project_not_found", {}
+        agent = data.get("agents", {}).get("%s:%s" % (workspace_id, agent_id))
+        if not agent or agent.get("status", "active") != "active":
+            return None, "registered_agent_required", {}
+        head_id = _uai_collaboration_head_id(workspace_id, project_id, path)
+        head = data.setdefault("uaiCollaborationHeads", {}).get(head_id)
+        if head and head.get("activeClaimId"):
+            active_claim = data.get("uaiEditClaims", {}).get(head.get("activeClaimId"))
+            if active_claim and active_claim.get("status") == "active":
+                return None, "uai_edit_claim_conflict", {
+                    "head": _public_uai_collaboration_head(head),
+                    "activeClaim": _public_uai_edit_claim(active_claim),
+                }
+        if head and head.get("observedContentHash") and head.get("observedContentHash") != base_hash:
+            return None, "uai_base_hash_mismatch", {
+                "head": _public_uai_collaboration_head(head),
+                "currentContentHash": "sha256:" + head.get("observedContentHash"),
+            }
+        now = utc_now()
+        if not head:
+            head = {
+                "headId": head_id,
+                "workspaceId": workspace_id,
+                "projectId": project_id,
+                "logicalPath": path,
+                "observedContentHash": base_hash,
+                "revision": 0,
+                "activeClaimId": None,
+                "activeAgentId": None,
+                "leaseExpiresAt": None,
+                "status": "tracked",
+                "createdAt": now,
+                "updatedAt": None,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
+            data["uaiCollaborationHeads"][head_id] = head
+        claim_id = _time_ordered_id("uaiclaim")
+        claim = {
+            "claimId": claim_id,
+            "headId": head_id,
+            "workspaceId": workspace_id,
+            "projectId": project_id,
+            "agentId": agent_id,
+            "agentName": agent.get("displayName") or agent_id,
+            "logicalPath": path,
+            "baseContentHash": base_hash,
+            "intentSummary": safe_summary,
+            "leaseSeconds": lease_value,
+            "leaseExpiresAt": _uai_lease_expires_at(lease_value),
+            "status": "active",
+            "completionContentHash": None,
+            "completionSummary": None,
+            "createdAt": now,
+            "closedAt": None,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        head["activeClaimId"] = claim_id
+        head["activeAgentId"] = agent_id
+        head["leaseExpiresAt"] = claim["leaseExpiresAt"]
+        head["updatedAt"] = now
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+        if self.workspace_usage_bytes(data, workspace_id) + _json_size(claim) > limit:
+            return None, "quota_exceeded", {}
+        data.setdefault("uaiEditClaims", {})[claim_id] = claim
+        self._append_outbox(data, workspace_id, "uai_edit_claim.acquired", "uai_edit_claim", claim_id, claim)
+        self._append_storage_ledger(data, workspace_id, "uai_edit_claim", claim_id, claim)
+        self.audit(data, "uai_edit_claim.acquire", agent_id, claim_id, workspace_id, {"projectId": project_id, "logicalPath": path, "leaseSeconds": lease_value})
+        self._save(data)
+        return {
+            "claim": _public_uai_edit_claim(claim),
+            "head": _public_uai_collaboration_head(head),
+            "claimAcquired": True,
+        }, None, {}
+
+    def heartbeat_uai_edit_claim(self, workspace_id, agent_id, claim_id, lease_seconds=None):
+        data = self._load()
+        self._expire_uai_edit_claims_data(data, workspace_id)
+        claim = data.get("uaiEditClaims", {}).get(claim_id)
+        if not claim or claim.get("workspaceId") != workspace_id:
+            return None, "uai_edit_claim_not_found", {}
+        if claim.get("agentId") != agent_id:
+            return None, "uai_edit_claim_agent_mismatch", {}
+        if claim.get("status") != "active":
+            return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+        lease_value = _uai_lease_seconds(lease_seconds)
+        claim["leaseSeconds"] = lease_value
+        claim["leaseExpiresAt"] = _uai_lease_expires_at(lease_value)
+        head = data.get("uaiCollaborationHeads", {}).get(claim.get("headId"))
+        if not head or head.get("activeClaimId") != claim_id:
+            return None, "uai_edit_claim_conflict", {}
+        head["leaseExpiresAt"] = claim["leaseExpiresAt"]
+        head["updatedAt"] = utc_now()
+        self.audit(data, "uai_edit_claim.heartbeat", agent_id, claim_id, workspace_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath"), "leaseSeconds": lease_value})
+        self._save(data)
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
+
+    def complete_uai_edit_claim(self, workspace_id, agent_id, claim_id, new_content_hash, completion_summary):
+        new_hash = normalize_sha256(new_content_hash)
+        if not new_hash:
+            return None, "uai_completion_content_hash_invalid", {}
+        safe_summary, error, details = _validate_uai_collaboration_summary(completion_summary, "completion_summary")
+        if error:
+            return None, error, details
+        data = self._load()
+        self._expire_uai_edit_claims_data(data, workspace_id)
+        claim = data.get("uaiEditClaims", {}).get(claim_id)
+        if not claim or claim.get("workspaceId") != workspace_id:
+            return None, "uai_edit_claim_not_found", {}
+        if claim.get("agentId") != agent_id:
+            return None, "uai_edit_claim_agent_mismatch", {}
+        if claim.get("status") != "active":
+            return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+        head = data.get("uaiCollaborationHeads", {}).get(claim.get("headId"))
+        if not head or head.get("activeClaimId") != claim_id:
+            return None, "uai_edit_claim_conflict", {}
+        if head.get("observedContentHash") != claim.get("baseContentHash"):
+            return None, "uai_base_hash_mismatch", {"head": _public_uai_collaboration_head(head)}
+        now = utc_now()
+        claim["status"] = "completed"
+        claim["completionContentHash"] = new_hash
+        claim["completionSummary"] = safe_summary
+        claim["closedAt"] = now
+        head["observedContentHash"] = new_hash
+        head["revision"] = int(head.get("revision") or 0) + 1
+        head["activeClaimId"] = None
+        head["activeAgentId"] = None
+        head["leaseExpiresAt"] = None
+        head["updatedAt"] = now
+        self._append_outbox(data, workspace_id, "uai_edit_claim.completed", "uai_collaboration_head", head["headId"], head)
+        self._append_storage_ledger(data, workspace_id, "uai_edit_claim_completion", claim_id, {"completionSummary": safe_summary, "completionContentHash": new_hash})
+        self.audit(data, "uai_edit_claim.complete", agent_id, claim_id, workspace_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath"), "headRevision": head["revision"]})
+        self._save(data)
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
+
+    def release_uai_edit_claim(self, workspace_id, agent_id, claim_id, release_summary):
+        safe_summary, error, details = _validate_uai_collaboration_summary(release_summary, "release_summary")
+        if error:
+            return None, error, details
+        data = self._load()
+        self._expire_uai_edit_claims_data(data, workspace_id)
+        claim = data.get("uaiEditClaims", {}).get(claim_id)
+        if not claim or claim.get("workspaceId") != workspace_id:
+            return None, "uai_edit_claim_not_found", {}
+        if claim.get("agentId") != agent_id:
+            return None, "uai_edit_claim_agent_mismatch", {}
+        if claim.get("status") != "active":
+            return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+        head = data.get("uaiCollaborationHeads", {}).get(claim.get("headId"))
+        if not head or head.get("activeClaimId") != claim_id:
+            return None, "uai_edit_claim_conflict", {}
+        now = utc_now()
+        claim["status"] = "released"
+        claim["completionSummary"] = safe_summary
+        claim["closedAt"] = now
+        head["activeClaimId"] = None
+        head["activeAgentId"] = None
+        head["leaseExpiresAt"] = None
+        head["updatedAt"] = now
+        self.audit(data, "uai_edit_claim.release", agent_id, claim_id, workspace_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath")})
+        self._save(data)
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
 
     def _append_outbox(self, data, workspace_id, event_type, aggregate_type, aggregate_id, payload=None):
         item = {
@@ -2838,6 +3587,130 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_agents_workspace ON matm_agents (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_uai_packages (
+              package_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              agent_record_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              agent_name TEXT NOT NULL,
+              profile TEXT NOT NULL,
+              package_type TEXT NOT NULL,
+              client_class TEXT NOT NULL,
+              local_filesystem_available INTEGER NOT NULL DEFAULT 0,
+              storage_mode TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (workspace_id, agent_id, profile),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (agent_record_id) REFERENCES matm_agents (agent_record_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_packages_agent ON matm_uai_packages (workspace_id, agent_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_uai_records (
+              record_id TEXT PRIMARY KEY,
+              package_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              logical_path TEXT NOT NULL,
+              role TEXT NOT NULL,
+              title TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              content_bytes INTEGER NOT NULL,
+              revision INTEGER NOT NULL,
+              required_record INTEGER NOT NULL DEFAULT 0,
+              startup_order INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              source_uri TEXT NOT NULL,
+              firewall_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (package_id, logical_path),
+              FOREIGN KEY (package_id) REFERENCES matm_uai_packages (package_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_records_startup ON matm_uai_records (workspace_id, package_id, status, startup_order);
+
+            CREATE TABLE IF NOT EXISTS matm_uai_record_revisions (
+              revision_id TEXT PRIMARY KEY,
+              record_id TEXT NOT NULL,
+              package_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              logical_path TEXT NOT NULL,
+              revision INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (record_id, revision),
+              FOREIGN KEY (record_id) REFERENCES matm_uai_records (record_id),
+              FOREIGN KEY (package_id) REFERENCES matm_uai_packages (package_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_revisions_record ON matm_uai_record_revisions (workspace_id, record_id, revision);
+
+            CREATE TABLE IF NOT EXISTS matm_uai_collaboration_heads (
+              head_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              logical_path TEXT NOT NULL,
+              observed_content_hash TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 0,
+              active_claim_id TEXT,
+              active_agent_id TEXT,
+              lease_expires_at TEXT,
+              status TEXT NOT NULL DEFAULT 'tracked',
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              UNIQUE (workspace_id, project_id, logical_path),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_heads_project ON matm_uai_collaboration_heads (workspace_id, project_id, logical_path);
+
+            CREATE TABLE IF NOT EXISTS matm_uai_edit_claims (
+              claim_id TEXT PRIMARY KEY,
+              head_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              agent_record_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              agent_name TEXT NOT NULL,
+              logical_path TEXT NOT NULL,
+              base_content_hash TEXT NOT NULL,
+              intent_summary TEXT NOT NULL,
+              lease_seconds INTEGER NOT NULL,
+              lease_expires_at TEXT NOT NULL,
+              status TEXT NOT NULL,
+              completion_content_hash TEXT,
+              completion_summary TEXT,
+              created_at TEXT NOT NULL,
+              closed_at TEXT,
+              values_redacted INTEGER NOT NULL DEFAULT 1,
+              raw_credential_exposed INTEGER NOT NULL DEFAULT 0,
+              raw_payload_exposed INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (head_id) REFERENCES matm_uai_collaboration_heads (head_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (agent_record_id) REFERENCES matm_agents (agent_record_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_claims_active ON matm_uai_edit_claims (workspace_id, project_id, status, lease_expires_at);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_uai_claims_agent ON matm_uai_edit_claims (workspace_id, agent_id, created_at);
 
             CREATE TABLE IF NOT EXISTS matm_memory_records (
               memory_id TEXT PRIMARY KEY,
@@ -3589,6 +4462,11 @@ class SQLiteStore(FileStore):
         for table in (
             "matm_projects",
             "matm_agents",
+            "matm_uai_packages",
+            "matm_uai_records",
+            "matm_uai_record_revisions",
+            "matm_uai_collaboration_heads",
+            "matm_uai_edit_claims",
             "matm_crawl_sources",
             "matm_search_documents",
             "matm_external_links",
@@ -4637,24 +5515,927 @@ class SQLiteStore(FileStore):
         with _LOCK:
             with self._open_connection() as connection:
                 with connection:
-                    connection.execute(
-                        """
-                        INSERT OR REPLACE INTO matm_agents (
-                          agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            self._agent_record_id(workspace_id, agent_id),
-                            workspace_id,
-                            agent_id,
-                            record["displayName"],
-                            record["status"],
-                            record["registeredAt"],
-                            now,
-                        ),
-                    )
+                    existing = connection.execute(
+                        "SELECT * FROM matm_agents WHERE workspace_id = ? AND agent_id = ?",
+                        (workspace_id, agent_id),
+                    ).fetchone()
+                    if existing:
+                        record["registeredAt"] = existing["registered_at"]
+                        connection.execute(
+                            """
+                            UPDATE matm_agents
+                            SET display_name = ?, status = ?, last_seen_at = ?
+                            WHERE workspace_id = ? AND agent_id = ?
+                            """,
+                            (record["displayName"], record["status"], now, workspace_id, agent_id),
+                        )
+                        connection.execute(
+                            """
+                            UPDATE matm_uai_packages
+                            SET agent_name = ?, updated_at = ?
+                            WHERE workspace_id = ? AND agent_id = ?
+                            """,
+                            (record["displayName"], now, workspace_id, agent_id),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agents (
+                              agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                self._agent_record_id(workspace_id, agent_id),
+                                workspace_id,
+                                agent_id,
+                                record["displayName"],
+                                record["status"],
+                                record["registeredAt"],
+                                now,
+                            ),
+                        )
                     self._record_audit_sql(connection, workspace_id, "agent.register", agent_id, workspace_id)
         return record
+
+    def _uai_package_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "packageId": row["package_id"],
+            "workspaceId": row["workspace_id"],
+            "agentId": row["agent_id"],
+            "agentName": row["agent_name"],
+            "profile": row["profile"],
+            "packageType": row["package_type"],
+            "clientClass": row["client_class"],
+            "localFilesystemAvailable": self._bool(row["local_filesystem_available"]),
+            "storageMode": row["storage_mode"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _uai_record_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "recordId": row["record_id"],
+            "packageId": row["package_id"],
+            "workspaceId": row["workspace_id"],
+            "agentId": row["agent_id"],
+            "logicalPath": row["logical_path"],
+            "role": row["role"],
+            "title": row["title"],
+            "content": row["content"],
+            "contentHash": row["content_hash"],
+            "contentBytes": int(row["content_bytes"] or 0),
+            "revision": int(row["revision"] or 0),
+            "required": self._bool(row["required_record"]),
+            "startupOrder": int(row["startup_order"] or 0),
+            "status": row["status"],
+            "source": row["source_uri"],
+            "firewall": self._json_load(row["firewall_json"], {}),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _uai_revision_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "revisionId": row["revision_id"],
+            "recordId": row["record_id"],
+            "packageId": row["package_id"],
+            "workspaceId": row["workspace_id"],
+            "agentId": row["agent_id"],
+            "logicalPath": row["logical_path"],
+            "revision": int(row["revision"] or 0),
+            "title": row["title"],
+            "content": row["content"],
+            "contentHash": row["content_hash"],
+            "createdAt": row["created_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _uai_records_for_package_sql(self, connection, package_id):
+        rows = list(
+            connection.execute(
+                """
+                SELECT * FROM matm_uai_records
+                WHERE package_id = ?
+                ORDER BY startup_order, logical_path
+                """,
+                (package_id,),
+            )
+        )
+        return [self._uai_record_from_row(row) for row in rows]
+
+    def uai_packages(self, workspace_id, agent_id=None, package_id=None):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if package_id:
+            clauses.append("package_id = ?")
+            params.append(package_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        "SELECT * FROM matm_uai_packages WHERE %s ORDER BY created_at, package_id"
+                        % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+                return [
+                    _public_uai_package(
+                        self._uai_package_from_row(row),
+                        self._uai_records_for_package_sql(connection, row["package_id"]),
+                    )
+                    for row in rows
+                ]
+
+    def create_uai_package(self, workspace_id, agent_id, client_class, local_filesystem_available):
+        if client_class != "accountless_browser_ai":
+            return None, False, "unsupported_uai_client_class", {
+                "supportedClientClass": "accountless_browser_ai"
+            }
+        if local_filesystem_available is not False:
+            return None, False, "uai_exception_not_applicable", {
+                "normalRule": "Clients with durable local filesystem access keep local .uai active memory."
+            }
+        package_id = _uai_package_id(workspace_id, agent_id)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace:
+                        return None, False, "workspace_not_found", {}
+                    agent_sql = "SELECT * FROM matm_agents WHERE workspace_id = ? AND agent_id = ? AND status = 'active'"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        agent_sql += " FOR UPDATE"
+                    agent = connection.execute(agent_sql, (workspace_id, agent_id)).fetchone()
+                    if not agent:
+                        return None, False, "registered_agent_required", {}
+                    existing = connection.execute(
+                        "SELECT * FROM matm_uai_packages WHERE workspace_id = ? AND package_id = ?",
+                        (workspace_id, package_id),
+                    ).fetchone()
+                    if existing:
+                        package = self._uai_package_from_row(existing)
+                        records = self._uai_records_for_package_sql(connection, package_id)
+                        return _public_uai_package(package, records), False, None, {}
+                    package = {
+                        "packageId": package_id,
+                        "workspaceId": workspace_id,
+                        "agentId": agent_id,
+                        "agentName": agent["display_name"],
+                        "profile": VIRTUAL_UAI_PROFILE,
+                        "packageType": VIRTUAL_UAI_PACKAGE_TYPE,
+                        "clientClass": client_class,
+                        "localFilesystemAvailable": False,
+                        "storageMode": "protected_database_virtual_files",
+                        "status": "setup_required",
+                        "createdAt": now,
+                        "updatedAt": None,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+                    limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
+                    if self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(package) > limit:
+                        return None, False, "quota_exceeded", {}
+                    connection.execute(
+                        """
+                        INSERT INTO matm_uai_packages (
+                          package_id, workspace_id, agent_record_id, agent_id, agent_name, profile,
+                          package_type, client_class, local_filesystem_available, storage_mode,
+                          status, created_at, updated_at, values_redacted, raw_credential_exposed,
+                          raw_payload_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            package_id,
+                            workspace_id,
+                            agent["agent_record_id"],
+                            agent_id,
+                            agent["display_name"],
+                            VIRTUAL_UAI_PROFILE,
+                            VIRTUAL_UAI_PACKAGE_TYPE,
+                            client_class,
+                            self._int_bool(False),
+                            package["storageMode"],
+                            package["status"],
+                            now,
+                            None,
+                            self._int_bool(True),
+                            self._int_bool(False),
+                            self._int_bool(False),
+                        ),
+                    )
+                    self._insert_outbox_sql(connection, workspace_id, "uai_package.created", "uai_package", package_id, package)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "uai_package", package_id, package)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "uai_package.create",
+                        agent_id,
+                        package_id,
+                        {"profile": VIRTUAL_UAI_PROFILE, "clientClass": client_class, "requiredRecordCount": len(VIRTUAL_UAI_REQUIRED_PATHS)},
+                    )
+        return _public_uai_package(package, []), True, None, {}
+
+    def uai_records(self, workspace_id, agent_id=None, package_id=None, logical_path=None, include_content=True):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if package_id:
+            clauses.append("package_id = ?")
+            params.append(package_id)
+        if logical_path:
+            normalized_path = normalize_uai_logical_path(logical_path)
+            if not normalized_path:
+                return []
+            clauses.append("logical_path = ?")
+            params.append(normalized_path)
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_uai_records
+                        WHERE %s
+                        ORDER BY startup_order, logical_path
+                        """ % " AND ".join(clauses),
+                        tuple(params),
+                    )
+                )
+        return [_public_uai_record(self._uai_record_from_row(row), include_content) for row in rows]
+
+    def uai_record_revisions(self, workspace_id, record_id, include_content=True):
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(
+                    connection.execute(
+                        """
+                        SELECT * FROM matm_uai_record_revisions
+                        WHERE workspace_id = ? AND record_id = ?
+                        ORDER BY revision
+                        """,
+                        (workspace_id, record_id),
+                    )
+                )
+        return [_public_uai_revision(self._uai_revision_from_row(row), include_content) for row in rows]
+
+    def upsert_uai_record(self, workspace_id, agent_id, package_id, logical_path, title, content, expected_revision=None):
+        normalized_path = normalize_uai_logical_path(logical_path)
+        if not normalized_path or normalized_path not in VIRTUAL_UAI_SPEC_BY_PATH:
+            return None, "unsupported_uai_logical_path", {"supportedLogicalPaths": list(VIRTUAL_UAI_STARTUP_ORDER)}
+        record_id = _uai_record_id(package_id, normalized_path)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    package_sql = "SELECT * FROM matm_uai_packages WHERE workspace_id = ? AND package_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        package_sql += " FOR UPDATE"
+                    package_row = connection.execute(package_sql, (workspace_id, package_id)).fetchone()
+                    if not package_row:
+                        return None, "uai_package_not_found", {}
+                    package = self._uai_package_from_row(package_row)
+                    if package.get("agentId") != agent_id:
+                        return None, "uai_package_agent_mismatch", {}
+                    validated, error, details = _validate_uai_record_content(
+                        normalized_path,
+                        title,
+                        content,
+                        agent_id,
+                        package.get("agentName"),
+                    )
+                    if error:
+                        return None, error, details
+                    select_record_sql = "SELECT * FROM matm_uai_records WHERE workspace_id = ? AND record_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_record_sql += " FOR UPDATE"
+                    existing_row = connection.execute(select_record_sql, (workspace_id, record_id)).fetchone()
+                    existing = self._uai_record_from_row(existing_row)
+                    if existing:
+                        if expected_revision in (None, ""):
+                            return None, "expected_revision_required", {"currentRevision": existing["revision"]}
+                        try:
+                            expected_value = int(expected_revision)
+                        except (TypeError, ValueError):
+                            return None, "expected_revision_invalid", {"currentRevision": existing["revision"]}
+                        if expected_value != existing["revision"]:
+                            return None, "uai_revision_conflict", {"currentRevision": existing["revision"]}
+                        if existing.get("contentHash") == validated["contentHash"] and existing.get("title") == validated["title"]:
+                            records = self._uai_records_for_package_sql(connection, package_id)
+                            return {
+                                "record": _public_uai_record(existing, True),
+                                "package": _public_uai_package(package, records),
+                                "created": False,
+                                "changed": False,
+                            }, None, {}
+                        revision_number = existing["revision"] + 1
+                        created = False
+                    else:
+                        if expected_revision not in (None, "", 0, "0"):
+                            return None, "uai_revision_conflict", {"currentRevision": 0}
+                        revision_number = 1
+                        created = True
+                    spec = validated["spec"]
+                    record = {
+                        "recordId": record_id,
+                        "packageId": package_id,
+                        "workspaceId": workspace_id,
+                        "agentId": agent_id,
+                        "logicalPath": validated["logicalPath"],
+                        "role": spec["role"],
+                        "title": validated["title"],
+                        "content": validated["content"],
+                        "contentHash": validated["contentHash"],
+                        "contentBytes": validated["contentBytes"],
+                        "revision": revision_number,
+                        "required": bool(spec.get("required")),
+                        "startupOrder": int(spec.get("startupOrder") or 0),
+                        "status": "active",
+                        "source": "memoryendpoints://uai-memory/accountless-browser-connector",
+                        "firewall": validated["firewall"],
+                        "createdAt": existing.get("createdAt") if existing else now,
+                        "updatedAt": None if created else now,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+                    revision = {
+                        "revisionId": _uai_revision_id(record_id, revision_number),
+                        "recordId": record_id,
+                        "packageId": package_id,
+                        "workspaceId": workspace_id,
+                        "agentId": agent_id,
+                        "logicalPath": record["logicalPath"],
+                        "revision": revision_number,
+                        "title": record["title"],
+                        "content": record["content"],
+                        "contentHash": record["contentHash"],
+                        "createdAt": now,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+                    workspace = connection.execute(
+                        "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    previous_size = _json_size(existing) if existing else 0
+                    added_size = max(0, _json_size(record) - previous_size) + _json_size(revision)
+                    if self._workspace_usage_bytes_sql(connection, workspace_id) + added_size > int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES):
+                        return None, "quota_exceeded", {}
+                    if created:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_uai_records (
+                              record_id, package_id, workspace_id, agent_id, logical_path, role,
+                              title, content, content_hash, content_bytes, revision, required_record,
+                              startup_order, status, source_uri, firewall_json, created_at, updated_at,
+                              values_redacted, raw_credential_exposed, raw_payload_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record_id, package_id, workspace_id, agent_id, record["logicalPath"],
+                                record["role"], record["title"], record["content"], record["contentHash"],
+                                record["contentBytes"], revision_number, self._int_bool(record["required"]),
+                                record["startupOrder"], record["status"], record["source"],
+                                self._json_dump(record["firewall"]), record["createdAt"], record["updatedAt"],
+                                self._int_bool(True), self._int_bool(False), self._int_bool(False),
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE matm_uai_records
+                            SET title = ?, content = ?, content_hash = ?, content_bytes = ?,
+                                revision = ?, status = 'active', firewall_json = ?, updated_at = ?
+                            WHERE workspace_id = ? AND record_id = ? AND revision = ?
+                            """,
+                            (
+                                record["title"], record["content"], record["contentHash"],
+                                record["contentBytes"], revision_number, self._json_dump(record["firewall"]),
+                                now, workspace_id, record_id, existing["revision"],
+                            ),
+                        )
+                        confirmed = connection.execute(
+                            "SELECT revision, content_hash FROM matm_uai_records WHERE workspace_id = ? AND record_id = ?",
+                            (workspace_id, record_id),
+                        ).fetchone()
+                        if not confirmed or int(confirmed["revision"] or 0) != revision_number or confirmed["content_hash"] != record["contentHash"]:
+                            current_revision = int(confirmed["revision"] or 0) if confirmed else 0
+                            return None, "uai_revision_conflict", {"currentRevision": current_revision}
+                    connection.execute(
+                        """
+                        INSERT INTO matm_uai_record_revisions (
+                          revision_id, record_id, package_id, workspace_id, agent_id, logical_path,
+                          revision, title, content, content_hash, created_at, values_redacted,
+                          raw_credential_exposed, raw_payload_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            revision["revisionId"], record_id, package_id, workspace_id, agent_id,
+                            record["logicalPath"], revision_number, record["title"], record["content"],
+                            record["contentHash"], now, self._int_bool(True), self._int_bool(False),
+                            self._int_bool(False),
+                        ),
+                    )
+                    records = self._uai_records_for_package_sql(connection, package_id)
+                    public_package = _public_uai_package(package, records)
+                    connection.execute(
+                        "UPDATE matm_uai_packages SET status = ?, updated_at = ? WHERE workspace_id = ? AND package_id = ?",
+                        (public_package["status"], now, workspace_id, package_id),
+                    )
+                    package["status"] = public_package["status"]
+                    package["updatedAt"] = now
+                    public_package = _public_uai_package(package, records)
+                    self._insert_outbox_sql(connection, workspace_id, "uai_record.upserted", "uai_record", record_id, record)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "uai_record_revision", revision["revisionId"], revision)
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "uai_record.upsert",
+                        agent_id,
+                        record_id,
+                        {
+                            "packageId": package_id,
+                            "logicalPath": record["logicalPath"],
+                            "revision": revision_number,
+                            "created": created,
+                            "readyForStartup": public_package["readyForStartup"],
+                        },
+                    )
+        return {
+            "record": _public_uai_record(record, True),
+            "package": public_package,
+            "created": created,
+            "changed": True,
+        }, None, {}
+
+    def uai_startup(self, workspace_id, agent_id, package_id=None):
+        package_id = package_id or _uai_package_id(workspace_id, agent_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                package_row = connection.execute(
+                    "SELECT * FROM matm_uai_packages WHERE workspace_id = ? AND package_id = ?",
+                    (workspace_id, package_id),
+                ).fetchone()
+                if not package_row:
+                    return None, "uai_package_not_found"
+                package = self._uai_package_from_row(package_row)
+                if package.get("agentId") != agent_id:
+                    return None, "uai_package_agent_mismatch"
+                records = [
+                    record
+                    for record in self._uai_records_for_package_sql(connection, package_id)
+                    if record.get("status", "active") == "active"
+                ]
+        public_package = _public_uai_package(package, records)
+        return {
+            "schemaVersion": "memoryendpoints.virtual_uai_startup.v1",
+            "package": public_package,
+            "records": [_public_uai_record(record, True) for record in records],
+            "recordCount": len(records),
+            "startupReadOrder": list(VIRTUAL_UAI_STARTUP_ORDER),
+            "missingRequiredPaths": public_package["missingRequiredPaths"],
+            "invalidRequiredPaths": public_package["invalidRequiredPaths"],
+            "readyForStartup": public_package["readyForStartup"],
+            "partialStartupAllowed": False,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }, None
+
+    def _uai_collaboration_head_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "headId": row["head_id"],
+            "workspaceId": row["workspace_id"],
+            "projectId": row["project_id"],
+            "logicalPath": row["logical_path"],
+            "observedContentHash": row["observed_content_hash"],
+            "revision": int(row["revision"] or 0),
+            "activeClaimId": row["active_claim_id"],
+            "activeAgentId": row["active_agent_id"],
+            "leaseExpiresAt": row["lease_expires_at"],
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _uai_edit_claim_from_row(self, row):
+        if not row:
+            return None
+        return {
+            "claimId": row["claim_id"],
+            "headId": row["head_id"],
+            "workspaceId": row["workspace_id"],
+            "projectId": row["project_id"],
+            "agentId": row["agent_id"],
+            "agentName": row["agent_name"],
+            "logicalPath": row["logical_path"],
+            "baseContentHash": row["base_content_hash"],
+            "intentSummary": row["intent_summary"],
+            "leaseSeconds": int(row["lease_seconds"] or 0),
+            "leaseExpiresAt": row["lease_expires_at"],
+            "status": row["status"],
+            "completionContentHash": row["completion_content_hash"],
+            "completionSummary": row["completion_summary"],
+            "createdAt": row["created_at"],
+            "closedAt": row["closed_at"],
+            "valuesRedacted": self._bool(row["values_redacted"]),
+            "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+            "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+        }
+
+    def _expire_uai_edit_claims_sql(self, connection, workspace_id):
+        now = utc_now()
+        rows = list(
+            connection.execute(
+                """
+                SELECT * FROM matm_uai_edit_claims
+                WHERE workspace_id = ? AND status = 'active' AND lease_expires_at <= ?
+                ORDER BY lease_expires_at, claim_id
+                """,
+                (workspace_id, now),
+            )
+        )
+        for row in rows:
+            connection.execute(
+                "UPDATE matm_uai_edit_claims SET status = 'expired', closed_at = ? WHERE workspace_id = ? AND claim_id = ? AND status = 'active'",
+                (now, workspace_id, row["claim_id"]),
+            )
+            connection.execute(
+                """
+                UPDATE matm_uai_collaboration_heads
+                SET active_claim_id = NULL, active_agent_id = NULL, lease_expires_at = NULL, updated_at = ?
+                WHERE workspace_id = ? AND head_id = ? AND active_claim_id = ?
+                """,
+                (now, workspace_id, row["head_id"], row["claim_id"]),
+            )
+            self._record_audit_sql(
+                connection,
+                workspace_id,
+                "uai_edit_claim.expire",
+                "system",
+                row["claim_id"],
+                {"projectId": row["project_id"], "logicalPath": row["logical_path"]},
+            )
+        return len(rows)
+
+    def uai_collaboration_heads(self, workspace_id, project_id=None, logical_path=None):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if logical_path:
+            path = normalize_local_uai_collaboration_path(logical_path)
+            if not path:
+                return []
+            clauses.append("logical_path = ?")
+            params.append(path)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    rows = list(
+                        connection.execute(
+                            "SELECT * FROM matm_uai_collaboration_heads WHERE %s ORDER BY project_id, logical_path"
+                            % " AND ".join(clauses),
+                            tuple(params),
+                        )
+                    )
+        return [_public_uai_collaboration_head(self._uai_collaboration_head_from_row(row)) for row in rows]
+
+    def uai_edit_claims(self, workspace_id, project_id=None, agent_id=None, logical_path=None, status=None):
+        clauses = ["workspace_id = ?"]
+        params = [workspace_id]
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if agent_id:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if logical_path:
+            path = normalize_local_uai_collaboration_path(logical_path)
+            if not path:
+                return []
+            clauses.append("logical_path = ?")
+            params.append(path)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    rows = list(
+                        connection.execute(
+                            "SELECT * FROM matm_uai_edit_claims WHERE %s ORDER BY created_at DESC, claim_id DESC"
+                            % " AND ".join(clauses),
+                            tuple(params),
+                        )
+                    )
+        return [_public_uai_edit_claim(self._uai_edit_claim_from_row(row)) for row in rows]
+
+    def acquire_uai_edit_claim(self, workspace_id, project_id, agent_id, logical_path, base_content_hash, intent_summary, lease_seconds=None):
+        path = normalize_local_uai_collaboration_path(logical_path)
+        if not path:
+            return None, "unsupported_local_uai_path", {}
+        base_hash = normalize_sha256(base_content_hash)
+        if not base_hash:
+            return None, "uai_base_content_hash_invalid", {}
+        safe_summary, error, details = _validate_uai_collaboration_summary(intent_summary, "intent_summary")
+        if error:
+            return None, error, details
+        lease_value = _uai_lease_seconds(lease_seconds)
+        lease_expires_at = _uai_lease_expires_at(lease_value)
+        head_id = _uai_collaboration_head_id(workspace_id, project_id, path)
+        claim_id = _time_ordered_id("uaiclaim")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    project = connection.execute(
+                        "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ? AND status <> 'deleted'",
+                        (workspace_id, project_id),
+                    ).fetchone()
+                    if not project:
+                        return None, "project_not_found", {}
+                    agent = connection.execute(
+                        "SELECT * FROM matm_agents WHERE workspace_id = ? AND agent_id = ? AND status = 'active'",
+                        (workspace_id, agent_id),
+                    ).fetchone()
+                    if not agent:
+                        return None, "registered_agent_required", {}
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO matm_uai_collaboration_heads (
+                          head_id, workspace_id, project_id, logical_path, observed_content_hash,
+                          revision, active_claim_id, active_agent_id, lease_expires_at, status,
+                          created_at, updated_at, values_redacted, raw_credential_exposed,
+                          raw_payload_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            head_id, workspace_id, project_id, path, base_hash, 0, None, None, None,
+                            "tracked", now, None, self._int_bool(True), self._int_bool(False),
+                            self._int_bool(False),
+                        ),
+                    )
+                    select_head_sql = "SELECT * FROM matm_uai_collaboration_heads WHERE workspace_id = ? AND head_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_head_sql += " FOR UPDATE"
+                    head_row = connection.execute(select_head_sql, (workspace_id, head_id)).fetchone()
+                    head = self._uai_collaboration_head_from_row(head_row)
+                    if head.get("activeClaimId"):
+                        claim_row = connection.execute(
+                            "SELECT * FROM matm_uai_edit_claims WHERE workspace_id = ? AND claim_id = ?",
+                            (workspace_id, head["activeClaimId"]),
+                        ).fetchone()
+                        active_claim = self._uai_edit_claim_from_row(claim_row)
+                        if active_claim and active_claim.get("status") == "active":
+                            return None, "uai_edit_claim_conflict", {
+                                "head": _public_uai_collaboration_head(head),
+                                "activeClaim": _public_uai_edit_claim(active_claim),
+                            }
+                    if head.get("observedContentHash") != base_hash:
+                        return None, "uai_base_hash_mismatch", {
+                            "head": _public_uai_collaboration_head(head),
+                            "currentContentHash": "sha256:" + head.get("observedContentHash"),
+                        }
+                    claim = {
+                        "claimId": claim_id,
+                        "headId": head_id,
+                        "workspaceId": workspace_id,
+                        "projectId": project_id,
+                        "agentId": agent_id,
+                        "agentName": agent["display_name"],
+                        "logicalPath": path,
+                        "baseContentHash": base_hash,
+                        "intentSummary": safe_summary,
+                        "leaseSeconds": lease_value,
+                        "leaseExpiresAt": lease_expires_at,
+                        "status": "active",
+                        "completionContentHash": None,
+                        "completionSummary": None,
+                        "createdAt": now,
+                        "closedAt": None,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+                    workspace = connection.execute(
+                        "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(claim) > int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES):
+                        return None, "quota_exceeded", {}
+                    connection.execute(
+                        """
+                        INSERT INTO matm_uai_edit_claims (
+                          claim_id, head_id, workspace_id, project_id, agent_record_id, agent_id,
+                          agent_name, logical_path, base_content_hash, intent_summary, lease_seconds,
+                          lease_expires_at, status, completion_content_hash, completion_summary,
+                          created_at, closed_at, values_redacted, raw_credential_exposed,
+                          raw_payload_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            claim_id, head_id, workspace_id, project_id, agent["agent_record_id"],
+                            agent_id, agent["display_name"], path, base_hash, safe_summary, lease_value,
+                            lease_expires_at, "active", None, None, now, None, self._int_bool(True),
+                            self._int_bool(False), self._int_bool(False),
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE matm_uai_collaboration_heads
+                        SET active_claim_id = ?, active_agent_id = ?, lease_expires_at = ?, updated_at = ?
+                        WHERE workspace_id = ? AND head_id = ? AND active_claim_id IS NULL
+                        """,
+                        (claim_id, agent_id, lease_expires_at, now, workspace_id, head_id),
+                    )
+                    confirmed = connection.execute(
+                        "SELECT * FROM matm_uai_collaboration_heads WHERE workspace_id = ? AND head_id = ?",
+                        (workspace_id, head_id),
+                    ).fetchone()
+                    head = self._uai_collaboration_head_from_row(confirmed)
+                    if head.get("activeClaimId") != claim_id:
+                        return None, "uai_edit_claim_conflict", {"head": _public_uai_collaboration_head(head)}
+                    self._insert_outbox_sql(connection, workspace_id, "uai_edit_claim.acquired", "uai_edit_claim", claim_id, claim)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "uai_edit_claim", claim_id, claim)
+                    self._record_audit_sql(connection, workspace_id, "uai_edit_claim.acquire", agent_id, claim_id, {"projectId": project_id, "logicalPath": path, "leaseSeconds": lease_value})
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head), "claimAcquired": True}, None, {}
+
+    def heartbeat_uai_edit_claim(self, workspace_id, agent_id, claim_id, lease_seconds=None):
+        lease_value = _uai_lease_seconds(lease_seconds)
+        lease_expires_at = _uai_lease_expires_at(lease_value)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    select_claim_sql = "SELECT * FROM matm_uai_edit_claims WHERE workspace_id = ? AND claim_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_claim_sql += " FOR UPDATE"
+                    claim_row = connection.execute(select_claim_sql, (workspace_id, claim_id)).fetchone()
+                    claim = self._uai_edit_claim_from_row(claim_row)
+                    if not claim:
+                        return None, "uai_edit_claim_not_found", {}
+                    if claim.get("agentId") != agent_id:
+                        return None, "uai_edit_claim_agent_mismatch", {}
+                    if claim.get("status") != "active":
+                        return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+                    head_row = connection.execute(
+                        "SELECT * FROM matm_uai_collaboration_heads WHERE workspace_id = ? AND head_id = ?",
+                        (workspace_id, claim["headId"]),
+                    ).fetchone()
+                    head = self._uai_collaboration_head_from_row(head_row)
+                    if not head or head.get("activeClaimId") != claim_id:
+                        return None, "uai_edit_claim_conflict", {}
+                    connection.execute(
+                        "UPDATE matm_uai_edit_claims SET lease_seconds = ?, lease_expires_at = ? WHERE workspace_id = ? AND claim_id = ? AND status = 'active'",
+                        (lease_value, lease_expires_at, workspace_id, claim_id),
+                    )
+                    connection.execute(
+                        "UPDATE matm_uai_collaboration_heads SET lease_expires_at = ?, updated_at = ? WHERE workspace_id = ? AND head_id = ? AND active_claim_id = ?",
+                        (lease_expires_at, now, workspace_id, claim["headId"], claim_id),
+                    )
+                    claim["leaseSeconds"] = lease_value
+                    claim["leaseExpiresAt"] = lease_expires_at
+                    head["leaseExpiresAt"] = lease_expires_at
+                    head["updatedAt"] = now
+                    self._record_audit_sql(connection, workspace_id, "uai_edit_claim.heartbeat", agent_id, claim_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath"), "leaseSeconds": lease_value})
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
+
+    def complete_uai_edit_claim(self, workspace_id, agent_id, claim_id, new_content_hash, completion_summary):
+        new_hash = normalize_sha256(new_content_hash)
+        if not new_hash:
+            return None, "uai_completion_content_hash_invalid", {}
+        safe_summary, error, details = _validate_uai_collaboration_summary(completion_summary, "completion_summary")
+        if error:
+            return None, error, details
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    select_claim_sql = "SELECT * FROM matm_uai_edit_claims WHERE workspace_id = ? AND claim_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_claim_sql += " FOR UPDATE"
+                    claim_row = connection.execute(select_claim_sql, (workspace_id, claim_id)).fetchone()
+                    claim = self._uai_edit_claim_from_row(claim_row)
+                    if not claim:
+                        return None, "uai_edit_claim_not_found", {}
+                    if claim.get("agentId") != agent_id:
+                        return None, "uai_edit_claim_agent_mismatch", {}
+                    if claim.get("status") != "active":
+                        return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+                    head_row = connection.execute(
+                        "SELECT * FROM matm_uai_collaboration_heads WHERE workspace_id = ? AND head_id = ?",
+                        (workspace_id, claim["headId"]),
+                    ).fetchone()
+                    head = self._uai_collaboration_head_from_row(head_row)
+                    if not head or head.get("activeClaimId") != claim_id:
+                        return None, "uai_edit_claim_conflict", {}
+                    if head.get("observedContentHash") != claim.get("baseContentHash"):
+                        return None, "uai_base_hash_mismatch", {"head": _public_uai_collaboration_head(head)}
+                    next_revision = int(head.get("revision") or 0) + 1
+                    connection.execute(
+                        """
+                        UPDATE matm_uai_edit_claims
+                        SET status = 'completed', completion_content_hash = ?, completion_summary = ?, closed_at = ?
+                        WHERE workspace_id = ? AND claim_id = ? AND status = 'active'
+                        """,
+                        (new_hash, safe_summary, now, workspace_id, claim_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE matm_uai_collaboration_heads
+                        SET observed_content_hash = ?, revision = ?, active_claim_id = NULL,
+                            active_agent_id = NULL, lease_expires_at = NULL, updated_at = ?
+                        WHERE workspace_id = ? AND head_id = ? AND active_claim_id = ?
+                        """,
+                        (new_hash, next_revision, now, workspace_id, claim["headId"], claim_id),
+                    )
+                    claim.update({"status": "completed", "completionContentHash": new_hash, "completionSummary": safe_summary, "closedAt": now})
+                    head.update({"observedContentHash": new_hash, "revision": next_revision, "activeClaimId": None, "activeAgentId": None, "leaseExpiresAt": None, "updatedAt": now})
+                    self._insert_outbox_sql(connection, workspace_id, "uai_edit_claim.completed", "uai_collaboration_head", head["headId"], head)
+                    self._insert_storage_ledger_sql(connection, workspace_id, "uai_edit_claim_completion", claim_id, {"completionSummary": safe_summary, "completionContentHash": new_hash})
+                    self._record_audit_sql(connection, workspace_id, "uai_edit_claim.complete", agent_id, claim_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath"), "headRevision": next_revision})
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
+
+    def release_uai_edit_claim(self, workspace_id, agent_id, claim_id, release_summary):
+        safe_summary, error, details = _validate_uai_collaboration_summary(release_summary, "release_summary")
+        if error:
+            return None, error, details
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._expire_uai_edit_claims_sql(connection, workspace_id)
+                    select_claim_sql = "SELECT * FROM matm_uai_edit_claims WHERE workspace_id = ? AND claim_id = ?"
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_claim_sql += " FOR UPDATE"
+                    claim_row = connection.execute(select_claim_sql, (workspace_id, claim_id)).fetchone()
+                    claim = self._uai_edit_claim_from_row(claim_row)
+                    if not claim:
+                        return None, "uai_edit_claim_not_found", {}
+                    if claim.get("agentId") != agent_id:
+                        return None, "uai_edit_claim_agent_mismatch", {}
+                    if claim.get("status") != "active":
+                        return None, "uai_edit_claim_not_active", {"claimStatus": claim.get("status")}
+                    head_row = connection.execute(
+                        "SELECT * FROM matm_uai_collaboration_heads WHERE workspace_id = ? AND head_id = ?",
+                        (workspace_id, claim["headId"]),
+                    ).fetchone()
+                    head = self._uai_collaboration_head_from_row(head_row)
+                    if not head or head.get("activeClaimId") != claim_id:
+                        return None, "uai_edit_claim_conflict", {}
+                    connection.execute(
+                        "UPDATE matm_uai_edit_claims SET status = 'released', completion_summary = ?, closed_at = ? WHERE workspace_id = ? AND claim_id = ? AND status = 'active'",
+                        (safe_summary, now, workspace_id, claim_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE matm_uai_collaboration_heads
+                        SET active_claim_id = NULL, active_agent_id = NULL, lease_expires_at = NULL, updated_at = ?
+                        WHERE workspace_id = ? AND head_id = ? AND active_claim_id = ?
+                        """,
+                        (now, workspace_id, claim["headId"], claim_id),
+                    )
+                    claim.update({"status": "released", "completionSummary": safe_summary, "closedAt": now})
+                    head.update({"activeClaimId": None, "activeAgentId": None, "leaseExpiresAt": None, "updatedAt": now})
+                    self._record_audit_sql(connection, workspace_id, "uai_edit_claim.release", agent_id, claim_id, {"projectId": claim.get("projectId"), "logicalPath": claim.get("logicalPath")})
+        return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
 
     def _record_audit_sql(self, connection, workspace_id, action, actor, target, details=None):
         connection.execute(

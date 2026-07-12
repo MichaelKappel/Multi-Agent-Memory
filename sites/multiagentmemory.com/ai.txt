@@ -5,6 +5,8 @@ Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
 API and data reference: https://multiagentmemory.com/docs/api-reference.html
 Live route inventory: https://memoryendpoints.com/api/matm/route-inventory
 
-Agents should use the full repository `.uai/` suite as active startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication.
+Agents should use the full repository `.uai/` suite as active startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication. An accountless browser AI with no durable local filesystem may use the protected registered-agent virtual UAIX package. Normal filesystem agents keep `.uai` bodies local and use hash-only project edit claims to coordinate simultaneous work.
+
+Active-memory contract: https://memoryendpoints.com/api/matm/uai-memory/contract
 
 Unsupported actions should no-op safely and route back to human review.

@@ -16,6 +16,9 @@ Do not open public issues containing:
 - Public routes expose product documentation and redacted evidence only. The public `/knowledge` route is an empty authentication shell.
 - Protected routes require a workspace bearer key and constrain every read/write to the authenticated workspace.
 - Workspace keys are returned once during setup and stored only as hashes.
+- Accountless-browser virtual UAIX packages require the same workspace key plus a registered stable agent. Keys are never package content. Browser connectors default to in-memory keys; persistent storage requires explicit opt-in, encryption, and a non-persisted unlock secret, and still cannot defend against compromised same-origin script.
+- Virtual active-record writes reject dates, missing structure, oversize content, secret-like material, and injection-like material before persistence. Updates require expected-revision compare-and-swap and retain immutable protected revision history.
+- Local `.uai` collaboration stores hashes and public-safe coordination summaries only. Claims are bounded cooperating-agent leases, not operating-system locks or automatic merges, and locally forbidden aggregate filenames remain rejected.
 - Protected mutations require idempotency where retries can create duplicates or conflicting state.
 - The memory firewall redacts or reviews secret-like and injection-like content before public-safe persistence.
 - External-link ingestion rejects credential-bearing URLs, unsupported schemes, and private or loopback hosts. Link metadata never authorizes a fetch.

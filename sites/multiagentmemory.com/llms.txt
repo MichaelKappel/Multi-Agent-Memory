@@ -14,6 +14,8 @@ Primary links:
 Memory boundary:
 
 - Active startup memory: the full repository `.uai/` suite.
+- Accountless-browser exception: a complete protected virtual UAIX package bound to a workspace key and registered agent when no durable local filesystem exists.
+- Concurrent local-agent overlay: project/path hashes and bounded edit claims only; local `.uai` bodies remain local.
 - Mid-to-long-term memory: MemoryEndpoints.com protected MATM endpoint routes.
 - Public documentation: MultiAgentMemory.com pages and discovery files.
 
@@ -22,6 +24,7 @@ Primary live endpoint evidence:
 - https://memoryendpoints.com/api/matm/live-capability-matrix
 - https://memoryendpoints.com/api/version
 - https://memoryendpoints.com/api/matm/sync/capabilities
+- https://memoryendpoints.com/api/matm/uai-memory/contract
 - https://memoryendpoints.com/api/matm/openapi.json
 - https://memoryendpoints.com/api/matm/route-inventory
 - https://memoryendpoints.com/api/matm/readiness-result
@@ -41,6 +44,11 @@ Protected MATM workflow:
 
 - Agent setup: POST /api/matm/agent-setup/free-account
 - Memory write: POST /api/matm/memory-events/submit
+- Virtual UAIX packages: GET, POST /api/matm/uai-memory/packages
+- Virtual UAIX records: GET, POST /api/matm/uai-memory/records
+- Virtual UAIX startup: GET /api/matm/uai-memory/startup
+- Local .uai hash heads: GET /api/matm/uai-memory/file-heads
+- Local .uai claims: GET, POST /api/matm/uai-memory/edit-claims; POST heartbeat, complete, or release subroutes
 - Memory search: GET /api/matm/search
 - Knowledge tree: GET /api/matm/knowledge-tree
 - Knowledge search: GET /api/matm/knowledge-documents
@@ -71,6 +79,9 @@ Documentation evidence rule:
 
 Setup references:
 
+- UAIX AI memory: https://uaix.org/en-us/ai-memory/
+- UAIX package format: https://uaix.org/en-us/ai-memory/uaix-package-format/
+- UAIX UAI files: https://uaix.org/en-us/ai-memory/uai-files/
 - UAIX setup option: https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints
 - MemoryEndpoints.com inbound/home: https://memoryendpoints.com
 
@@ -82,3 +93,5 @@ Setup mode:
 Inbound link rule: UAIX may use setup-option fragments because it has multiple wizard modes. MemoryEndpoints.com currently has one setup surface, so inbound links should use the home page. Future MemoryEndpoints setup URLs should be clean readable routes.
 
 Authority boundary: no certification, endorsement, automatic repository writes, hidden credential validation, or private secret handling is granted by this documentation site.
+
+Active-memory truth boundary: the full virtual package is only for an accountless browser AI with no durable local filesystem and is never anonymous. Normal filesystem agents keep local .uai contents local. Edit claims coordinate cooperating agents but do not lock, merge, distribute, or rewrite local files.

@@ -7,6 +7,7 @@ The repository is organized around a deployable endpoint app plus a documentatio
 - `app.py` exposes the WSGI application for local and import-based use.
 - `passenger_wsgi.py` is the Passenger/cPanel entry point.
 - `memoryendpoints/` contains the pure Python runtime package.
+- `memoryendpoints/uai_memory.py` defines the accountless-browser virtual UAIX profile, date-free record validation, and hash-only local `.uai` collaboration contract; persistence remains in `memoryendpoints/storage.py` and routing remains in `memoryendpoints/app.py`.
 - `static/` contains browser assets used by MemoryEndpoints.com.
 
 ## Documentation Surface
@@ -17,7 +18,8 @@ The repository is organized around a deployable endpoint app plus a documentatio
 
 ## Agent Memory Surface
 
-- `.uai/` contains the typed active startup memory suite, pointer ledgers, totem invariant, and local continuity records. Every file in the startup read order is active memory, and forbidden duration/state filenames such as `short-term-memory.uai` and `current-state.uai` are not allowed.
+- `.uai/` contains the typed active startup memory suite, pointer ledgers, totem invariant, and local continuity records. Every file in the startup read order is active memory, and forbidden duration/state filenames such as `short-term-memory.uai` and `current-state.uai` are not allowed as actual local files. The protected accountless-browser package can represent its configuration-specific short-term logical role virtually because it creates no repository file.
+- When multiple local agents share this codebase, their `.uai` bodies remain local. They coordinate a path before editing through protected hash-only file heads and bounded edit claims, then use the project meeting room and source control for content reconciliation.
 - `agent-file-handoff/` contains local intake buckets. Raw active intake files are ignored by Git and are reviewed one item at a time into protected MemoryEndpoints database wiki pages and source-linked memory. `.uai` retains compact startup continuity and semantic pointers, not report bodies.
 
 ## Operational Surface
