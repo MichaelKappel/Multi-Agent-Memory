@@ -417,6 +417,61 @@ def sync_capabilities():
     }
 
 
+def disconnected_delivery_contract():
+    return {
+        "schemaVersion": "memoryendpoints.disconnected_delivery_contract.v1",
+        "status": "live_polling_baseline",
+        "deliverySourceOfTruth": "durable_recipient_notification_in_server_database",
+        "routes": {
+            "send": "/api/matm/agent-messages",
+            "read": "/api/matm/current-message",
+            "acknowledge": "/api/matm/notifications/ack",
+        },
+        "polling": {
+            "status": "live",
+            "method": "GET",
+            "requiredQueryFields": ["workspace_id", "agent_id"],
+            "optionalQueryFields": ["message_id", "notification_id", "limit", "cursor", "after_notification_id"],
+            "limitRange": {"minimum": 1, "maximum": 200},
+            "paginationResponseFields": ["visibleUnreadCount", "totalUnreadCount", "hasMore", "nextCursor", "cursor", "cursorAccepted"],
+            "invalidCursorRule": "When cursorAccepted=false, discard the stale cursor and restart from the attention-ordered first page.",
+        },
+        "recommendedClientLoop": [
+            "Poll immediately at startup, after reconnect, and when the user explicitly refreshes.",
+            "Continue polling with bounded backoff and jitter while idle or after transient failures; do not let polling stop permanently.",
+            "Reset backoff after connectivity recovery or when a message becomes visible.",
+            "Drain pages while hasMore=true by passing nextCursor as cursor, then return to the first page on the next poll cycle.",
+        ],
+        "attentionOrdering": {
+            "priority": ["required_response", "viewed_acknowledgement"],
+            "withinPriority": "newest_notification_first",
+            "causalOrderingClaimed": False,
+        },
+        "acknowledgement": {
+            "scope": "recipient_notification",
+            "meaning": "The configured agent has viewed or otherwise acknowledged this notification.",
+            "requiredResponseCompletionIsSeparate": True,
+            "broadcastIsolation": "Each active recipient receives a distinct notification, so one acknowledgement does not clear another agent's notification.",
+        },
+        "multiDeviceRule": "Devices configured with the same agentId share notification state; no device lease, claim, or work-stealing protocol is advertised.",
+        "transports": {
+            "outboundHttpsPolling": "live",
+            "serverSentEvents": "not_implemented_optional_wakeup_hint_only",
+            "inboundCallbacks": "not_implemented",
+            "conditionalPolling": "not_implemented",
+        },
+        "deliverySemantics": {
+            "unreadUntilRecipientAcknowledgement": True,
+            "exactlyOnceClaimed": False,
+            "liveHintIsDeliveryProof": False,
+            "retentionResetProtocolAdvertised": False,
+        },
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def capability_matrix():
     health = store_backend_health()
     backend = health["storeBackend"]
@@ -526,12 +581,14 @@ def capability_matrix():
             "sendRoute": "/api/matm/agent-messages",
             "ackRoute": "/api/matm/notifications/ack",
             "responseStates": ["required_response", "viewed_acknowledgement"],
-            "queryFilters": ["agent_id", "message_id", "notification_id", "limit"],
+            "queryFilters": ["agent_id", "message_id", "notification_id", "limit", "cursor", "after_notification_id"],
+            "paginationResponseFields": ["visibleUnreadCount", "totalUnreadCount", "hasMore", "nextCursor", "cursor", "cursorAccepted"],
             "broadcastFanout": "per_active_agent_notification",
             "ackIsolation": "per_recipient_notification",
             "broadcastInvariant": "Each broadcast recipient receives a distinct unread notification id so one agent acknowledgement does not clear the broadcast for other agents.",
             "postConfirmationFields": ["expectedRecipientCount", "visibleRecipientCount", "visibleToAgents", "notificationIds"],
         },
+        "disconnectedDelivery": disconnected_delivery_contract(),
         "meetingRooms": {
             "status": "live",
             "roomListRoute": "/api/matm/meeting-rooms",
@@ -829,6 +886,7 @@ def connector_contract():
                 "Use targeted current messages for urgent lane-specific notices; use meeting rooms for durable coordination transcripts.",
             ],
         },
+        "disconnectedDelivery": disconnected_delivery_contract(),
         "recommendedConnectorUi": [
             "Settings: base URL, workspace id, agent id, masked workspace key, and a test-connection action.",
             "Active memory: show either virtual UAIX startup readiness for the accountless-browser exception or local .uai file-head and edit-claim status for filesystem agents; never silently switch modes.",

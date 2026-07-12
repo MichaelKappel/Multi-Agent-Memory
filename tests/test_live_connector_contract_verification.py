@@ -1,5 +1,6 @@
 import unittest
 
+from memoryendpoints import site_data
 from scripts import verify_live_connector_contract as verifier
 
 
@@ -45,6 +46,7 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
                         "X-MemoryEndpoints-Key",
                     ],
                 },
+                "disconnectedDelivery": site_data.disconnected_delivery_contract(),
             }
         }
 
@@ -56,6 +58,17 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         self.assertTrue(check["recipientCountConfirmationAdvertised"])
         self.assertTrue(check["browserCorsHeadersVerified"])
         self.assertTrue(check["searchQueryFiltersVerified"])
+        self.assertTrue(check["disconnectedPollingBaselineAdvertised"])
+        self.assertTrue(check["disconnectedDatabaseTruthVerified"])
+        self.assertTrue(check["disconnectedRoutesVerified"])
+        self.assertTrue(check["disconnectedPollFieldsVerified"])
+        self.assertTrue(check["disconnectedPaginationVerified"])
+        self.assertTrue(check["disconnectedAttentionOrderingVerified"])
+        self.assertTrue(check["disconnectedAcknowledgementVerified"])
+        self.assertTrue(check["disconnectedClientLoopVerified"])
+        self.assertTrue(check["disconnectedUnavailableTransportsExplicit"])
+        self.assertTrue(check["disconnectedDeliveryClaimsSafe"])
+        self.assertTrue(check["disconnectedMultiDeviceRuleVerified"])
 
     def test_connector_contract_check_rejects_missing_ack_isolation_fields(self):
         payload = {
@@ -89,6 +102,10 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         self.assertFalse(check["visibleAgentsConfirmationAdvertised"])
         self.assertFalse(check["recipientCountConfirmationAdvertised"])
         self.assertFalse(check["searchQueryFiltersVerified"])
+        self.assertFalse(check["disconnectedPollingBaselineAdvertised"])
+        self.assertFalse(check["disconnectedDatabaseTruthVerified"])
+        self.assertFalse(check["disconnectedPollFieldsVerified"])
+        self.assertFalse(check["disconnectedPaginationVerified"])
         self.assertIn("event_id", check["missingSearchQueryFilters"])
 
     def test_protected_exact_memory_readback_requires_single_filtered_row(self):
@@ -157,6 +174,7 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
                         "preflightWithoutWorkspaceKey": True,
                     },
                 },
+                "disconnectedDelivery": site_data.disconnected_delivery_contract(),
             }
         }
 
@@ -166,6 +184,11 @@ class LiveConnectorContractVerificationTests(unittest.TestCase):
         self.assertTrue(check["ackIsolationAdvertised"])
         self.assertTrue(check["visibleAgentsConfirmationAdvertised"])
         self.assertTrue(check["browserCorsAdvertised"])
+        self.assertTrue(check["disconnectedPollingBaselineAdvertised"])
+        self.assertTrue(check["disconnectedDatabaseTruthVerified"])
+        self.assertTrue(check["disconnectedPollFieldsVerified"])
+        self.assertTrue(check["disconnectedPaginationVerified"])
+        self.assertTrue(check["disconnectedDeliveryClaimsSafe"])
 
     def test_build_report_fails_when_current_message_contract_is_missing(self):
         passing_preflight = {"verified": True}

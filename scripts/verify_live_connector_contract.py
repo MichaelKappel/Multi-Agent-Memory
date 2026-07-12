@@ -24,6 +24,8 @@ MEMORY_SEARCH_FILTERS = [
     "event_id",
 ]
 CORS_HEADERS = ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"]
+DISCONNECTED_POLL_FIELDS = ["workspace_id", "agent_id", "message_id", "notification_id", "limit", "cursor", "after_notification_id"]
+DISCONNECTED_PAGINATION_FIELDS = ["visibleUnreadCount", "totalUnreadCount", "hasMore", "nextCursor", "cursor", "cursorAccepted"]
 SOURCE_PREFIX = "docs/long-term-memory/"
 MIGRATION_TAG = "long-term-memory-migration"
 
@@ -89,6 +91,40 @@ def missing_values(actual, required):
     return [item for item in required if item.lower() not in actual_set]
 
 
+def disconnected_delivery_check(contract):
+    contract = contract or {}
+    routes = contract.get("routes") or {}
+    polling = contract.get("polling") or {}
+    attention = contract.get("attentionOrdering") or {}
+    acknowledgement = contract.get("acknowledgement") or {}
+    transports = contract.get("transports") or {}
+    semantics = contract.get("deliverySemantics") or {}
+    required_and_optional = list(polling.get("requiredQueryFields") or []) + list(polling.get("optionalQueryFields") or [])
+    missing_poll_fields = missing_values(required_and_optional, DISCONNECTED_POLL_FIELDS)
+    missing_pagination_fields = missing_values(polling.get("paginationResponseFields"), DISCONNECTED_PAGINATION_FIELDS)
+    client_loop = " ".join(str(item) for item in (contract.get("recommendedClientLoop") or [])).lower()
+    multi_device_rule = str(contract.get("multiDeviceRule") or "").lower()
+    return {
+        "disconnectedPollingBaselineAdvertised": contract.get("status") == "live_polling_baseline" and polling.get("status") == "live",
+        "disconnectedDatabaseTruthVerified": contract.get("deliverySourceOfTruth") == "durable_recipient_notification_in_server_database",
+        "disconnectedRoutesVerified": routes == {
+            "send": "/api/matm/agent-messages",
+            "read": "/api/matm/current-message",
+            "acknowledge": "/api/matm/notifications/ack",
+        },
+        "disconnectedPollFieldsVerified": not missing_poll_fields,
+        "missingDisconnectedPollFields": missing_poll_fields,
+        "disconnectedPaginationVerified": not missing_pagination_fields and (polling.get("limitRange") or {}).get("maximum") == 200,
+        "missingDisconnectedPaginationFields": missing_pagination_fields,
+        "disconnectedAttentionOrderingVerified": attention.get("priority") == ["required_response", "viewed_acknowledgement"] and attention.get("causalOrderingClaimed") is False,
+        "disconnectedAcknowledgementVerified": acknowledgement.get("scope") == "recipient_notification" and acknowledgement.get("requiredResponseCompletionIsSeparate") is True,
+        "disconnectedClientLoopVerified": all(term in client_loop for term in ("startup", "reconnect", "bounded backoff", "hasmore", "nextcursor")),
+        "disconnectedUnavailableTransportsExplicit": str(transports.get("serverSentEvents") or "").startswith("not_implemented") and transports.get("inboundCallbacks") == "not_implemented",
+        "disconnectedDeliveryClaimsSafe": semantics.get("unreadUntilRecipientAcknowledgement") is True and semantics.get("exactlyOnceClaimed") is False and semantics.get("liveHintIsDeliveryProof") is False,
+        "disconnectedMultiDeviceRuleVerified": "share notification state" in multi_device_rule and "no device lease" in multi_device_rule,
+    }
+
+
 def connector_contract_check(payload):
     data = (payload or {}).get("data") or {}
     memory_flow = data.get("memoryFlow") or {}
@@ -99,7 +135,7 @@ def connector_contract_check(payload):
     missing_search_filters = missing_values(memory_flow.get("searchQueryFilters"), MEMORY_SEARCH_FILTERS)
     missing_headers = missing_values(browser_cors.get("allowedHeaders"), CORS_HEADERS)
     post_confirmation_fields = response_contract.get("postConfirmationFields") or []
-    return {
+    result = {
         "schemaVersion": data.get("schemaVersion"),
         "reviewQueueFiltersVerified": not missing_filters,
         "missingReviewQueueFilters": missing_filters,
@@ -116,6 +152,8 @@ def connector_contract_check(payload):
         "browserCorsHeadersVerified": not missing_headers,
         "valuesRedacted": True,
     }
+    result.update(disconnected_delivery_check(data.get("disconnectedDelivery")))
+    return result
 
 
 def capability_matrix_check(payload):
@@ -124,7 +162,7 @@ def capability_matrix_check(payload):
     current_message = data.get("currentMessageLane") or {}
     browser_cors = ((data.get("connectorContract") or {}).get("browserCors") or {})
     missing_filters = missing_values(review_queue.get("queryFilters"), REVIEW_QUEUE_FILTERS)
-    return {
+    result = {
         "reviewQueueFiltersVerified": not missing_filters,
         "missingReviewQueueFilters": missing_filters,
         "longTermReviewHealthAdvertised": "docs/long-term-memory" in (review_queue.get("longTermMemoryReviewHealth") or ""),
@@ -135,6 +173,8 @@ def capability_matrix_check(payload):
         "browserCorsAdvertised": browser_cors.get("status") == "live" and browser_cors.get("preflightWithoutWorkspaceKey") is True,
         "valuesRedacted": True,
     }
+    result.update(disconnected_delivery_check(data.get("disconnectedDelivery")))
+    return result
 
 
 def cors_preflight_check(status, headers):
@@ -214,7 +254,7 @@ def protected_exact_memory_readback_check(seed_payload, exact_payload, event_id)
 def build_report(base_url, source_sha, contract_check, capability_check, preflight_check, protected_check, exact_memory_check=None, workspace_id="", token=""):
     exact_memory_check = exact_memory_check or {}
     report = {
-        "schemaVersion": "memoryendpoints.live_connector_contract_verification.v2",
+        "schemaVersion": "memoryendpoints.live_connector_contract_verification.v3",
         "baseUrl": base_url.rstrip("/"),
         "sourceSha": source_sha,
         "connectorContract": contract_check,
@@ -239,12 +279,34 @@ def build_report(base_url, source_sha, contract_check, capability_check, preflig
         and contract_check.get("visibleAgentsConfirmationAdvertised")
         and contract_check.get("recipientCountConfirmationAdvertised")
         and contract_check.get("browserCorsHeadersVerified")
+        and contract_check.get("disconnectedPollingBaselineAdvertised")
+        and contract_check.get("disconnectedDatabaseTruthVerified")
+        and contract_check.get("disconnectedRoutesVerified")
+        and contract_check.get("disconnectedPollFieldsVerified")
+        and contract_check.get("disconnectedPaginationVerified")
+        and contract_check.get("disconnectedAttentionOrderingVerified")
+        and contract_check.get("disconnectedAcknowledgementVerified")
+        and contract_check.get("disconnectedClientLoopVerified")
+        and contract_check.get("disconnectedUnavailableTransportsExplicit")
+        and contract_check.get("disconnectedDeliveryClaimsSafe")
+        and contract_check.get("disconnectedMultiDeviceRuleVerified")
         and capability_check.get("reviewQueueFiltersVerified")
         and capability_check.get("longTermReviewHealthAdvertised")
         and capability_check.get("operatorSummaryFieldsIncludeLongTerm")
         and capability_check.get("broadcastFanoutAdvertised")
         and capability_check.get("ackIsolationAdvertised")
         and capability_check.get("visibleAgentsConfirmationAdvertised")
+        and capability_check.get("disconnectedPollingBaselineAdvertised")
+        and capability_check.get("disconnectedDatabaseTruthVerified")
+        and capability_check.get("disconnectedRoutesVerified")
+        and capability_check.get("disconnectedPollFieldsVerified")
+        and capability_check.get("disconnectedPaginationVerified")
+        and capability_check.get("disconnectedAttentionOrderingVerified")
+        and capability_check.get("disconnectedAcknowledgementVerified")
+        and capability_check.get("disconnectedClientLoopVerified")
+        and capability_check.get("disconnectedUnavailableTransportsExplicit")
+        and capability_check.get("disconnectedDeliveryClaimsSafe")
+        and capability_check.get("disconnectedMultiDeviceRuleVerified")
         and preflight_check.get("verified")
         and (protected_check.get("verified") if protected_check else True)
         and (exact_memory_check.get("verified") if exact_memory_check else True)
