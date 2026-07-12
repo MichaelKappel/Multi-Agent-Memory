@@ -9,6 +9,7 @@ from scripts.ingest_one_external_link import (
     external_link_preflight,
     external_link_readback_matches,
     external_link_request_fingerprint,
+    merge_external_link_keywords,
     review_status_readback_satisfies,
 )
 
@@ -92,6 +93,15 @@ class SingleExternalLinkIngestTests(unittest.TestCase):
         self.assertEqual(
             {"metadataMatches": True, "citationMatches": True},
             external_link_readback_matches(link, body),
+        )
+
+    def test_existing_external_link_keywords_are_preserved_and_extended(self):
+        self.assertEqual(
+            ["agent memory", "retrieval", "prompt budget"],
+            merge_external_link_keywords(
+                ["agent memory", "retrieval"],
+                ["Agent Memory", "prompt budget"],
+            ),
         )
 
     def test_preflight_finds_canonical_url_and_exact_citation(self):

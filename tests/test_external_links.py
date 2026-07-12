@@ -208,6 +208,7 @@ class ExternalLinkTests(unittest.TestCase):
 
         source_citation = dict(
             base_body,
+            keywords=["later evidence", "agent api"],
             reviewStatus="unreviewed",
             contextDescription="Unreviewed source citation reuses the reviewed canonical page.",
             citationLabel="Works cited 1",
@@ -222,6 +223,10 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
         self.assertEqual("reviewed", payload["link"]["reviewStatus"])
+        self.assertEqual(
+            ["agent API", "canonical review", "later evidence"],
+            payload["link"]["keywords"],
+        )
         self.assertEqual(2, payload["link"]["mentionCount"])
         self.assertEqual(
             {"Primary evidence", "Works cited 1"},

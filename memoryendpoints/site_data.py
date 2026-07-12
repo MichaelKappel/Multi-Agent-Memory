@@ -761,6 +761,7 @@ def connector_contract():
             "storageTables": ["matm_external_links", "matm_external_link_mentions"],
             "requiredUpsertFields": ["workspaceId", "actorAgentId", "url", "siteName", "pageTitle", "description", "keywords"],
             "citationRule": "When a wiki page cites the link, also send knowledgeDocumentId and contextDescription. The canonical link is deduplicated while each page keeps its own relationship, anchor, citation label, order, and context.",
+            "keywordRule": "Canonical search keywords are a case-insensitive monotonic union across reviewed upserts, so a later citation can add vocabulary without erasing terms learned from earlier reports.",
             "securityRule": "Only public HTTP(S) URLs are accepted. URLs containing userinfo, credential-like query parameters, localhost, private IPs, or internal host suffixes are rejected.",
             "fetchRule": "Upsert indexes reviewed metadata only; it does not automatically fetch or execute the target URL.",
             "postConfirmationRule": "Treat an external-link upsert as successful only when persisted=true and visibleInInternetSearch, visibleOnKnowledgeDocument when cited, and visibleInAuditLog are confirmed.",

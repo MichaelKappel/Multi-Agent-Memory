@@ -45,6 +45,18 @@ def review_status_readback_satisfies(actual_status, requested_status):
     return requested == "unreviewed" and actual in ("reviewed", "quarantined", "rejected")
 
 
+def merge_external_link_keywords(existing_keywords, requested_keywords):
+    merged = []
+    seen = set()
+    for value in list(existing_keywords or []) + list(requested_keywords or []):
+        keyword = str(value or "").strip()
+        key = keyword.casefold()
+        if keyword and key not in seen:
+            seen.add(key)
+            merged.append(keyword[:96])
+    return merged
+
+
 def external_link_request_fingerprint(body):
     material = dict(body)
     metadata = dict(material.get("metadata") or {})
@@ -208,11 +220,6 @@ def main(argv=None):
                 "citationOrder": args.citation_order,
             }
         )
-    request_fingerprint = external_link_request_fingerprint(body)
-    body["metadata"]["requestFingerprint"] = "sha256:" + request_fingerprint
-    idempotency_key = "single-external-link-" + sha256_text(
-        normalized["normalizedUrl"] + "\n" + request_fingerprint
-    )[:24]
     preflight = external_link_preflight(
         args.base_url,
         token,
@@ -220,6 +227,15 @@ def main(argv=None):
         normalized["normalizedUrl"],
         body,
     )
+    requested_keywords = list(body["keywords"])
+    existing_keywords = list((preflight.get("link") or {}).get("keywords") or [])
+    body["keywords"] = merge_external_link_keywords(existing_keywords, requested_keywords)
+    body["metadata"]["keywordsMergedFromExisting"] = bool(existing_keywords)
+    request_fingerprint = external_link_request_fingerprint(body)
+    body["metadata"]["requestFingerprint"] = "sha256:" + request_fingerprint
+    idempotency_key = "single-external-link-" + sha256_text(
+        normalized["normalizedUrl"] + "\n" + request_fingerprint
+    )[:24]
     result = {
         "schemaVersion": "memoryendpoints.single_external_link_ingest.v2",
         "mode": "live_apply" if args.apply else "dry_run",
@@ -230,7 +246,10 @@ def main(argv=None):
         "siteName": args.site_name,
         "pageTitle": args.page_title,
         "description": args.description,
-        "keywords": args.keyword,
+        "requestedKeywords": requested_keywords,
+        "keywords": body["keywords"],
+        "existingKeywordCount": len(existing_keywords),
+        "keywordsMergedFromExisting": bool(existing_keywords),
         "knowledgeDocumentIdHash": "sha256:" + sha256_text(args.document_id) if args.document_id else None,
         "relationshipType": args.relationship_type if args.document_id else None,
         "citationLabel": args.citation_label if args.document_id else None,

@@ -948,6 +948,10 @@ def _merge_external_link_review_status(existing_status, requested_status):
     return requested
 
 
+def _merge_external_link_keywords(existing_keywords, requested_keywords):
+    return _normalize_keywords(list(existing_keywords or []) + list(requested_keywords or []))
+
+
 def _knowledge_tree_from_documents(documents):
     scopes = []
     scope_map = {}
@@ -1991,7 +1995,7 @@ class FileStore(object):
             relationship_type = normalize_relationship_type(payload.get("relationshipType") or payload.get("relationship_type"))
         except ExternalLinkValidationError as exc:
             return None, exc.code
-        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
+        requested_keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
         now = utc_now()
         external_link_id = stable_external_link_id(workspace_id, normalized["normalizedUrl"])
         link = data.setdefault("externalLinks", {}).get(external_link_id) or {
@@ -1999,6 +2003,7 @@ class FileStore(object):
             "workspaceId": workspace_id,
             "createdAt": now,
         }
+        keywords = _merge_external_link_keywords(link.get("keywords"), requested_keywords)
         requested_review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
         if requested_review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
             return None, "external_link_review_status_unsupported"
@@ -5192,7 +5197,7 @@ class SQLiteStore(FileStore):
             relationship_type = normalize_relationship_type(payload.get("relationshipType") or payload.get("relationship_type"))
         except ExternalLinkValidationError as exc:
             return None, exc.code
-        keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
+        requested_keywords = _normalize_keywords(payload.get("keywords") or payload.get("keyword") or payload.get("tags"))
         requested_review_status = _slug(payload.get("reviewStatus") or payload.get("review_status") or "unreviewed", "unreviewed", 32)
         if requested_review_status not in ("unreviewed", "reviewed", "quarantined", "rejected"):
             return None, "external_link_review_status_unsupported"
@@ -5222,9 +5227,13 @@ class SQLiteStore(FileStore):
                         if not document:
                             return None, "knowledge_document_not_found"
                     existing = connection.execute(
-                        "SELECT external_link_id, review_status FROM matm_external_links WHERE workspace_id = ? AND normalized_url_hash = ?",
+                        "SELECT external_link_id, review_status, keywords_json FROM matm_external_links WHERE workspace_id = ? AND normalized_url_hash = ?",
                         (workspace_id, normalized["normalizedUrlHash"]),
                     ).fetchone()
+                    keywords = _merge_external_link_keywords(
+                        self._json_load(existing["keywords_json"], []) if existing else [],
+                        requested_keywords,
+                    )
                     review_status = _merge_external_link_review_status(
                         existing["review_status"] if existing else "",
                         requested_review_status,

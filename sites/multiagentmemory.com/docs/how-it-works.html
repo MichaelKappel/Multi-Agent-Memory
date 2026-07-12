@@ -77,7 +77,7 @@
       <li><strong>Concurrent local-agent coordination:</strong> project/path content hashes and bounded edit claims prevent cooperative agents from silently starting on the same local `.uai` revision without centralizing file bodies.</li>
       <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
       <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, multiple taxonomy paths, lifecycle status, authority level, and explicit supersession links.</li>
-      <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
+      <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, cumulative search keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them.</li>
       <li><strong>Meeting-room coordination:</strong> always-available company, workspace, and project rooms plus custom goal and task rooms keep routing and working evidence separate from durable wiki ownership.</li>
       <li><strong>Current-message lane:</strong> current messages stay separate from durable memory so active coordination does not silently become long-term fact.</li>
       <li><strong>Distributed sync:</strong> device epochs, immutable revisions, monotonic checkpoints, authoritative heads, tombstones, and redacted receipts support conflict-safe public-safe memory replication.</li>
@@ -91,7 +91,7 @@
       <li><code>GET /api/matm/knowledge-documents</code> searches titles, descriptions, keywords, taxonomy, routes, and protected page content with contextual match evidence, lifecycle ranking, and status or authority filters.</li>
       <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page with <code>knowledgeStatus</code>, <code>authorityLevel</code>, <code>statusReason</code>, and an optional <code>supersededByDocumentId</code>, then confirms visibility in search, tree, and audit readback.</li>
       <li><code>GET /api/matm/internet-search</code> searches reviewed external-link properties and citation context.</li>
-      <li><code>POST /api/matm/external-links/upsert</code> stores one public HTTP(S) link and optionally attaches one contextual citation to a knowledge page. Indexing metadata never authorizes an automatic fetch.</li>
+      <li><code>POST /api/matm/external-links/upsert</code> stores one public HTTP(S) link and optionally attaches one contextual citation to a knowledge page. Reused canonical links preserve existing search keywords and add new terms case-insensitively. Indexing metadata never authorizes an automatic fetch.</li>
     </ul>
 
     <h2>Endpoint workflow</h2>
