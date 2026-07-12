@@ -1,18 +1,26 @@
 Long-term pointer ledger
 
 Purpose:
-- Local durable-memory map for docs, reports, release evidence, and hosted MATM routing.
+- Local pointer map for protected hosted MATM knowledge, transitional migration evidence, release evidence, and companion documentation.
 
 Verification status: active operational memory; verify with the `.uai` audit before relying on it.
-Memory scope: local durable documentation pointers and promotion rules.
+Memory scope: hosted durable-memory routes, transitional local evidence pointers, and promotion rules.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local ledger when durable docs/reports change; submit public-safe durable summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
-Source of truth: `docs/long-term-memory`, `docs/reports`, `.uai/long-term-memory.uai`, and `.uai/totem.uai`.
+Source of truth: protected MemoryEndpoints.com database records, current code and tests, `.uai/long-term-memory.uai`, and `.uai/totem.uai`. The `docs/` tree is transitional migration and verification evidence only.
 Next action for agents: promote facts only after code, docs, tests, release notes, or reviewed reports prove them.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
 
-Durable docs memory root:
+Durable hosted memory roots:
+- https://memoryendpoints.com/api/matm/memory-events/submit
+- https://memoryendpoints.com/api/matm/search
+- https://memoryendpoints.com/api/matm/knowledge-tree
+- https://memoryendpoints.com/api/matm/knowledge-documents
+- https://memoryendpoints.com/api/matm/external-links
+
+Transitional local evidence root:
 - docs/long-term-memory/
+- docs/reports/
 
 Initial records:
 - docs/long-term-memory/strategy-index.md
@@ -52,4 +60,4 @@ Hosted memory:
 - Totem invariant: local `.uai` stays active always and is never retired by hosted MATM verification.
 
 Promotion rule:
-Facts in session memory become durable only after they are written to docs, code, tests, release notes, or reviewed reports.
+Facts become durable hosted memory only after one protected submission, one explicit review decision, and readback with source, scope, lifecycle, and redaction intact. Local docs and reports may supply migration or verification evidence but are not the final company knowledge source of truth.

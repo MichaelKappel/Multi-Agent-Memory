@@ -15,7 +15,7 @@ Memory layers:
 - Active startup memory: `.uai/` files in the startup-packet read order.
 - Human/agent front door: `AGENTS.md`, `workspace.uai`, and `.uai/readme.human`.
 - Active dropped-file intake: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
-- Reviewed local durable memory: `docs/long-term-memory/` and `docs/reports/`.
+- Transitional local migration and verification evidence: `docs/long-term-memory/` and `docs/reports/`; move knowledge deliberately into hosted MATM and remove the parallel `docs/` hierarchy after migration is complete.
 - Hosted durable MATM: MemoryEndpoints.com protected routes when authenticated.
 - Database-backed knowledge wiki: protected `matm_crawl_sources` and `matm_search_documents` rows exposed through `/knowledge`, `/api/matm/knowledge-tree`, and `/api/matm/knowledge-documents`.
 - Curated external web index: protected `matm_external_links` and `matm_external_link_mentions` rows exposed through `/api/matm/internet-search` and `/api/matm/external-links`, with the same citations visible on authenticated wiki pages.
@@ -26,6 +26,7 @@ Rules:
 - `.uai` contains pointers and current operating state, not raw secrets or long report bodies.
 - README.md files are human documentation, not memory-package state.
 - Research/report intake is processed one file at a time. Preserve one canonical source page, split multi-topic material into reviewed semantic knowledge pages, and create compact MATM summaries that link back to those pages. Do not bulk-import archives or process multiple source files as one intake operation.
+- Review each compact MATM summary as one memory decision with protected readback. Promotion preserves current, proposed, historical, risk, decision, evidence, and other typed meaning; it is not an authority upgrade.
 - Use a reviewer-authored overlay for corrected current guidance when raw research mixes valid principles with stale or unsafe claims. Preserve exact whole-source and selected-source hashes, retain the raw source as protected historical evidence, and never store the local overlay path in hosted metadata.
 - Every wiki knowledge document needs a title, description, keywords, and one or more taxonomy paths. Exact search is not enough; agents must be able to browse contextual hierarchy paths such as `AI infrastructure > tokenization > prompt optimization`. One canonical document can appear in multiple hierarchies without duplicating the stored body.
 - Every retained external citation needs a canonical URL record with site name, page title, description, keywords, host, review state, and crawl state. A separate mention record preserves why a knowledge page cites it, including relationship, anchor text, context, label, and order.

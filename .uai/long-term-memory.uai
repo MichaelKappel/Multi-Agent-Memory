@@ -7,7 +7,7 @@ Verification status: active operational memory; verify with the `.uai` audit bef
 Memory scope: mid-to-long-term memory routing, documentation pointers, and UAIX MATM setup anchors.
 Public-safe status: safe for source control; contains route URLs only, no credentials.
 Update route: use https://memoryendpoints.com/api/matm/memory-events/submit for authenticated MATM memory updates; update this local pointer ledger when durable routes change.
-Source of truth: live MemoryEndpoints.com public evidence routes, repository docs, and `.uai/totem.uai`.
+Source of truth: live protected MemoryEndpoints.com database records, current code and tests, public-safe readiness evidence, and `.uai/totem.uai`; repository `docs/` content is transitional migration or verification evidence only.
 Next action for agents: use hosted MATM when reachable and authenticated, but keep local `.uai` active always.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
 
