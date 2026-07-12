@@ -96,3 +96,14 @@ Authority/source: UAIX public standards page
 Review status: published_reference_verified
 Review evidence: UAIX AI Memory Package Wizard public page and repository setup reports.
 Truth boundary: UAIX publishes setup guidance and MemoryEndpoints.com example route prefill only. This is not certification, endorsement, automatic sync, repository write authority, hidden credential validation, or the MATM memory update destination.
+
+Stable id: tinyrustlm-browser-runtime-architecture
+Path: https://memoryendpoints.com
+Protected project: TinyRustLM.com
+Protected knowledge route: /knowledge/project/tinyrustlm-runtime/runtime-target
+Label: TinyRustLM deterministic Rust and WebAssembly browser inference target
+Routing summary: Start at the MemoryEndpoints.com home page, authenticate, select the TinyRustLM.com project tree, then crawl the thirteen reviewed proposed pages for loading, compute, operators, tokenization, generation state, sampling, lifecycle, resource preflight, benchmarking, security, browser capabilities, and release rollback.
+Authority/source: reviewed protected database knowledge derived from `Rust WASM Inference Architecture.md`; every page remains proposed until TinyRustLM code and acceptance evidence prove it.
+Review status: proposed_reviewed_promoted
+Review evidence: one canonical source identity and hash, thirteen pages, fifty-five canonical external links, sixty-five contextual mentions, thirteen individual memory promotions, conceptual retrieval, project-tree placement, tenant denial, and production MySQL readback.
+Truth boundary: a Web Worker is not inherently network-isolated, static browser support tables are not session authority, illustrative memory budgets are not canonical capacity, and bibliography inclusion is not implementation proof.

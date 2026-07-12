@@ -30,6 +30,8 @@ Current risks:
 - Canonical-link downgrade risk: adding a low-authority source mention can erase an existing reviewed, quarantined, or rejected canonical disposition unless storage preserves explicit review state and readback reports the effective state.
 - Discovery-authority risk: metadata density, hidden instructions, hashes, manifests, CSS selectors, crawler labels, draft formats, or first-party route inventories can be mistaken for publisher authority, interoperability, authorization, or complete supply-chain security.
 - Representation risk: a public full-context export or machine-only surface can leak protected knowledge, create stale duplicates, or degrade accessibility and accountable human review.
+- Browser-worker isolation risk: moving inference into a Web Worker can be mistaken for removing network access, ambient credentials, storage access, side channels, or hostile host mediation.
+- Canonical-link vocabulary risk: last-write-wins metadata updates can erase search terms learned from earlier reviewed reports and make durable evidence harder to retrieve.
 
 Mitigation:
 - Run local tests, route verifiers, `.uai` audit, package check, secret scan, dogfood, and readiness audit before handoff.
@@ -43,3 +45,5 @@ Mitigation:
 - Treat snapshots as revocable supply-chain artifacts with provenance, quarantine, policy and malware checks, retention, versioning, and restore evidence; persist only allowlisted, redacted outcomes into durable memory.
 - Preserve explicit canonical review dispositions across incidental citations, canonicalize link metadata consistently, and expose requested versus effective review state in redacted single-link evidence.
 - Keep discovery files public-safe and advisory, require protected query-bounded retrieval for tenant knowledge, preserve accessible human representations, and reverify changing draft or product status from primary sources.
+- Require explicit host mediation, restrictive browser policy, no network imports, artifact authentication, and behavior tests before claiming local-only worker execution.
+- Merge canonical external-link keywords case-insensitively, preserve existing casing and order, append new terms, and verify reused-link search plus citation readback after every update.
