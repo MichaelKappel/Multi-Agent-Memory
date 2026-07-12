@@ -588,6 +588,7 @@ Query:
 Response includes:
 
 - `items`: API-submitted memory events
+- Non-empty `q` searches use weighted, stem-aware partial-term recall across title, subject, tags, summary, source, type, actor, and identifiers. Results are ordered by `matchScore` and expose `matchedTerms` and `unmatchedTerms`; callers do not need to guess one exact stored phrase.
 - `memorySource`: `hosted_workspace_store`
 - `filesystemDocsIncluded`: `false`
 - `filters`: active public-safe filters applied to the hosted search

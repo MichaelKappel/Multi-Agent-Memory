@@ -49,7 +49,7 @@ Protected MATM workflow:
 - Virtual UAIX startup: GET /api/matm/uai-memory/startup
 - Local .uai hash heads: GET /api/matm/uai-memory/file-heads
 - Local .uai claims: GET, POST /api/matm/uai-memory/edit-claims; POST heartbeat, complete, or release subroutes
-- Memory search: GET /api/matm/search
+- Memory search: GET /api/matm/search (weighted, stem-aware partial-term recall with matchScore, matchedTerms, and unmatchedTerms)
 - Knowledge tree: GET /api/matm/knowledge-tree
 - Knowledge search: GET /api/matm/knowledge-documents
 - Knowledge upsert: POST /api/matm/knowledge-documents/upsert

@@ -80,14 +80,29 @@ def _search_tokens(query):
     return [token for token in re.split(r"[^a-z0-9]+", (query or "").lower()) if len(token) >= 2]
 
 
-def _memory_query_matches(query, haystack):
-    q = (query or "").lower().strip()
-    if not q:
-        return True
-    if q in haystack:
-        return True
-    tokens = _search_tokens(q)
-    return bool(tokens) and all(token in haystack for token in tokens)
+_MEMORY_QUERY_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "without",
+}
 
 
 def _audit_detail_summary(details):
@@ -282,7 +297,7 @@ def _meeting_transcript_page(messages, cursor, limit_value):
     }
 
 
-def _public_memory_event(event):
+def _public_memory_event(event, query=""):
     item = dict(event or {})
     firewall = dict(item.get("firewall") or {})
     if firewall:
@@ -291,6 +306,11 @@ def _public_memory_event(event):
         item["firewall"] = firewall
     item["valuesRedacted"] = True
     item["rawPrivatePayloadStored"] = False
+    if str(query or "").strip():
+        match = _memory_text_match(query, event or {})
+        item["matchScore"] = match["score"]
+        item["matchedTerms"] = match["matchedTerms"]
+        item["unmatchedTerms"] = match["unmatchedTerms"]
     return item
 
 
@@ -827,9 +847,60 @@ def _search_term_root(value):
         return token[:-3] + "y"
     if len(token) > 4 and token.endswith("es"):
         return token[:-2]
-    if len(token) > 3 and token.endswith("s"):
+    if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is", "ous")):
         return token[:-1]
     return token
+
+
+def _memory_text_match(query, event):
+    query_text = str(query or "").strip().lower()
+    if not query_text:
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
+    fields = [
+        (event.get("title") or "", 15),
+        (event.get("subject") or "", 13),
+        (" ".join(event.get("tags") or []), 12),
+        (event.get("summary") or "", 10),
+        (event.get("source") or "", 7),
+        (event.get("memoryType") or "", 5),
+        (event.get("actorAgentId") or "", 3),
+        (" ".join([event.get("eventId") or "", event.get("reviewId") or ""]), 2),
+    ]
+    combined = " ".join(value.lower() for value, _weight in fields)
+    if re.fullmatch(r"[a-z][a-z0-9]*-[a-z0-9][a-z0-9-]*", query_text):
+        if query_text in combined:
+            return {"score": 200, "matchedTerms": [query_text], "unmatchedTerms": []}
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": [query_text]}
+    query_terms = []
+    for token in _search_tokens(query_text):
+        root = _search_term_root(token)
+        if root and root not in _MEMORY_QUERY_STOP_WORDS and root not in query_terms:
+            query_terms.append(root)
+    if not query_terms:
+        return {"score": 0, "matchedTerms": [], "unmatchedTerms": []}
+    score = 0
+    if query_text in combined:
+        score += 60
+    matched = []
+    unmatched = []
+    for term in query_terms:
+        best = 0
+        for value, weight in fields:
+            field_terms = {_search_term_root(token) for token in _search_tokens(value)}
+            if term in field_terms:
+                best = max(best, weight)
+        if best:
+            matched.append(term)
+            score += best
+        else:
+            unmatched.append(term)
+    if len(query_terms) >= 3 and len(matched) < 2:
+        return {"score": 0, "matchedTerms": matched, "unmatchedTerms": unmatched}
+    if matched:
+        score += int(round(30.0 * len(matched) / len(query_terms)))
+        if not unmatched:
+            score += 25
+    return {"score": score, "matchedTerms": matched, "unmatchedTerms": unmatched}
 
 
 def _external_link_search_match(link, mentions, query):
@@ -3259,23 +3330,11 @@ class FileStore(object):
                 continue
             if event_id_filter and event.get("eventId") != event_id_filter:
                 continue
-            haystack = " ".join(
-                [
-                    event.get("eventId", ""),
-                    event.get("reviewId", ""),
-                    event.get("actorAgentId", ""),
-                    event.get("subject", ""),
-                    event.get("title", ""),
-                    event.get("summary", ""),
-                    " ".join(event.get("tags", [])),
-                    event.get("source", ""),
-                    event.get("memoryType", ""),
-                    event.get("scope", ""),
-                    event.get("scopeId", ""),
-                ]
-            ).lower()
-            if _memory_query_matches(q, haystack):
-                items.append(_public_memory_event(event))
+            match = _memory_text_match(q, event)
+            if not q or match["score"] > 0:
+                items.append(_public_memory_event(event, q))
+        if q:
+            items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("title") or "", item.get("eventId") or ""))
         return items
 
     def memory_events_for_review(self, workspace_id):
@@ -6912,23 +6971,11 @@ class SQLiteStore(FileStore):
                 event["updatedAt"] = row["updated_at"]
             if review_rows.get(row["memory_id"]):
                 event["reviewId"] = review_rows[row["memory_id"]]
-            haystack = " ".join(
-                [
-                    event.get("eventId", ""),
-                    event.get("reviewId", ""),
-                    event.get("actorAgentId", ""),
-                    event.get("subject", ""),
-                    event.get("title", ""),
-                    event.get("summary", ""),
-                    " ".join(event.get("tags", [])),
-                    event.get("source", ""),
-                    event.get("memoryType", ""),
-                    event.get("scope", ""),
-                    event.get("scopeId", ""),
-                ]
-            ).lower()
-            if _memory_query_matches(q, haystack):
-                items.append(_public_memory_event(event))
+            match = _memory_text_match(q, event)
+            if not q or match["score"] > 0:
+                items.append(_public_memory_event(event, q))
+        if q:
+            items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("title") or "", item.get("eventId") or ""))
         return items
 
     def review_queue(self, workspace_id, status=None):

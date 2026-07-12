@@ -87,6 +87,88 @@ class MySQLStoreTests(unittest.TestCase):
         self.assertTrue(confirmation["visibleInAuditLog"])
         self.assertTrue(any(item["target"] == event["eventId"] for item in audit_items))
 
+    def test_file_and_sql_memory_search_rank_partial_concepts(self):
+        from memoryendpoints.storage import FileStore, SQLiteStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, store in (
+                ("file", FileStore(Path(tmp) / "matm.json")),
+                ("sqlite", SQLiteStore(Path(tmp) / "matm.sqlite")),
+            ):
+                with self.subTest(backend=label):
+                    workspace_id, _key_id, _token, _account_id, _company_id, project_id = store.create_free_account(
+                        "Search Workspace " + label,
+                        "Search Company " + label,
+                        "Search Project " + label,
+                    )
+                    resource = store.submit_memory(
+                        workspace_id,
+                        "search-agent",
+                        "project",
+                        "Model Artifact and Browser Resource Estimation",
+                        "Use bounded streaming and measured browser memory evidence instead of generic ceilings.",
+                        ["resource preflight", "browser inference"],
+                        "/knowledge/project/model-resource-estimation",
+                        "risk",
+                        "browser resource envelope",
+                        0.9,
+                        scope_id=project_id,
+                    )
+                    behavior = store.submit_memory(
+                        workspace_id,
+                        "search-agent",
+                        "project",
+                        "Behavioral Evaluation and Instruction Hierarchy",
+                        "System and developer instructions govern lower-priority user intent.",
+                        ["instruction hierarchy", "behavioral evaluation"],
+                        "/knowledge/project/instruction-hierarchy",
+                        "decision",
+                        "instruction hierarchy evaluation",
+                        0.9,
+                        scope_id=project_id,
+                    )
+                    store.submit_memory(
+                        workspace_id,
+                        "search-agent",
+                        "project",
+                        "Meeting Room Routing",
+                        "Route authenticated agents to the appropriate project room.",
+                        ["meeting rooms"],
+                        "/knowledge/project/meeting-routing",
+                        "procedure",
+                        "meeting routing",
+                        0.9,
+                        scope_id=project_id,
+                    )
+
+                    resource_results = store.search_memory(
+                        workspace_id,
+                        "contiguous multi gigabyte allocation browser memory",
+                        {"scope": "project", "scopeId": project_id},
+                    )
+                    self.assertEqual(resource["eventId"], resource_results[0]["eventId"])
+                    self.assertIn("browser", resource_results[0]["matchedTerms"])
+                    self.assertIn("memory", resource_results[0]["matchedTerms"])
+                    self.assertIn("contiguous", resource_results[0]["unmatchedTerms"])
+                    self.assertGreater(resource_results[0]["matchScore"], 0)
+                    self.assertEqual([resource["eventId"]], [item["eventId"] for item in resource_results])
+
+                    behavior_results = store.search_memory(
+                        workspace_id,
+                        "user prompt conflicts with system developer instructions",
+                        {"scope": "project", "scopeId": project_id},
+                    )
+                    self.assertEqual(behavior["eventId"], behavior_results[0]["eventId"])
+                    self.assertTrue({"user", "system", "developer", "instruction"}.issubset(set(behavior_results[0]["matchedTerms"])))
+                    self.assertNotIn("with", behavior_results[0]["unmatchedTerms"])
+
+                    exact_results = store.search_memory(
+                        workspace_id,
+                        resource["eventId"],
+                        {"scope": "project", "scopeId": project_id},
+                    )
+                    self.assertEqual([resource["eventId"]], [item["eventId"] for item in exact_results])
+
     def test_sql_record_audit_does_not_rebuild_store_or_drop_sync_rows(self):
         from memoryendpoints.storage import SQLiteStore
 
