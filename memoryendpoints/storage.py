@@ -120,6 +120,15 @@ def _credential_pepper():
     return pepper.encode("utf-8")
 
 
+def credential_system_available():
+    """Return whether governed credentials can be issued and verified safely."""
+    try:
+        _credential_pepper()
+    except RuntimeError:
+        return False
+    return True
+
+
 def _governed_credential(kind, company_id, credential_id):
     secret = secrets.token_urlsafe(32)
     token = "me_%s_v1.%s.%s" % (kind, credential_id, secret)
@@ -9450,6 +9459,15 @@ class SQLiteStore(FileStore):
 
     def _open_connection(self):
         return _ClosingConnection(self._connect())
+
+    def healthcheck(self):
+        """Verify relational connectivity without materializing tenant data."""
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute("SELECT 1 AS ok").fetchone()
+        if not row:
+            raise RuntimeError("Relational storage health check returned no row.")
+        return True
 
     def consume_connector_rate_limit(
         self,

@@ -80,16 +80,55 @@ class HumanAccessMarkupContractTests(unittest.TestCase):
         self.assertNotIn("data-human-access-protected", markup)
         self.assertNotIn("successorTokenProof", markup)
 
+    def test_company_master_help_names_issuer_default_path_and_safe_fallback(self):
+        signed_out = render_human_access_main(authenticated=False)
+        authenticated = render_human_access_main(authenticated=True)
+
+        self.assertIn('href="/agent-setup"', signed_out)
+        self.assertIn("Where do I get the company master credential?", signed_out)
+        self.assertIn(
+            "&lt;project-root&gt;/.local-secrets/memoryendpoints-company-master.json",
+            signed_out,
+        )
+        self.assertIn("ask your AI agent to check that exact project-relative file", signed_out)
+        self.assertIn("the agent must stop and ask which governed secret store was used", signed_out)
+        self.assertIn("never ask you to paste the credential into chat", signed_out)
+        self.assertLess(
+            signed_out.index("human-access-credential-guide"),
+            signed_out.index("data-human-access-master-proof-form"),
+        )
+        self.assertEqual(2, authenticated.count("human-access-credential-guide"))
+
     def test_demo_route_uses_real_renderer_and_mock_transport_injection(self):
         status, headers, body = call_get("/tour/human")
         self.assertEqual("200 OK", status)
         self.assertTrue(headers["content-type"].startswith("text/html"))
-        self.assertNotIn("no-store", headers.get("cache-control", "").lower())
+        self.assertIn("no-store", headers.get("cache-control", "").lower())
+        self.assertEqual("no-referrer", headers["referrer-policy"])
+        self.assertEqual("DENY", headers["x-frame-options"])
+        self.assertEqual("nosniff", headers["x-content-type-options"])
+        self.assertEqual("max-age=31536000", headers["strict-transport-security"])
+        self.assertIn("script-src-attr 'none'", headers["content-security-policy"])
+        self.assertIn("nonce-", headers["content-security-policy"])
         self.assertIn("data-human-access-demo", body)
+        self.assertIn("data-human-access-demo-warning", body)
+        self.assertIn("Never enter a real username", body)
         self.assertIn("session-only mock data", body)
+        self.assertNotIn('onsubmit="return false"', body)
         self.assertIn("/static/js/human-access.js", body)
         self.assertIn("/static/js/human-access-bootstrap.js", body)
         self.assertIn("/static/css/human-access.css", body)
+
+    def test_demo_warning_is_visible_before_secret_shaped_fields_and_production_omits_it(self):
+        demo = render_human_access_main(authenticated=False, demo=True)
+        production = render_human_access_main(authenticated=False, demo=False)
+
+        warning_position = demo.index("data-human-access-demo-warning")
+        password_position = demo.index('name="password"')
+        self.assertLess(warning_position, password_position)
+        warning_end = demo.index("</aside>", warning_position)
+        self.assertNotIn("hidden", demo[warning_position:warning_end])
+        self.assertNotIn("data-human-access-demo-warning", production)
 
 
 if __name__ == "__main__":

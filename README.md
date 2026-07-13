@@ -85,6 +85,14 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 
 Current deployed provenance comes from `/api/version`; current bounded capability and readiness claims come from the live evidence routes above. Files under `docs/reports/` are historical point-in-time snapshots and must not be treated as proof of a later commit. Fresh local and live verification output belongs under ignored `var/reports/`.
 
+## Company Master Credential
+
+MemoryEndpoints creates the company master credential during [Agent Setup](https://memoryendpoints.com/agent-setup) and shows it once after the first company workspace is created. It is not a human account password and it is not the credential an agent should use for normal work.
+
+For an AI-assisted local project, the default agent-readable file is `<project-root>/.local-secrets/memoryendpoints-company-master.json`. Store JSON fields for `baseUrl`, `companyId`, `workspaceId`, and `companyMasterTokenSecret`; keep `.local-secrets/` in `.gitignore`, restrict the file to the owner and explicitly authorized local agents, and prefer a managed secret store when available. Keep the exceptional human-owner recovery secret separately.
+
+If you cannot find the company master, ask your AI agent to check that exact project-relative file. The agent must read it directly instead of asking you to paste the credential into chat. If the file is missing, the agent stops and asks which governed secret store was used; it must not scan outside the project or request, echo, or log the raw value. Normal agents should use their own bound agent credential and access the company master only for an explicit owner-authorized company operation.
+
 ## Quick Start
 
 ```powershell

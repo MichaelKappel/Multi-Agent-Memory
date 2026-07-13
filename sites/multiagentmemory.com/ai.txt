@@ -9,4 +9,6 @@ Agents should use the full repository `.uai/` suite as active startup memory and
 
 Active-memory contract: https://memoryendpoints.com/api/matm/uai-memory/contract
 
+Company master guidance: Agent Setup creates and shows the credential once. The default agent-readable file is `<project-root>/.local-secrets/memoryendpoints-company-master.json`, outside source control. If it is missing, stop and ask the human which governed secret store was used; never scan outside the project or request the raw credential in chat. Use a bound agent credential for normal agent work.
+
 Unsupported actions should no-op safely and route back to human review.

@@ -7,6 +7,8 @@ the bounded pre-auth variant so no tenant-derived or operational UI is emitted.
 
 from html import escape
 
+from .credential_guidance import COMPANY_MASTER_DEFAULT_SECRET_PATH
+
 
 def _field(label, name, input_type="text", autocomplete="off", required=True, extra=""):
     required_attribute = " required" if required else ""
@@ -21,6 +23,22 @@ def _field(label, name, input_type="text", autocomplete="off", required=True, ex
             required_attribute,
             extra,
         )
+    )
+
+
+def _company_master_guidance_markup(context):
+    heading_id = "company-master-guidance-%s" % context
+    return """
+<aside class="human-access-credential-guide" aria-labelledby="{heading_id}">
+  <p class="eyebrow">Credential help</p>
+  <h3 id="{heading_id}">Where do I get the company master credential?</h3>
+  <p>MemoryEndpoints creates it on <a href="/agent-setup">Agent Setup</a> and shows it once after the first company workspace is created. It is not your account password or an agent invitation credential.</p>
+  <p><strong>Default agent-readable location</strong><code class="human-access-secret-path">&lt;project-root&gt;/{default_path}</code></p>
+  <p>If you cannot find it, ask your AI agent to check that exact project-relative file. The agent should read the ignored file directly. If it is missing, the agent must stop and ask which governed secret store was used&mdash;never ask you to paste the credential into chat.</p>
+</aside>
+""".format(
+        heading_id=escape(heading_id, quote=True),
+        default_path=escape(COMPANY_MASTER_DEFAULT_SECRET_PATH),
     )
 
 
@@ -41,6 +59,7 @@ def _authentication_markup():
     <p class="eyebrow">First company owner</p>
     <h2 id="human-enroll-title">Prove ownership, then create an account</h2>
     <p>The raw company master credential is cleared before the proof request completes and is never stored in this page.</p>
+    {master_guidance}
     <form data-human-access-master-proof-form>
       {master}
       <button class="button" type="submit">Prove company ownership</button>
@@ -66,6 +85,7 @@ def _authentication_markup():
             "off",
             extra='spellcheck="false" data-human-access-secret-control',
         ),
+        master_guidance=_company_master_guidance_markup("enrollment"),
         account_username=_field("Username", "username", autocomplete="username"),
         display_name=_field("Display name", "displayName", autocomplete="name", required=False),
         account_password=_field("Password", "password", "password", "new-password"),
@@ -121,6 +141,7 @@ def _protected_markup(demo=False):
     <p class="eyebrow">Link another company</p>
     <h2 id="human-link-title">Prove the company master credential</h2>
     <p>The raw value is cleared before the proof response and is never sent to the link endpoint.</p>
+    {link_master_guidance}
     {link_master}
     <div class="human-access-dialog-actions">
       <button class="button quiet" type="button" data-human-access-link-cancel>Cancel</button>
@@ -130,7 +151,7 @@ def _protected_markup(demo=False):
 </dialog>
 
 <dialog class="human-access-dialog human-access-replacement" data-human-access-replacement-dialog aria-labelledby="human-replacement-title">
-  <form method="dialog" onsubmit="return false">
+  <form method="dialog">
     <p class="eyebrow">Two-phase credential replacement</p>
     <h2 id="human-replacement-title">Replace and reveal a new token once</h2>
     <p data-human-access-replacement-summary></p>
@@ -166,6 +187,7 @@ def _protected_markup(demo=False):
             "off",
             extra='spellcheck="false" data-human-access-secret-control',
         ),
+        link_master_guidance=_company_master_guidance_markup("link-company"),
     )
 
 
@@ -176,9 +198,18 @@ def render_human_access_main(authenticated=False, demo=False):
         attributes.extend(["data-human-preauth-shell", "data-human-access-preauth-only"])
     if demo:
         attributes.append("data-human-access-demo")
+    demo_warning = ""
+    if demo:
+        demo_warning = """
+  <aside class="human-access-demo-warning" data-human-access-demo-warning role="note" aria-label="Demo credential safety">
+    <strong>DEMO - session-only mock data</strong>
+    <span>Never enter a real username, password, company master credential, recovery secret, or agent token. Use invented demo values only; nothing is sent to protected APIs.</span>
+  </aside>
+"""
     protected = "" if preauth else _protected_markup(demo=demo)
     return """
 <section class="human-access human-access-shell" {attributes}>
+  {demo_warning}
   <header class="human-access-hero">
     <p class="eyebrow">Human authority</p>
     <h1>Secure access that remembers your companies—not their master credentials</h1>
@@ -190,6 +221,7 @@ def render_human_access_main(authenticated=False, demo=False):
 </section>
 """.format(
         attributes=" ".join(attributes),
+        demo_warning=demo_warning,
         authentication=_authentication_markup(),
         protected=protected,
     )

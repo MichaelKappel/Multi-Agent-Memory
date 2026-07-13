@@ -8,6 +8,13 @@ if (!sourcePath) {
 }
 const source = fs.readFileSync(sourcePath, "utf8");
 
+assert(source.includes("function makeActionableCard"), "console summaries must use actionable card helper");
+assert(source.includes("function makeActionableBadge"), "count badges must support actionable workflow targets");
+assert(source.includes("data-console-card-action"), "console metric/checklist cards must expose workflow actions");
+assert(source.includes("data-console-badge-action"), "count badges must expose workflow actions where drilldown exists");
+assert(source.includes("function updateWorkflowSwitchLabels"), "workflow switcher must surface live counts");
+assert(source.includes("Open current-message lanes"), "message metric must drill into the current-message workflow");
+
 function eventTarget(attributes) {
   const listeners = {};
   const attrs = Object.assign({}, attributes || {});

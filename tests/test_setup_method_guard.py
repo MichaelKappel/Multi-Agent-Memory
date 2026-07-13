@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from memoryendpoints.app import application
+from memoryendpoints.storage import credential_system_available
 
 
 class SetupMethodGuardTests(unittest.TestCase):
@@ -57,6 +58,15 @@ class SetupMethodGuardTests(unittest.TestCase):
                 self.assertFalse(payload["rawPayloadExposed"])
                 self.assertEqual("method_not_allowed", payload["error"]["code"])
 
+    def test_credential_availability_uses_the_governed_pepper_boundary(self):
+        with patch("memoryendpoints.storage._credential_pepper", return_value=b"configured"):
+            self.assertTrue(credential_system_available())
+        with patch(
+            "memoryendpoints.storage._credential_pepper",
+            side_effect=RuntimeError("credential service unavailable"),
+        ):
+            self.assertFalse(credential_system_available())
+
     def test_invalid_setup_shapes_and_labels_do_not_reach_store(self):
         valid = {
             "companyLabel": "Example Company",
@@ -85,10 +95,26 @@ class SetupMethodGuardTests(unittest.TestCase):
                 store.create_free_account.assert_not_called()
 
     def test_setup_get_and_post_are_no_store_and_valid_posts_are_distinct(self):
-        captured, payload, _store = self.call_setup("GET")
+        with patch("memoryendpoints.app.credential_system_available", return_value=True):
+            captured, payload, _store = self.call_setup("GET")
         self.assertEqual("200 OK", captured["status"])
         self.assertEqual("no-store", captured["headers"]["Cache-Control"])
         self.assertFalse(payload["idempotencySupported"])
+        self.assertTrue(payload["credentialSystemAvailable"])
+        guidance = payload["companyMasterStorageGuidance"]
+        self.assertEqual(
+            "memoryendpoints.company_master_storage_guidance.v1",
+            guidance["schemaVersion"],
+        )
+        self.assertEqual(
+            ".local-secrets/memoryendpoints-company-master.json",
+            guidance["defaultLocalSecretPath"],
+        )
+        self.assertEqual("project_root", guidance["pathBase"])
+        self.assertIn("companyMasterTokenSecret", guidance["requiredFields"])
+        self.assertIn("Ask your AI agent", guidance["humanIfMissing"])
+        self.assertIn("Stop safely", guidance["agentIfMissing"])
+        self.assertFalse(guidance["rawCredentialIncluded"])
 
         store = Mock()
         store.create_free_account.side_effect = [
@@ -110,8 +136,56 @@ class SetupMethodGuardTests(unittest.TestCase):
         self.assertNotEqual(first["companyMasterTokenSecret"], second["companyMasterTokenSecret"])
         self.assertNotEqual(first["humanOwnerRecoverySecret"], second["humanOwnerRecoverySecret"])
         self.assertEqual(
+            ".local-secrets/memoryendpoints-company-master.json",
+            first["companyMasterStorageGuidance"]["defaultLocalSecretPath"],
+        )
+        self.assertNotIn(
+            first["companyMasterTokenSecret"],
+            json.dumps(first["companyMasterStorageGuidance"]),
+        )
+        self.assertEqual(
             [("Workspace", "Company", "Project"), ("Workspace", "Company", "Project")],
             [call.args for call in store.create_free_account.call_args_list],
+        )
+
+    def test_setup_get_reports_credential_service_availability(self):
+        with patch("memoryendpoints.app.credential_system_available", return_value=False):
+            captured, payload, _store = self.call_setup("GET")
+
+        self.assertEqual("200 OK", captured["status"])
+        self.assertEqual("no-store", captured["headers"]["Cache-Control"])
+        self.assertFalse(payload["credentialSystemAvailable"])
+
+    def test_missing_credential_configuration_fails_without_issuing_identifiers(self):
+        store = Mock()
+        store.create_free_account.side_effect = RuntimeError(
+            "A protected credential pepper of at least 32 bytes is required."
+        )
+        body = {
+            "companyLabel": "Example Company",
+            "label": "Example Workspace",
+            "projectLabel": "Example Project",
+        }
+
+        captured, payload, _store = self.call_setup("POST", body, store)
+
+        self.assertEqual("503 Service Unavailable", captured["status"])
+        self.assertEqual("credential_system_not_configured", payload["error"]["code"])
+        self.assertTrue(payload["safeNoOp"])
+        self.assertFalse(payload["rawCredentialExposed"])
+        self.assertFalse(payload["rawPayloadExposed"])
+        for key in (
+            "accountId",
+            "companyId",
+            "workspaceId",
+            "projectId",
+            "credentialId",
+            "companyMasterTokenSecret",
+            "humanOwnerRecoverySecret",
+        ):
+            self.assertNotIn(key, payload)
+        store.create_free_account.assert_called_once_with(
+            "Example Workspace", "Example Company", "Example Project"
         )
 
     def test_omitted_labels_preserve_default_account_creation_contract(self):

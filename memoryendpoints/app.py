@@ -48,6 +48,10 @@ from .connector_pairing import (
     validate_redirect_uri,
 )
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
+from .credential_guidance import (
+    COMPANY_MASTER_DEFAULT_SECRET_PATH,
+    company_master_storage_guidance,
+)
 from .http import (
     json_response,
     one_time_secret_payload,
@@ -60,7 +64,14 @@ from .human_operational import route_human_operational
 from .runtime import backend_error_code, configured_store_backend, store_backend_health
 from .security import evaluate_memory_firewall, governed_bearer_token, redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
-from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
+from .storage import (
+    FileStore,
+    MySQLStore,
+    SQLiteStore,
+    credential_system_available,
+    mysql_config_diagnostics,
+    mysql_connection_stage_diagnostics,
+)
 from .uai_memory import virtual_uai_contract
 
 
@@ -120,6 +131,27 @@ def _connector_authorize_headers(script_nonce):
         ),
         ("Cross-Origin-Opener-Policy", "same-origin"),
         ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("Vary", "Cookie"),
+        (
+            "Permissions-Policy",
+            "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+        ),
+    ]
+
+
+def _sensitive_html_headers(script_nonce):
+    nonce = str(script_nonce or "")
+    return list(_CONNECTOR_JSON_HEADERS) + [
+        (
+            "Content-Security-Policy",
+            "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; script-src 'self' 'nonce-%s'; script-src-attr 'none'; "
+            "style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'" % nonce,
+        ),
+        ("Cross-Origin-Opener-Policy", "same-origin"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("Strict-Transport-Security", "max-age=31536000"),
+        ("X-Content-Type-Options", "nosniff"),
         ("Vary", "Cookie"),
         (
             "Permissions-Policy",
@@ -861,7 +893,11 @@ def _meeting_post_confirmation(store, workspace_id, room, message):
         "messageId": message.get("meetingMessageId"),
         "transcriptQueryUrl": _protected_query_url(
             "/api/matm/meeting-messages",
-            {"room_id": room_id, "agent_id": sender_agent_id},
+            {
+                "workspace_id": workspace_id,
+                "room_id": room_id,
+                "agent_id": sender_agent_id,
+            },
         ),
         "valuesRedacted": True,
     }
@@ -1176,6 +1212,7 @@ def _current_message_confirmation(store, workspace_id, message, notes):
         "inboxQueryUrl": _protected_query_url(
             "/api/matm/current-message",
             {
+                "workspace_id": workspace_id,
                 "agent_id": message_target or first_recipient,
                 "message_id": message.get("messageId"),
                 "notification_id": notification_ids[0] if len(notification_ids) == 1 else "",
@@ -3031,19 +3068,9 @@ def route_connector_authorize(
 
 
 def route_agent_setup(start_response):
-    body = """
-<section class="page">
-  <header class="setup-heading">
-    <p class="eyebrow">Secure workspace onboarding</p>
-    <h1>Start using MemoryEndpoints</h1>
-    <p class="lead">Create a bounded Account, Company, Workspace, and Project, redeem a human-approved agent invitation, or sign in with an existing governed credential.</p>
-  </header>
-  <section class="setup-onboarding" data-agent-setup>
-    <div class="setup-choice-grid">
-      <article class="setup-card setup-card-primary">
-        <p class="setup-step">New workspace</p>
-        <h2>Create a free 200 MB workspace</h2>
-        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier.</p>
+    setup_available = credential_system_available()
+    if setup_available:
+        setup_form = """
         <form class="setup-form" method="post" action="/api/matm/agent-setup/free-account" data-agent-setup-form>
           <label>
             Company name
@@ -3060,6 +3087,34 @@ def route_agent_setup(start_response):
           <button class="button primary" type="submit" data-agent-setup-submit>Create workspace</button>
         </form>
         <noscript><p class="setup-noscript">JavaScript is required for the interactive form. Use the copy-safe API examples below; this form never sends labels in a URL.</p></noscript>
+        """
+        setup_status = "Enter labels to create your workspace. No checkout is required."
+    else:
+        setup_form = """
+        <div class="setup-boundary-note setup-unavailable" role="alert" data-agent-setup-unavailable>
+          <strong>Workspace setup is temporarily unavailable</strong>
+          <span>Governed credential verification is not configured, so no workspace can be created safely. No setup request was sent. Ask the operator to restore credential service, then reload this page.</span>
+        </div>
+        """
+        setup_status = "Workspace creation is unavailable. No workspace was created and no one-time credential was issued."
+    body = """
+<section class="page">
+  <header class="setup-heading">
+    <p class="eyebrow">Secure workspace onboarding</p>
+    <h1>Start using MemoryEndpoints</h1>
+    <p class="lead">Create a bounded Account, Company, Workspace, and Project, redeem a human-approved agent invitation, or sign in with an existing governed credential.</p>
+  </header>
+  <section class="setup-onboarding" data-agent-setup data-agent-setup-available="__SETUP_AVAILABLE__" data-company-master-default-path="__COMPANY_MASTER_DEFAULT_SECRET_PATH__">
+    <div class="setup-choice-grid">
+      <article class="setup-card setup-card-primary">
+        <p class="setup-step">New workspace</p>
+        <h2>Create a free 200 MB workspace</h2>
+        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier.</p>
+        <div class="setup-boundary-note setup-credential-location" data-company-master-storage-guidance>
+          <strong>Know where the credential will go before creating</strong>
+          <span>MemoryEndpoints creates the company master here and shows it once. For an AI-assisted project, the default local file is <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. Keep <code>.local-secrets/</code> out of source control.</span>
+        </div>
+        __SETUP_FORM__
       </article>
       <article class="setup-card setup-card-existing">
         <p class="setup-step">Existing human account or company</p>
@@ -3073,7 +3128,7 @@ def route_agent_setup(start_response):
         </div>
       </article>
     </div>
-    <p class="setup-status" role="status" aria-live="polite" data-agent-setup-status>Enter labels to create your workspace. No checkout is required.</p>
+    <p class="setup-status" role="status" aria-live="polite" data-agent-setup-status>__SETUP_STATUS__</p>
     <section class="setup-result" data-agent-setup-result hidden>
       <div class="setup-result-heading" tabindex="-1" data-agent-setup-result-heading>
         <p class="setup-step">Workspace created</p>
@@ -3093,6 +3148,17 @@ def route_agent_setup(start_response):
         <button class="button" type="button" aria-pressed="false" data-agent-setup-key-toggle>Show credential</button>
         <button class="button primary" type="button" data-agent-setup-copy-key>Copy credential</button>
       </div>
+      <div class="setup-boundary-note setup-secret-location" data-company-master-storage-guidance>
+        <strong>Default agent-readable secret file</strong>
+        <span>Save an owner-readable JSON file at <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. Add <code>.local-secrets/</code> to <code>.gitignore</code>, restrict local access, and use a managed secret store instead when available.</span>
+        <pre><code>{
+  "baseUrl": "https://memoryendpoints.com",
+  "companyId": "&lt;company id shown above&gt;",
+  "workspaceId": "&lt;workspace id shown above&gt;",
+  "companyMasterTokenSecret": "&lt;credential shown above&gt;"
+}</code></pre>
+        <span>Normal agents should use their own bound agent credential. An agent may read the company master only for an explicit owner-authorized company operation. If a human cannot find it, ask the AI agent to check this exact file. If the file is missing, the agent must stop and ask which governed secret store was used&mdash;never request or echo the raw credential in chat.</span>
+      </div>
       <label class="setup-key-label" for="one-time-human-owner-recovery">One-time exceptional recovery secret</label>
       <p class="setup-key-help" id="one-time-human-owner-recovery-help">This secret authorizes only bounded export and company-closure recovery. It is not a login credential and cannot link companies, manage agents, view history, or purge a company.</p>
       <div class="setup-key-row">
@@ -3102,7 +3168,7 @@ def route_agent_setup(start_response):
       </div>
       <label class="setup-key-saved">
         <input type="checkbox" data-agent-setup-key-saved>
-        I saved this one-time company master credential in a secure secret store.
+        I saved this one-time company master credential at the default local path or in a documented secure alternative.
       </label>
       <label class="setup-key-saved">
         <input type="checkbox" data-agent-setup-recovery-saved>
@@ -3157,7 +3223,7 @@ def route_agent_setup(start_response):
   </section>
   <details class="setup-code-examples">
     <summary>Copy-Safe Setup for agents and developers</summary>
-    <p>These examples use placeholder labels only. Save the returned company master credential outside source control, logs, prompts, URLs, and public chat.</p>
+    <p>These examples use placeholder labels only. Save the returned company master credential at <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> or a documented managed-secret alternative. If the default file is missing, an agent must stop and ask the human which governed store was used; it must not scan outside the project or request the raw value in chat.</p>
     <h3>Bash</h3>
     <pre><code>curl -sS -X POST "https://memoryendpoints.com/api/matm/agent-setup/free-account" \\
   -H "Content-Type: application/json" \\
@@ -3177,15 +3243,34 @@ Invoke-RestMethod `
   </details>
 </section>
 """
-    return response(start_response, "200 OK", html_page("Agent Setup", body), "text/html; charset=utf-8")
+    body = (
+        body.replace("__SETUP_AVAILABLE__", "true" if setup_available else "false")
+        .replace("__SETUP_FORM__", setup_form)
+        .replace("__SETUP_STATUS__", setup_status)
+        .replace(
+            "__COMPANY_MASTER_DEFAULT_SECRET_PATH__",
+            escape_html(COMPANY_MASTER_DEFAULT_SECRET_PATH),
+        )
+    )
+    script_nonce = secrets.token_urlsafe(18)
+    page = html_page("Agent Setup", body, script_nonce=script_nonce)
+    return response(
+        start_response,
+        "200 OK",
+        page,
+        "text/html; charset=utf-8",
+        headers=_sensitive_html_headers(script_nonce),
+    )
 
 
 def route_agent_coordination(start_response):
     body = """
-<section class="page">
+  <section class="page">
   <h1>Agent Coordination Quickstart</h1>
   <p>This is the shortest public path from a governed, human-approved agent credential to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
-  <p>Before using this flow, request a meaningful company-scoped agent name, have a company master or authenticated human owner approve it, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. LocalEndpoint Connect should instead use <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a>; arbitrary company-master registration is not supported.</p>
+    <p>Before using this flow, request a meaningful company-scoped agent name, have a company master or authenticated human owner approve it, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. LocalEndpoint Connect should instead use <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a>; arbitrary company-master registration is not supported.</p>
+    <h2>Find Credentials Safely</h2>
+    <p>Agent Setup creates the company master credential and shows it once. The default agent-readable location is <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, with <code>.local-secrets/</code> excluded from source control. Normal agents use their bound agent credential, not the company master. If the default company-master file is missing, stop and ask the human which governed secret store was used; never scan outside the project or ask for the raw credential in chat.</p>
   <h2>Choose The Active-Memory Mode</h2>
   <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after invite redemption. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the governed credential and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
   <h2>Inputs</h2>
@@ -3204,8 +3289,19 @@ $headers = @{
   Authorization = "Bearer $env:MEMORYENDPOINTS_AGENT_TOKEN"
 }
 
-$rooms = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms?agent_id=$env:MEMORYENDPOINTS_AGENT_ID" -Headers $headers
+# Keep each generated header variable and reuse it only for an exact body retry.
+function New-MutationHeaders([string]$operation) {
+  $mutationHeaders = $headers.Clone()
+  $mutationHeaders["Idempotency-Key"] = "$operation-$([guid]::NewGuid())"
+  return $mutationHeaders
+}
+
+$workspaceQuery = [uri]::EscapeDataString($env:MEMORYENDPOINTS_WORKSPACE_ID)
+$agentQuery = [uri]::EscapeDataString($env:MEMORYENDPOINTS_AGENT_ID)
+
+$rooms = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms?workspace_id=$workspaceQuery&amp;agent_id=$agentQuery" -Headers $headers
 $projectRoom = $rooms.items | Where-Object { $_.scope -eq "project" } | Select-Object -First 1
+$projectScopeQuery = [uri]::EscapeDataString([string]$projectRoom.scopeId)
 
 $goalRoomBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
@@ -3215,7 +3311,8 @@ $goalRoomBody = @{
   name = "Example connector goal meeting"
   purpose = "Public-safe coordination room for one bounded connector goal."
 } | ConvertTo-Json
-$goalRoom = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms" -Headers $headers -ContentType "application/json" -Body $goalRoomBody
+$goalRoomHeaders = New-MutationHeaders "goal-room"
+$goalRoom = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms" -Headers $goalRoomHeaders -ContentType "application/json" -Body $goalRoomBody
 
 $meetingBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
@@ -3223,7 +3320,8 @@ $meetingBody = @{
   senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
   safeSummary = "Public-safe goal-room status: agent registered, listed rooms, created a goal room, and is ready for connector work."
 } | ConvertTo-Json
-$post = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages" -Headers $headers -ContentType "application/json" -Body $meetingBody
+$meetingHeaders = New-MutationHeaders "meeting-message"
+$post = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages" -Headers $meetingHeaders -ContentType "application/json" -Body $meetingBody
 $transcript = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($post.transcriptQueryUrl)" -Headers $headers
 $promoteBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
@@ -3232,7 +3330,8 @@ $promoteBody = @{
   memoryType = "evidence"
   tags = @("meeting-message", "coordination", "dogfood")
 } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages/promote" -Headers $headers -ContentType "application/json" -Body $promoteBody</code></pre>
+$promoteHeaders = New-MutationHeaders "meeting-promotion"
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-messages/promote" -Headers $promoteHeaders -ContentType "application/json" -Body $promoteBody</code></pre>
   <h2>Memory Save And Search</h2>
   <pre><code>$memoryBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
@@ -3246,17 +3345,20 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meet
   tags = @("coordination", "public-safe")
   source = "agent-coordination-quickstart"
 } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/memory-events/submit" -Headers $headers -ContentType "application/json" -Body $memoryBody
-Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/search?q=coordination&amp;scope=project" -Headers $headers</code></pre>
+$memoryHeaders = New-MutationHeaders "memory-submit"
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/memory-events/submit" -Headers $memoryHeaders -ContentType "application/json" -Body $memoryBody
+Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/search?workspace_id=$workspaceQuery&amp;q=coordination&amp;scope=project&amp;scope_id=$projectScopeQuery" -Headers $headers</code></pre>
   <h2>Current Message And Receipt</h2>
+  <p>This runnable single-agent loop targets the authenticated agent so that same bound credential may read and acknowledge the notification. To target another agent, change <code>targetAgentId</code>; that target must use its own bound credential for inbox readback and acknowledgement.</p>
   <pre><code>$messageBody = @{
   workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
   senderAgentId = $env:MEMORYENDPOINTS_AGENT_ID
-  targetAgentId = "memoryendpoints-backend-agent"
-  safeSummary = "Public-safe current-message check from example-agent."
+  targetAgentId = $env:MEMORYENDPOINTS_AGENT_ID
+  safeSummary = "Public-safe current-message self-check from the authenticated agent."
   responseRequired = $true
 } | ConvertTo-Json
-$message = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agent-messages" -Headers $headers -ContentType "application/json" -Body $messageBody
+$messageHeaders = New-MutationHeaders "current-message"
+$message = Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agent-messages" -Headers $messageHeaders -ContentType "application/json" -Body $messageBody
 $inbox = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL$($message.inboxQueryUrl)" -Headers $headers
 
 $ackBody = @{
@@ -3265,7 +3367,8 @@ $ackBody = @{
   consumerAgentId = $message.canonicalTargetAgentId
   status = "read"
 } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/notifications/ack" -Headers $headers -ContentType "application/json" -Body $ackBody</code></pre>
+$ackHeaders = New-MutationHeaders "notification-ack"
+Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/notifications/ack" -Headers $ackHeaders -ContentType "application/json" -Body $ackBody</code></pre>
   <h2>Required Evidence</h2>
   <ul>
     <li>Post a project-room status note with routes exercised, tests run, and remaining blocker.</li>
@@ -3290,6 +3393,10 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
   </ul>
 </section>
 """
+    body = body.replace(
+        "__COMPANY_MASTER_DEFAULT_SECRET_PATH__",
+        escape_html(COMPANY_MASTER_DEFAULT_SECRET_PATH),
+    )
     return response(start_response, "200 OK", html_page("Agent Coordination", body), "text/html; charset=utf-8")
 
 
@@ -3311,6 +3418,7 @@ def route_human_access_page(environ, start_response, demo=False):
         "js/human-access-bootstrap.js",
     )
     main = render_human_access_main(authenticated=authenticated, demo=demo)
+    script_nonce = secrets.token_urlsafe(18)
     page = html_page(
         "Human access Demo" if demo else "Human access",
         main,
@@ -3319,14 +3427,15 @@ def route_human_access_page(environ, start_response, demo=False):
             '<script src="/static/js/human-access.js?v=%s"></script>'
             '<script src="/static/js/human-access-bootstrap.js?v=%s"></script>'
         ) % (escape_html(version), escape_html(version)),
+        script_nonce=script_nonce,
     )
-    headers = None if demo else [
-        ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
-        ("Pragma", "no-cache"),
-        ("Referrer-Policy", "no-referrer"),
-        ("X-Frame-Options", "DENY"),
-    ]
-    return response(start_response, "200 OK", page, "text/html; charset=utf-8", headers)
+    return response(
+        start_response,
+        "200 OK",
+        page,
+        "text/html; charset=utf-8",
+        headers=_sensitive_html_headers(script_nonce),
+    )
 
 
 def route_console(start_response, demo=False):
@@ -4272,6 +4381,8 @@ def text_discovery(name):
         "Source repository: %s." % GITHUB_REPO_URL,
         "Memory boundary: hosted workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
+        "Company master storage: /agent-setup creates and shows it once; the default agent-readable file is <project-root>/%s and .local-secrets/ stays outside source control." % COMPANY_MASTER_DEFAULT_SECRET_PATH,
+        "Missing company master: agents stop and ask the human which governed secret store was used; never scan outside the project or request, echo, or log the raw credential.",
         "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "UAIX active memory: /api/matm/uai-memory/contract separates the accountless-browser virtual-package exception from hash-only local .uai edit coordination.",
@@ -4520,7 +4631,9 @@ def route_setup(environ, start_response):
                     "project": "project belongs to workspace",
                 },
                 "credentialHandling": "The company master token is returned once; keep it in protected secret storage and never place it in a URL, log, public file, or ordinary chat.",
+                "companyMasterStorageGuidance": company_master_storage_guidance(),
                 "credentialType": "company_master",
+                "credentialSystemAvailable": credential_system_available(),
                 "idempotencySupported": False,
                 "checkoutRequired": False,
             },
@@ -4592,6 +4705,7 @@ def route_setup(environ, start_response):
             "credentialId": key_id,
             "credentialType": "company_master",
             "companyMasterTokenSecret": token,
+            "companyMasterStorageGuidance": company_master_storage_guidance(),
             "humanOwnerCredentialId": human_credential_id,
             "humanOwnerRecoverySecret": human_recovery_secret,
             "hierarchy": {
@@ -8364,11 +8478,15 @@ def route_protected(environ, start_response, path):
             "canonicalRoomId": room.get("roomId"),
             "roomQueryUrl": _protected_query_url(
                 "/api/matm/meeting-rooms",
-                {"agent_id": creator_agent_id},
+                {"workspace_id": workspace_id, "agent_id": creator_agent_id},
             ),
             "transcriptQueryUrl": _protected_query_url(
                 "/api/matm/meeting-messages",
-                {"room_id": room.get("roomId"), "agent_id": creator_agent_id},
+                {
+                    "workspace_id": workspace_id,
+                    "room_id": room.get("roomId"),
+                    "agent_id": creator_agent_id,
+                },
             ),
             "valuesRedacted": True,
         }

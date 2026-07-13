@@ -9,6 +9,13 @@ if (!cssPath) {
 }
 const css = fs.readFileSync(cssPath, "utf8");
 
+assert(css.includes("width: min(100%, calc(100vw - 20px))"), "console and knowledge shells must stay liquid");
+assert(!css.includes("max-width: 1180px"), "console shell must not return to a narrow fixed desktop cap");
+assert(css.includes("grid-template-columns: repeat(auto-fit, minmax(172px, 1fr))"), "operator metrics must auto-fit available space");
+assert(css.includes("[data-console-card-action]"), "actionable console cards must have visible affordances");
+assert(css.includes("[data-console-badge-action]"), "actionable count badges must have visible affordances");
+assert(css.includes("--topbar-sticky-height"), "sticky console controls must share a topbar offset token");
+
 function variable(name) {
   const match = css.match(new RegExp("--" + name + ":\\s*(#[0-9a-fA-F]{6})"));
   if (!match) {

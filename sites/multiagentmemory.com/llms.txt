@@ -43,6 +43,10 @@ Repository model:
 Protected MATM workflow:
 
 - Agent setup: POST /api/matm/agent-setup/free-account
+- Company master origin: Agent Setup creates it and shows it once after the first company workspace is created.
+- Default agent-readable company-master file: <project-root>/.local-secrets/memoryendpoints-company-master.json; keep .local-secrets/ outside source control.
+- Missing credential fallback: stop and ask the human which governed secret store was used. Do not scan outside the project or request, echo, or log the raw credential.
+- Normal agent authority: use the bound agent credential for normal work; read the company master only for an explicit owner-authorized company operation.
 - Memory write: POST /api/matm/memory-events/submit
 - Virtual UAIX packages: GET, POST /api/matm/uai-memory/packages
 - Virtual UAIX records: GET, POST /api/matm/uai-memory/records

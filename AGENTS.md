@@ -20,6 +20,7 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
 
 - Do not print or commit secrets.
 - Do not commit deployment handoffs, FileZilla credentials, local secret files, or report prompts.
+- Company setup creates and shows the company master credential once. Its default agent-readable location is `.local-secrets/memoryendpoints-company-master.json` relative to the project root. Normal agents use their bound agent credential; read the company master only for an explicit owner-authorized company operation. If the default file is missing, stop and ask the human which governed secret store was used. Do not scan outside the project or request, echo, or log the raw credential.
 - Keep runtime code dependency-free unless the maintainer explicitly approves a dependency.
 - Do not copy NeuralWikis public wiki pages, branding, or claims.
 - Keep public claims bounded by evidence.
@@ -46,6 +47,8 @@ python scripts\enterprise_readiness_audit.py --run-checks
 ```
 
 ## Deployment
+
+Unless the human explicitly requests local-only work, completing an authorized website change includes committing, pushing, deploying, and verifying the live revision. Do not ask again solely for deployment permission.
 
 Use `scripts/ftp_deploy_memoryendpoints.py` only after tests pass. The script must resolve host, user, password, package, and remote directory while redacting values. Run explicit-FTPS dry-run and connection-check gates before the live upload.
 

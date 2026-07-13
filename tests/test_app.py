@@ -9,7 +9,8 @@ import subprocess
 import unittest
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlencode
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
@@ -285,10 +286,29 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('href="/mcp/resources"', docs)
         self.assertIn('href="/api/matm/openapi.json"', docs)
 
-        status, _headers, setup = call_app("/agent-setup")
+        status, _headers, agent_guidance = call_app("/llms.txt")
         self.assertEqual("200 OK", status)
+        self.assertIn(
+            "<project-root>/.local-secrets/memoryendpoints-company-master.json",
+            agent_guidance,
+        )
+        self.assertIn("agents stop and ask the human", agent_guidance)
+        self.assertIn("never scan outside the project", agent_guidance)
+
+        with patch("memoryendpoints.app.credential_system_available", return_value=True):
+            status, setup_headers, setup = call_app("/agent-setup")
+        self.assertEqual("200 OK", status)
+        self.assertIn("no-store", setup_headers["Cache-Control"])
+        self.assertEqual("no-referrer", setup_headers["Referrer-Policy"])
+        self.assertEqual("DENY", setup_headers["X-Frame-Options"])
+        self.assertEqual("nosniff", setup_headers["X-Content-Type-Options"])
+        self.assertEqual("max-age=31536000", setup_headers["Strict-Transport-Security"])
+        self.assertIn("script-src-attr 'none'", setup_headers["Content-Security-Policy"])
+        self.assertIn("nonce-", setup_headers["Content-Security-Policy"])
+        self.assertIn('nonce="', setup)
         self.assertIn("Copy-Safe Setup", setup)
         self.assertIn("data-agent-setup", setup)
+        self.assertIn('data-agent-setup-available="true"', setup)
         self.assertIn("data-agent-setup-form", setup)
         self.assertIn('method="post" action="/api/matm/agent-setup/free-account"', setup)
         self.assertIn("this form never sends labels in a URL", setup)
@@ -300,6 +320,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('type="password" readonly autocomplete="new-password"', setup)
         self.assertIn('aria-describedby="one-time-workspace-key-help"', setup)
         self.assertIn('data-agent-setup-key-saved', setup)
+        self.assertIn('data-company-master-default-path=".local-secrets/memoryendpoints-company-master.json"', setup)
+        self.assertIn("Default agent-readable secret file", setup)
+        self.assertIn("ask the AI agent to check this exact file", setup)
+        self.assertIn('"companyMasterTokenSecret": "&lt;credential shown above&gt;"', setup)
         self.assertIn('disabled data-agent-setup-continue', setup)
         self.assertIn('data-agent-setup-reset', setup)
         self.assertIn('href="/human">Open Human Access</a>', setup)
@@ -328,6 +352,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('cache: "no-store"', site_js)
         self.assertIn('credentials: "same-origin"', site_js)
         self.assertIn('Do not submit again from this page because setup is not idempotent.', site_js)
+        self.assertIn('setupRoot.getAttribute("data-company-master-default-path")', site_js)
+        self.assertIn('Save it at " + setupDefaultSecretPath', site_js)
         self.assertNotIn("localStorage", site_js)
         self.assertNotIn("sessionStorage", site_js)
         self.assertNotIn("window.name", site_js)
@@ -336,6 +362,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn(".setup-choice-grid", css)
         self.assertIn(".setup-result-grid", css)
         self.assertIn(".setup-key-row", css)
+        self.assertIn(".setup-secret-location", css)
 
         completed = subprocess.run(
             ["node", str(root / "tests" / "setup_ui_contract.js"), str(root / "static" / "js" / "site.js")],
@@ -351,11 +378,32 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(setup_contract["outcomeUnknownLocked"])
         self.assertTrue(setup_contract["storageAvoided"])
 
+    def test_agent_setup_omits_creation_form_when_credentials_are_unavailable(self):
+        with patch("memoryendpoints.app.credential_system_available", return_value=False):
+            status, headers, setup = call_app("/agent-setup")
+
+        self.assertEqual("200 OK", status)
+        self.assertIn('data-agent-setup-available="false"', setup)
+        self.assertIn("data-agent-setup-unavailable", setup)
+        self.assertIn('role="alert"', setup)
+        self.assertIn("No setup request was sent", setup)
+        self.assertIn("No workspace was created", setup)
+        self.assertNotIn("data-agent-setup-form", setup)
+        self.assertNotIn("data-agent-setup-submit", setup)
+        self.assertIn("no-store", headers["Cache-Control"])
+        self.assertEqual("no-referrer", headers["Referrer-Policy"])
+        self.assertEqual("DENY", headers["X-Frame-Options"])
+        self.assertEqual("nosniff", headers["X-Content-Type-Options"])
+        self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
+
     def test_agent_coordination_quickstart_covers_authenticated_flow(self):
         status, _headers, text = call_app("/agent-coordination")
 
         self.assertEqual("200 OK", status)
         self.assertIn("Agent Coordination Quickstart", text)
+        self.assertIn("Find Credentials Safely", text)
+        self.assertIn(".local-secrets/memoryendpoints-company-master.json", text)
+        self.assertIn("stop and ask the human which governed secret store was used", text)
         self.assertIn("MEMORYENDPOINTS_AGENT_TOKEN", text)
         self.assertIn("/.well-known/memoryendpoints-connector", text)
         self.assertIn("one-time invite", text)
@@ -373,6 +421,40 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("visibleToSender=true", text)
         self.assertIn("visibleToTarget=true", text)
         self.assertIn("goal-example-connector", text)
+        self.assertIn('["Idempotency-Key"]', text)
+        self.assertIn('New-MutationHeaders "goal-room"', text)
+        self.assertIn('New-MutationHeaders "meeting-message"', text)
+        self.assertIn('New-MutationHeaders "meeting-promotion"', text)
+        self.assertIn('New-MutationHeaders "memory-submit"', text)
+        self.assertIn('New-MutationHeaders "current-message"', text)
+        self.assertIn('New-MutationHeaders "notification-ack"', text)
+        self.assertIn("meeting-rooms?workspace_id=$workspaceQuery&amp;agent_id=$agentQuery", text)
+        self.assertIn("search?workspace_id=$workspaceQuery&amp;q=coordination", text)
+        self.assertIn("scope_id=$projectScopeQuery", text)
+        self.assertIn("targetAgentId = $env:MEMORYENDPOINTS_AGENT_ID", text)
+        self.assertIn("that target must use its own bound credential", text)
+        self.assertNotIn('targetAgentId = "memoryendpoints-backend-agent"', text)
+        post_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if "Invoke-RestMethod -Method Post" in line
+        ]
+        self.assertEqual(6, len(post_lines))
+        post_header_variables = {
+            line.split("-Headers ", 1)[1].split(" ", 1)[0]
+            for line in post_lines
+        }
+        self.assertEqual(
+            {
+                "$goalRoomHeaders",
+                "$meetingHeaders",
+                "$promoteHeaders",
+                "$memoryHeaders",
+                "$messageHeaders",
+                "$ackHeaders",
+            },
+            post_header_variables,
+        )
         self.assertIn('href="/api/matm/connector-contract"', text)
         self.assertNotIn("Bearer me_", text)
         self.assertNotIn("apiKeySecret", text)
@@ -1682,6 +1764,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(goal_room["roomId"], goal_room_payload["canonicalRoomId"])
         self.assertIn("/api/matm/meeting-rooms?", goal_room_payload["roomQueryUrl"])
         self.assertIn("/api/matm/meeting-messages?", goal_room_payload["transcriptQueryUrl"])
+        room_query = parse_qs(urlsplit(goal_room_payload["roomQueryUrl"]).query)
+        self.assertEqual([workspace_id], room_query["workspace_id"])
+        self.assertEqual(["agent-b"], room_query["agent_id"])
+        room_transcript_query = parse_qs(
+            urlsplit(goal_room_payload["transcriptQueryUrl"]).query
+        )
+        self.assertEqual([workspace_id], room_transcript_query["workspace_id"])
+        self.assertEqual([goal_room["roomId"]], room_transcript_query["room_id"])
+        self.assertEqual(["agent-b"], room_transcript_query["agent_id"])
         self.assertFalse(goal_room_payload["rawCredentialExposed"])
         self.assertFalse(goal_room_payload["rawPayloadExposed"])
         self.assertNotIn(token, json.dumps(goal_room_payload))
@@ -1750,7 +1841,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(project_room["roomId"], meeting_post["canonicalRoomId"])
         self.assertEqual(meeting_message["meetingMessageId"], meeting_post["messageId"])
         self.assertIn("/api/matm/meeting-messages?", meeting_post["transcriptQueryUrl"])
+        self.assertIn("workspace_id=", meeting_post["transcriptQueryUrl"])
         self.assertIn("room_id=", meeting_post["transcriptQueryUrl"])
+        meeting_query = parse_qs(urlsplit(meeting_post["transcriptQueryUrl"]).query)
+        self.assertEqual([workspace_id], meeting_query["workspace_id"])
+        self.assertEqual([project_room["roomId"]], meeting_query["room_id"])
+        self.assertEqual(["agent-a"], meeting_query["agent_id"])
         self.assertEqual(meeting_message["meetingMessageId"], meeting_post["confirmation"]["messageId"])
         self.assertTrue(meeting_post_summary["alwaysAvailable"])
         self.assertFalse(meeting_post_summary["rawCredentialExposed"])
@@ -1940,6 +2036,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(message_payload["message"]["messageId"], message_payload["messageId"])
         self.assertEqual(message_payload["notification"]["notificationId"], message_payload["notificationId"])
         self.assertIn("/api/matm/current-message?", message_payload["inboxQueryUrl"])
+        self.assertIn("workspace_id=", message_payload["inboxQueryUrl"])
+        inbox_query = parse_qs(urlsplit(message_payload["inboxQueryUrl"]).query)
+        self.assertEqual([workspace_id], inbox_query["workspace_id"])
+        self.assertEqual(["agent-b"], inbox_query["agent_id"])
+        self.assertEqual([message_payload["messageId"]], inbox_query["message_id"])
+        self.assertEqual(
+            [message_payload["notificationId"]],
+            inbox_query["notification_id"],
+        )
 
         status, _headers, text = call_app(
             "/api/matm/agent-inbox",

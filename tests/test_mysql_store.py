@@ -50,6 +50,17 @@ class MySQLStoreTests(unittest.TestCase):
         self.assertGreater(status["storageUsedBytes"], 0)
         self.assertFalse(status["rawKeyStoredByServer"])
 
+    def test_relational_healthcheck_does_not_export_whole_store(self):
+        from memoryendpoints.storage import SQLiteStore
+
+        class DirectHealthcheckStore(SQLiteStore):
+            def _load(self):
+                raise AssertionError("healthcheck must not export the whole relational store")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = DirectHealthcheckStore(Path(tmp) / "matm.sqlite")
+            self.assertTrue(store.healthcheck())
+
     def test_sql_memory_confirmation_uses_direct_audit_log(self):
         from memoryendpoints.app import _memory_submission_confirmation
         from memoryendpoints.storage import SQLiteStore

@@ -65,9 +65,21 @@ pairing v1 setup path, and clients must not automatically retry an uncertain
 outcome. Connector pairing uses `workspaceSelection.mode=new` instead: its
 workspace, project, agent, and grant remain provisional until activation, so
 an abandoned or canceled setup creates no durable hierarchy. A successful
-compatibility response returns `apiKeySecret` once with
-`showKeyOnce=true` and `rawKeyStoredByServer=false`. The server persists only
-the key hash, and redacted summaries never contain the raw secret.
+compatibility response returns `companyMasterTokenSecret` once with
+`showCredentialOnce=true` and `rawCredentialPersisted=false`. The server
+persists only the key verifier, and redacted summaries never contain the raw
+secret.
+
+Both setup metadata and a successful setup response include the public-safe
+`companyMasterStorageGuidance` contract. Its default agent-readable location is
+`<project-root>/.local-secrets/memoryendpoints-company-master.json`; the file is
+JSON, `.local-secrets/` must be ignored by source control, and the contract
+names the required `baseUrl`, `companyId`, `workspaceId`, and
+`companyMasterTokenSecret` fields without including a raw value. Normal agents
+use their bound agent credential. They may read the company master only for an
+explicit owner-authorized company operation. If the default file is missing,
+an agent stops safely and asks the human which governed secret store was used;
+it must not scan outside the project or request, echo, or log the raw value.
 
 ### GET `/api/matm/connector-contract`
 
@@ -520,10 +532,13 @@ NuGet assets.
 Free agent workspaces receive 200 MB of storage. Checkout and coupon use are not required.
 
 `POST /api/matm/agent-setup/free-account` intentionally returns
-`apiKeySecret` once. The response also includes a redacted `operatorSummary`
+`companyMasterTokenSecret` once. The response also includes a redacted `operatorSummary`
 with account/company/workspace/project hierarchy, storage quota, checkout
 status, one-time key handling, and no-raw-credential/no-raw-payload flags for
-operator UI use. The `operatorSummary` never contains `apiKeySecret`.
+operator UI use. The `operatorSummary` never contains the company master
+credential. The separate public-safe `companyMasterStorageGuidance` object
+names the default local secret path and safe human/agent fallback without
+including the credential.
 
 ## Account Hierarchy
 

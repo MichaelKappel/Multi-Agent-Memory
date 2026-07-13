@@ -72,7 +72,8 @@ function response(status, payload, rawText) {
   };
 }
 
-function createHarness(fetchImpl) {
+function createHarness(fetchImpl, options) {
+  options = options || {};
   const companyLabel = node({ value: "  Example Company  " });
   const workspaceLabel = node({ value: "  Agent Operations  " });
   const projectLabel = node({ value: "  Memory Integration  " });
@@ -101,6 +102,7 @@ function createHarness(fetchImpl) {
   const companyId = node();
   const workspaceId = node();
   const projectId = node();
+  const companyMasterDefaultPath = ".local-secrets/memoryendpoints-company-master.json";
   const selectorMap = {
     "[data-agent-setup-form]": form,
     "[data-agent-setup-submit]": submit,
@@ -123,6 +125,9 @@ function createHarness(fetchImpl) {
     "[data-agent-setup-project-id]": projectId,
   };
   const root = {
+    getAttribute(name) {
+      return name === "data-company-master-default-path" ? companyMasterDefaultPath : null;
+    },
     querySelector(selector) {
       return selectorMap[selector] || null;
     },
@@ -131,9 +136,15 @@ function createHarness(fetchImpl) {
   const copiedValues = [];
   const windowListeners = {};
   const assignedLocations = [];
+  const confirmCalls = [];
+  const confirmResponses = (options.confirmResponses || []).slice();
   const window = {
     addEventListener(type, handler) {
       windowListeners[type] = handler;
+    },
+    confirm(message) {
+      confirmCalls.push(message);
+      return confirmResponses.length ? confirmResponses.shift() : true;
     },
     fetch(url, options) {
       fetchCalls.push({ url, options });
@@ -166,7 +177,9 @@ function createHarness(fetchImpl) {
     accountId,
     assignedLocations,
     companyId,
+    companyMasterDefaultPath,
     companyLabel,
+    confirmCalls,
     continueButton,
     copiedValues,
     copyKey,
@@ -222,6 +235,11 @@ function submit(harness) {
   submit(success);
   assert.strictEqual(success.fetchCalls.length, 1, "pending setup must not duplicate");
   await settle();
+  assert.strictEqual(
+    success.status.textContent.includes(success.companyMasterDefaultPath),
+    true,
+    success.status.textContent
+  );
   submit(success);
   assert.strictEqual(success.fetchCalls.length, 1, "successful setup must remain locked");
   const call = success.fetchCalls[0];
@@ -246,6 +264,16 @@ function submit(harness) {
   assert.strictEqual(success.workspaceId.textContent, "workspace-1");
   assert.strictEqual(success.projectId.textContent, "project-1");
   assert.strictEqual(success.status.textContent.includes(oneTimeValue), false);
+  let beforeUnloadPrevented = false;
+  const beforeUnloadEvent = {
+    returnValue: undefined,
+    preventDefault() {
+      beforeUnloadPrevented = true;
+    },
+  };
+  assert.strictEqual(success.windowListeners.beforeunload(beforeUnloadEvent), "");
+  assert.strictEqual(beforeUnloadPrevented, true);
+  assert.strictEqual(beforeUnloadEvent.returnValue, "");
 
   success.keyToggle.emit("click");
   assert.strictEqual(success.key.type, "text");
@@ -264,10 +292,39 @@ function submit(harness) {
   success.recoverySaved.checked = true;
   success.recoverySaved.emit("change");
   assert.strictEqual(success.continueButton.disabled, false);
+  beforeUnloadPrevented = false;
+  const savedBeforeUnloadEvent = {
+    returnValue: undefined,
+    preventDefault() {
+      beforeUnloadPrevented = true;
+    },
+  };
+  assert.strictEqual(success.windowListeners.beforeunload(savedBeforeUnloadEvent), undefined);
+  assert.strictEqual(beforeUnloadPrevented, false);
+  assert.strictEqual(savedBeforeUnloadEvent.returnValue, undefined);
   success.continueButton.emit("click");
   assert.strictEqual(success.key.value, "");
   assert.strictEqual(success.recovery.value, "");
   assert.deepStrictEqual(success.assignedLocations, ["/human"]);
+
+  const resetCancelled = createHarness(() => Promise.resolve(response(201, successPayload)), { confirmResponses: [false] });
+  submit(resetCancelled);
+  await settle();
+  resetCancelled.resetButton.emit("click");
+  assert.strictEqual(resetCancelled.confirmCalls.length, 1);
+  assert.strictEqual(resetCancelled.key.value, oneTimeValue);
+  assert.strictEqual(resetCancelled.recovery.value, recoveryValue);
+  assert.strictEqual(resetCancelled.result.hidden, false);
+  assert.strictEqual(resetCancelled.status.textContent.includes("Reset cancelled"), true);
+
+  const resetConfirmed = createHarness(() => Promise.resolve(response(201, successPayload)), { confirmResponses: [true] });
+  submit(resetConfirmed);
+  await settle();
+  resetConfirmed.resetButton.emit("click");
+  assert.strictEqual(resetConfirmed.confirmCalls.length, 1);
+  assert.strictEqual(resetConfirmed.key.value, "");
+  assert.strictEqual(resetConfirmed.recovery.value, "");
+  assert.strictEqual(resetConfirmed.result.hidden, true);
 
   const pageLifecycle = createHarness(() => Promise.resolve(response(201, successPayload)));
   submit(pageLifecycle);
@@ -291,6 +348,27 @@ function submit(harness) {
   await settle();
   assert.strictEqual(safeError.status.textContent.includes("Company label is required."), true);
   assert.strictEqual(safeError.submit.disabled, false);
+
+  const safeNoWorkspace = createHarness(() => Promise.resolve(response(503, {
+    ok: false,
+    safeNoOp: true,
+    valuesRedacted: true,
+    error: {
+      code: "credential_system_not_configured",
+      title: "Credential system not configured",
+      detail: "Credential system is not configured.",
+      safeNoOp: true,
+      valuesRedacted: true,
+    },
+  })));
+  submit(safeNoWorkspace);
+  await settle();
+  assert.strictEqual(safeNoWorkspace.key.value, "");
+  assert.strictEqual(safeNoWorkspace.recovery.value, "");
+  assert.strictEqual(safeNoWorkspace.submit.disabled, false);
+  assert.strictEqual(safeNoWorkspace.status.textContent.includes("no workspace was created"), true);
+  submit(safeNoWorkspace);
+  assert.strictEqual(safeNoWorkspace.fetchCalls.length, 2, "confirmed no-workspace-created must allow retry after configuration");
 
   const unknown = createHarness(() => Promise.reject(new Error("network unavailable")));
   submit(unknown);
@@ -330,6 +408,9 @@ function submit(harness) {
     exactSinglePost: true,
     oneTimeKeyPreservedAndScrubbed: true,
     bothOneTimeValuesPreservedAndScrubbed: true,
+    unsavedBeforeUnloadGuarded: true,
+    resetRequiresConfirmation: true,
+    safeNoOpNoWorkspaceRetry: true,
     outcomeUnknownLocked: true,
     storageAvoided: true,
   }) + "\n");

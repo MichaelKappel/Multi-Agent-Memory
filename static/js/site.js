@@ -131,6 +131,10 @@
     var setupHuman = setupRoot.querySelector("[data-agent-setup-human]");
     var setupReset = setupRoot.querySelector("[data-agent-setup-reset]");
     var setupState = "idle";
+    var setupDefaultSecretPath = (
+      typeof setupRoot.getAttribute === "function"
+      && setupRoot.getAttribute("data-company-master-default-path")
+    ) || "the default local secret file shown on this page";
 
     function setSetupStatus(message, isError) {
       if (!setupStatus) {
@@ -211,15 +215,31 @@
       }
     }
 
-    function setupRequestError(message, safeRetry) {
+    function setupRequestError(message, safeRetry, code) {
       var error = new Error(message);
       error.safeRetry = Boolean(safeRetry);
+      error.code = code || "";
       return error;
+    }
+
+    function setupHasUnsavedOneTimeCredentials() {
+      return setupState === "created_unsaved" && Boolean(
+        (setupKey && setupKey.value) || (setupRecovery && setupRecovery.value)
+      );
     }
 
     window.addEventListener("pagehide", function () {
       setupState = "cleared";
       resetSetupSecret();
+    });
+
+    window.addEventListener("beforeunload", function (event) {
+      if (!setupHasUnsavedOneTimeCredentials()) {
+        return undefined;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+      return "";
     });
 
     window.addEventListener("pageshow", function (event) {
@@ -230,6 +250,13 @@
 
     if (setupReset) {
       setupReset.addEventListener("click", function () {
+        if (setupHasUnsavedOneTimeCredentials()) {
+          var confirmed = window.confirm && window.confirm("Reset will permanently clear the displayed one-time company master credential and recovery secret. Continue only after both are saved.");
+          if (!confirmed) {
+            setSetupStatus("Reset cancelled. Save both one-time credentials before clearing this page.", true);
+            return;
+          }
+        }
         prepareForAnotherSetup("The one-time credentials were cleared. Enter new labels only if you intend to create another workspace.");
       });
     }
@@ -297,7 +324,7 @@
         }
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(value).then(function () {
-            setSetupStatus("Company master credential copied. Save it in your secure secret store; device clipboard history is outside MemoryEndpoints.", false);
+            setSetupStatus("Company master credential copied. Save it at " + setupDefaultSecretPath + " or in your documented secure alternative; device clipboard history is outside MemoryEndpoints.", false);
           }).catch(function () {
             setupKey.focus();
             setupKey.select();
@@ -384,6 +411,18 @@
             }
             if (!response.ok) {
               var problem = payload.error || payload;
+              if (
+                (problem.code || payload.code) === "credential_system_not_configured"
+                && (problem.safeNoOp === true || payload.safeNoOp === true)
+                && problem.valuesRedacted !== false
+                && payload.valuesRedacted !== false
+              ) {
+                throw setupRequestError(
+                  "Credential system is not configured; no workspace was created. Ask the operator to configure credentials before trying setup again.",
+                  true,
+                  "confirmed_no_workspace_created"
+                );
+              }
               throw setupRequestError(
                 problem.detail || problem.title || "Workspace setup could not be completed.",
                 response.status >= 400 && response.status < 500
@@ -420,8 +459,8 @@
           );
           setSetupStatus(
             completeResponse
-              ? "Workspace created. Save both one-time credentials before leaving or refreshing this page."
-              : "One-time credentials were returned, but some setup confirmation fields were missing. Save both values and contact support before creating anything else.",
+              ? "Workspace created. Save the company master credential at " + setupDefaultSecretPath + " and keep the recovery secret separately before leaving or refreshing this page."
+              : "One-time credentials were returned, but some setup confirmation fields were missing. Save the company master credential at " + setupDefaultSecretPath + ", keep the recovery secret separately, and contact support before creating anything else.",
             !completeResponse
           );
           if (setupResultHeading) {
@@ -909,6 +948,7 @@
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
+    updateWorkflowSwitchLabels();
     if (shouldScroll && resolved !== "all") {
       var panel = workflowPanel(resolved);
       if (panel && panel.scrollIntoView) {
@@ -934,6 +974,51 @@
     return node;
   }
 
+  function activateConsoleTarget(view, options) {
+    options = options || {};
+    var resolved = workflowLabels[view] ? view : "";
+    if (!resolved) {
+      return;
+    }
+    setWorkflowView(resolved, options.scroll !== false);
+    if (options.status) {
+      setStatus(options.status, false);
+    }
+  }
+
+  function applyActionableTarget(node, options, dataAttribute) {
+    options = options || {};
+    if (options.href) {
+      node.href = options.href;
+    }
+    if (options.view) {
+      node.type = "button";
+      node.setAttribute(dataAttribute, options.view);
+      node.addEventListener("click", function () {
+        activateConsoleTarget(options.view, options);
+      });
+    }
+    if (options.label) {
+      node.setAttribute("aria-label", options.label);
+    }
+    if (options.title) {
+      node.title = options.title;
+    }
+    return node;
+  }
+
+  function makeActionableCard(tag, className, options) {
+    options = options || {};
+    var node = el(options.href ? "a" : (options.view ? "button" : tag), className);
+    return applyActionableTarget(node, options, "data-console-card-action");
+  }
+
+  function makeActionableBadge(text, kind, options) {
+    options = options || {};
+    var node = el(options.href ? "a" : (options.view ? "button" : "span"), "status-badge " + (kind || ""), text);
+    return applyActionableTarget(node, options, "data-console-badge-action");
+  }
+
   function shortId(value) {
     var text = String(value || "");
     if (!text) {
@@ -957,11 +1042,25 @@
     return number + " B";
   }
 
-  function appendBadge(parent, text, kind) {
+  function badgeTargetOptions(options, key) {
+    if (!options) {
+      return null;
+    }
+    return {
+      href: options.href,
+      view: options.view,
+      scroll: options.scroll,
+      status: options.status,
+      title: options.title,
+      label: options.labelPrefix ? options.labelPrefix + " " + key : options.label,
+    };
+  }
+
+  function appendBadge(parent, text, kind, options) {
     if (!text) {
       return;
     }
-    parent.appendChild(el("span", "status-badge " + (kind || ""), text));
+    parent.appendChild(makeActionableBadge(text, kind, options));
   }
 
   function appendMeta(parent, items) {
@@ -988,7 +1087,7 @@
     parent.appendChild(summary);
   }
 
-  function appendCountBadges(parent, label, counts, preferredKeys) {
+  function appendCountBadges(parent, label, counts, preferredKeys, options) {
     counts = counts || {};
     var keys = (preferredKeys || []).slice();
     Object.keys(counts).forEach(function (key) {
@@ -1004,7 +1103,7 @@
     }
     parent.appendChild(el("span", "filter-summary-label", label));
     active.forEach(function (key) {
-      appendBadge(parent, key + ": " + counts[key], "neutral");
+      appendBadge(parent, key + ": " + counts[key], "neutral", badgeTargetOptions(options, key));
     });
   }
 
@@ -1023,11 +1122,27 @@
     var count = summary.count !== undefined ? summary.count : (items || []).length;
     var line = el("div", "filter-summary memory-search-summary");
     line.appendChild(el("span", "filter-summary-label", "Summary"));
-    appendBadge(line, count + " hosted", count ? "good" : "neutral");
+    appendBadge(line, count + " hosted", count ? "good" : "neutral", {
+      view: "memory",
+      label: "Open hosted memory rows",
+      status: "Hosted memory workflow selected.",
+    });
     appendBadge(line, summary.filesystemDocsIncluded ? "filesystem included" : "filesystem excluded", summary.filesystemDocsIncluded ? "warn" : "good");
-    appendCountBadges(line, "Scopes", summary.scopeCounts, ["account", "company", "workspace", "project"]);
-    appendCountBadges(line, "Reviews", summary.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
-    appendCountBadges(line, "Promotion", summary.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(line, "Scopes", summary.scopeCounts, ["account", "company", "workspace", "project"], {
+      view: "memory",
+      labelPrefix: "Open hosted memory scope",
+      status: "Hosted memory workflow selected.",
+    });
+    appendCountBadges(line, "Reviews", summary.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open review queue status",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(line, "Promotion", summary.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open review promotion state",
+      status: "Review queue selected.",
+    });
     parent.appendChild(line);
     renderLongTermMemoryOperatorSummary(parent, summary.longTermMemoryMigration);
   }
@@ -1124,22 +1239,58 @@
     var line = el("div", "filter-summary long-term-memory-summary");
     line.appendChild(el("span", "filter-summary-label", "Long-term memory"));
     appendBadge(line, formatStatusText(migration.status), migration.status === "promoted" ? "good" : "warn");
-    appendBadge(line, (migration.searchResultCount || 0) + " search hits", migration.searchResultCount ? "neutral" : "good");
-    appendBadge(line, (migration.canonicalSourceCount || migration.count || 0) + " canonical sources", (migration.canonicalSourceCount || migration.count) ? "good" : "neutral");
-    appendBadge(line, (migration.sourcePathCount || 0) + " source paths", migration.sourcePathCount ? "good" : "neutral");
-    appendBadge(line, (migration.canonicalRecordCount || migration.recordCount || migration.count || 0) + " canonical records", (migration.canonicalRecordCount || migration.recordCount) ? "neutral" : "good");
+    appendBadge(line, (migration.searchResultCount || 0) + " search hits", migration.searchResultCount ? "neutral" : "good", {
+      view: "memory",
+      label: "Open long-term memory search hits",
+      status: "Hosted memory workflow selected.",
+    });
+    appendBadge(line, (migration.canonicalSourceCount || migration.count || 0) + " canonical sources", (migration.canonicalSourceCount || migration.count) ? "good" : "neutral", {
+      view: "memory",
+      label: "Open canonical long-term memory sources",
+      status: "Hosted memory workflow selected.",
+    });
+    appendBadge(line, (migration.sourcePathCount || 0) + " source paths", migration.sourcePathCount ? "good" : "neutral", {
+      view: "memory",
+      label: "Open source path ledger",
+      status: "Hosted memory workflow selected.",
+    });
+    appendBadge(line, (migration.canonicalRecordCount || migration.recordCount || migration.count || 0) + " canonical records", (migration.canonicalRecordCount || migration.recordCount) ? "neutral" : "good", {
+      view: "memory",
+      label: "Open canonical memory records",
+      status: "Hosted memory workflow selected.",
+    });
     if (migration.relatedRecordCount) {
-      appendBadge(line, migration.relatedRecordCount + " related records excluded from canonical", "neutral");
+      appendBadge(line, migration.relatedRecordCount + " related records excluded from canonical", "neutral", {
+        view: "reviews",
+        label: "Open related long-term memory review records",
+        status: "Review queue selected.",
+      });
     }
     if (migration.duplicateRecordCount) {
-      appendBadge(line, migration.duplicateRecordCount + " duplicate records", "warn");
+      appendBadge(line, migration.duplicateRecordCount + " duplicate records", "warn", {
+        view: "reviews",
+        label: "Open duplicate long-term memory review records",
+        status: "Review queue selected.",
+      });
     }
     appendBadge(line, migration.filesystemDocsIncluded ? "filesystem included" : "filesystem excluded", migration.filesystemDocsIncluded ? "warn" : "good");
     appendBadge(line, migration.allValuesRedacted ? "redacted" : "redaction review", migration.allValuesRedacted ? "good" : "warn");
     appendBadge(line, migration.rawPrivatePayloadStoredCount ? "payload storage review" : "private payload hidden", migration.rawPrivatePayloadStoredCount ? "warn" : "good");
-    appendCountBadges(line, "Reviews", migration.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
-    appendCountBadges(line, "Promotion", migration.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"]);
-    appendCountBadges(line, "Related reviews", migration.relatedReviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    appendCountBadges(line, "Reviews", migration.reviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open long-term review status",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(line, "Promotion", migration.promotionStateCounts, ["review_pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open long-term promotion state",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(line, "Related reviews", migration.relatedReviewStatusCounts, ["pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open related long-term review status",
+      status: "Review queue selected.",
+    });
     parent.appendChild(line);
     renderLongTermMemorySourceLedger(parent, migration);
   }
@@ -1204,8 +1355,8 @@
     node.appendChild(el("p", "empty-state", text));
   }
 
-  function summaryCard(title, value, meta, badges) {
-    var card = el("article", "summary-card");
+  function summaryCard(title, value, meta, badges, options) {
+    var card = makeActionableCard("article", "summary-card", options);
     card.appendChild(el("div", "summary-label", title));
     card.appendChild(el("strong", "", value || "Not available"));
     if (meta) {
@@ -1221,8 +1372,8 @@
     return card;
   }
 
-  function sessionItem(title, value, meta, badges) {
-    var item = el("article", "session-item");
+  function sessionItem(title, value, meta, badges, options) {
+    var item = makeActionableCard("article", "session-item", options);
     item.appendChild(el("span", "summary-label", title));
     item.appendChild(el("strong", "", value || "Not available"));
     if (meta) {
@@ -1321,8 +1472,8 @@
     return parts.join(" / ");
   }
 
-  function metricCard(title, value, meta, badges) {
-    var card = el("article", "metric-card");
+  function metricCard(title, value, meta, badges, options) {
+    var card = makeActionableCard("article", "metric-card", options);
     card.appendChild(el("span", "summary-label", title));
     card.appendChild(el("strong", "", value || "Pending"));
     card.appendChild(el("span", "summary-meta", meta || "Awaiting data"));
@@ -1336,12 +1487,62 @@
     return card;
   }
 
+  function knownWorkflowCount(view) {
+    var showingLaneMessages = state.messageDeskMode === "lanes";
+    var unread = showingLaneMessages && state.laneUnreadCount !== null && state.laneUnreadCount !== undefined
+      ? state.laneUnreadCount
+      : state.inboxUnreadCount;
+    var evidence = 0;
+    var evidenceKnown = false;
+    if (state.receiptCount !== null && state.receiptCount !== undefined) {
+      evidence += state.receiptCount;
+      evidenceKnown = true;
+    }
+    if (state.auditCount !== null && state.auditCount !== undefined) {
+      evidence += state.auditCount;
+      evidenceKnown = true;
+    }
+    switch (view) {
+      case "memory":
+        return state.memoryCount !== null && state.memoryCount !== undefined ? state.memoryCount : null;
+      case "reviews":
+        return state.reviewCount !== null && state.reviewCount !== undefined ? state.reviewCount : null;
+      case "meetings":
+        return state.meetingRoomCount !== null && state.meetingRoomCount !== undefined ? state.meetingRoomCount : null;
+      case "messages":
+        return unread !== null && unread !== undefined ? unread : null;
+      case "evidence":
+        return evidenceKnown ? evidence : null;
+      case "sync":
+        return state.syncLatestReceiptId || state.syncLatestRevisionId || state.syncHeadCount !== null || state.syncCapabilityStatus ? 1 : null;
+      default:
+        return null;
+    }
+  }
+
+  function updateWorkflowSwitchLabels() {
+    Array.prototype.forEach.call(consoleRoot.querySelectorAll("[data-console-workflow-view]"), function (button) {
+      var view = button.getAttribute("data-console-workflow-view") || "all";
+      var label = workflowLabels[view] || view;
+      var count = knownWorkflowCount(view);
+      if (count !== null && count !== undefined) {
+        button.textContent = label + " " + String(count);
+        button.setAttribute("data-console-count-known", "true");
+        button.setAttribute("aria-label", label + " workflow, " + String(count) + " item count");
+      } else {
+        button.textContent = label;
+        button.removeAttribute("data-console-count-known");
+        button.setAttribute("aria-label", label + " workflow");
+      }
+    });
+  }
+
   function checklistStatus(status, text) {
     return {status: status, text: text};
   }
 
-  function checklistRow(title, status, detail, meta) {
-    var row = el("article", "checklist-row");
+  function checklistRow(title, status, detail, meta, options) {
+    var row = makeActionableCard("article", "checklist-row", options);
     var badgeKind = status.status === "pass" ? "good" : (status.status === "review" ? "warn" : "neutral");
     var top = el("div", "checklist-row-top");
     top.appendChild(el("strong", "", title));
@@ -1416,43 +1617,50 @@
       "Workspace boundary",
       boundaryReady ? checklistStatus("pass", "pass") : checklistStatus("pending", "pending"),
       boundaryReady ? "Account, company, workspace, and project are loaded as operator cards." : "Load a workspace key to confirm the account/company/workspace/project hierarchy.",
-      boundaryReady ? "4 hierarchy levels" : "boundary not loaded"
+      boundaryReady ? "4 hierarchy levels" : "boundary not loaded",
+      { view: "workspace", label: "Open workspace boundary details", status: "Workspace boundary selected." }
     ));
     node.appendChild(checklistRow(
       "Hosted memory",
       !memoryKnown ? checklistStatus("pending", "pending") : (state.memoryCount > 0 && !state.memoryFilesystemIncluded ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
       !memoryKnown ? "Run Search Verification or Hosted long-term memory." : (state.memoryCount + " hosted memory row(s); filesystem docs " + (state.memoryFilesystemIncluded ? "need review." : "excluded.")),
-      countMeta(state.memoryScopeCounts, ["account", "company", "workspace", "project"]) || "memory search"
+      countMeta(state.memoryScopeCounts, ["account", "company", "workspace", "project"]) || "memory search",
+      { view: "memory", label: "Open hosted memory evidence", status: "Hosted memory workflow selected." }
     ));
     node.appendChild(checklistRow(
       "Broadcast and targeted messages",
       !unreadKnown ? checklistStatus("pending", "pending") : (broadcastSeen && targetedSeen ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
       !unreadKnown ? "Refresh all lanes to distinguish broadcast from targeted messages." : ((deliveryCounts.broadcast || 0) + " broadcast / " + (deliveryCounts.targeted || 0) + " targeted visible across refreshed lanes."),
-      unreadKnown ? state.laneUnreadCount + " unread across lanes" : "message lanes not refreshed"
+      unreadKnown ? state.laneUnreadCount + " unread across lanes" : "message lanes not refreshed",
+      { view: "messages", label: "Open current-message lanes", status: "Current-message workflow selected." }
     ));
     node.appendChild(checklistRow(
       "Direct attention",
       !requiredResponseKnown ? checklistStatus("pending", "pending") : (requiredResponseCount ? checklistStatus("review", "review") : checklistStatus("pass", "pass")),
       !requiredResponseKnown ? "Refresh the inbox or all lanes to detect targeted required-response work." : (requiredResponseCount ? requiredResponseCount + " required-response message(s) need operator action." : "No required-response messages are blocking the current operator view."),
-      requiredResponseKnown ? "required response count" : "attention not checked"
+      requiredResponseKnown ? "required response count" : "attention not checked",
+      { view: "messages", label: "Open direct attention messages", status: "Current-message workflow selected." }
     ));
     node.appendChild(checklistRow(
       "Receipts",
       !receiptsKnown ? checklistStatus("pending", "pending") : (state.receiptCount > 0 && state.receiptsPayloadsHidden !== false ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
       !receiptsKnown ? "Refresh receipts or acknowledge a visible notification." : (state.receiptCount + " receipt(s); payloads " + (state.receiptsPayloadsHidden === false ? "need review." : "hidden.")),
-      "acknowledgement evidence"
+      "acknowledgement evidence",
+      { view: "evidence", label: "Open receipt evidence", status: "Receipts and audit evidence selected." }
     ));
     node.appendChild(checklistRow(
       "Distributed sync",
       !syncKnown ? checklistStatus("pending", "pending") : (syncReady ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
       !syncKnown ? "Refresh Sync capabilities, then register a device and submit a mutation." : (syncReady ? "Sync mutation receipt, change feed, and head readback are visible." : "Sync capability or mutation state is visible; complete readback to prove the path."),
-      state.syncLatestReceiptId ? "receipt " + shortId(state.syncLatestReceiptId) : (state.syncCapabilityStatus || "sync workflow")
+      state.syncLatestReceiptId ? "receipt " + shortId(state.syncLatestReceiptId) : (state.syncCapabilityStatus || "sync workflow"),
+      { view: "sync", label: "Open distributed sync workflow", status: "Distributed sync workflow selected." }
     ));
     node.appendChild(checklistRow(
       "Redaction",
       !redactionKnown ? checklistStatus("pending", "pending") : (redactionReview ? checklistStatus("review", "review") : checklistStatus("pass", "pass")),
       !redactionKnown ? "Refresh receipts and audit to verify hidden credentials and payloads." : (redactionReview ? "One redaction signal needs review." : "Credentials and private payloads are hidden in visible evidence."),
-      "receipts / audit"
+      "receipts / audit",
+      { view: "evidence", label: "Open redaction evidence", status: "Receipts and audit evidence selected." }
     ));
   }
 
@@ -1462,6 +1670,7 @@
       return;
     }
     updateSurfaceBadge();
+    updateWorkflowSwitchLabels();
     clear(node);
     var surface = surfaceInfo();
     var boundaryReady = Boolean(state.workspaceOperatorSummary && state.workspaceOperatorSummary.hierarchyReady);
@@ -1475,6 +1684,10 @@
     var unreadTotal = showingLaneMessages ? null : state.inboxTotalUnreadCount;
     var unreadLabel = showingLaneMessages ? "unread" : (state.inboxCountLimited ? "visible unread" : "unread");
     var evidencePending = state.receiptCount === null && state.auditCount === null;
+    var syncKnown = Boolean(state.syncCapabilityStatus || state.syncLatestReceiptId || state.syncLatestRevisionId || state.syncHeadCount !== null);
+    var meetingKnown = state.meetingRoomCount !== null && state.meetingRoomCount !== undefined;
+    var meetingMessageKnown = state.meetingTranscriptVisibleCount !== null && state.meetingTranscriptVisibleCount !== undefined;
+    var reviewKnown = state.reviewCount !== null && state.reviewCount !== undefined;
     var runtime = runtimeEvidence();
     node.appendChild(metricCard(
       "Session",
@@ -1483,13 +1696,15 @@
       [
         { text: surface.badge, kind: surface.kind },
         { text: state.workspaceId ? "key hidden" : "key masked", kind: "good" },
-      ]
+      ],
+      { view: "workspace", label: "Open workspace overview", status: "Workspace overview selected." }
     ));
     node.appendChild(metricCard(
       "Runtime",
       runtime.value,
       runtime.meta,
-      runtime.badges
+      runtime.badges,
+      { href: "/api/version", label: "Open runtime version JSON", title: "Open /api/version in this tab" }
     ));
     node.appendChild(metricCard(
       "Boundary",
@@ -1497,7 +1712,8 @@
       "account / company / workspace / project",
       [
         { text: boundaryReady ? "pass" : "pending", kind: boundaryReady ? "good" : "neutral" },
-      ]
+      ],
+      { view: "workspace", label: "Open boundary and workspace cards", status: "Workspace boundary selected." }
     ));
     node.appendChild(metricCard(
       "Memory",
@@ -1506,7 +1722,28 @@
       [
         { text: "hosted", kind: "good" },
         { text: state.memoryFilesystemIncluded ? "filesystem review" : "filesystem excluded", kind: state.memoryFilesystemIncluded ? "warn" : "good" },
-      ]
+      ],
+      { view: "memory", label: "Open hosted memory search", status: "Hosted memory workflow selected." }
+    ));
+    node.appendChild(metricCard(
+      "Reviews",
+      reviewKnown ? state.reviewCount + " visible" : "Review pending",
+      state.longTermMemoryHealth ? "long-term health loaded" : "review queue",
+      [
+        { text: reviewKnown ? "queue rows" : "refresh queue", kind: reviewKnown ? (state.reviewCount ? "warn" : "good") : "neutral" },
+        { text: state.longTermMemoryHealth ? "long-term linked" : "long-term check", kind: state.longTermMemoryHealth ? "good" : "neutral" },
+      ],
+      { view: "reviews", label: "Open review queue", status: "Review queue selected." }
+    ));
+    node.appendChild(metricCard(
+      "Meetings",
+      meetingKnown ? state.meetingRoomCount + " rooms" : "Rooms pending",
+      meetingMessageKnown ? state.meetingTranscriptVisibleCount + " visible messages" : "rooms / transcript",
+      [
+        { text: meetingKnown ? "room rows" : "refresh rooms", kind: meetingKnown ? "good" : "neutral" },
+        { text: state.latestMeetingMessageId ? "latest message" : "transcript check", kind: state.latestMeetingMessageId ? "good" : "neutral" },
+      ],
+      { view: "meetings", label: "Open meeting rooms and transcripts", status: "Meeting workflow selected." }
     ));
     node.appendChild(metricCard(
       "Messages",
@@ -1517,7 +1754,18 @@
       [
         { text: "rows", kind: "neutral" },
         { text: requiredResponseKnown ? (requiredResponseCount ? requiredResponseCount + " response needed" : "no response blockers") : "attention pending", kind: requiredResponseKnown ? (requiredResponseCount ? "warn" : "good") : "neutral" },
-      ]
+      ],
+      { view: "messages", label: "Open current-message lanes", status: "Current-message workflow selected." }
+    ));
+    node.appendChild(metricCard(
+      "Sync",
+      syncKnown ? (state.syncCapabilityStatus || state.syncLatestMutationStatus || "sync visible") : "Sync pending",
+      state.syncLatestReceiptId ? "receipt " + shortId(state.syncLatestReceiptId) : (state.syncHeadCount !== null ? state.syncHeadCount + " heads" : "capability / receipts / heads"),
+      [
+        { text: state.syncDeviceStatus || "device check", kind: state.syncDeviceStatus === "revoked" ? "warn" : (state.syncDeviceStatus ? "good" : "neutral") },
+        { text: state.syncLastReadbackKind ? state.syncLastReadbackKind + " " + String(state.syncLastReadbackCount || 0) : "readback", kind: state.syncLastReadbackKind ? "good" : "neutral" },
+      ],
+      { view: "sync", label: "Open distributed sync workflow", status: "Distributed sync workflow selected." }
     ));
     node.appendChild(metricCard(
       "Evidence",
@@ -1526,7 +1774,8 @@
       [
         { text: state.auditCredentialsHidden === false ? "credential review" : "credentials hidden", kind: state.auditCredentialsHidden === false ? "warn" : "good" },
         { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
-      ]
+      ],
+      { view: "evidence", label: "Open receipts and audit evidence", status: "Receipts and audit evidence selected." }
     ));
     renderVerifierChecklist();
     renderOperatorDesk();
@@ -1583,19 +1832,23 @@
     );
     node.appendChild(sessionItem("Surface", surface.label, surface.origin, [
       { text: surface.badge, kind: surface.kind },
-    ]));
-    node.appendChild(sessionItem("Runtime", runtime.value, runtime.meta, runtime.badges));
+    ], { view: "workspace", label: "Open workspace surface details", status: "Workspace overview selected." }));
+    node.appendChild(sessionItem("Runtime", runtime.value, runtime.meta, runtime.badges, {
+      href: "/api/version",
+      label: "Open runtime version JSON",
+      title: "Open /api/version in this tab",
+    }));
     node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
       { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
-    ]));
+    ], { view: "workspace", label: "Open hierarchy boundary cards", status: "Workspace boundary selected." }));
     node.appendChild(sessionItem("Credential", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review credential handling" : "not echoed", "browser session only", [
       { text: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review" : "private", kind: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "warn" : "good" },
-    ]));
+    ], { view: "access", label: "Open agent access and credential controls", status: "Agent access workflow selected." }));
     node.appendChild(sessionItem("Principal", principal.displayName || principal.agentId || "company master", principal.credentialType || "governed credential", [
       { text: principal.grant && principal.grant.immutable ? "immutable grant" : "grant review", kind: principal.grant && principal.grant.immutable ? "good" : "warn" },
       { text: principal.rawCredentialExposed ? "credential exposure review" : "credentials hidden", kind: principal.rawCredentialExposed ? "warn" : "good" },
       { text: principal.rawPayloadExposed ? "payload exposure review" : "payload hidden", kind: principal.rawPayloadExposed ? "warn" : "good" },
-    ]));
+    ], { view: "access", label: "Open principal and grant controls", status: "Agent access workflow selected." }));
     var actions = el("nav", "session-actions");
     actions.setAttribute("aria-label", "Loaded workspace shortcuts");
     [
@@ -1607,6 +1860,12 @@
     ].forEach(function (item) {
       var link = el("a", "button compact", item.label);
       link.href = item.href;
+      link.addEventListener("click", function () {
+        var view = workflowViewByHash[item.href] || "";
+        if (view) {
+          setWorkflowView(view, false);
+        }
+      });
       actions.appendChild(link);
     });
     node.appendChild(actions);
@@ -1790,11 +2049,18 @@
     }
   }
 
-  function appendDeskHeading(parent, title, meta) {
+  function appendDeskHeading(parent, title, meta, options) {
     var heading = el("div", "operator-desk-panel-heading");
     heading.appendChild(el("h3", "", title));
     if (meta) {
-      heading.appendChild(el("span", "summary-meta", meta));
+      heading.appendChild(makeActionableCard("span", "summary-meta", options ? {
+        view: options.view,
+        href: options.href,
+        label: options.label,
+        status: options.status,
+        title: options.title,
+      } : null));
+      heading.lastChild.textContent = meta;
     }
     parent.appendChild(heading);
   }
@@ -1804,7 +2070,11 @@
     if (!panel) {
       return;
     }
-    appendDeskHeading(panel, "Hierarchy", state.workspaceId ? "copy-safe ids" : "locked");
+    appendDeskHeading(panel, "Hierarchy", state.workspaceId ? "copy-safe ids" : "locked", {
+      view: "workspace",
+      label: "Open workspace hierarchy",
+      status: "Workspace boundary selected.",
+    });
     if (!state.workspace || !state.workspace.workspaceId) {
       panel.appendChild(el("p", "empty-state", "Account, company, workspace, and project cards appear after the key loads."));
       return;
@@ -2037,7 +2307,11 @@
     }
     var items = state.latestMemoryItems || [];
     var migration = state.longTermMemoryHealth;
-    appendDeskHeading(panel, "Memory Rows", migration ? "long-term health loaded" : (items.length ? items.length + " latest" : "search pending"));
+    appendDeskHeading(panel, "Memory Rows", migration ? "long-term health loaded" : (items.length ? items.length + " latest" : "search pending"), {
+      view: "memory",
+      label: "Open hosted memory rows",
+      status: "Hosted memory workflow selected.",
+    });
     if (migration) {
       panel.appendChild(longTermMemoryDeskRow(migration));
     }
@@ -2065,7 +2339,11 @@
     var headingMeta = requiredResponseKnown && requiredResponseCount
       ? requiredResponseCount + " response needed"
       : (showingLanes ? knownUnread + " unread across lanes" : (items.length ? items.length + (state.inboxCountLimited ? " visible unread" : " unread") : "inbox clear"));
-    appendDeskHeading(panel, "Message Rows", headingMeta);
+    appendDeskHeading(panel, "Message Rows", headingMeta, {
+      view: "messages",
+      label: "Open current-message rows",
+      status: "Current-message workflow selected.",
+    });
     if (!items.length) {
       panel.appendChild(el("p", "empty-state", showingLanes ? "All checked lanes are clear." : "Current-message rows appear after inbox refresh."));
       return;
@@ -2083,7 +2361,11 @@
     var receipts = state.latestReceiptItems || [];
     var audits = state.latestAuditItems || [];
     var syncRow = syncDeskRow();
-    appendDeskHeading(panel, "Evidence", (receipts.length + audits.length || syncRow) ? receipts.length + " receipts / " + audits.length + " audit" + (syncRow ? " / sync" : "") : "refresh pending");
+    appendDeskHeading(panel, "Evidence", (receipts.length + audits.length || syncRow) ? receipts.length + " receipts / " + audits.length + " audit" + (syncRow ? " / sync" : "") : "refresh pending", {
+      view: "evidence",
+      label: "Open receipt and audit evidence",
+      status: "Receipts and audit evidence selected.",
+    });
     if (!receipts.length && !audits.length && !syncRow) {
       panel.appendChild(el("p", "empty-state", "Receipt, audit, and sync evidence rows appear after refresh."));
       return;
@@ -2277,15 +2559,31 @@
     renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary inbox-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Inbox"));
-    appendBadge(summaryLine, inboxUnreadCount + " " + inboxCountLabel, items.length ? "warn" : "good");
+    appendBadge(summaryLine, inboxUnreadCount + " " + inboxCountLabel, items.length ? "warn" : "good", {
+      view: "messages",
+      label: "Open unread current-message rows",
+      status: "Current-message workflow selected.",
+    });
     if (limitedInboxView && inboxTotalUnreadCount !== inboxUnreadCount) {
-      appendBadge(summaryLine, inboxTotalUnreadCount + " total unread", "neutral");
+      appendBadge(summaryLine, inboxTotalUnreadCount + " total unread", "neutral", {
+        view: "messages",
+        label: "Open total unread current-message rows",
+        status: "Current-message workflow selected.",
+      });
     }
     if (inboxHasMore) {
       appendBadge(summaryLine, "older unread available", "neutral");
     }
-    appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"]);
-    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
+    appendCountBadges(summaryLine, "Delivery", deliveryCounts, ["broadcast", "targeted"], {
+      view: "messages",
+      labelPrefix: "Open current-message delivery count",
+      status: "Current-message workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"], {
+      view: "messages",
+      labelPrefix: "Open current-message response count",
+      status: "Current-message workflow selected.",
+    });
     node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No " + inboxCountLabel + " messages for " + lane + "."));
@@ -2389,11 +2687,27 @@
     summaryLine.appendChild(el("span", "filter-summary-label", "Delivery"));
     appendBadge(summaryLine, messageType, isTargeted ? "neutral" : "good");
     if (!isTargeted) {
-      appendBadge(summaryLine, expectedRecipientCount + " recipients", expectedRecipientCount > 1 ? "good" : "warn");
-      appendBadge(summaryLine, recipientReadbackText, recipientReadbackOk ? "good" : "warn");
+      appendBadge(summaryLine, expectedRecipientCount + " recipients", expectedRecipientCount > 1 ? "good" : "warn", {
+        view: "messages",
+        label: "Open broadcast recipient readback",
+        status: "Current-message workflow selected.",
+      });
+      appendBadge(summaryLine, recipientReadbackText, recipientReadbackOk ? "good" : "warn", {
+        view: "messages",
+        label: "Open broadcast visibility readback",
+        status: "Current-message workflow selected.",
+      });
     }
-    appendCountBadges(summaryLine, "Counts", deliveryCounts, ["broadcast", "targeted"]);
-    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"]);
+    appendCountBadges(summaryLine, "Counts", deliveryCounts, ["broadcast", "targeted"], {
+      view: "messages",
+      labelPrefix: "Open delivery count",
+      status: "Current-message workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Responses", responseCounts, ["required_response", "viewed_acknowledgement"], {
+      view: "messages",
+      labelPrefix: "Open response disposition count",
+      status: "Current-message workflow selected.",
+    });
     appendBadge(
       summaryLine,
       operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
@@ -2573,7 +2887,11 @@
     var line = el("div", "filter-summary broadcast-ack-isolation-summary");
     line.appendChild(el("span", "filter-summary-label", "Broadcast ack isolation"));
     appendBadge(line, ok ? "ack isolation pass" : "ack isolation review", ok ? "good" : "warn");
-    appendBadge(line, visibleAgents.length + "/" + remainingAgents.length + " remaining lanes visible", ok ? "good" : "warn");
+    appendBadge(line, visibleAgents.length + "/" + remainingAgents.length + " remaining lanes visible", ok ? "good" : "warn", {
+      view: "messages",
+      label: "Open broadcast lane visibility readback",
+      status: "Current-message workflow selected.",
+    });
     appendBadge(line, ackedLaneCleared ? "acked lane cleared" : "acked lane still unread", ackedLaneCleared ? "good" : "warn");
     if (missingAgents.length) {
       appendBadge(line, "missing " + missingAgents.join(", "), "warn");
@@ -2754,20 +3072,40 @@
     renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary meeting-rooms-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Meeting rooms"));
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project", "goal", "task"]);
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : rooms.length) + " rooms", rooms.length ? "good" : "neutral", {
+      view: "meetings",
+      label: "Open meeting room rows",
+      status: "Meeting workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Scopes", summary.scopeCounts, ["company", "workspace", "project", "goal", "task"], {
+      view: "meetings",
+      labelPrefix: "Open meeting room scope",
+      status: "Meeting workflow selected.",
+    });
     if (summary.filters && (summary.filters.scope || summary.filters.scopeId)) {
       appendBadge(summaryLine, "filter " + (summary.filters.scope || "any"), "neutral");
       if (summary.filters.scopeId) {
         appendBadge(summaryLine, "scope " + shortId(summary.filters.scopeId), "neutral");
       }
     }
-    appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn");
-    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
+    appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn", {
+      view: "meetings",
+      label: "Open always-available meeting rooms",
+      status: "Meeting workflow selected.",
+    });
+    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good", {
+      view: "meetings",
+      label: "Open unread meeting rooms",
+      status: "Meeting workflow selected.",
+    });
     var assignedIds = assignedMeetingRoomIds();
     var assignedCount = rooms.filter(function (room) { return assignedIds[room.roomId] !== undefined; }).length;
     if (assignedCount) {
-      appendBadge(summaryLine, assignedCount + " assigned to you", "good");
+      appendBadge(summaryLine, assignedCount + " assigned to you", "good", {
+        view: "meetings",
+        label: "Open assigned meeting rooms",
+        status: "Meeting workflow selected.",
+      });
     }
     node.appendChild(summaryLine);
     if (!rooms.length) {
@@ -2945,9 +3283,21 @@
     var summary = (payload && payload.operatorSummary) || {};
     var summaryLine = el("div", "filter-summary routing-decisions-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Routing readback"));
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " decisions", items.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Scopes", summary.destinationScopeCounts, ["company", "workspace", "project", "goal", "task"]);
-    appendCountBadges(summaryLine, "Lanes", summary.laneCounts, []);
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " decisions", items.length ? "good" : "neutral", {
+      view: "meetings",
+      label: "Open routing decision rows",
+      status: "Meeting workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Scopes", summary.destinationScopeCounts, ["company", "workspace", "project", "goal", "task"], {
+      view: "meetings",
+      labelPrefix: "Open routing destination scope",
+      status: "Meeting workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Lanes", summary.laneCounts, [], {
+      view: "meetings",
+      labelPrefix: "Open routing lane",
+      status: "Meeting workflow selected.",
+    });
     appendBadge(summaryLine, summary.rawPayloadExposedCount ? "payload exposure review" : "payload hidden", summary.rawPayloadExposedCount ? "warn" : "good");
     appendFilterSummary(summaryLine, (payload && payload.filters) || {});
     node.appendChild(summaryLine);
@@ -3024,15 +3374,31 @@
     var summaryLine = el("div", "filter-summary meeting-messages-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
     appendBadge(summaryLine, roomTitle(room), "neutral");
-    appendBadge(summaryLine, "showing " + visibleMessageCount + " of " + totalMessageCount, items.length ? "good" : "neutral");
+    appendBadge(summaryLine, "showing " + visibleMessageCount + " of " + totalMessageCount, items.length ? "good" : "neutral", {
+      view: "meetings",
+      label: "Open meeting transcript rows",
+      status: "Meeting workflow selected.",
+    });
     if (totalMessageCount !== visibleMessageCount) {
-      appendBadge(summaryLine, totalMessageCount + " total messages", "neutral");
+      appendBadge(summaryLine, totalMessageCount + " total messages", "neutral", {
+        view: "meetings",
+        label: "Open full meeting transcript count",
+        status: "Meeting workflow selected.",
+      });
     }
     if (transcriptHasMore) {
       appendBadge(summaryLine, "older available", "neutral");
     }
-    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
-    appendCountBadges(summaryLine, "Senders", summary.senderAgentCounts, []);
+    appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good", {
+      view: "meetings",
+      label: "Open unread meeting messages",
+      status: "Meeting workflow selected.",
+    });
+    appendCountBadges(summaryLine, "Senders", summary.senderAgentCounts, [], {
+      view: "meetings",
+      labelPrefix: "Open meeting sender count",
+      status: "Meeting workflow selected.",
+    });
     node.appendChild(summaryLine);
     if (!items.length) {
       node.appendChild(el("p", "empty-state", "No meeting messages in this room yet."));
@@ -3231,9 +3597,21 @@
     renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary receipt-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Receipts"));
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " total", items.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Status", summary.statusCounts, ["read", "unread", "acknowledged"]);
-    appendCountBadges(summaryLine, "Consumers", summary.consumerAgentCounts, []);
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " total", items.length ? "good" : "neutral", {
+      view: "evidence",
+      label: "Open receipt rows",
+      status: "Receipts and audit evidence selected.",
+    });
+    appendCountBadges(summaryLine, "Status", summary.statusCounts, ["read", "unread", "acknowledged"], {
+      view: "evidence",
+      labelPrefix: "Open receipt status",
+      status: "Receipts and audit evidence selected.",
+    });
+    appendCountBadges(summaryLine, "Consumers", summary.consumerAgentCounts, [], {
+      view: "evidence",
+      labelPrefix: "Open receipt consumer count",
+      status: "Receipts and audit evidence selected.",
+    });
     appendBadge(summaryLine, summary.allPayloadsHidden === false ? "payload exposure review" : "payloads hidden", summary.allPayloadsHidden === false ? "warn" : "good");
     node.appendChild(summaryLine);
     if (!items.length) {
@@ -3324,8 +3702,16 @@
     }
     var summaryLine = el("div", "filter-summary ack-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Acknowledgement"));
-    appendBadge(summaryLine, receipts.length + " recorded", "good");
-    appendCountBadges(summaryLine, "Status", statusCounts, ["read"]);
+    appendBadge(summaryLine, receipts.length + " recorded", "good", {
+      view: "evidence",
+      label: "Open acknowledgement receipt rows",
+      status: "Receipts and audit evidence selected.",
+    });
+    appendCountBadges(summaryLine, "Status", statusCounts, ["read"], {
+      view: "evidence",
+      labelPrefix: "Open acknowledgement status",
+      status: "Receipts and audit evidence selected.",
+    });
     appendBadge(summaryLine, allPayloadsHidden ? "payloads hidden" : "payload exposure review", allPayloadsHidden ? "good" : "warn");
     appendBadge(summaryLine, rawCredentialExposed ? "credential exposure review" : "credentials hidden", rawCredentialExposed ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -3368,8 +3754,16 @@
     renderOperatorMetrics();
     var summaryLine = el("div", "filter-summary audit-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Audit"));
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " events", items.length ? "good" : "neutral");
-    appendCountBadges(summaryLine, "Actions", summary.actionCounts, ["memory.search", "message.submit", "meeting_room.create", "current_message.read", "notification.ack", "receipts.read", "audit_log.read"]);
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " events", items.length ? "good" : "neutral", {
+      view: "evidence",
+      label: "Open audit event rows",
+      status: "Receipts and audit evidence selected.",
+    });
+    appendCountBadges(summaryLine, "Actions", summary.actionCounts, ["memory.search", "message.submit", "meeting_room.create", "current_message.read", "notification.ack", "receipts.read", "audit_log.read"], {
+      view: "evidence",
+      labelPrefix: "Open audit action count",
+      status: "Receipts and audit evidence selected.",
+    });
     appendBadge(summaryLine, summary.allCredentialsHidden === false ? "credential exposure review" : "credentials hidden", summary.allCredentialsHidden === false ? "warn" : "good");
     appendBadge(summaryLine, summary.allPayloadsHidden === false ? "payload exposure review" : "payloads hidden", summary.allPayloadsHidden === false ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -3418,11 +3812,27 @@
     var statusCounts = summary.statusCounts || (payload && payload.statusCounts) || {};
     var summaryLine = el("div", "filter-summary review-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Reviews"));
-    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " visible", items.length ? "warn" : "neutral");
-    appendCountBadges(summaryLine, "Status", statusCounts, ["pending", "quarantined", "promoted", "rejected"]);
-    appendCountBadges(summaryLine, "Firewall", summary.firewallDecisionCounts, ["accepted", "quarantine_for_review"]);
+    appendBadge(summaryLine, (summary.count !== undefined ? summary.count : items.length) + " visible", items.length ? "warn" : "neutral", {
+      view: "reviews",
+      label: "Open review queue rows",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(summaryLine, "Status", statusCounts, ["pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open review status",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(summaryLine, "Firewall", summary.firewallDecisionCounts, ["accepted", "quarantine_for_review"], {
+      view: "reviews",
+      labelPrefix: "Open firewall decision count",
+      status: "Review queue selected.",
+    });
     if (summary.detectedThreatCount !== undefined) {
-      appendBadge(summaryLine, summary.detectedThreatCount + " threats", summary.detectedThreatCount ? "warn" : "good");
+      appendBadge(summaryLine, summary.detectedThreatCount + " threats", summary.detectedThreatCount ? "warn" : "good", {
+        view: "reviews",
+        label: "Open detected-threat review rows",
+        status: "Review queue selected.",
+      });
     }
     node.appendChild(summaryLine);
     renderLongTermMemoryReviewSummary(node, summary.longTermMemoryReviews);
@@ -3497,14 +3907,38 @@
     var line = el("div", "filter-summary long-term-review-summary");
     line.appendChild(el("span", "filter-summary-label", "Long-term reviews"));
     appendBadge(line, formatStatusText(reviewSummary.status), reviewSummary.allPromoted ? "good" : "warn");
-    appendBadge(line, (reviewSummary.count || 0) + " source paths", reviewSummary.count ? "good" : "neutral");
-    appendBadge(line, (reviewSummary.visibleRecordCount || 0) + " visible", reviewSummary.visibleRecordCount ? "warn" : "neutral");
-    appendBadge(line, (reviewSummary.recordCount || 0) + " records", reviewSummary.recordCount ? "neutral" : "good");
+    appendBadge(line, (reviewSummary.count || 0) + " source paths", reviewSummary.count ? "good" : "neutral", {
+      view: "reviews",
+      label: "Open long-term review source paths",
+      status: "Review queue selected.",
+    });
+    appendBadge(line, (reviewSummary.visibleRecordCount || 0) + " visible", reviewSummary.visibleRecordCount ? "warn" : "neutral", {
+      view: "reviews",
+      label: "Open visible long-term review records",
+      status: "Review queue selected.",
+    });
+    appendBadge(line, (reviewSummary.recordCount || 0) + " records", reviewSummary.recordCount ? "neutral" : "good", {
+      view: "reviews",
+      label: "Open long-term review records",
+      status: "Review queue selected.",
+    });
     if (reviewSummary.duplicateRecordCount) {
-      appendBadge(line, reviewSummary.duplicateRecordCount + " duplicate records", "warn");
+      appendBadge(line, reviewSummary.duplicateRecordCount + " duplicate records", "warn", {
+        view: "reviews",
+        label: "Open duplicate long-term review records",
+        status: "Review queue selected.",
+      });
     }
-    appendBadge(line, (reviewSummary.actionableCount || 0) + " actionable", reviewSummary.actionableCount ? "warn" : "good");
-    appendCountBadges(line, "Status", reviewSummary.statusCounts, ["pending", "quarantined", "promoted", "rejected"]);
+    appendBadge(line, (reviewSummary.actionableCount || 0) + " actionable", reviewSummary.actionableCount ? "warn" : "good", {
+      view: "reviews",
+      label: "Open actionable long-term review records",
+      status: "Review queue selected.",
+    });
+    appendCountBadges(line, "Status", reviewSummary.statusCounts, ["pending", "quarantined", "promoted", "rejected"], {
+      view: "reviews",
+      labelPrefix: "Open long-term review status",
+      status: "Review queue selected.",
+    });
     parent.appendChild(line);
   }
 
@@ -3525,7 +3959,11 @@
     var summaryLine = el("div", "filter-summary review-decision-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Review decision"));
     appendBadge(summaryLine, status, status === "promoted" ? "good" : (status === "quarantined" ? "warn" : "neutral"));
-    appendCountBadges(summaryLine, "Status", operatorSummary.statusCounts, ["promoted", "rejected", "quarantined"]);
+    appendCountBadges(summaryLine, "Status", operatorSummary.statusCounts, ["promoted", "rejected", "quarantined"], {
+      view: "reviews",
+      labelPrefix: "Open review decision status",
+      status: "Review queue selected.",
+    });
     appendBadge(
       summaryLine,
       operatorSummary.reviewNoteExposed ? "review note exposure" : "review note hidden",
@@ -3670,7 +4108,11 @@
     summaryLine.appendChild(el("span", "filter-summary-label", "Device authority"));
     appendBadge(summaryLine, summary.action || "register", "neutral");
     appendBadge(summaryLine, device.status || "active", device.status === "revoked" ? "warn" : "good");
-    appendBadge(summaryLine, "epoch " + String(device.authorityEpoch || summary.authorityEpoch || 0), "neutral");
+    appendBadge(summaryLine, "epoch " + String(device.authorityEpoch || summary.authorityEpoch || 0), "neutral", {
+      view: "sync",
+      label: "Open sync device epoch controls",
+      status: "Distributed sync workflow selected.",
+    });
     appendBadge(summaryLine, payload.persisted ? "persisted" : "readback pending", payload.persisted ? "good" : "warn");
     appendBadge(summaryLine, summary.rawPayloadExposed ? "payload exposure review" : "payload hidden", summary.rawPayloadExposed ? "warn" : "good");
     node.appendChild(summaryLine);
@@ -3722,11 +4164,27 @@
     var summaryLine = el("div", "filter-summary sync-mutation-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Sync mutation"));
     appendBadge(summaryLine, status, status === "applied" ? "good" : "warn");
-    appendBadge(summaryLine, "sequence " + String(serverSequence || 0), "neutral");
+    appendBadge(summaryLine, "sequence " + String(serverSequence || 0), "neutral", {
+      view: "sync",
+      label: "Open sync sequence readback",
+      status: "Distributed sync workflow selected.",
+    });
     appendBadge(summaryLine, confirmation.persisted || (payload && payload.persisted) ? "readback confirmed" : "readback pending", confirmation.persisted || (payload && payload.persisted) ? "good" : "warn");
-    appendBadge(summaryLine, confirmation.receiptVisible ? "receipt visible" : "receipt check", confirmation.receiptVisible ? "good" : "warn");
-    appendBadge(summaryLine, confirmation.revisionVisibleInChanges ? "change visible" : "change check", confirmation.revisionVisibleInChanges ? "good" : "warn");
-    appendBadge(summaryLine, confirmation.headVisible ? "head visible" : "head check", confirmation.headVisible ? "good" : "warn");
+    appendBadge(summaryLine, confirmation.receiptVisible ? "receipt visible" : "receipt check", confirmation.receiptVisible ? "good" : "warn", {
+      view: "sync",
+      label: "Open sync receipt readback",
+      status: "Distributed sync workflow selected.",
+    });
+    appendBadge(summaryLine, confirmation.revisionVisibleInChanges ? "change visible" : "change check", confirmation.revisionVisibleInChanges ? "good" : "warn", {
+      view: "sync",
+      label: "Open sync changes readback",
+      status: "Distributed sync workflow selected.",
+    });
+    appendBadge(summaryLine, confirmation.headVisible ? "head visible" : "head check", confirmation.headVisible ? "good" : "warn", {
+      view: "sync",
+      label: "Open sync heads readback",
+      status: "Distributed sync workflow selected.",
+    });
     if (conflictCode) {
       appendBadge(summaryLine, conflictCode, "warn");
     }
@@ -3830,12 +4288,24 @@
     renderOperatorDesk();
     var summaryLine = el("div", "filter-summary sync-readback-operator-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Sync " + label));
-    appendBadge(summaryLine, items.length + " row(s)", items.length ? "good" : "neutral");
+    appendBadge(summaryLine, items.length + " row(s)", items.length ? "good" : "neutral", {
+      view: "sync",
+      label: "Open sync readback rows",
+      status: "Distributed sync workflow selected.",
+    });
     appendBadge(summaryLine, payload && payload.valuesRedacted ? "redacted" : "redaction review", payload && payload.valuesRedacted ? "good" : "warn");
     appendBadge(summaryLine, payload && payload.rawCredentialExposed ? "credential exposure review" : "credentials hidden", payload && payload.rawCredentialExposed ? "warn" : "good");
     if (label === "changes" && payload && payload.changes) {
-      appendBadge(summaryLine, "indexed " + String(payload.changes.indexedThroughSequence || 0), "neutral");
-      appendBadge(summaryLine, payload.changes.hasMore ? "more changes" : "checkpoint complete", payload.changes.hasMore ? "warn" : "good");
+      appendBadge(summaryLine, "indexed " + String(payload.changes.indexedThroughSequence || 0), "neutral", {
+        view: "sync",
+        label: "Open sync indexed sequence",
+        status: "Distributed sync workflow selected.",
+      });
+      appendBadge(summaryLine, payload.changes.hasMore ? "more changes" : "checkpoint complete", payload.changes.hasMore ? "warn" : "good", {
+        view: "sync",
+        label: "Open sync checkpoint state",
+        status: "Distributed sync workflow selected.",
+      });
     }
     node.appendChild(summaryLine);
     if (!items.length) {
