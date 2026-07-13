@@ -74,6 +74,29 @@ class PublicVerifierLeakContractTests(unittest.TestCase):
             self.assertEqual(b"{}", probes[route]["body"])
             self.assertIn(422, probes[route]["expectedStatuses"])
 
+    def test_memoryendpoints_verifier_accepts_only_exact_docs_canonical_redirect(self):
+        self.assertTrue(
+            verify_memoryendpoints.canonical_redirect_check(
+                "/docs",
+                301,
+                {"Location": "https://memoryendpoints.com/docs/"},
+            )
+        )
+        self.assertFalse(
+            verify_memoryendpoints.canonical_redirect_check(
+                "/docs",
+                301,
+                {"Location": "https://memoryendpoints.com/console"},
+            )
+        )
+        self.assertFalse(
+            verify_memoryendpoints.canonical_redirect_check(
+                "/connect/authorize/{publicRequestRef}",
+                301,
+                {"Location": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/"},
+            )
+        )
+
     def test_connector_safe_no_op_probe_requires_exact_problem_envelope(self):
         payload = {
             "ok": False,

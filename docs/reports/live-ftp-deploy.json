@@ -1,8 +1,11 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "187baa3f75f8ad67b6f64035f71b28374e0d3ed0",
-    "sourceShaShort": "187baa3f75f8",
+    "contentHash": "bacc4fc740465c14a9d809d1e255d103edcc21380d2896872246a026d211a129",
+    "sourceDirtyPathCount": 0,
+    "sourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+    "sourceShaShort": "c1f5d4ad8c3e",
+    "sourceWorktreeDirty": false,
     "valuesRedacted": true
   },
   "credentialSource": "filezilla_site_manager",
@@ -22,7 +25,7 @@
   "packageExists": true,
   "passengerRestartPlanned": true,
   "passengerRestartRequested": true,
-  "plannedUploadCount": 117,
+  "plannedUploadCount": 170,
   "protocol": "ftps",
   "remoteDirFingerprint": "cdb4ee2aea69cc6a",
   "remoteDirResolved": true,
@@ -39,8 +42,10 @@
     "selectedSectionMentionsMemoryEndpoints": true,
     "valuesRedacted": true
   },
+  "snapshotContentHash": "bacc4fc740465c14a9d809d1e255d103edcc21380d2896872246a026d211a129",
+  "sourceRevisionVerified": true,
   "status": "uploaded",
   "transportSecurity": "explicit_ftps",
-  "uploadedCount": 117,
+  "uploadedCount": 170,
   "valuesRedacted": true
 }

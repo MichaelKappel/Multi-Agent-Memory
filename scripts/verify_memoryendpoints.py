@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +56,9 @@ ROUTES = [
 ]
 
 CONNECTOR_SCHEMA = "memoryendpoints.connector_pairing.v1"
+CANONICAL_REDIRECTS = {
+    "/docs": "/docs/",
+}
 CONNECTOR_PUBLIC_PROBES = {
     "/.well-known/memoryendpoints-connector": {
         "path": "/.well-known/memoryendpoints-connector",
@@ -190,6 +194,17 @@ def _header(headers, name):
         if str(key).lower() == wanted:
             return str(value)
     return ""
+
+
+def canonical_redirect_check(route, status, headers):
+    target = CANONICAL_REDIRECTS.get(route)
+    if not target or status not in (301, 302, 307, 308):
+        return False
+    location = _header(headers, "Location")
+    if not location:
+        return False
+    parsed = urlparse(location)
+    return (parsed.path or location) == target
 
 
 def connector_public_probe_check(route, status, body, headers):
@@ -332,9 +347,11 @@ def main(argv=None):
             status, body, headers = fetch(
                 url, probe["method"], probe.get("body")
             )
+        canonical_redirect_accepted = canonical_redirect_check(route, status, headers)
         missing = []
         if (
             route not in CONNECTOR_PUBLIC_PROBES
+            and not canonical_redirect_accepted
             and "MemoryEndpoints" not in body
             and route not in ("/robots.txt", "/api/matm/sync/capabilities")
         ):
@@ -351,6 +368,9 @@ def main(argv=None):
             "leakHitCount": len(leak_hits),
             "leakRules": leak_hits,
         }
+        if canonical_redirect_accepted:
+            item["canonicalRedirectAccepted"] = True
+            item["canonicalRedirectTarget"] = CANONICAL_REDIRECTS[route]
         if route in CONNECTOR_PUBLIC_PROBES:
             connector_probe = connector_public_probe_check(route, status, body, headers)
             item["connectorProbe"] = connector_probe
@@ -370,7 +390,16 @@ def main(argv=None):
     failures = [
         item
         for item in items
-        if item["status"] not in (CONNECTOR_PUBLIC_PROBES.get(item["route"]) or {"expectedStatuses": (200,)})["expectedStatuses"]
+        if item["status"] not in (
+            CONNECTOR_PUBLIC_PROBES.get(item["route"])
+            or {
+                "expectedStatuses": (
+                    (200, 301, 302, 307, 308)
+                    if item["route"] in CANONICAL_REDIRECTS
+                    else (200,)
+                )
+            }
+        )["expectedStatuses"]
         or item["missing"]
         or item["secretHitCount"]
         or item["leakHitCount"]

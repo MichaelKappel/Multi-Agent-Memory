@@ -1,237 +1,9 @@
 {
-  "expectedSourceSha": null,
-  "expectedSourceShaSource": null,
-  "failureCount": 10,
-  "failures": [
-    {
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/docs",
-      "route": "/docs",
-      "secretHitCount": 0,
-      "status": 301
-    },
-    {
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/tour",
-      "route": "/tour",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/tour/knowledge",
-      "route": "/tour/knowledge",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/tour/human",
-      "route": "/tour/human",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          200
-        ],
-        "failures": [
-          "expected status 200",
-          "connector pairing schema",
-          "exact HTTPS issuer",
-          "exact connector endpoint inventory"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "GET",
-        "probePath": "/.well-known/memoryendpoints-connector",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "connector pairing schema",
-        "exact HTTPS issuer",
-        "exact connector endpoint inventory"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/.well-known/memoryendpoints-connector",
-      "route": "/.well-known/memoryendpoints-connector",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          200
-        ],
-        "failures": [
-          "expected status 200",
-          "content type text/html",
-          "connector authorization shell",
-          "Referrer-Policy no-referrer"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "GET",
-        "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "content type text/html",
-        "connector authorization shell",
-        "Referrer-Policy no-referrer"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      "route": "/connect/authorize/{publicRequestRef}",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          200
-        ],
-        "failures": [
-          "expected status 200",
-          "content type text/html",
-          "connector authorization shell",
-          "Referrer-Policy no-referrer",
-          "explicit Demo label"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "GET",
-        "probePath": "/tour/connect/authorize/signed_out",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "content type text/html",
-        "connector authorization shell",
-        "Referrer-Policy no-referrer",
-        "explicit Demo label"
-      ],
-      "probeMethod": "GET",
-      "probePath": "/tour/connect/authorize/signed_out",
-      "route": "/tour/connect/authorize/{demoState}",
-      "secretHitCount": 0,
-      "status": 404
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          405,
-          422
-        ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "POST",
-        "probePath": "/api/matm/connector-pairings/requests",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
-      "probeMethod": "POST",
-      "probePath": "/api/matm/connector-pairings/requests",
-      "route": "/api/matm/connector-pairings/requests",
-      "secretHitCount": 0,
-      "status": 401
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          405,
-          422
-        ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "POST",
-        "probePath": "/api/matm/connector-pairings/authorization-code-claims",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
-      "probeMethod": "POST",
-      "probePath": "/api/matm/connector-pairings/authorization-code-claims",
-      "route": "/api/matm/connector-pairings/authorization-code-claims",
-      "secretHitCount": 0,
-      "status": 401
-    },
-    {
-      "connectorProbe": {
-        "contentType": "application/json",
-        "expectedStatuses": [
-          405,
-          422
-        ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
-        "noRedirectObserved": true,
-        "probeMethod": "POST",
-        "probePath": "/api/matm/connector-pairings/token",
-        "verified": false
-      },
-      "leakHitCount": 0,
-      "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
-      "probeMethod": "POST",
-      "probePath": "/api/matm/connector-pairings/token",
-      "route": "/api/matm/connector-pairings/token",
-      "secretHitCount": 0,
-      "status": 401
-    }
-  ],
-  "gitHeadAtVerification": "73c50b14b07899a032cb0442889bda2e99142cd9",
+  "expectedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+  "expectedSourceShaSource": "argument",
+  "failureCount": 0,
+  "failures": [],
+  "gitHeadAtVerification": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
   "items": [
     {
       "leakHitCount": 0,
@@ -244,11 +16,11 @@
       "status": 200
     },
     {
+      "canonicalRedirectAccepted": true,
+      "canonicalRedirectTarget": "/docs/",
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/docs",
       "route": "/docs",
@@ -308,38 +80,32 @@
     {
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/tour",
       "route": "/tour",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/tour/knowledge",
       "route": "/tour/knowledge",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "MemoryEndpoints"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/tour/human",
       "route": "/tour/human",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "leakHitCount": 0,
@@ -363,6 +129,7 @@
     },
     {
       "cleanSourceRevision": true,
+      "expectedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
@@ -370,8 +137,10 @@
       "probePath": "/api/version",
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "187baa3f75f8ad67b6f64035f71b28374e0d3ed0",
-      "sourceShaShort": "187baa3f75f8",
+      "sourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+      "sourceShaMatchesExpected": true,
+      "sourceShaShort": "c1f5d4ad8c3e",
+      "sourceShaValueMatchesExpected": true,
       "sourceWorktreeDirty": false,
       "sourceWorktreeDirtyPresent": true,
       "status": 200
@@ -422,94 +191,62 @@
         "expectedStatuses": [
           200
         ],
-        "failures": [
-          "expected status 200",
-          "connector pairing schema",
-          "exact HTTPS issuer",
-          "exact connector endpoint inventory"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "GET",
         "probePath": "/.well-known/memoryendpoints-connector",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "connector pairing schema",
-        "exact HTTPS issuer",
-        "exact connector endpoint inventory"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/.well-known/memoryendpoints-connector",
       "route": "/.well-known/memoryendpoints-connector",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "connectorProbe": {
-        "contentType": "application/json",
+        "contentType": "text/html",
         "expectedStatuses": [
           200
         ],
-        "failures": [
-          "expected status 200",
-          "content type text/html",
-          "connector authorization shell",
-          "Referrer-Policy no-referrer"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "GET",
         "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "content type text/html",
-        "connector authorization shell",
-        "Referrer-Policy no-referrer"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
       "route": "/connect/authorize/{publicRequestRef}",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "connectorProbe": {
-        "contentType": "application/json",
+        "contentType": "text/html",
         "expectedStatuses": [
           200
         ],
-        "failures": [
-          "expected status 200",
-          "content type text/html",
-          "connector authorization shell",
-          "Referrer-Policy no-referrer",
-          "explicit Demo label"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "GET",
         "probePath": "/tour/connect/authorize/signed_out",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 200",
-        "content type text/html",
-        "connector authorization shell",
-        "Referrer-Policy no-referrer",
-        "explicit Demo label"
-      ],
+      "missing": [],
       "probeMethod": "GET",
       "probePath": "/tour/connect/authorize/signed_out",
       "route": "/tour/connect/authorize/{demoState}",
       "secretHitCount": 0,
-      "status": 404
+      "status": 200
     },
     {
       "connectorProbe": {
@@ -518,26 +255,20 @@
           405,
           422
         ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "POST",
         "probePath": "/api/matm/connector-pairings/requests",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
+      "missing": [],
       "probeMethod": "POST",
       "probePath": "/api/matm/connector-pairings/requests",
       "route": "/api/matm/connector-pairings/requests",
       "secretHitCount": 0,
-      "status": 401
+      "status": 422
     },
     {
       "connectorProbe": {
@@ -546,26 +277,20 @@
           405,
           422
         ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "POST",
         "probePath": "/api/matm/connector-pairings/authorization-code-claims",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
+      "missing": [],
       "probeMethod": "POST",
       "probePath": "/api/matm/connector-pairings/authorization-code-claims",
       "route": "/api/matm/connector-pairings/authorization-code-claims",
       "secretHitCount": 0,
-      "status": 401
+      "status": 422
     },
     {
       "connectorProbe": {
@@ -574,26 +299,20 @@
           405,
           422
         ],
-        "failures": [
-          "expected status 405/422",
-          "exact redacted invalid_request safe no-op"
-        ],
+        "failures": [],
         "noRedirectObserved": true,
         "probeMethod": "POST",
         "probePath": "/api/matm/connector-pairings/token",
-        "verified": false
+        "verified": true
       },
       "leakHitCount": 0,
       "leakRules": [],
-      "missing": [
-        "expected status 405/422",
-        "exact redacted invalid_request safe no-op"
-      ],
+      "missing": [],
       "probeMethod": "POST",
       "probePath": "/api/matm/connector-pairings/token",
       "route": "/api/matm/connector-pairings/token",
       "secretHitCount": 0,
-      "status": 401
+      "status": 422
     },
     {
       "leakHitCount": 0,
@@ -747,12 +466,12 @@
     }
   ],
   "mode": "http",
-  "observedSourceSha": "187baa3f75f8ad67b6f64035f71b28374e0d3ed0",
+  "observedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
   "observedSourceWorktreeDirty": false,
-  "ok": false,
+  "ok": true,
   "reportScope": "point_in_time_snapshot",
   "routeCount": 38,
   "schemaVersion": "memoryendpoints.verifier.v1",
-  "sourceShaMatchesExpected": null,
-  "sourceShaValueMatchesExpected": null
+  "sourceShaMatchesExpected": true,
+  "sourceShaValueMatchesExpected": true
 }
