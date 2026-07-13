@@ -1,9 +1,9 @@
 {
-  "expectedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+  "expectedSourceSha": "2875227d28f4fcd5719e4e07096b51861ff9952d",
   "expectedSourceShaSource": "argument",
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+  "gitHeadAtVerification": "2875227d28f4fcd5719e4e07096b51861ff9952d",
   "items": [
     {
       "leakHitCount": 0,
@@ -129,7 +129,7 @@
     },
     {
       "cleanSourceRevision": true,
-      "expectedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+      "expectedSourceSha": "2875227d28f4fcd5719e4e07096b51861ff9952d",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
@@ -137,9 +137,9 @@
       "probePath": "/api/version",
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+      "sourceSha": "2875227d28f4fcd5719e4e07096b51861ff9952d",
       "sourceShaMatchesExpected": true,
-      "sourceShaShort": "c1f5d4ad8c3e",
+      "sourceShaShort": "2875227d28f4",
       "sourceShaValueMatchesExpected": true,
       "sourceWorktreeDirty": false,
       "sourceWorktreeDirtyPresent": true,
@@ -466,7 +466,7 @@
     }
   ],
   "mode": "http",
-  "observedSourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
+  "observedSourceSha": "2875227d28f4fcd5719e4e07096b51861ff9952d",
   "observedSourceWorktreeDirty": false,
   "ok": true,
   "reportScope": "point_in_time_snapshot",

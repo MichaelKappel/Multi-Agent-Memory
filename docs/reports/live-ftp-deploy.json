@@ -1,10 +1,10 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "contentHash": "bacc4fc740465c14a9d809d1e255d103edcc21380d2896872246a026d211a129",
+    "contentHash": "2bed68bc470666070901e407b5465d5c7d83c8f2db88870fb8c4ec00768ac2cd",
     "sourceDirtyPathCount": 0,
-    "sourceSha": "c1f5d4ad8c3e1d4acd02e092378fa01e09e57826",
-    "sourceShaShort": "c1f5d4ad8c3e",
+    "sourceSha": "2875227d28f4fcd5719e4e07096b51861ff9952d",
+    "sourceShaShort": "2875227d28f4",
     "sourceWorktreeDirty": false,
     "valuesRedacted": true
   },
@@ -42,7 +42,7 @@
     "selectedSectionMentionsMemoryEndpoints": true,
     "valuesRedacted": true
   },
-  "snapshotContentHash": "bacc4fc740465c14a9d809d1e255d103edcc21380d2896872246a026d211a129",
+  "snapshotContentHash": "2bed68bc470666070901e407b5465d5c7d83c8f2db88870fb8c4ec00768ac2cd",
   "sourceRevisionVerified": true,
   "status": "uploaded",
   "transportSecurity": "explicit_ftps",
