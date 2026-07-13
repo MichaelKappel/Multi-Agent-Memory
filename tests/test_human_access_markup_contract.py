@@ -1,0 +1,96 @@
+import io
+import unittest
+
+from app import application
+from memoryendpoints.human_access_ui import render_human_access_main
+
+
+def call_get(path):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+        captured["headers"] = {name.lower(): value for name, value in headers}
+
+    body = b"".join(
+        application(
+            {
+                "REQUEST_METHOD": "GET",
+                "PATH_INFO": path,
+                "QUERY_STRING": "",
+                "CONTENT_LENGTH": "0",
+                "wsgi.input": io.BytesIO(b""),
+            },
+            start_response,
+        )
+    ).decode("utf-8")
+    return captured["status"], captured["headers"], body
+
+
+class HumanAccessMarkupContractTests(unittest.TestCase):
+    def test_full_renderer_has_every_controller_selector_once(self):
+        markup = render_human_access_main(authenticated=True)
+        selectors = (
+            "data-human-access-status",
+            "data-human-access-locked",
+            "data-human-access-account-step",
+            "data-human-access-protected",
+            "data-human-access-demo-label",
+            "data-human-access-master-proof-form",
+            "data-human-access-account-form",
+            "data-human-access-login-form",
+            "data-human-access-logout",
+            "data-human-access-membership-form",
+            "data-human-access-membership-list",
+            "data-human-access-link-company",
+            "data-human-access-link-dialog",
+            "data-human-access-link-proof-form",
+            "data-human-access-link-cancel",
+            "data-human-access-roster-list",
+            "data-human-access-roster-empty",
+            "data-human-access-roster-refresh",
+            "data-human-access-reauth-dialog",
+            "data-human-access-reauth-form",
+            "data-human-access-reauth-cancel",
+            "data-human-access-replacement-dialog",
+            "data-human-access-replacement-summary",
+            "data-human-access-replacement-status",
+            "data-human-access-successor-token",
+            "data-human-access-successor-show",
+            "data-human-access-successor-copy",
+            "data-human-access-successor-saved",
+            "data-human-access-successor-clear",
+            "data-human-access-possession-form",
+            "data-human-access-possession-token",
+            "data-human-access-replacement-retry",
+            "data-human-access-replacement-cancel",
+        )
+        for selector in selectors:
+            with self.subTest(selector=selector):
+                self.assertEqual(1, markup.count(selector))
+        self.assertNotIn("predecessorToken", markup)
+        self.assertNotIn("oldToken", markup)
+        self.assertIn("Existing raw credentials can never be viewed", markup)
+
+    def test_signed_out_renderer_is_bounded_but_uses_same_root(self):
+        markup = render_human_access_main(authenticated=False)
+        self.assertIn("data-human-access", markup)
+        self.assertIn("data-human-preauth-shell", markup)
+        self.assertIn("data-human-access-preauth-only", markup)
+        self.assertNotIn("data-human-access-protected", markup)
+        self.assertNotIn("successorTokenProof", markup)
+
+    def test_demo_route_uses_real_renderer_and_mock_transport_injection(self):
+        status, headers, body = call_get("/tour/human")
+        self.assertEqual("200 OK", status)
+        self.assertTrue(headers["content-type"].startswith("text/html"))
+        self.assertNotIn("no-store", headers.get("cache-control", "").lower())
+        self.assertIn("data-human-access-demo", body)
+        self.assertIn("session-only mock data", body)
+        self.assertIn("/static/js/human-access.js", body)
+        self.assertIn("/static/js/human-access-bootstrap.js", body)
+        self.assertIn("/static/css/human-access.css", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

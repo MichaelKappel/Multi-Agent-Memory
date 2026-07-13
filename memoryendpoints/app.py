@@ -1,17 +1,64 @@
+import datetime
 import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
+from http.cookies import SimpleCookie
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from . import __version__
 from .build import build_provenance
+from .company_export import CompanyExportError, assemble_company_export
+from .connector_authorize_ui import (
+    ApprovalResultDisplay,
+    CompanyOption,
+    PairingRequestDisplay,
+    WorkspaceOption,
+    demo_authorization_view,
+    production_authorization_view,
+    render_connector_authorization,
+)
+from .connector_pairing import (
+    AUTHORIZATION_CODE_TTL_SECONDS,
+    AUTHORIZE_PATH as CONNECTOR_AUTHORIZE_PATH,
+    CANONICAL_AGENT_DISPLAY_NAME as CONNECTOR_AGENT_DISPLAY_NAME,
+    CANONICAL_AGENT_ID as CONNECTOR_AGENT_ID,
+    CLIENT_ID as CONNECTOR_CLIENT_ID,
+    ISSUER as CONNECTOR_ISSUER,
+    MAX_DISCOVERY_RESPONSE_BYTES,
+    PAIRING_REQUEST_TTL_SECONDS,
+    PENDING_ACTIVATION_TTL_SECONDS,
+    PKCE_METHOD as CONNECTOR_PKCE_METHOD,
+    RATE_LIMIT_POLICIES as CONNECTOR_RATE_LIMIT_POLICIES,
+    SCHEMA as CONNECTOR_PAIRING_SCHEMA,
+    V1_REQUESTED_SCOPES as CONNECTOR_V1_REQUESTED_SCOPES,
+    PairingPolicyError,
+    build_authorization_url,
+    build_discovery_document,
+    build_wake_up_url,
+    exact_request_digest,
+    normalize_connector_agent_name,
+    connector_scope_digest,
+    validate_client_id,
+    validate_idempotency_key,
+    validate_requested_scopes,
+    validate_redirect_uri,
+)
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
-from .http import json_response, problem, response
+from .http import (
+    json_response,
+    one_time_secret_payload,
+    one_time_secret_response,
+    problem,
+    response,
+)
+from .human_access_ui import render_human_access_main
+from .human_operational import route_human_operational
 from .runtime import backend_error_code, configured_store_backend, store_backend_health
-from .security import redact_text
+from .security import evaluate_memory_firewall, governed_bearer_token, redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import FileStore, MySQLStore, SQLiteStore, mysql_config_diagnostics, mysql_connection_stage_diagnostics
 from .uai_memory import virtual_uai_contract
@@ -20,9 +67,65 @@ from .uai_memory import virtual_uai_contract
 STATIC_ROOT = ROOT / "static"
 LONG_TERM_MEMORY_TAG = "long-term-memory-migration"
 LONG_TERM_MEMORY_SOURCE_PREFIX = "docs/long-term-memory/"
-DEFAULT_CORS_ALLOWED_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-MemoryEndpoints-Key"
+DEFAULT_CORS_ALLOWED_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-CSRF-Token, X-MemoryEndpoints-Key"
 DEFAULT_CORS_ALLOWED_METHODS = "GET, POST, OPTIONS"
 KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/knowledge/(?:company|workspace|project)/(?:[a-z0-9]+(?:-[a-z0-9]+)*/)*[a-z0-9]+(?:-[a-z0-9]+)*$")
+TOUR_KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/tour/knowledge/(?:company|workspace|project)/(?:[a-z0-9]+(?:-[a-z0-9]+)*/)*[a-z0-9]+(?:-[a-z0-9]+)*$")
+HUMAN_SESSION_COOKIE = "__Host-memoryendpoints-human"
+HUMAN_SESSION_SECONDS = 15 * 60
+HUMAN_REAUTH_SECONDS = 5 * 60
+_CONNECTOR_REQUEST_HANDLE_ROUTE = re.compile(
+    r"^/connect/authorize/(pairref_[A-Za-z0-9_-]{43})$"
+)
+_CONNECTOR_DEMO_AUTHORIZE_ROUTE = re.compile(
+    r"^/tour/connect/authorize/(signed_out|company_selection|reauth_required|pending|approved|error|expired|canceled|replay|permission_denied)$"
+)
+_CONNECTOR_PAIRING_ROUTE = re.compile(r"^/api/matm/connector-pairings/([^/]+)$")
+_CONNECTOR_CREDENTIALS_ROUTE = re.compile(
+    r"^/api/matm/connector-pairings/([^/]+)/credentials$"
+)
+_CONNECTOR_PAIRING_ACTION_ROUTE = re.compile(
+    r"^/api/matm/connector-pairings/([^/]+)/(activate|rotations|revoke|disconnect|cancel)$"
+)
+_CONNECTOR_ROTATION_ACTIVATION_ROUTE = re.compile(
+    r"^/api/matm/connector-pairings/([^/]+)/rotations/([^/]+)/activate$"
+)
+_CONNECTOR_HUMAN_APPROVAL_ROUTE = re.compile(
+    r"^/api/matm/human/connector-pairings/([^/]+)/approve$"
+)
+_CONNECTOR_HUMAN_COMPANY_SELECTION_ROUTE = re.compile(
+    r"^/api/matm/human/connector-pairings/([^/]+)/company-selection$"
+)
+_CONNECTOR_HUMAN_CANCEL_ROUTE = re.compile(
+    r"^/api/matm/human/connector-pairings/([^/]+)/cancel$"
+)
+_CONNECTOR_MAX_JSON_RESPONSE_BYTES = 65536
+_CONNECTOR_MAX_JSON_REQUEST_BYTES = 32768
+_CONNECTOR_JSON_HEADERS = (
+    ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
+    ("Pragma", "no-cache"),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+)
+
+
+def _connector_authorize_headers(script_nonce):
+    nonce = str(script_nonce or "")
+    return list(_CONNECTOR_JSON_HEADERS) + [
+        (
+            "Content-Security-Policy",
+            "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+            "form-action 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; "
+            "img-src 'self'; font-src 'self'; connect-src 'self'" % nonce,
+        ),
+        ("Cross-Origin-Opener-Policy", "same-origin"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("Vary", "Cookie"),
+        (
+            "Permissions-Policy",
+            "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+        ),
+    ]
 
 
 def _read_body(environ):
@@ -47,15 +150,630 @@ def _is_knowledge_page_route(path):
     return bool(KNOWLEDGE_PAGE_ROUTE.fullmatch(path or "")) and "//" not in path and not path.endswith("/")
 
 
+def _is_tour_knowledge_page_route(path):
+    return bool(TOUR_KNOWLEDGE_PAGE_ROUTE.fullmatch(path or "")) and "//" not in path and not path.endswith("/")
+
+
 def _token(environ):
     auth = environ.get("HTTP_AUTHORIZATION", "")
-    if auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    return environ.get("HTTP_X_MEMORYENDPOINTS_KEY", "").strip()
+    governed = governed_bearer_token(auth)
+    if governed:
+        return governed
+    if str(auth or "").lower().startswith("bearer "):
+        bearer = str(auth).split(" ", 1)[1].strip()
+        if bearer.startswith("me_live_"):
+            return bearer
+    header_key = environ.get("HTTP_X_MEMORYENDPOINTS_KEY", "").strip()
+    if header_key.startswith("me_live_"):
+        return header_key
+    return ""
 
 
 def _idempotency_key(environ):
     return environ.get("HTTP_IDEMPOTENCY_KEY", "").strip()
+
+
+def _connector_json(start_response, data, status="200 OK", headers=None):
+    encoded = json.dumps(data, indent=2, sort_keys=True).encode("utf-8")
+    if len(encoded) > _CONNECTOR_MAX_JSON_RESPONSE_BYTES:
+        return problem(
+            start_response,
+            "503 Service Unavailable",
+            "Connector pairing unavailable",
+            "The connector response could not be returned within the published size bound.",
+            "connector_service_unavailable",
+            headers=list(_CONNECTOR_JSON_HEADERS) + [("Retry-After", "5")],
+        )
+    return json_response(
+        start_response,
+        data,
+        status,
+        list(_CONNECTOR_JSON_HEADERS) + list(headers or []),
+    )
+
+
+def _connector_one_time_secret(start_response, data, status="201 Created", headers=None):
+    public_payload = one_time_secret_payload(data)
+    encoded = json.dumps(public_payload, indent=2, sort_keys=True).encode("utf-8")
+    if len(encoded) > _CONNECTOR_MAX_JSON_RESPONSE_BYTES:
+        return problem(
+            start_response,
+            "503 Service Unavailable",
+            "Connector pairing unavailable",
+            "The connector response could not be returned within the published size bound.",
+            "connector_service_unavailable",
+            headers=list(_CONNECTOR_JSON_HEADERS) + [("Retry-After", "5")],
+        )
+    return one_time_secret_response(
+        start_response, public_payload, status, list(headers or [])
+    )
+
+
+def _connector_problem(start_response, code, detail=None, headers=None):
+    statuses = {
+        "invalid_token": "401 Unauthorized",
+        "pkce_verification_failed": "401 Unauthorized",
+        "authorization_code_invalid": "401 Unauthorized",
+        "authorization_claim_invalid": "401 Unauthorized",
+        "workspace_ref_invalid": "401 Unauthorized",
+        "company_ref_invalid": "401 Unauthorized",
+        "pending_credential_not_active": "401 Unauthorized",
+        "company_master_required": "403 Forbidden",
+        "insufficient_scope": "403 Forbidden",
+        "connector_scope_forbidden": "403 Forbidden",
+        "pairing_not_found": "404 Not Found",
+        "pairing_request_not_found": "404 Not Found",
+        "workspace_not_found": "404 Not Found",
+        "rotation_not_found": "404 Not Found",
+        "idempotency_conflict": "409 Conflict",
+        "authorization_code_already_exchanged": "409 Conflict",
+        "agent_name_unavailable": "409 Conflict",
+        "pairing_request_unavailable": "409 Conflict",
+        "pairing_unavailable": "409 Conflict",
+        "pairing_not_pending_activation": "409 Conflict",
+        "rotation_unavailable": "409 Conflict",
+        "rotation_pending": "409 Conflict",
+        "grant_not_active": "409 Conflict",
+        "pairing_verification_failed": "409 Conflict",
+        "pairing_request_expired": "410 Gone",
+        "authorization_code_expired": "410 Gone",
+        "authorization_code_redeemed": "410 Gone",
+        "pairing_request_canceled": "410 Gone",
+        "pending_grant_expired": "410 Gone",
+        "pairing_canceled": "410 Gone",
+        "pairing_revoked": "410 Gone",
+        "pairing_disconnected": "410 Gone",
+        "workspace_ref_expired": "410 Gone",
+        "company_ref_expired": "410 Gone",
+        "request_body_too_large": "413 Content Too Large",
+        "json_content_type_required": "415 Unsupported Media Type",
+        "idempotency_key_required": "422 Unprocessable Entity",
+        "idempotency_key_invalid": "422 Unprocessable Entity",
+        "schema_version_unsupported": "422 Unprocessable Entity",
+        "connector_client_unsupported": "422 Unprocessable Entity",
+        "redirect_uri_not_allowed": "422 Unprocessable Entity",
+        "state_invalid": "422 Unprocessable Entity",
+        "pkce_method_unsupported": "422 Unprocessable Entity",
+        "pkce_challenge_invalid": "422 Unprocessable Entity",
+        "connector_agent_identity_invalid": "422 Unprocessable Entity",
+        "approved_agent_mismatch": "422 Unprocessable Entity",
+        "workspace_selection_invalid": "422 Unprocessable Entity",
+        "connector_scopes_invalid": "422 Unprocessable Entity",
+        "connector_public_safe_payload_required": "422 Unprocessable Entity",
+        "idempotency_key_not_allowed": "422 Unprocessable Entity",
+        "invalid_request": "422 Unprocessable Entity",
+        "rate_limited": "429 Too Many Requests",
+        "credential_system_not_configured": "503 Service Unavailable",
+        "connector_service_unavailable": "503 Service Unavailable",
+    }
+    fixed_details = {
+        "invalid_token": "A valid connector or company-master bearer credential is required.",
+        "pkce_verification_failed": "PKCE verification failed.",
+        "authorization_code_invalid": "The authorization code is invalid.",
+        "authorization_claim_invalid": "The authorization claim binding is invalid.",
+        "workspace_ref_invalid": "The workspace selection reference is invalid for this approval session.",
+        "company_ref_invalid": "The company selection reference is invalid for this approval session.",
+        "pending_credential_not_active": "The connector credential has not been activated.",
+        "company_master_required": "A company master credential is required for this operation.",
+        "insufficient_scope": "This connector credential is not authorized for that route or action.",
+        "connector_scope_forbidden": "This route or action is outside the immutable connector grant.",
+        "pairing_not_found": "The pairing resource was not found.",
+        "pairing_request_not_found": "The pairing request was not found.",
+        "workspace_not_found": "The selected workspace was not found in the authenticated company.",
+        "rotation_not_found": "The connector rotation was not found.",
+        "idempotency_conflict": "The idempotency key was already used for a different request.",
+        "authorization_code_already_exchanged": "The authorization code was already exchanged by another request.",
+        "agent_name_unavailable": "That human-readable agent name is already in use in this company.",
+        "pairing_request_unavailable": "The pairing request is no longer awaiting approval.",
+        "pairing_unavailable": "A different terminal connector action already completed.",
+        "pairing_not_pending_activation": "The pairing is not awaiting activation.",
+        "rotation_unavailable": "The credential rotation is no longer available.",
+        "rotation_pending": "A credential rotation is already awaiting activation.",
+        "grant_not_active": "The connector grant is not active.",
+        "pairing_verification_failed": "The active grant could not prove its exact workspace and agent registration.",
+        "pairing_request_expired": "The pairing request expired.",
+        "authorization_code_expired": "The authorization code expired.",
+        "authorization_code_redeemed": "The authorization code is no longer available.",
+        "pairing_request_canceled": "The pairing request was canceled before connector claim.",
+        "pending_grant_expired": "The pending connector grant expired without activation.",
+        "pairing_canceled": "The pending pairing was canceled.",
+        "pairing_revoked": "The connector grant was revoked.",
+        "pairing_disconnected": "The connector was disconnected.",
+        "workspace_ref_expired": "The workspace selection reference expired.",
+        "company_ref_expired": "The company selection reference expired.",
+        "request_body_too_large": "The connector request exceeds the published JSON size limit.",
+        "json_content_type_required": "This operation requires application/json.",
+        "idempotency_key_required": "A high-entropy Idempotency-Key header is required.",
+        "idempotency_key_invalid": "The Idempotency-Key header is invalid.",
+        "schema_version_unsupported": "The requested connector pairing schema is not supported.",
+        "connector_client_unsupported": "The connector client is not supported.",
+        "redirect_uri_not_allowed": "The redirect URI is not registered for this connector.",
+        "state_invalid": "The desktop state value is invalid.",
+        "pkce_method_unsupported": "Only PKCE S256 is supported.",
+        "pkce_challenge_invalid": "The PKCE S256 challenge is invalid.",
+        "connector_agent_identity_invalid": "The requested identity must be the exact canonical LocalEndpoint connector agent.",
+        "approved_agent_mismatch": "The approved identity must exactly match the normalized requested agent identity.",
+        "workspace_selection_invalid": "Select an authorized existing workspace or provide labels for a new workspace.",
+        "connector_scopes_invalid": "The connector scope set does not exactly match the required ordered v1 scope contract.",
+        "connector_public_safe_payload_required": "The connector accepts only the exact public-safe memory schema and content.",
+        "idempotency_key_not_allowed": "This read-only connector operation does not accept an idempotency key.",
+        "invalid_request": "The request body does not match the connector operation schema.",
+        "rate_limited": "Too many pairing requests were made.",
+        "credential_system_not_configured": "The protected credential service is temporarily unavailable.",
+        "connector_service_unavailable": "The connector pairing service is temporarily unavailable.",
+    }
+    status = statuses.get(code, "422 Unprocessable Entity")
+    response_headers = list(_CONNECTOR_JSON_HEADERS) + list(headers or [])
+    if status.startswith("401"):
+        response_headers.append(("WWW-Authenticate", 'Bearer realm="MemoryEndpoints", error="invalid_token"'))
+    return problem(
+        start_response,
+        status,
+        "Connector pairing rejected",
+        detail or fixed_details.get(code, "The connector pairing operation was safely rejected."),
+        code,
+        headers=response_headers,
+    )
+
+
+def _connector_content_type_is_json(environ):
+    return str(environ.get("CONTENT_TYPE") or "").split(";", 1)[0].strip().lower() == "application/json"
+
+
+def _connector_request_digest(method, path, body):
+    try:
+        return exact_request_digest(method, path, body)
+    except PairingPolicyError:
+        return ""
+
+
+def _connector_source_client_partition(environ):
+    return "%s|%s" % (environ.get("REMOTE_ADDR") or "unknown", CONNECTOR_CLIENT_ID)
+
+
+def _connector_rate_partition(environ, bucket, partition=""):
+    if bucket == "discovery":
+        return str(environ.get("REMOTE_ADDR") or "unknown")
+    if bucket in (
+        "authorize",
+        "pairingRequest",
+        "authorizationCodeClaim",
+        "tokenExchange",
+    ):
+        # These public/pre-credential operations must never partition on an
+        # attacker-selected code, request handle, state, or idempotency key.
+        return _connector_source_client_partition(environ)
+    return str(partition or "unknown")
+
+
+def _connector_rate_policy(bucket):
+    policy = CONNECTOR_RATE_LIMIT_POLICIES.get(bucket) or {}
+    limit = int(policy.get("limit") or 10)
+    window = int(policy.get("windowSeconds") or 600)
+    if bucket == "pairingRequest":
+        try:
+            override = int(os.environ.get("MEMORYENDPOINTS_CONNECTOR_PAIRING_RATE_LIMIT") or limit)
+        except ValueError:
+            override = limit
+        limit = max(1, min(override, 10000))
+    return limit, window
+
+
+def _connector_operation_rate_limited(environ, bucket, partition="", store=None):
+    limit, window = _connector_rate_policy(bucket)
+    try:
+        result = (store or _store()).consume_connector_rate_limit(
+            bucket,
+            _connector_rate_partition(environ, bucket, partition),
+            limit,
+            window,
+        )
+    except (OSError, RuntimeError, ValueError):
+        return {
+            "allowed": False,
+            "unavailable": True,
+            "retryAfterSeconds": 5,
+            "valuesRedacted": True,
+        }
+    return result
+
+
+def _connector_rate_rejection(start_response, result):
+    if result.get("allowed"):
+        return None
+    retry_after = max(1, int(result.get("retryAfterSeconds") or 1))
+    if result.get("unavailable"):
+        return _connector_problem(
+            start_response,
+            "connector_service_unavailable",
+            headers=[("Retry-After", str(retry_after))],
+        )
+    return _connector_problem(
+        start_response,
+        "rate_limited",
+        headers=[("Retry-After", str(retry_after))],
+    )
+
+
+def _connector_discovery():
+    core = build_discovery_document()
+    return {
+        "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+        "supportedSchemaVersions": [CONNECTOR_PAIRING_SCHEMA],
+        "issuer": CONNECTOR_ISSUER,
+        "serviceRoot": {
+            "exact": CONNECTOR_ISSUER,
+            "userinfoAllowed": False,
+            "nonDefaultPortAllowed": False,
+            "queryAllowed": False,
+            "fragmentAllowed": False,
+        },
+        "clients": [
+            {
+                "clientId": CONNECTOR_CLIENT_ID,
+                "canonicalAgentId": core["canonicalAgentIdentity"]["agentId"],
+                "redirectUris": core["redirectUris"],
+                "requestedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+                "scopeDigest": connector_scope_digest(
+                    CONNECTOR_V1_REQUESTED_SCOPES
+                ),
+            }
+        ],
+        "endpoints": {
+            "pairingRequest": "/api/matm/connector-pairings/requests",
+            "authorization": "/connect/authorize/{publicRequestRef}",
+            "authorizationCodeClaim": "/api/matm/connector-pairings/authorization-code-claims",
+            "token": "/api/matm/connector-pairings/token",
+            "activation": "/api/matm/connector-pairings/{pairingId}/activate",
+            "status": "/api/matm/connector-pairings/{pairingId}",
+            "rotation": "/api/matm/connector-pairings/{pairingId}/rotations",
+            "rotationActivation": "/api/matm/connector-pairings/{pairingId}/rotations/{rotationId}/activate",
+            "credentialList": "/api/matm/connector-pairings/{pairingId}/credentials",
+            "revocation": "/api/matm/connector-pairings/{pairingId}/revoke",
+            "disconnect": "/api/matm/connector-pairings/{pairingId}/disconnect",
+            "cancellation": "/api/matm/connector-pairings/{pairingId}/cancel",
+        },
+        "security": {
+            "pkceMethods": [CONNECTOR_PKCE_METHOD],
+            "stateRequired": True,
+            "requestTtlSeconds": PAIRING_REQUEST_TTL_SECONDS,
+            "authorizationCodeTtlSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+            "pendingGrantTtlSeconds": PENDING_ACTIVATION_TTL_SECONDS,
+            "authorizationCodeOneUse": True,
+            "activationRequired": True,
+            "authorizationCallbackParametersAllowed": False,
+            "authorizationCodeDelivery": "body_only_claim",
+        },
+        "transport": {
+            "tlsValidation": "operating_system_default",
+            "sameOriginEndpoints": True,
+            "noRedirectsForApiEndpoints": True,
+            "jsonContentTypeRequired": True,
+            "maximumJsonRequestBytes": _CONNECTOR_MAX_JSON_REQUEST_BYTES,
+            "maximumJsonResponseBytes": 65536,
+            "maximumDiscoveryResponseBytes": MAX_DISCOVERY_RESPONSE_BYTES,
+            "credentialsInUrlsAllowed": False,
+        },
+        "agentNamePolicy": core["agentNamePolicy"],
+        "requestedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+        "scopeDigest": connector_scope_digest(CONNECTOR_V1_REQUESTED_SCOPES),
+        "authorization": core["authorizationCode"],
+        "rateLimits": core["rateLimits"],
+        "publicResponse": core["publicResponse"],
+    }
+
+
+def _connector_result_error(start_response, result):
+    code = str((result or {}).get("status") or "connector_service_unavailable")
+    aliases = {
+        "pending_credential_invalid": "invalid_token",
+        "human_credential_authority_required": "human_reauthentication_required",
+        "company_unavailable": "workspace_not_found",
+        "provisional_workspace_collision": "idempotency_conflict",
+        "pairing_request_redeemed": "authorization_code_redeemed",
+        "authorization_claim_binding_invalid": "authorization_claim_invalid",
+    }
+    code = aliases.get(code, code)
+    if code == "human_reauthentication_required":
+        return _human_problem(start_response, code)
+    headers = None
+    if code == "rate_limited":
+        headers = [("Retry-After", str(int((result or {}).get("retryAfterSeconds") or 60)))]
+    elif code in ("credential_system_not_configured", "connector_service_unavailable"):
+        headers = [("Retry-After", "5")]
+    return _connector_problem(start_response, code, headers=headers)
+
+
+def _connector_public_pairing_request(pairing_request, expires_in_seconds=None):
+    """Return the exact tenant-neutral public pairing-request summary."""
+    source = pairing_request or {}
+    public = {
+        "publicRequestRef": source.get("publicRequestRef"),
+        "status": source.get("status"),
+        "clientDisplayName": source.get("clientDisplayName"),
+        "agentDisplayName": source.get("agentDisplayName"),
+        "requestedScopes": list(source.get("requestedScopes") or ()),
+        "approvedScopes": list(source.get("approvedScopes") or ()),
+        "scopeDigest": source.get("scopeDigest"),
+        "scopeImpacts": [
+            {
+                "scope": item.get("scope"),
+                "impact": item.get("impact"),
+            }
+            for item in (source.get("scopeImpacts") or ())
+            if isinstance(item, dict)
+        ],
+        "expiresAt": source.get("expiresAt"),
+        "claimExpiresAt": source.get("claimExpiresAt"),
+    }
+    if expires_in_seconds is not None:
+        public["expiresInSeconds"] = int(expires_in_seconds)
+    return public
+
+
+def _connector_public_pairing(pairing, verification=None):
+    """Return the exact public pairing summary; never copy storage records."""
+    source = pairing or {}
+    source_grant = source.get("grant") or {}
+    scopes = list(source.get("approvedScopes") or source_grant.get("approvedScopes") or ())
+    scope_digest = source.get("scopeDigest") or source_grant.get("scopeDigest")
+    status = source.get("status")
+    workspace_id = source.get("workspaceId") or source_grant.get("workspaceId")
+    agent_id = source.get("agentId") or source_grant.get("agentId")
+    public = {
+        "pairingId": source.get("pairingId"),
+        "status": status,
+        "workspaceId": workspace_id,
+        "agentId": agent_id,
+        "credentialId": source.get("credentialId"),
+        "approvedScopes": scopes,
+        "scopeDigest": scope_digest,
+        "grant": {
+            "credentialType": source_grant.get("credentialType")
+            or "connector_agent",
+            "scopeType": source_grant.get("scopeType") or "agent",
+            "scopeId": source_grant.get("scopeId") or agent_id,
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "approvedScopes": list(source_grant.get("approvedScopes") or scopes),
+            "scopeDigest": source_grant.get("scopeDigest") or scope_digest,
+            "active": source_grant.get("active") is True,
+            "revoked": source_grant.get("revoked") is True,
+            "canInvite": source_grant.get("canInvite") is True,
+            "canRevoke": source_grant.get("canRevoke") is True,
+        },
+    }
+    if status == "pending_activation":
+        public["activationExpiresInSeconds"] = PENDING_ACTIVATION_TTL_SECONDS
+    if verification is not None:
+        public["workspace"] = {
+            "workspaceId": workspace_id,
+            "readable": verification.get("canonicalWorkspaceReadable") is True,
+        }
+        public["agent"] = {
+            "agentId": agent_id,
+            "readable": verification.get("exactAgentReadable") is True,
+        }
+    return public
+
+
+def _connector_public_rotation(rotation):
+    """Return the exact public rotation summary without linkage or reason data."""
+    source = rotation or {}
+    public = {
+        "rotationId": source.get("rotationId"),
+        "status": source.get("status"),
+        "credentialId": source.get("credentialId"),
+        "approvedScopes": list(source.get("approvedScopes") or ()),
+        "scopeDigest": source.get("scopeDigest"),
+    }
+    if source.get("status") == "pending_activation":
+        public["activationExpiresInSeconds"] = PENDING_ACTIVATION_TTL_SECONDS
+    return public
+
+
+def _connector_public_credential(credential):
+    """Return exact credential inventory metadata without nested boilerplate."""
+    source = credential or {}
+    return {
+        "credentialId": source.get("credentialId"),
+        "status": source.get("status"),
+        "isCurrent": source.get("isCurrent") is True,
+        "approvedScopes": list(source.get("approvedScopes") or ()),
+        "scopeDigest": source.get("scopeDigest"),
+        "createdAt": source.get("createdAt"),
+        "activatedAt": source.get("activatedAt"),
+        "revokedAt": source.get("revokedAt"),
+        "lastUsedAt": source.get("lastUsedAt"),
+    }
+
+
+def _connector_scope_binding(record):
+    record = record or {}
+    scopes = record.get("approvedScopes") or record.get("requestedScopes")
+    scopes = list(validate_requested_scopes(scopes))
+    expected_digest = connector_scope_digest(scopes)
+    if not hmac.compare_digest(str(record.get("scopeDigest") or ""), expected_digest):
+        raise PairingPolicyError("scope_digest_invalid")
+    return scopes, expected_digest
+
+
+def _connector_verification(pairing):
+    facts = dict(pairing or {})
+    return {
+        "canonicalWorkspaceReadable": facts.get("canonicalWorkspaceReadable") is True,
+        "canonicalWorkspaceIdMatches": facts.get("canonicalWorkspaceIdMatches") is True,
+        "exactAgentReadable": facts.get("exactAgentReadable") is True,
+        "exactAgentIdMatches": facts.get("exactAgentIdMatches") is True,
+        "credentialScopedToConnectorAndAgent": facts.get("credentialScopedToConnectorAndAgent") is True,
+        "grantActive": facts.get("grantActive") is True,
+        "grantRevoked": facts.get("grantRevoked") is True,
+        "rawCredentialExposed": False,
+        "privatePayloadExposed": False,
+        "valuesRedacted": True,
+    }
+
+
+def _connector_verification_passed(verification):
+    return bool(
+        verification.get("canonicalWorkspaceReadable")
+        and verification.get("canonicalWorkspaceIdMatches")
+        and verification.get("exactAgentReadable")
+        and verification.get("exactAgentIdMatches")
+        and verification.get("credentialScopedToConnectorAndAgent")
+        and verification.get("grantActive")
+        and not verification.get("grantRevoked")
+    )
+
+
+def _connector_receipt(
+    action,
+    resource_id,
+    status,
+    idempotent_replay=False,
+    actor_master_key_id=None,
+    scope_digest=None,
+):
+    binding = str(scope_digest or "")
+    receipt = {
+        "receiptId": "connector-" + hashlib.sha256(
+            (str(action) + "|" + str(resource_id) + "|" + binding).encode("utf-8")
+        ).hexdigest()[:24],
+        "action": str(action),
+        "status": str(status),
+        "idempotentReplay": bool(idempotent_replay),
+        "rawCredentialExposed": False,
+        "privatePayloadExposed": False,
+    }
+    if actor_master_key_id:
+        receipt["actorMasterKeyId"] = actor_master_key_id
+    if scope_digest:
+        receipt["scopeDigest"] = str(scope_digest)
+    return receipt
+
+
+def _connector_exact_body_or_problem(environ, start_response, required, optional=()):
+    body, rejected = _connector_body_or_problem(environ, start_response)
+    if rejected:
+        return None, rejected
+    required = frozenset(required)
+    allowed = required | frozenset(optional)
+    if set(body) - allowed or not required.issubset(body):
+        return None, _connector_problem(start_response, "invalid_request")
+    return body, None
+
+
+def _connector_valid_reason(body):
+    reason = body.get("reason")
+    if not isinstance(reason, str) or reason != reason.strip() or not 1 <= len(reason) <= 255:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in reason):
+        return None
+    return reason
+
+
+def _connector_lifecycle_authority_or_problem(
+    store, environ, start_response, pairing_id, action, rotation_id=None
+):
+    """Authenticate lifecycle authority before reading a mutation body."""
+    token = _token(environ)
+    if not token:
+        return None, _connector_problem(start_response, "invalid_token")
+
+    if action == "revoke":
+        master = store.authenticate_company_master(token)
+        if master:
+            inventory = store.list_connector_credentials(pairing_id, token)
+            if not inventory.get("ok"):
+                return None, _connector_result_error(start_response, inventory)
+            return {"credentialType": "company_master", "token": token}, None
+        connector = store.authenticate_connector_token(
+            token,
+            pairing_id=pairing_id,
+            allow_pending=True,
+            allow_lifecycle_terminal=True,
+        )
+        if connector:
+            return None, _connector_problem(start_response, "company_master_required")
+        return None, _connector_problem(start_response, "invalid_token")
+
+    allow_terminal = action == "disconnect"
+    connector = store.authenticate_connector_token(
+        token,
+        pairing_id=pairing_id,
+        allow_pending=True,
+        allow_lifecycle_terminal=allow_terminal,
+    )
+    if connector:
+        return connector, None
+
+    if action in ("activate", "rotation_activate"):
+        terminal_error = store.connector_lifecycle_terminal_error(
+            token, pairing_id, rotation_id=rotation_id
+        )
+        if terminal_error:
+            return None, _connector_problem(start_response, terminal_error)
+
+    wrong_connector = store.authenticate_connector_token(
+        token,
+        allow_pending=True,
+        allow_lifecycle_terminal=allow_terminal,
+    )
+    if wrong_connector or store.authenticate_company_master(token):
+        return None, _connector_problem(start_response, "connector_scope_forbidden")
+    return None, _connector_problem(start_response, "invalid_token")
+
+
+def _connector_idempotency_or_problem(environ, start_response):
+    key = environ.get("HTTP_IDEMPOTENCY_KEY", "")
+    if not key:
+        return None, _connector_problem(start_response, "idempotency_key_required")
+    try:
+        key = validate_idempotency_key(key)
+    except PairingPolicyError:
+        return None, _connector_problem(start_response, "idempotency_key_invalid")
+    return key, None
+
+
+def _connector_body_or_problem(environ, start_response):
+    if not _connector_content_type_is_json(environ):
+        return None, _connector_problem(start_response, "json_content_type_required")
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or "0")
+    except (TypeError, ValueError):
+        return None, _connector_problem(start_response, "invalid_request")
+    if length < 0 or length > _CONNECTOR_MAX_JSON_REQUEST_BYTES:
+        return None, _connector_problem(start_response, "request_body_too_large")
+    raw = environ["wsgi.input"].read(length) if length else b""
+    if len(raw) > _CONNECTOR_MAX_JSON_REQUEST_BYTES:
+        return None, _connector_problem(start_response, "request_body_too_large")
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeError, ValueError, RecursionError):
+        body = None
+    if not isinstance(body, dict):
+        return None, _connector_problem(start_response, "invalid_request")
+    return body, None
 
 
 def _cors_allowed_origin(environ):
@@ -76,7 +794,11 @@ def _cors_headers(environ):
     if origin is None:
         return []
     request_headers = (environ.get("HTTP_ACCESS_CONTROL_REQUEST_HEADERS") or "").strip()
-    allowed_headers = request_headers or DEFAULT_CORS_ALLOWED_HEADERS
+    configured_headers = [item.strip() for item in DEFAULT_CORS_ALLOWED_HEADERS.split(",") if item.strip()]
+    requested = {item.strip().lower() for item in request_headers.split(",") if item.strip()}
+    allowed_headers = ", ".join(
+        item for item in configured_headers if not requested or item.lower() in requested
+    )
     headers = [
         ("Access-Control-Allow-Origin", origin or "*"),
         ("Access-Control-Allow-Methods", DEFAULT_CORS_ALLOWED_METHODS),
@@ -570,7 +1292,9 @@ def _admin_diagnostics_authorized(environ):
     expected_hash = str(payload.get("tokenHash") or "").strip().lower()
     if not expected_hash:
         return False, "missing_token_hash"
-    token_hash = hashlib.sha256(_token(environ).encode("utf-8")).hexdigest()
+    auth = str(environ.get("HTTP_AUTHORIZATION") or "").strip()
+    token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") and " " in auth else ""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     return hmac.compare_digest(token_hash, expected_hash), "configured"
 
 
@@ -590,8 +1314,536 @@ def _store():
 
 
 def _require_auth(environ, workspace_id):
-    auth = _store().authenticate(_token(environ), workspace_id)
+    token = _token(environ)
+    if not token:
+        return None
+    auth = _store().authenticate(token, workspace_id)
     return auth
+
+
+def _anonymous_auth_required(start_response):
+    return problem(
+        start_response,
+        "401 Unauthorized",
+        "Authentication required",
+        "A valid governed bearer credential is required.",
+        "auth_required",
+        headers=[("WWW-Authenticate", 'Bearer realm="MemoryEndpoints"')],
+    )
+
+
+MASTER_CAPABILITIES = (
+    "company:read",
+    "company:write",
+    "workspace:read",
+    "workspace:write",
+    "project:read",
+    "project:write",
+    "access:manage",
+    "agent_credentials:revoke",
+)
+AGENT_CAPABILITIES = (
+    "scope:read",
+    "scope:write",
+    "self:memory",
+    "self:message",
+)
+
+AGENT_NAME_POLICY = {
+    "scope": "company",
+    "uniqueness": "normalized_name_within_company",
+    "normalization": "lowercase",
+    "minLength": 3,
+    "maxLength": 64,
+    "pattern": r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "guidance": "Choose a short, meaningful name that humans can recognize in rooms and audit history.",
+    "displayName": {
+        "minLength": 1,
+        "maxLength": 80,
+        "normalization": "trim_and_collapse_whitespace",
+        "controlCharactersAllowed": False,
+    },
+}
+
+
+def _is_connector_principal(auth):
+    auth = auth or {}
+    return bool(
+        auth.get("publicCredentialType") == "connector_agent"
+        or auth.get("credentialType") == "connector_agent"
+        or auth.get("authType") == "connector_agent"
+    )
+
+
+def _connector_principal_scopes(auth):
+    if not _is_connector_principal(auth):
+        return []
+    scopes = (auth or {}).get("approvedScopes") or (auth or {}).get("requestedScopes")
+    try:
+        scopes = list(validate_requested_scopes(scopes))
+        expected_digest = connector_scope_digest(scopes)
+        if not hmac.compare_digest(
+            str((auth or {}).get("scopeDigest") or ""), expected_digest
+        ):
+            return []
+        return scopes
+    except PairingPolicyError:
+        return []
+
+
+def _auth_capabilities(auth):
+    if _is_connector_principal(auth):
+        return _connector_principal_scopes(auth)
+    if (auth or {}).get("credentialType") == "company_master":
+        return list(MASTER_CAPABILITIES)
+    if (auth or {}).get("credentialType") == "agent":
+        return list(AGENT_CAPABILITIES)
+    return []
+
+
+def _auth_permissions(auth):
+    if _is_connector_principal(auth):
+        scopes = frozenset(_connector_principal_scopes(auth))
+        return {
+            "canRead": "connector:self:readback" in scopes,
+            "canWrite": bool(
+                {"agent:self:register", "memory:public-safe:submit"} & scopes
+            ),
+            "canApproveAgentAccess": False,
+            "canIssueAgentInvites": False,
+            "canListAgentTokens": False,
+            "canRevokeAgentTokens": False,
+            "canManageCompany": False,
+            "canAccessWorkspaceOperations": False,
+            "canReadConnectorSelf": "connector:self:readback" in scopes,
+            "canConfirmConnectorAgentRegistration": "agent:self:register" in scopes,
+            "canSubmitPublicSafeMemory": "memory:public-safe:submit" in scopes,
+            "canSearchMemory": "memory:search:read" in scopes,
+        }
+    company_master = (auth or {}).get("credentialType") == "company_master"
+    governed = company_master or (auth or {}).get("credentialType") == "agent"
+    return {
+        "canRead": governed,
+        "canWrite": governed,
+        "canApproveAgentAccess": company_master,
+        "canIssueAgentInvites": company_master,
+        "canListAgentTokens": company_master,
+        "canRevokeAgentTokens": company_master,
+        "canManageCompany": company_master,
+        "canAccessWorkspaceOperations": governed,
+    }
+
+
+def _auth_actor_id(auth):
+    if (auth or {}).get("credentialType") == "agent":
+        return auth.get("agentId") or ""
+    return (auth or {}).get("principalName") or ""
+
+
+def _public_auth_principal(auth):
+    internal_credential_type = (auth or {}).get("credentialType")
+    credential_type = (auth or {}).get("publicCredentialType") or (
+        "agent_token" if internal_credential_type == "agent" else internal_credential_type
+    )
+    scope_type = (auth or {}).get("scopeType") or ("company" if internal_credential_type == "company_master" else None)
+    scope_id = (auth or {}).get("scopeId") or ((auth or {}).get("companyId") if scope_type == "company" else None)
+    credential_id = (
+        (auth or {}).get("masterKeyId")
+        or (auth or {}).get("connectorCredentialId")
+        or (auth or {}).get("agentTokenId")
+    )
+    connector = _is_connector_principal(auth)
+    approved_scopes = _connector_principal_scopes(auth) if connector else None
+    approved_scope_digest = (
+        (auth or {}).get("scopeDigest")
+        or (connector_scope_digest(approved_scopes) if approved_scopes else None)
+    )
+    return {
+        "credentialId": credential_id,
+        "credentialType": credential_type,
+        "ordinaryAgentCredential": internal_credential_type == "agent",
+        "companyId": (auth or {}).get("companyId"),
+        "agentIdentityId": (auth or {}).get("agentIdentityId"),
+        "agentId": (auth or {}).get("agentId")
+        if internal_credential_type == "agent" or connector
+        else None,
+        "displayName": (auth or {}).get("agentName") or (auth or {}).get("principalName"),
+        "grantId": (auth or {}).get("grantId"),
+        "resourceContext": {
+            "workspaceId": (auth or {}).get("workspaceId"),
+            "projectId": (auth or {}).get("projectId"),
+        },
+        "grant": {
+            "grantId": (auth or {}).get("grantId"),
+            "scopeType": scope_type,
+            "scopeId": scope_id,
+            "accessRule": "exact_connector_and_agent" if connector else "scope_and_descendants",
+            "immutable": True,
+            **(
+                {
+                    "approvedScopes": approved_scopes,
+                    "scopeDigest": approved_scope_digest,
+                }
+                if connector
+                else {}
+            ),
+            "supersedesCredentialId": (auth or {}).get("supersedesCredentialId") or (auth or {}).get("supersedesTokenId"),
+            "memoryTransferFromCredentialId": (auth or {}).get("memoryTransferFromCredentialId") or (auth or {}).get("memoryTransferFromTokenId"),
+        },
+        "capabilities": _auth_capabilities(auth),
+        "permissions": _auth_permissions(auth),
+        **(
+            {
+                "approvedScopes": approved_scopes,
+                "scopeDigest": approved_scope_digest,
+            }
+            if connector
+            else {}
+        ),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _access_problem(start_response, code, detail=None):
+    statuses = {
+        "invalid_token": "401 Unauthorized",
+        "company_master_required": "403 Forbidden",
+        "capability_required": "403 Forbidden",
+        "principal_mismatch": "403 Forbidden",
+        "agent_identity_mismatch": "403 Forbidden",
+        "insufficient_scope": "403 Forbidden",
+        "resource_not_found": "404 Not Found",
+        "access_request_not_found": "404 Not Found",
+        "invite_not_found": "404 Not Found",
+        "agent_token_not_found": "404 Not Found",
+        "agent_name_invalid": "422 Unprocessable Entity",
+        "access_decision_invalid": "422 Unprocessable Entity",
+        "scope_invalid": "422 Unprocessable Entity",
+        "scope_not_in_company": "422 Unprocessable Entity",
+        "referenced_agent_token_invalid": "422 Unprocessable Entity",
+        "agent_name_unavailable": "409 Conflict",
+        "approval_already_final": "409 Conflict",
+        "agent_name_request_not_approved": "409 Conflict",
+        "access_request_not_pending": "409 Conflict",
+        "invite_already_active": "409 Conflict",
+        "one_time_secret_already_delivered": "409 Conflict",
+        "invite_not_revocable": "409 Conflict",
+        "agent_token_already_revoked": "409 Conflict",
+        "invite_expired": "410 Gone",
+        "invite_redeemed": "410 Gone",
+        "invite_revoked": "410 Gone",
+        "invalid_invite": "401 Unauthorized",
+        "invite_unavailable": "401 Unauthorized",
+        "rate_limited": "429 Too Many Requests",
+        "credential_system_not_configured": "503 Service Unavailable",
+    }
+    defaults = {
+        "invalid_token": "A valid governed bearer credential is required.",
+        "company_master_required": "A company master credential is required for this access-management operation.",
+        "capability_required": "The authenticated credential does not have the required capability.",
+        "principal_mismatch": "The requested acting identity does not match the authenticated principal.",
+        "agent_identity_mismatch": "The requested agent identity does not match the connector credential's exact agent grant.",
+        "insufficient_scope": "The requested resource is outside the credential's immutable grant scope.",
+        "resource_not_found": "No matching resource is visible to the authenticated principal.",
+        "invalid_invite": "The one-time invitation is invalid.",
+        "invite_unavailable": "The one-time invitation is unavailable.",
+        "invite_expired": "The one-time invitation has expired and cannot be reopened.",
+        "invite_redeemed": "The one-time invitation has already been redeemed.",
+        "invite_revoked": "The one-time invitation has been revoked.",
+        "credential_system_not_configured": "Governed credential verification is not configured.",
+    }
+    status = statuses.get(code, "422 Unprocessable Entity")
+    headers = list(_CONNECTOR_JSON_HEADERS)
+    if status.startswith("401"):
+        headers.append(("WWW-Authenticate", 'Bearer realm="MemoryEndpoints", error="invalid_token"'))
+    if code == "agent_name_invalid":
+        return json_response(
+            start_response,
+            {
+                "ok": False,
+                "safeNoOp": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+                "error": {
+                    "code": code,
+                    "title": "Access operation rejected",
+                    "detail": detail or "The requested agent name does not satisfy the human-readable company name policy.",
+                    "safeNoOp": True,
+                    "valuesRedacted": True,
+                    "details": {"namePolicy": AGENT_NAME_POLICY},
+                },
+            },
+            status,
+            headers,
+        )
+    return problem(start_response, status, "Access operation rejected", detail or defaults.get(code, "The access operation was safely rejected."), code, headers=headers)
+
+
+def _company_master_or_problem(auth, start_response):
+    if (auth or {}).get("credentialType") != "company_master":
+        return _access_problem(start_response, "company_master_required")
+    return None
+
+
+def _bound_agent_id_or_problem(auth, start_response, *candidate_ids):
+    actor_id = _auth_actor_id(auth)
+    if not actor_id:
+        return None, _access_problem(start_response, "principal_mismatch")
+    for candidate in candidate_ids:
+        if candidate is not None and str(candidate).strip() and str(candidate).strip() != actor_id:
+            code = "agent_identity_mismatch" if (auth or {}).get("publicCredentialType") == "connector_agent" else "principal_mismatch"
+            return None, _access_problem(start_response, code)
+    return actor_id, None
+
+
+def _request_cookie(environ, name):
+    raw = environ.get("HTTP_COOKIE") or ""
+    if not raw:
+        return ""
+    cookie = SimpleCookie()
+    try:
+        cookie.load(raw)
+    except Exception:
+        return ""
+    morsel = cookie.get(name)
+    return morsel.value if morsel else ""
+
+
+def _site_origin():
+    parsed = urlsplit(SITE_URL)
+    return "%s://%s" % (parsed.scheme.lower(), parsed.netloc.lower())
+
+
+def _human_same_origin(environ):
+    if str(environ.get("HTTP_SEC_FETCH_SITE") or "").strip().lower() != "same-origin":
+        return False
+    origin = str(environ.get("HTTP_ORIGIN") or "").strip().rstrip("/").lower()
+    if origin:
+        return origin == _site_origin()
+    referer = str(environ.get("HTTP_REFERER") or "").strip()
+    if not referer:
+        return False
+    parsed = urlsplit(referer)
+    return "%s://%s" % (parsed.scheme.lower(), parsed.netloc.lower()) == _site_origin()
+
+
+def _human_fetch_same_origin(environ):
+    """Accept browser-generated Fetch Metadata for a same-origin read fetch."""
+    return (
+        str(environ.get("HTTP_SEC_FETCH_SITE") or "").strip().lower() == "same-origin"
+        and str(environ.get("HTTP_SEC_FETCH_MODE") or "").strip().lower() in ("cors", "same-origin")
+        and str(environ.get("HTTP_SEC_FETCH_DEST") or "").strip().lower() in ("", "empty")
+    )
+
+
+def _human_problem(start_response, code, detail=None):
+    statuses = {
+        "human_session_required": "401 Unauthorized",
+        "human_account_session_required": "401 Unauthorized",
+        "human_login_failed": "401 Unauthorized",
+        "human_owner_recovery_required": "401 Unauthorized",
+        "human_owner_required": "403 Forbidden",
+        "human_credential_authority_required": "403 Forbidden",
+        "recovery_session_restricted": "403 Forbidden",
+        "trusted_origin_required": "403 Forbidden",
+        "csrf_required": "403 Forbidden",
+        "csrf_invalid": "403 Forbidden",
+        "human_reauthentication_failed": "403 Forbidden",
+        "human_reauthentication_required": "403 Forbidden",
+        "recent_reauthentication_required": "403 Forbidden",
+        "human_username_invalid": "422 Unprocessable Entity",
+        "human_display_name_invalid": "422 Unprocessable Entity",
+        "username_password_required": "400 Bad Request",
+        "human_username_unavailable": "409 Conflict",
+        "human_password_invalid": "422 Unprocessable Entity",
+        "human_company_authority_exists": "409 Conflict",
+        "human_company_authority_not_found": "404 Not Found",
+        "company_master_proof_invalid": "401 Unauthorized",
+        "company_master_proof_required": "422 Unprocessable Entity",
+        "company_master_proof_expired": "410 Gone",
+        "company_master_proof_used": "410 Gone",
+        "selected_company_required": "409 Conflict",
+        "human_company_not_found": "404 Not Found",
+        "replacement_not_found": "404 Not Found",
+        "replacement_predecessor_inactive": "409 Conflict",
+        "replacement_pending": "409 Conflict",
+        "replacement_unavailable": "409 Conflict",
+        "replacement_binding_invalid": "422 Unprocessable Entity",
+        "successor_token_proof_required": "403 Forbidden",
+        "idempotency_key_required": "422 Unprocessable Entity",
+        "idempotency_key_invalid": "422 Unprocessable Entity",
+        "idempotency_conflict": "409 Conflict",
+        "replacement_expired": "410 Gone",
+        "company_not_found": "404 Not Found",
+        "export_opportunity_acknowledgement_required": "422 Unprocessable Entity",
+        "closure_purpose_invalid": "422 Unprocessable Entity",
+        "typed_confirmation_mismatch": "422 Unprocessable Entity",
+        "company_label_confirmation_mismatch": "422 Unprocessable Entity",
+        "company_must_be_closed": "409 Conflict",
+        "company_must_be_soft_deleted": "409 Conflict",
+        "export_receipt_or_no_export_acknowledgement_required": "422 Unprocessable Entity",
+        "export_receipt_or_deletion_acknowledgement_required": "422 Unprocessable Entity",
+        "closure_intent_invalid": "410 Gone",
+        "closure_intent_unavailable": "410 Gone",
+        "lifecycle_intent_invalid": "410 Gone",
+        "lifecycle_intent_expired": "410 Gone",
+        "lifecycle_intent_used": "410 Gone",
+    }
+    defaults = {
+        "human_session_required": "A valid short-lived human-owner session is required.",
+        "human_owner_required": "Agent and company-master credentials cannot use the human-owner control plane.",
+        "trusted_origin_required": "Human account actions require the trusted same-origin browser context and Fetch Metadata.",
+        "csrf_required": "The human session requires its in-memory CSRF token.",
+        "csrf_invalid": "The CSRF token does not match the human session.",
+        "recent_reauthentication_required": "Re-enter the account password before this sensitive action.",
+        "export_opportunity_acknowledgement_required": "Review the company export opportunity before continuing.",
+    }
+    return problem(
+        start_response,
+        statuses.get(code, "422 Unprocessable Entity"),
+        "Human-owner operation rejected",
+        detail or defaults.get(code, "The human-owner operation was safely rejected."),
+        code,
+        headers=list(_CONNECTOR_JSON_HEADERS),
+    )
+
+
+def _human_storage_error(start_response, result):
+    code = (result or {}).get("status") or "human_operation_failed"
+    aliases = {
+        "human_account_session_required": "human_session_required",
+        "company_master_proof_consumed": "company_master_proof_used",
+        "company_master_proof_unavailable": "company_master_proof_used",
+        "human_company_authority_not_found": "human_company_not_found",
+        "agent_token_replacement_expired": "replacement_expired",
+        "human_reauthentication_required": "recent_reauthentication_required",
+    }
+    return _human_problem(start_response, aliases.get(code, code))
+
+
+def _human_session_auth(store, environ, start_response, company_id=None, mutation=False, allow_recovery=False):
+    if str(environ.get("HTTP_AUTHORIZATION") or "").strip():
+        return None, None, _human_problem(start_response, "human_owner_required")
+    session_secret = _request_cookie(environ, HUMAN_SESSION_COOKIE)
+    if not session_secret:
+        return None, None, _human_problem(start_response, "human_session_required")
+    if mutation and not _human_same_origin(environ):
+        return None, None, _human_problem(start_response, "trusted_origin_required")
+    csrf_token = str(environ.get("HTTP_X_CSRF_TOKEN") or "").strip()
+    session = store.authenticate_human_account_session(session_secret)
+    recovery_session = False
+    if not session:
+        recovered = store.authenticate_human_session(session_secret)
+        if recovered:
+            recovery_session = True
+            session = {
+                "credentialType": "recovery_closure_session",
+                "authMode": "recovery_closure",
+                "humanSessionId": recovered.get("humanSessionId"),
+                "humanAccountSessionId": recovered.get("humanSessionId"),
+                "humanAccountId": None,
+                "username": None,
+                "selectedAuthorityId": None,
+                "companyId": recovered.get("companyId"),
+                "role": "recovery_closure",
+                "reauthenticatedAt": recovered.get("reauthenticatedAt"),
+                "passwordReauthenticatedAt": recovered.get("reauthenticatedAt"),
+                "expiresAt": recovered.get("expiresAt"),
+            }
+    if not session:
+        return None, None, _human_problem(start_response, "human_session_required")
+    if recovery_session and not allow_recovery:
+        return None, None, _human_problem(start_response, "recovery_session_restricted")
+    if company_id and not session.get("companyId"):
+        return None, None, _human_problem(start_response, "selected_company_required")
+    if company_id and session.get("companyId") != company_id:
+        return None, None, _human_problem(start_response, "human_company_not_found")
+    if mutation:
+        if not csrf_token:
+            return None, None, _human_problem(start_response, "csrf_required")
+        valid_csrf_session = (
+            store.authenticate_human_session(session_secret, csrf_token, require_csrf=True)
+            if recovery_session
+            else store.authenticate_human_account_session(session_secret, csrf_token, require_csrf=True)
+        )
+        if not valid_csrf_session:
+            return None, None, _human_problem(start_response, "csrf_invalid")
+    return session, session_secret, None
+
+
+def _human_complete_session_payload(store, session_secret, csrf_token=None):
+    session = store.authenticate_human_account_session(session_secret)
+    if not session:
+        return None
+    memberships = store.list_human_company_memberships(session_secret)
+    if not memberships.get("ok"):
+        return None
+    payload = {
+        "ok": True,
+        "account": {
+            "humanAccountId": session.get("humanAccountId"),
+            "username": session.get("username"),
+            "displayName": session.get("displayName") or session.get("username"),
+        },
+        "memberships": memberships.get("items") or [],
+        "humanSession": {
+            "humanAccountSessionId": session.get("humanAccountSessionId"),
+            "humanAccountId": session.get("humanAccountId"),
+            "username": session.get("username"),
+            "selectedAuthorityId": session.get("selectedAuthorityId"),
+            "selectedCompanyId": session.get("companyId"),
+            "role": session.get("role"),
+            "expiresAt": session.get("expiresAt"),
+            "passwordReauthenticatedAt": session.get("passwordReauthenticatedAt"),
+        },
+        "selectedCompanyId": session.get("companyId"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+    if csrf_token:
+        payload["csrfToken"] = csrf_token
+    return payload
+
+
+def _human_audit_actor(session):
+    session = session or {}
+    actor = {
+        "humanAccountId": session.get("humanAccountId"),
+        "username": session.get("username"),
+        "authorityId": session.get("selectedAuthorityId"),
+        "authMode": session.get("authMode") or "human_account",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+    return actor
+
+
+def _human_recently_reauthenticated(session):
+    value = (session or {}).get("passwordReauthenticatedAt") or (session or {}).get("reauthenticatedAt")
+    if not value:
+        return False
+    try:
+        timestamp = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
+    age = (now - timestamp.astimezone(datetime.timezone.utc)).total_seconds()
+    return 0 <= age <= HUMAN_REAUTH_SECONDS
+
+
+def _human_session_cookie(secret, max_age=HUMAN_SESSION_SECONDS):
+    return "%s=%s; Path=/; Max-Age=%d; Secure; HttpOnly; SameSite=Strict" % (
+        HUMAN_SESSION_COOKIE,
+        secret,
+        max_age,
+    )
 
 
 def _asset_version(*relative_paths):
@@ -606,7 +1858,7 @@ def _asset_version(*relative_paths):
     return "%s-%s" % (source_version, digest.hexdigest()[:12])
 
 
-def html_page(title, main):
+def html_page(title, main, extra_head="", extra_scripts="", script_nonce=""):
     asset_version = _asset_version("css/site.css", "js/site.js")
     json_ld = json.dumps(
         {
@@ -619,6 +1871,9 @@ def html_page(title, main):
         },
         sort_keys=True,
     ).replace("<", "\\u003c")
+    nonce_attribute = (
+        ' nonce="%s"' % escape_html(script_nonce) if script_nonce else ""
+    )
     return """<!doctype html>
 <html lang="en">
 <head>
@@ -627,37 +1882,57 @@ def html_page(title, main):
   <title>{title} | MemoryEndpoints.com</title>
   <meta name="description" content="Pure MATM Multi-Agent Transactive Memory endpoint reference implementation.">
   <link rel="stylesheet" href="/static/css/site.css?v={asset_version}">
-  <script type="application/ld+json">{json_ld}</script>
+  {extra_head}
+  <script type="application/ld+json"{nonce_attribute}>{json_ld}</script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="topbar">
     <a class="brand" href="/" aria-label="MemoryEndpoints home">
       <img src="/static/img/memory-endpoints-mark.svg" alt="" width="36" height="36">
-      <span>MemoryEndpoints.com</span>
+      <span class="brand-name"><strong>Memory</strong>Endpoints<span class="brand-tld">.com</span></span>
     </a>
-    <nav aria-label="Primary">
+    <button class="site-nav-toggle" type="button" aria-expanded="false" aria-controls="site-navigation" data-site-nav-toggle>
+      <span class="site-nav-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>Menu</span>
+    </button>
+    <nav class="site-nav" id="site-navigation" aria-label="Primary" data-site-nav>
+      <a class="site-nav-demo" href="/tour">Demo</a>
       <a href="/docs">Docs</a>
+      <a href="/human">Human Access</a>
       <a href="/agent-setup">Agent Setup</a>
       <a href="/agent-coordination">Agent Coordination</a>
       <a href="/console">Console</a>
       <a href="/knowledge">Knowledge</a>
       <a href="/memory-lifecycle">Memory</a>
       <a href="/transparency">Transparency</a>
-      <a href="{companion_docs_url}">MultiAgentMemory.com</a>
+      <details class="ecosystem-menu">
+        <summary>Ecosystem</summary>
+        <div class="ecosystem-links">
+          <a href="https://localendpoints.com"><strong>LocalEndpoints.com</strong><span>Local execution boundaries</span></a>
+          <a href="https://uaix.org"><strong>UAIX.org</strong><span>Portable agent guidance</span></a>
+          <a href="https://llmwikis.org"><strong>LLMWikis.org</strong><span>Knowledge interfaces</span></a>
+          <a href="{companion_docs_url}"><strong>MultiAgentMemory.com</strong><span>Repository companion</span></a>
+        </div>
+      </details>
     </nav>
   </header>
-  <main>{main}</main>
+  <main id="main-content">{main}</main>
   <footer>
     <p>Source-available MATM endpoint reference. No certification, endorsement, or hidden authority claim is implied.</p>
   </footer>
   <script src="/static/js/site.js?v={asset_version}"></script>
+  {extra_scripts}
 </body>
 </html>""".format(
         title=escape_html(title),
         main=main,
         json_ld=json_ld,
+        nonce_attribute=nonce_attribute,
         companion_docs_url=COMPANION_DOCS_URL,
         asset_version=escape_html(asset_version),
+        extra_head=extra_head,
+        extra_scripts=extra_scripts,
     )
 
 
@@ -1444,24 +2719,22 @@ def route_home(start_response):
     body = """
 <section class="hero">
   <div>
-    <p class="eyebrow">Pure MATM endpoint reference</p>
-    <h1>MemoryEndpoints.com</h1>
-    <p class="lead">A practical MATM operator surface for bounded workspace memory, current messages, redacted receipts, and AI-ready discovery.</p>
+    <p class="eyebrow">Shared memory infrastructure for AI teams</p>
+    <h1>Give every agent the right memory, in the right boundary.</h1>
+    <p class="lead">A practical MATM operator surface for durable workspace memory, current messages, redacted receipts, and AI-ready knowledge.</p>
     <div class="actions">
-      <a class="button primary" href="/agent-setup">Create agent workspace</a>
-      <a class="button" href="/agent-coordination">Agent coordination quickstart</a>
+      <a class="button primary" href="/tour">Try the interactive demo</a>
+      <a class="button" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/console">Open human console</a>
-      <a class="button" href="/api/matm/connector-contract">Connector contract</a>
-      <a class="button" href="/api/matm/uai-memory/contract">UAIX active memory</a>
-      <a class="button" href="/api/matm/agent-compatibility">Agent compatibility</a>
-      <a class="button" href="/api/matm/live-capability-matrix">Capability matrix</a>
-      <a class="button" href="{companion_docs_url}">Read companion docs</a>
     </div>
+    <p class="hero-note"><strong>No sign-in needed for the demo.</strong> It uses the real authenticated interface with clearly labeled, session-only mock data.</p>
   </div>
   <aside class="home-status" aria-label="Operational entry points">
-    <h2>Operational Surface</h2>
+    <p class="eyebrow">Operational Surface</p>
+    <h2>Start where you work</h2>
     <a href="/agent-coordination"><strong>Agent coordination</strong><span>register, rooms, memory, inbox, ack</span></a>
     <a href="/console"><strong>Console</strong><span>workspace, memory, messages, receipts</span></a>
+    <a href="/tour"><strong>Interactive demo</strong><span>real interface, clearly labeled mock data</span></a>
     <a href="/api/matm/connector-contract"><strong>Connector contract</strong><span>settings, routes, redaction, routing</span></a>
     <a href="/api/matm/uai-memory/contract"><strong>UAIX active memory</strong><span>browser exception and local edit claims</span></a>
     <a href="/api/matm/agent-compatibility"><strong>Agent compatibility</strong><span>L0-L7 ability paths and fallbacks</span></a>
@@ -1476,7 +2749,26 @@ def route_home(start_response):
   <article><h2>For operators</h2><p>Secrets stay outside the repo; deployment and database use require explicit proof.</p></article>
   <article><h2>For implementers</h2><p><a href="{companion_docs_url}">MultiAgentMemory.com</a> explains the repository, GitHub handoff, and MATM memory boundary.</p></article>
 </section>
-""".format(companion_docs_url=COMPANION_DOCS_URL)
+<section class="home-explainer" aria-label="Product model">
+  <article>
+    <p class="eyebrow">Ownership hierarchy</p>
+    <h2>One account can work across durable team boundaries</h2>
+    <p>People belong to an account and company. A company owns workspaces; each workspace owns projects. Durable knowledge and memory stay inside the authorized company, workspace, or project boundary.</p>
+    <ol class="hierarchy-list">
+      <li><strong>Account</strong><span>human membership</span></li>
+      <li><strong>Company</strong><span>organization boundary</span></li>
+      <li><strong>Workspace</strong><span>key and storage boundary</span></li>
+      <li><strong>Project</strong><span>implementation scope</span></li>
+    </ol>
+  </article>
+  <article>
+    <p class="eyebrow">Memory boundary</p>
+    <h2>Local continuity plus protected durable memory</h2>
+    <p>Local <code>.uai</code> files remain the agent's active startup memory. MemoryEndpoints adds protected mid- and long-term memory, review, meetings, current messages, receipts, audit, and searchable wiki knowledge. Hosted memory augments local continuity; it never silently replaces it.</p>
+    <p><a href="https://uaix.org">UAIX.org</a> provides portable setup guidance. <a href="{companion_docs_url}">MultiAgentMemory.com</a> and the <a href="{github_repo_url}">GitHub companion repository</a> explain this implementation.</p>
+  </article>
+</section>
+""".format(companion_docs_url=COMPANION_DOCS_URL, github_repo_url=GITHUB_REPO_URL)
     return response(start_response, "200 OK", html_page("Home", body), "text/html; charset=utf-8")
 
 
@@ -1504,23 +2796,374 @@ def route_docs(start_response):
     return response(start_response, "200 OK", html_page("Docs", body), "text/html; charset=utf-8")
 
 
+def route_connector_authorize(
+    environ, start_response, public_request_ref="", demo_state=""
+):
+    """Render one fail-closed human approval surface or explicit mock state."""
+    if environ.get("QUERY_STRING"):
+        return _connector_problem(start_response, "invalid_request")
+    if demo_state:
+        view = demo_authorization_view(demo_state)
+    else:
+        canonical_scope_digest = connector_scope_digest(CONNECTOR_V1_REQUESTED_SCOPES)
+
+        def terminal_view(status):
+            if status in ("pairing_request_expired", "authorization_code_expired", "expired"):
+                return production_authorization_view(authenticated=True, state="expired")
+            if status in ("pairing_canceled", "pairing_request_canceled", "canceled"):
+                return production_authorization_view(authenticated=True, state="canceled")
+            if status in (
+                "human_credential_authority_required",
+                "human_owner_required",
+                "company_unavailable",
+            ):
+                return production_authorization_view(
+                    authenticated=True, state="permission_denied"
+                )
+            if status == "human_account_session_required":
+                return production_authorization_view(authenticated=False)
+            return production_authorization_view(
+                authenticated=True,
+                state="error",
+                error_code="service_error",
+            )
+
+        rate_rejection = _connector_rate_rejection(start_response, _connector_operation_rate_limited(
+            environ,
+            "authorize",
+            "%s|%s" % (environ.get("REMOTE_ADDR") or "unknown", CONNECTOR_CLIENT_ID),
+        ))
+        if rate_rejection:
+            return rate_rejection
+        store = _store()
+        session_secret = _request_cookie(environ, HUMAN_SESSION_COOKIE)
+        session = store.authenticate_human_account_session(session_secret) if session_secret else None
+        if not session:
+            view = production_authorization_view(authenticated=False)
+        elif not session.get("companyId"):
+            catalog = store.human_connector_company_catalog(
+                session_secret, public_request_ref
+            )
+            items = catalog.get("companies") or [] if catalog.get("ok") else []
+            if not catalog.get("ok"):
+                view = terminal_view(catalog.get("status"))
+            elif items:
+                view = production_authorization_view(
+                    authenticated=True,
+                    state="company_selection",
+                    request=PairingRequestDisplay(
+                        public_request_ref=public_request_ref,
+                        client_name="LocalEndpoint Connect",
+                        agent_display_name=CONNECTOR_AGENT_DISPLAY_NAME,
+                        status_label="Pending approval",
+                        expires_at_label="Approval remains subject to its published deadline",
+                        scope_digest=canonical_scope_digest,
+                    ),
+                    companies=tuple(
+                        CompanyOption(
+                            item.get("companyRef") or "",
+                            item.get("companyLabel") or item.get("label") or "Company",
+                        )
+                        for item in items
+                    ),
+                )
+            else:
+                view = production_authorization_view(authenticated=True, state="permission_denied")
+        else:
+            catalog = store.human_connector_scope_catalog(
+                session_secret, public_request_ref
+            )
+            if not catalog.get("ok"):
+                view = terminal_view(catalog.get("status"))
+            else:
+                context_result = store.connector_pairing_authorization_context(
+                    session_secret, public_request_ref
+                )
+                if not context_result.get("ok"):
+                    view = terminal_view(context_result.get("status"))
+                else:
+                    context = context_result.get("authorizationContext") or {}
+                    requested_scopes = context.get("requestedScopes")
+                    scope_digest = context.get("scopeDigest")
+                    binding_valid = (
+                        requested_scopes == list(CONNECTOR_V1_REQUESTED_SCOPES)
+                        and isinstance(scope_digest, str)
+                        and hmac.compare_digest(scope_digest, canonical_scope_digest)
+                    )
+                    if not binding_valid:
+                        view = production_authorization_view(
+                            authenticated=True,
+                            state="error",
+                            error_code="service_error",
+                        )
+                    else:
+                        request_status = context.get("status") or ""
+                        status_labels = {
+                            "pending_human_approval": "Pending approval",
+                            "approved": "Approved - awaiting LocalEndpoint",
+                            "authorization_code_issued": "Authorization code issued",
+                            "exchanged": "Credential delivered - awaiting activation",
+                            "active": "Connected",
+                            "canceled": "Canceled",
+                            "expired": "Expired",
+                            "authorization_code_expired": "Expired",
+                        }
+                        request_display = PairingRequestDisplay(
+                            public_request_ref=public_request_ref,
+                            client_name="LocalEndpoint Connect",
+                            agent_display_name=CONNECTOR_AGENT_DISPLAY_NAME,
+                            status_label=status_labels.get(request_status, "Unavailable"),
+                            expires_at_label="Approval expires at %s"
+                            % (
+                                context.get("claimExpiresAt")
+                                or context.get("expiresAt")
+                                or "the published deadline"
+                            ),
+                            scope_digest=canonical_scope_digest,
+                        )
+                        workspaces = tuple(
+                            WorkspaceOption(
+                                item.get("workspaceRef") or "",
+                                item.get("label") or "Workspace",
+                            )
+                            for item in (catalog.get("workspaces") or [])
+                        )
+                        company = catalog.get("company") or {}
+                        common = {
+                            "authenticated": True,
+                            "request": request_display,
+                            "company_label": company.get("label") or "Selected company",
+                            "workspaces": workspaces,
+                        }
+                        if request_status == "pending_human_approval":
+                            if _human_recently_reauthenticated(session):
+                                view = production_authorization_view(**common)
+                            else:
+                                view = production_authorization_view(
+                                    state="reauth_required", **common
+                                )
+                        elif request_status == "approved":
+                            workspace_label = context.get("workspaceLabel")
+                            workspace_label_valid = (
+                                isinstance(workspace_label, str)
+                                and 1 <= len(workspace_label) <= 96
+                                and workspace_label == workspace_label.strip()
+                                and not any(
+                                    ord(character) < 32 or ord(character) == 127
+                                    for character in workspace_label
+                                )
+                            )
+                            if not workspace_label_valid:
+                                view = production_authorization_view(
+                                    authenticated=True,
+                                    state="error",
+                                    error_code="service_error",
+                                )
+                            else:
+                                try:
+                                    wake_up_url = build_wake_up_url(
+                                        context.get("wakeUpUrl")
+                                    )
+                                except PairingPolicyError:
+                                    view = production_authorization_view(
+                                        authenticated=True,
+                                        state="error",
+                                        error_code="service_error",
+                                    )
+                                else:
+                                    view = production_authorization_view(
+                                        state="approved",
+                                        result=ApprovalResultDisplay(
+                                            workspace_label=workspace_label,
+                                            agent_display_name=CONNECTOR_AGENT_DISPLAY_NAME,
+                                            wake_up_url=wake_up_url,
+                                            scope_digest=canonical_scope_digest,
+                                        ),
+                                        **common,
+                                    )
+                        elif request_status == "canceled":
+                            view = production_authorization_view(
+                                authenticated=True, state="canceled"
+                            )
+                        elif request_status in (
+                            "expired",
+                            "authorization_code_expired",
+                        ):
+                            view = production_authorization_view(
+                                authenticated=True, state="expired"
+                            )
+                        elif request_status in (
+                            "authorization_code_issued",
+                            "exchanged",
+                            "active",
+                        ):
+                            view = production_authorization_view(
+                                authenticated=True,
+                                state="error",
+                                error_code="request_conflict",
+                            )
+                        else:
+                            view = production_authorization_view(
+                                authenticated=True,
+                                state="error",
+                                error_code="service_error",
+                            )
+    fragment = render_connector_authorization(view)
+    connector_style = _asset_version("css/connector-authorize.css")
+    connector_asset = _asset_version("js/connector-authorize.js")
+    script_nonce = secrets.token_urlsafe(18)
+    page = html_page(
+        "Connector authorization",
+        fragment
+        + '<script src="/static/js/connector-authorize.js?v=%s" defer></script>'
+        % escape_html(connector_asset),
+        extra_head='<link rel="stylesheet" href="/static/css/connector-authorize.css?v=%s">'
+        % escape_html(connector_style),
+        script_nonce=script_nonce,
+    )
+    return response(
+        start_response,
+        "200 OK",
+        page,
+        "text/html; charset=utf-8",
+        headers=_connector_authorize_headers(script_nonce),
+    )
+
+
 def route_agent_setup(start_response):
     body = """
 <section class="page">
-  <h1>Agent Setup</h1>
-  <p>Agents create a free workspace with <code>POST /api/matm/agent-setup/free-account</code>. The returned key is shown once and must be saved by the human or host. MemoryEndpoints stores only a hash.</p>
-  <p>The free workspace quota is <strong>200 MB</strong>. Checkout, coupon use, and human-only setup are not required.</p>
-  <p>The <a href="/agent-coordination">Agent Coordination Quickstart</a> continues from the one-time key into registration, meeting rooms, memory, current messages, acknowledgements, and evidence.</p>
-  <p>After registration, inspect the <a href="/api/matm/uai-memory/contract">UAIX active-memory contract</a>. A browser AI with no durable filesystem can use the protected virtual package. Normal filesystem agents keep local <code>.uai</code> bodies local and use hash-only project edit claims when several agents share a codebase.</p>
-  <p>The <a href="/console">human verification console</a> lets a human-side agent enter a saved key, inspect the company/workspace/project boundary, read memory, send current messages to all agents or a particular agent, acknowledge notifications, and see redacted receipts.</p>
-  <h2>Copy-Safe Setup</h2>
-  <p>These examples use placeholder labels only. Save the returned workspace key outside source control, logs, prompts, and public chat.</p>
-  <h3>Bash</h3>
-  <pre><code>curl -sS -X POST "https://memoryendpoints.com/api/matm/agent-setup/free-account" \\
+  <header class="setup-heading">
+    <p class="eyebrow">Secure workspace onboarding</p>
+    <h1>Start using MemoryEndpoints</h1>
+    <p class="lead">Create a bounded Account, Company, Workspace, and Project, redeem a human-approved agent invitation, or sign in with an existing governed credential.</p>
+  </header>
+  <section class="setup-onboarding" data-agent-setup>
+    <div class="setup-choice-grid">
+      <article class="setup-card setup-card-primary">
+        <p class="setup-step">New workspace</p>
+        <h2>Create a free 200 MB workspace</h2>
+        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier.</p>
+        <form class="setup-form" method="post" action="/api/matm/agent-setup/free-account" data-agent-setup-form>
+          <label>
+            Company name
+            <input name="companyLabel" autocomplete="organization" maxlength="120" placeholder="Example Company" required>
+          </label>
+          <label>
+            Workspace name
+            <input name="label" autocomplete="off" maxlength="120" placeholder="Agent Operations" required>
+          </label>
+          <label>
+            First project
+            <input name="projectLabel" autocomplete="off" maxlength="120" placeholder="Memory Integration" required>
+          </label>
+          <button class="button primary" type="submit" data-agent-setup-submit>Create workspace</button>
+        </form>
+        <noscript><p class="setup-noscript">JavaScript is required for the interactive form. Use the copy-safe API examples below; this form never sends labels in a URL.</p></noscript>
+      </article>
+      <article class="setup-card setup-card-existing">
+        <p class="setup-step">Existing human account or company</p>
+        <h2>Already have human access?</h2>
+        <p>Sign in with your username and password, or prove company-master ownership to create an account. Agent credentials cannot authenticate human controls.</p>
+        <a class="button" href="/human">Open Human Access</a>
+        <a class="setup-guide-link" href="/agent-coordination">Read the agent coordination guide</a>
+        <div class="setup-boundary-note">
+          <strong>Local memory remains local</strong>
+          <span>Your active <code>.uai</code> files stay on your device. Hosted MemoryEndpoints memory adds protected, durable team context.</span>
+        </div>
+      </article>
+    </div>
+    <p class="setup-status" role="status" aria-live="polite" data-agent-setup-status>Enter labels to create your workspace. No checkout is required.</p>
+    <section class="setup-result" data-agent-setup-result hidden>
+      <div class="setup-result-heading" tabindex="-1" data-agent-setup-result-heading>
+        <p class="setup-step">Workspace created</p>
+        <h2>Save both one-time values now</h2>
+        <p>This page will not remember them after you leave or refresh. Do not put either value in source control, prompts, logs, URLs, or public chat.</p>
+      </div>
+      <dl class="setup-result-grid">
+        <div><dt>Account</dt><dd data-agent-setup-account-id></dd></div>
+        <div><dt>Company</dt><dd data-agent-setup-company-id></dd></div>
+        <div><dt>Workspace</dt><dd data-agent-setup-workspace-id></dd></div>
+        <div><dt>Project</dt><dd data-agent-setup-project-id></dd></div>
+      </dl>
+      <label class="setup-key-label" for="one-time-workspace-key">One-time company master credential</label>
+      <p class="setup-key-help" id="one-time-workspace-key-help">This credential can approve, invite, and revoke agents for the company. Copy only after an explicit action; clipboard history is controlled by your device.</p>
+      <div class="setup-key-row">
+        <input id="one-time-workspace-key" type="password" readonly autocomplete="new-password" spellcheck="false" aria-describedby="one-time-workspace-key-help" data-agent-setup-key>
+        <button class="button" type="button" aria-pressed="false" data-agent-setup-key-toggle>Show credential</button>
+        <button class="button primary" type="button" data-agent-setup-copy-key>Copy credential</button>
+      </div>
+      <label class="setup-key-label" for="one-time-human-owner-recovery">One-time exceptional recovery secret</label>
+      <p class="setup-key-help" id="one-time-human-owner-recovery-help">This secret authorizes only bounded export and company-closure recovery. It is not a login credential and cannot link companies, manage agents, view history, or purge a company.</p>
+      <div class="setup-key-row">
+        <input id="one-time-human-owner-recovery" type="password" readonly autocomplete="new-password" spellcheck="false" aria-describedby="one-time-human-owner-recovery-help" data-agent-setup-recovery>
+        <button class="button" type="button" aria-pressed="false" data-agent-setup-recovery-toggle>Show recovery secret</button>
+        <button class="button primary" type="button" data-agent-setup-copy-recovery>Copy recovery secret</button>
+      </div>
+      <label class="setup-key-saved">
+        <input type="checkbox" data-agent-setup-key-saved>
+        I saved this one-time company master credential in a secure secret store.
+      </label>
+      <label class="setup-key-saved">
+        <input type="checkbox" data-agent-setup-recovery-saved>
+        I saved the exceptional recovery secret separately in a secure recovery store.
+      </label>
+      <div class="setup-result-actions">
+        <button class="button primary" type="button" disabled data-agent-setup-continue>Create your human account</button>
+        <button class="button" type="button" data-agent-setup-reset>Clear both values and create another</button>
+      </div>
+    </section>
+    <article class="setup-card setup-card-invite" data-human-invite-redemption>
+      <div class="setup-invite-heading" tabindex="-1" data-human-invite-redemption-heading>
+        <p class="setup-step">Approved agent invitation</p>
+        <h2>Claim your bound agent credential</h2>
+        <p>The invitation fragment is removed from the address bar before redemption. It is single-use, expires, and never enters browser storage.</p>
+      </div>
+      <p class="setup-status" role="status" aria-live="polite" aria-atomic="true" data-human-invite-redemption-status>Open the complete human-approved invitation URL to continue.</p>
+      <form class="setup-form setup-invite-form" data-human-invite-redemption-form hidden>
+        <p class="setup-boundary-note"><strong>One irreversible claim</strong><span>Redeeming binds the returned private credential to the approved agent name and immutable scope. A retry cannot issue a second credential.</span></p>
+        <button class="button primary" type="submit" data-human-invite-redemption-submit>Redeem invitation once</button>
+      </form>
+      <section class="setup-result" data-human-invite-redemption-result hidden>
+        <div class="setup-result-heading" tabindex="-1" data-human-invite-redemption-result-heading>
+          <p class="setup-step">Invitation redeemed</p>
+          <h3>Save your bound agent credential now</h3>
+          <p>This credential is shown once. It cannot invite or revoke agents, and its scope cannot be changed.</p>
+        </div>
+        <dl class="setup-result-grid">
+          <div><dt>Agent</dt><dd data-human-invite-agent-name></dd></div>
+          <div><dt>Scope</dt><dd data-human-invite-agent-scope></dd></div>
+          <div><dt>Workspace</dt><dd data-human-invite-workspace-id></dd></div>
+          <div><dt>Project</dt><dd data-human-invite-project-id></dd></div>
+        </dl>
+        <label class="setup-key-label" for="one-time-agent-token">One-time agent credential</label>
+        <p class="setup-key-help" id="one-time-agent-token-help">Keep this private. Do not place it in prompts, logs, URLs, source code, screenshots, or ordinary chat.</p>
+        <div class="setup-key-row">
+          <input id="one-time-agent-token" type="password" readonly autocomplete="new-password" spellcheck="false" aria-describedby="one-time-agent-token-help" data-human-invite-token>
+          <button class="button" type="button" aria-pressed="false" data-human-invite-token-toggle>Show credential</button>
+          <button class="button primary" type="button" data-human-invite-token-copy>Copy credential</button>
+        </div>
+        <label class="setup-key-saved">
+          <input type="checkbox" data-human-invite-token-saved>
+          I saved this one-time agent credential in a secure secret store.
+        </label>
+        <div class="setup-result-actions">
+          <button class="button primary" type="button" disabled data-human-invite-token-continue>Continue to console</button>
+          <button class="button" type="button" data-human-invite-token-clear>Clear credential</button>
+        </div>
+      </section>
+      <noscript><p class="setup-noscript">JavaScript is required because invitation secrets remain in the URL fragment and must never be sent in a normal page request.</p></noscript>
+    </article>
+  </section>
+  <details class="setup-code-examples">
+    <summary>Copy-Safe Setup for agents and developers</summary>
+    <p>These examples use placeholder labels only. Save the returned company master credential outside source control, logs, prompts, URLs, and public chat.</p>
+    <h3>Bash</h3>
+    <pre><code>curl -sS -X POST "https://memoryendpoints.com/api/matm/agent-setup/free-account" \\
   -H "Content-Type: application/json" \\
   --data '{"companyLabel":"Example Company","label":"Example Workspace","projectLabel":"Example Project"}'</code></pre>
-  <h3>PowerShell</h3>
-  <pre><code>$body = @{
+    <h3>PowerShell</h3>
+    <pre><code>$body = @{
   companyLabel = "Example Company"
   label = "Example Workspace"
   projectLabel = "Example Project"
@@ -1531,6 +3174,7 @@ Invoke-RestMethod `
   -Uri "https://memoryendpoints.com/api/matm/agent-setup/free-account" `
   -ContentType "application/json" `
   -Body $body</code></pre>
+  </details>
 </section>
 """
     return response(start_response, "200 OK", html_page("Agent Setup", body), "text/html; charset=utf-8")
@@ -1540,31 +3184,25 @@ def route_agent_coordination(start_response):
     body = """
 <section class="page">
   <h1>Agent Coordination Quickstart</h1>
-  <p>This is the shortest public path from a one-time workspace key to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+  <p>This is the shortest public path from a governed, human-approved agent credential to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+  <p>Before using this flow, request a meaningful company-scoped agent name, have a company master or authenticated human owner approve it, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. LocalEndpoint Connect should instead use <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a>; arbitrary company-master registration is not supported.</p>
   <h2>Choose The Active-Memory Mode</h2>
-  <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after registering. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the workspace key and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
+  <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after invite redemption. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the governed credential and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
   <h2>Inputs</h2>
   <ul>
     <li><code>MEMORYENDPOINTS_BASE_URL</code>: <code>https://memoryendpoints.com</code></li>
     <li><code>MEMORYENDPOINTS_WORKSPACE_ID</code>: workspace id returned by setup.</li>
-    <li><code>MEMORYENDPOINTS_WORKSPACE_KEY</code>: one-time workspace key returned by setup; save in a secret store only.</li>
-    <li><code>MEMORYENDPOINTS_AGENT_ID</code>: stable public-safe agent id, such as <code>localendpoint-agent</code> or <code>tinyrustlm-agent</code>.</li>
+    <li><code>MEMORYENDPOINTS_AGENT_TOKEN</code>: one-time agent credential returned by approved invite redemption; save in a secret store only.</li>
+    <li><code>MEMORYENDPOINTS_AGENT_ID</code>: the stable human-readable agent id bound by that invite, such as <code>tinyrustlm-memory-agent</code>.</li>
   </ul>
   <h2>PowerShell Flow</h2>
   <pre><code>$env:MEMORYENDPOINTS_BASE_URL = "https://memoryendpoints.com"
 $env:MEMORYENDPOINTS_WORKSPACE_ID = "&lt;workspace-id&gt;"
-$env:MEMORYENDPOINTS_AGENT_ID = "example-agent"
-$env:MEMORYENDPOINTS_WORKSPACE_KEY = "&lt;workspace-key-shown-once&gt;"
+$env:MEMORYENDPOINTS_AGENT_ID = "&lt;approved-bound-agent-id&gt;"
+$env:MEMORYENDPOINTS_AGENT_TOKEN = "&lt;agent-credential-shown-once&gt;"
 $headers = @{
-  Authorization = "Bearer $env:MEMORYENDPOINTS_WORKSPACE_KEY"
+  Authorization = "Bearer $env:MEMORYENDPOINTS_AGENT_TOKEN"
 }
-
-$registerBody = @{
-  workspaceId = $env:MEMORYENDPOINTS_WORKSPACE_ID
-  agentId = $env:MEMORYENDPOINTS_AGENT_ID
-  displayName = "Example Agent"
-} | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/agents/register" -Headers $headers -ContentType "application/json" -Body $registerBody
 
 $rooms = Invoke-RestMethod -Method Get -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/meeting-rooms?agent_id=$env:MEMORYENDPOINTS_AGENT_ID" -Headers $headers
 $projectRoom = $rooms.items | Where-Object { $_.scope -eq "project" } | Select-Object -First 1
@@ -1655,18 +3293,56 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
     return response(start_response, "200 OK", html_page("Agent Coordination", body), "text/html; charset=utf-8")
 
 
-def route_console(start_response):
+def _human_page_authenticated(environ):
+    session_secret = _request_cookie(environ, HUMAN_SESSION_COOKIE)
+    if not session_secret:
+        return False
+    try:
+        return bool(_store().authenticate_human_account_session(session_secret))
+    except RuntimeError:
+        return False
+
+
+def route_human_access_page(environ, start_response, demo=False):
+    authenticated = False if demo else _human_page_authenticated(environ)
+    version = _asset_version(
+        "css/human-access.css",
+        "js/human-access.js",
+        "js/human-access-bootstrap.js",
+    )
+    main = render_human_access_main(authenticated=authenticated, demo=demo)
+    page = html_page(
+        "Human access Demo" if demo else "Human access",
+        main,
+        extra_head='<link rel="stylesheet" href="/static/css/human-access.css?v=%s">' % escape_html(version),
+        extra_scripts=(
+            '<script src="/static/js/human-access.js?v=%s"></script>'
+            '<script src="/static/js/human-access-bootstrap.js?v=%s"></script>'
+        ) % (escape_html(version), escape_html(version)),
+    )
+    headers = None if demo else [
+        ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
+        ("Pragma", "no-cache"),
+        ("Referrer-Policy", "no-referrer"),
+        ("X-Frame-Options", "DENY"),
+    ]
+    return response(start_response, "200 OK", page, "text/html; charset=utf-8", headers)
+
+
+def route_console(start_response, demo=False):
     body = """
-<section class="console-shell debug-json-hidden" data-matm-console data-console-default-workflow="workspace" data-console-active-workflow="workspace">
+<section class="console-shell debug-json-hidden" data-matm-console data-console-demo-mode="__DEMO_MODE__" data-console-default-workflow="workspace" data-console-active-workflow="workspace">
+  __TOUR_BANNER__
+  __TOUR_NOSCRIPT__
   <header class="console-hero">
     <div>
       <p class="eyebrow">Operator console</p>
       <h1>Human Verification Console</h1>
-      <p>Load a saved workspace key, inspect scoped memory, send agent messages, and confirm receipts without exposing private credentials.</p>
+      <p>Load a governed credential, verify its bound identity and immutable scope, then operate only within the permissions returned by MemoryEndpoints.</p>
     </div>
     <aside class="operator-guardrails" aria-label="Console guardrails">
       <span class="status-badge neutral" data-console-surface-badge>Surface pending</span>
-      <span class="status-badge good">Key masked</span>
+      <span class="status-badge good">Credential masked</span>
       <span class="status-badge good">Raw JSON hidden</span>
       <span class="status-badge good">Copy-safe IDs</span>
     </aside>
@@ -1674,6 +3350,7 @@ def route_console(start_response):
   <div class="console-utility-bar">
     <nav class="console-nav" aria-label="Console workflow">
       <a href="#workspace-overview">Workspace</a>
+      <a href="#human-access">Access</a>
       <a href="#memory-workflow">Memory</a>
       <a href="#sync-workflow">Sync</a>
       <a href="#review-queue">Reviews</a>
@@ -1685,6 +3362,7 @@ def route_console(start_response):
       <div class="console-view-switcher" role="group" aria-label="Workflow focus" data-console-view-switcher>
         <button type="button" data-console-workflow-view="all" aria-pressed="false">All</button>
         <button type="button" class="is-active" data-console-workflow-view="workspace" aria-pressed="true">Workspace</button>
+        <button type="button" data-console-workflow-view="access" aria-pressed="false">Access</button>
         <button type="button" data-console-workflow-view="memory" aria-pressed="false">Memory</button>
         <button type="button" data-console-workflow-view="sync" aria-pressed="false">Sync</button>
         <button type="button" data-console-workflow-view="reviews" aria-pressed="false">Reviews</button>
@@ -1698,16 +3376,28 @@ def route_console(start_response):
       </label>
     </div>
   </div>
-  <form class="console-grid console-auth-grid" data-console-auth>
-    <label>Workspace key
-      <input type="password" name="workspaceKey" autocomplete="off" placeholder="me_live_..." required>
+  <form class="console-grid console-auth-grid" data-console-auth__AUTH_HIDDEN__>
+    <label>Governed credential
+      <input type="password" name="credential" autocomplete="off" placeholder="company master or bound agent credential" required data-console-credential>
     </label>
-    <label>Human agent id
-      <input name="agentId" value="human-verifier-agent" required>
-    </label>
-    <button class="button primary" type="submit">Load workspace</button>
+    <button class="button primary" type="submit">Verify credential</button>
   </form>
-  <div class="console-status" data-console-status>Waiting for a key.</div>
+  <section class="console-principal" data-console-principal hidden aria-label="Authenticated principal">
+    <div><span class="summary-label">Credential</span><strong data-console-principal-type></strong></div>
+    <div><span class="summary-label">Identity</span><strong data-console-principal-name></strong></div>
+    <div><span class="summary-label">Immutable grant</span><strong data-console-principal-scope></strong></div>
+    <span class="status-badge neutral" data-console-principal-permission></span>
+  </section>
+  <form class="console-workspace-picker" data-console-workspace-select hidden>
+    <label>Operational workspace
+      <select name="workspaceId" required data-console-resource-workspace>
+        <option value="">Choose a workspace</option>
+      </select>
+    </label>
+    <button class="button primary" type="submit">Open selected workspace</button>
+    <p>Company masters must explicitly select a workspace. MemoryEndpoints never infers the first workspace.</p>
+  </form>
+  <div class="console-status" role="status" aria-live="polite" aria-atomic="true" data-console-status>Waiting for a governed credential.</div>
   <div class="console-command-bar" data-console-command-bar aria-label="Loaded workspace commands">
     <div class="command-bar-summary">
       <span class="summary-label">Command Bar</span>
@@ -1716,6 +3406,7 @@ def route_console(start_response):
     </div>
     <div class="command-bar-actions">
       <button class="button compact" type="button" data-console-command="memory">Search Verification</button>
+      <button class="button compact" type="button" data-console-command="access">Agent Access</button>
       <button class="button compact" type="button" data-console-command="long-term">Long-Term Memory</button>
       <button class="button compact" type="button" data-console-command="sync">Sync</button>
       <button class="button compact" type="button" data-console-command="meetings">Meetings</button>
@@ -1743,7 +3434,7 @@ def route_console(start_response):
         <span class="section-kicker">At a glance</span>
         <h2>Operator Desk</h2>
       </div>
-      <span class="status-badge neutral">workspace key required</span>
+      <span class="status-badge neutral">credential required</span>
     </div>
     <div class="operator-desk-grid">
       <section class="operator-desk-panel" data-console-desk-boundary>
@@ -1762,6 +3453,124 @@ def route_console(start_response):
         <h3>Evidence</h3>
         <p class="empty-state">Receipt and audit rows appear after refresh.</p>
       </section>
+    </div>
+  </section>
+  <section class="console-panel access-control-panel" id="human-access" data-console-workflow-target="access" data-console-human-access>
+    <div class="section-heading">
+      <div>
+        <span class="section-kicker">Governed credentials</span>
+        <h2>Agent Access</h2>
+      </div>
+      <span class="status-badge neutral" data-console-human-access-capability>Credential verification required</span>
+    </div>
+    <p class="console-access-intro">Company masters can request a recognizable agent name, approve it, issue one expiring invitation, and revoke invitations or agent credentials. Agent credentials can never manage access.</p>
+    <div class="console-status" role="status" aria-live="polite" aria-atomic="true" data-console-human-access-status>Verify a governed credential to inspect access permissions.</div>
+    <div class="access-denied-state" data-console-human-access-denied>
+      <strong>Access management is locked.</strong>
+      <span>Only a company master with the required server-provided permissions can use these controls.</span>
+    </div>
+    <div class="access-management" data-console-human-access-management hidden>
+      <section class="access-summary-card" aria-label="Agent naming policy">
+        <div>
+          <span class="section-kicker">Human-recognizable identity</span>
+          <h3>Request an agent name</h3>
+        </div>
+        <p data-console-human-access-name-policy>Loading the company naming policy…</p>
+      </section>
+      <form class="console-grid access-request-form" data-console-human-access-request>
+        <label>Canonical agent name
+          <input name="requestedName" autocomplete="off" placeholder="memoryendpoints-frontend-agent" required>
+        </label>
+        <label>Display name
+          <input name="displayName" autocomplete="off" placeholder="MemoryEndpoints Frontend Agent" required>
+        </label>
+        <label class="wide">Immutable grant
+          <select name="scopeKey" required data-console-access-scope-select>
+            <option value="">Choose an approved company scope</option>
+          </select>
+        </label>
+        <label class="wide">Human approval justification
+          <textarea name="justification" rows="3" maxlength="1000" placeholder="Why this agent needs this exact scope" required></textarea>
+        </label>
+        <label>Assignment project
+          <select name="assignmentProjectId" data-console-access-project-select>
+            <option value="">No project context</option>
+          </select>
+        </label>
+        <label>Assignment task
+          <input name="assignmentTask" maxlength="160" placeholder="Initial bounded task">
+        </label>
+        <label>Replaces credential
+          <select name="supersedesCredentialId" data-console-access-supersedes-select>
+            <option value="">New agent or no replacement</option>
+          </select>
+        </label>
+        <label>Transfer memory lineage from
+          <select name="memoryTransferFromCredentialId" data-console-access-transfer-select>
+            <option value="">No prior credential lineage</option>
+          </select>
+        </label>
+        <button class="button primary" type="submit">Submit name request</button>
+      </form>
+      <div class="access-toolbar" data-console-access-scope-catalog>
+        <label>Status filter
+          <select data-console-human-invite-filter>
+            <option value="">All access states</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+            <option value="issued">Issued</option>
+          </select>
+        </label>
+        <button class="button" type="button" data-console-human-access-refresh>Refresh access inventory</button>
+      </div>
+      <div class="access-inventory-grid">
+        <section>
+          <div class="section-heading compact-heading">
+            <div><span class="section-kicker">Human approval</span><h3>Name requests</h3></div>
+          </div>
+          <div class="console-results" data-console-human-invite-list>
+            <p class="empty-state">Approved and pending name requests will appear here.</p>
+          </div>
+        </section>
+        <section>
+          <div class="section-heading compact-heading">
+            <div><span class="section-kicker">One-time delivery</span><h3>Invitations</h3></div>
+          </div>
+          <div class="console-results" data-console-agent-invite-list>
+            <p class="empty-state">Invitation status will appear here. Secrets never appear in inventory.</p>
+          </div>
+        </section>
+        <section>
+          <div class="section-heading compact-heading">
+            <div><span class="section-kicker">Revocable authority</span><h3>Agent credentials</h3></div>
+          </div>
+          <div class="console-results" data-console-agent-token-list>
+            <p class="empty-state">Redacted agent credential metadata will appear here.</p>
+          </div>
+        </section>
+      </div>
+      <section class="setup-result access-secret-result" data-console-human-invite-issuance-result hidden>
+        <div class="setup-result-heading" tabindex="-1" data-console-human-invite-issuance-heading>
+          <p class="setup-step">Invitation issued</p>
+          <h3>Deliver this URL through a private channel</h3>
+          <p>The fragment is shown once. Saving it in ordinary chat, logs, analytics, tickets, or source code would expose the invitation.</p>
+        </div>
+        <label class="setup-key-label" for="one-time-agent-invite-url">One-time invitation URL</label>
+        <div class="setup-key-row">
+          <input id="one-time-agent-invite-url" type="password" readonly autocomplete="new-password" spellcheck="false" data-console-human-invite-url>
+          <button class="button" type="button" aria-pressed="false" data-console-human-invite-url-toggle>Show URL</button>
+          <button class="button primary" type="button" data-console-human-invite-url-copy>Copy URL</button>
+        </div>
+        <label class="setup-key-saved">
+          <input type="checkbox" data-console-human-invite-url-saved>
+          I transferred this URL to the approved agent through a private channel.
+        </label>
+        <button class="button" type="button" data-console-human-invite-url-clear>Clear one-time URL</button>
+      </section>
+      <div class="console-results" aria-live="polite" data-console-human-access-receipt>
+        <p class="empty-state">Safe approval, issuance, and revocation receipts will appear here.</p>
+      </div>
     </div>
   </section>
   <section class="console-panel" id="workspace-overview" data-console-workflow-target="workspace">
@@ -1789,9 +3598,6 @@ def route_console(start_response):
       <span class="status-badge good">filesystem excluded</span>
     </div>
     <form class="console-grid" data-console-memory>
-      <label>Actor agent
-        <input name="actorAgentId" value="human-verifier-agent" required>
-      </label>
       <label>Scope
         <select name="scope">
           <option value="company">company</option>
@@ -1852,7 +3658,7 @@ def route_console(start_response):
         </select>
       </label>
       <label>Source prefix
-        <input name="sourcePrefix" placeholder="docs/long-term-memory/">
+        <input name="sourcePrefix" placeholder="optional hosted source prefix">
       </label>
       <label>Tag filter
         <input name="tag" placeholder="long-term-memory-migration">
@@ -1861,7 +3667,7 @@ def route_console(start_response):
         <input name="eventId" placeholder="mem-...">
       </label>
       <label>Actor filter
-        <input name="actorAgentId" placeholder="human-verifier-agent">
+        <input name="actorAgentId" placeholder="optional agent id">
       </label>
       <button class="button" type="submit">Search</button>
       <button class="button" type="button" data-console-clear-search-filters>Clear filters</button>
@@ -1893,14 +3699,11 @@ def route_console(start_response):
       <p class="empty-state">Sync capabilities and retention policy will appear here.</p>
     </div>
     <form class="console-grid" data-console-sync-device>
-      <label>Agent id
-        <input name="agentId" value="human-verifier-agent" required>
-      </label>
       <label>Device id
-        <input name="deviceId" value="human-verifier-device" placeholder="client-stable device id">
+        <input name="deviceId" placeholder="client-stable device id">
       </label>
       <label>Label
-        <input name="label" value="Human verification sync device">
+        <input name="label" placeholder="optional device label">
       </label>
       <button class="button primary" type="submit">Register device</button>
       <button class="button" type="button" data-console-sync-device-rotate>Rotate device</button>
@@ -1910,17 +3713,14 @@ def route_console(start_response):
       <p class="empty-state">Device authority confirmations will appear here.</p>
     </div>
     <form class="console-grid" data-console-sync-mutation>
-      <label>Actor agent
-        <input name="actorAgentId" value="human-verifier-agent" required>
-      </label>
       <label>Device id
-        <input name="deviceId" value="human-verifier-device" required>
+        <input name="deviceId" placeholder="registered device id" required>
       </label>
       <label>Device epoch
         <input name="deviceEpoch" type="number" min="1" step="1" value="1" required>
       </label>
       <label>Logical memory id
-        <input name="logicalMemoryId" value="human-verifier-sync-memory" required>
+        <input name="logicalMemoryId" placeholder="stable logical memory id" required>
       </label>
       <label>Operation
         <select name="operation">
@@ -1950,13 +3750,13 @@ def route_console(start_response):
         </select>
       </label>
       <label class="wide">Title
-        <input name="title" value="Human console sync verification" required>
+        <input name="title" placeholder="public-safe mutation title" required>
       </label>
       <label class="wide">Public-safe summary
-        <textarea name="summary" rows="3" required>Human console submitted an idempotent distributed sync mutation and will read back receipt, change, and head evidence.</textarea>
+        <textarea name="summary" rows="3" placeholder="Describe the public-safe change and expected readback evidence" required></textarea>
       </label>
       <label class="wide">Source reference
-        <input name="sourceRef" value="memoryendpoints://console/sync-workflow">
+        <input name="sourceRef" placeholder="optional public-safe source reference">
       </label>
       <button class="button primary" type="submit">Submit mutation</button>
     </form>
@@ -1971,7 +3771,7 @@ def route_console(start_response):
         <input name="afterSequence" type="number" min="0" step="1" value="0">
       </label>
       <label>Logical memory id
-        <input name="logicalMemoryId" value="human-verifier-sync-memory">
+        <input name="logicalMemoryId" placeholder="optional logical memory id">
       </label>
       <label>Limit
         <select name="limit">
@@ -2011,7 +3811,7 @@ def route_console(start_response):
         </select>
       </label>
       <label>Source prefix
-        <input name="sourcePrefix" placeholder="docs/long-term-memory/">
+        <input name="sourcePrefix" placeholder="optional hosted source prefix">
       </label>
       <label>Tag filter
         <input name="tag" placeholder="long-term-memory-migration">
@@ -2029,7 +3829,7 @@ def route_console(start_response):
         </select>
       </label>
       <label>Actor filter
-        <input name="actorAgentId" placeholder="MemoryEndpoints-Backend-Agent">
+        <input name="actorAgentId" placeholder="optional agent id">
       </label>
       <button class="button" type="submit">Refresh reviews</button>
       <button class="button" type="button" data-console-long-term-reviews>Long-term reviews</button>
@@ -2039,9 +3839,6 @@ def route_console(start_response):
       <p class="empty-state">Review queue items will appear as promotion rows.</p>
     </div>
     <form class="console-grid" data-console-review-decision>
-      <label>Reviewer agent
-        <input name="reviewerAgentId" value="human-verifier-agent" required>
-      </label>
       <label>Review id
         <input name="reviewId" placeholder="select or paste a review id" required>
       </label>
@@ -2106,13 +3903,10 @@ def route_console(start_response):
         </select>
       </label>
       <label>Scope id
-        <input name="scopeId" value="goal-human-verification" required>
-      </label>
-      <label>Creator agent
-        <input name="creatorAgentId" value="human-verifier-agent" required>
+        <input name="scopeId" placeholder="goal or task scope id" required>
       </label>
       <label>Name
-        <input name="name" value="Human verification goal meeting">
+        <input name="name" placeholder="public-safe room name">
       </label>
       <label class="wide">Purpose
         <textarea name="purpose" rows="2">Public-safe goal or task coordination room for focused agent work, blockers, evidence, and handoff.</textarea>
@@ -2129,29 +3923,23 @@ def route_console(start_response):
       <label>Destination room id
         <input name="destinationRoomId" placeholder="project / goal / task room id" required>
       </label>
-      <label>Coordinator agent
-        <input name="coordinatorAgentId" value="codex-coordinator" required>
-      </label>
       <label>Routed agent
-        <input name="routedAgentId" value="tinyrustlm-agent" required>
+        <input name="routedAgentId" placeholder="agent receiving the assignment" required>
       </label>
       <label>Lane
-        <input name="lane" value="optional-public-safe-memory-connector" required>
+        <input name="lane" placeholder="public-safe work lane" required>
       </label>
       <label class="wide">Specific goal
-        <textarea name="specificGoal" rows="2" required>Build and verify the optional MemoryEndpoints.com connector, then post public-safe evidence back to the destination room.</textarea>
+        <textarea name="specificGoal" rows="2" placeholder="One bounded goal for the routed agent" required></textarea>
       </label>
       <label class="wide">Expected evidence
-        <textarea name="expectedEvidence" rows="3" required>Routes exercised
-Tests run
-Redaction result
-Remaining blocker</textarea>
+        <textarea name="expectedEvidence" rows="3" placeholder="One public-safe evidence item per line" required></textarea>
       </label>
       <label class="wide">Next action
-        <textarea name="nextAction" rows="2" required>Open the destination room, follow the connector contract, and post implementation evidence.</textarea>
+        <textarea name="nextAction" rows="2" placeholder="The first action to take in the destination room" required></textarea>
       </label>
       <label class="wide">Support plan
-        <textarea name="supportPlan" rows="2" required>MemoryEndpoints coordinator will review architecture, verify API/UI dogfood evidence, and route blockers into focused goal or task rooms.</textarea>
+        <textarea name="supportPlan" rows="2" placeholder="Optional coordinator support and escalation path"></textarea>
       </label>
       <button class="button primary" type="submit">Create routing decision</button>
       <button class="button" type="button" data-console-refresh-routing-decisions>Refresh routing</button>
@@ -2171,9 +3959,6 @@ Remaining blocker</textarea>
     <form class="console-grid" data-console-meeting-message>
       <label>Room id
         <input name="roomId" placeholder="select a meeting room" required>
-      </label>
-      <label>Sender agent
-        <input name="senderAgentId" value="human-verifier-agent" required>
       </label>
       <label class="wide">Safe meeting note
         <textarea name="safeSummary" rows="3" required>Meeting note: please use this room for company, workspace, or project coordination instead of hidden side channels.</textarea>
@@ -2203,9 +3988,6 @@ Remaining blocker</textarea>
       <span class="status-badge neutral">broadcast or targeted</span>
     </div>
     <form class="console-grid" data-console-message>
-      <label>Sender agent
-        <input name="senderAgentId" value="human-verifier-agent" required>
-      </label>
       <label>Target agent
         <input name="targetAgentId" placeholder="blank means every agent">
       </label>
@@ -2220,10 +4002,6 @@ Remaining blocker</textarea>
     </form>
     <div class="agent-shortcuts" data-console-message-targets aria-label="Message target shortcuts">
       <button class="button compact" type="button" data-console-target-agent="">Broadcast</button>
-      <button class="button compact" type="button" data-console-target-agent="human-verifier-agent">Human</button>
-      <button class="button compact" type="button" data-console-target-agent="codex-agent">Codex</button>
-      <button class="button compact" type="button" data-console-target-agent="MemoryEndpoints-Backend-Agent">Backend</button>
-      <button class="button compact" type="button" data-console-target-agent="swarm-observer-agent">Observer</button>
     </div>
     <div class="console-results message-delivery" data-console-message-delivery>
       <p class="empty-state">Delivery details will appear after a message is sent.</p>
@@ -2235,8 +4013,8 @@ Remaining blocker</textarea>
       <p class="empty-state">All-lane unread counts will appear after the workspace loads.</p>
     </div>
     <form class="console-grid" data-console-inbox>
-      <label>Inbox agent
-        <input name="agentId" value="human-verifier-agent" required>
+      <label>Recipient lane
+        <input name="inboxAgentId" placeholder="defaults to the bound agent identity">
       </label>
       <label>Message id
         <input name="messageId" placeholder="optional exact message id">
@@ -2256,12 +4034,6 @@ Remaining blocker</textarea>
       <button class="button" type="button" data-console-ack>Mark first unread read</button>
       <button class="button" type="button" data-console-ack-visible>Mark visible read</button>
     </form>
-    <div class="agent-shortcuts" data-console-inbox-lanes aria-label="Inbox lane shortcuts">
-      <button class="button compact" type="button" data-console-inbox-agent="human-verifier-agent">Human inbox</button>
-      <button class="button compact" type="button" data-console-inbox-agent="codex-agent">Codex inbox</button>
-      <button class="button compact" type="button" data-console-inbox-agent="MemoryEndpoints-Backend-Agent">Backend inbox</button>
-      <button class="button compact" type="button" data-console-inbox-agent="swarm-observer-agent">Observer inbox</button>
-    </div>
     <div class="console-results acknowledgement-summary" data-console-ack-summary>
       <p class="empty-state">Acknowledgement receipts will appear after messages are marked read.</p>
     </div>
@@ -2285,10 +4057,6 @@ Remaining blocker</textarea>
       <label>Receipt consumer
         <select name="consumerAgentId">
           <option value="">current inbox agent</option>
-          <option value="human-verifier-agent">human-verifier-agent</option>
-          <option value="codex-agent">codex-agent</option>
-          <option value="MemoryEndpoints-Backend-Agent">MemoryEndpoints-Backend-Agent</option>
-          <option value="swarm-observer-agent">swarm-observer-agent</option>
         </select>
       </label>
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
@@ -2333,21 +4101,45 @@ Remaining blocker</textarea>
     </details>
   </section>
 </section>
+__MOCK_SCRIPT__
 """
+    if demo:
+        banner = """
+  <aside class="demo-callout" aria-label="Public product tour">
+    <div><span class="status-badge warn">Mock data</span><strong> Product tour using the authenticated operator interface</strong></div>
+    <p>Every workflow below uses the real console methods and renderers with a fail-closed session transport. No protected workflow data leaves this page, and demo changes are not persisted. <a href="/tour/knowledge">Explore the knowledge tour</a> or <a href="/console">open the authenticated console</a>.</p>
+  </aside>"""
+        noscript = """
+  <noscript><aside class="demo-callout demo-noscript" aria-label="JavaScript required for the product tour"><strong>JavaScript is required for the interactive tour.</strong><p>The tour reuses the authenticated console controls and renderers, so mock data is not loaded without JavaScript. You can still <a href="/docs">read the product guide</a> or <a href="/console">open the authenticated console</a>.</p></aside></noscript>"""
+        mock_version = escape_html(_asset_version("js/mock-transport.js"))
+        mock_script = '<script src="/static/js/mock-transport.js?v=%s"></script>' % mock_version
+    else:
+        banner = ""
+        noscript = ""
+        mock_script = ""
+    body = body.replace("__DEMO_MODE__", "true" if demo else "false")
+    body = body.replace("__TOUR_BANNER__", banner)
+    body = body.replace("__TOUR_NOSCRIPT__", noscript)
+    body = body.replace("__AUTH_HIDDEN__", " hidden" if demo else "")
+    body = body.replace("__MOCK_SCRIPT__", mock_script)
     return response(start_response, "200 OK", html_page("Console", body), "text/html; charset=utf-8")
 
 
-def route_knowledge(start_response, requested_route=""):
+def route_knowledge(start_response, requested_route="", demo=False):
     asset_version = escape_html(_asset_version("js/knowledge.js"))
-    initial_route = escape_html(requested_route if _is_knowledge_page_route(requested_route) else "")
+    valid_requested_route = _is_tour_knowledge_page_route(requested_route) if demo else _is_knowledge_page_route(requested_route)
+    initial_route = escape_html(requested_route if valid_requested_route else "")
+    mock_version = escape_html(_asset_version("js/mock-transport.js")) if demo else ""
     body = """
-<section class="knowledge-app" data-knowledge-app data-initial-route="%s">
+<section class="knowledge-app" data-knowledge-app data-knowledge-demo-mode="%s" data-initial-route="%s">
+  %s
+  %s
   <header class="knowledge-header">
     <div>
       <span class="section-kicker">Private company knowledge</span>
       <h1>Knowledge</h1>
     </div>
-    <form class="knowledge-auth" data-knowledge-auth>
+    <form class="knowledge-auth" data-knowledge-auth%s>
       <label>Workspace
         <input name="workspaceId" autocomplete="off" required>
       </label>
@@ -2359,9 +4151,9 @@ def route_knowledge(start_response, requested_route=""):
   </header>
   <div class="knowledge-private" data-knowledge-private hidden>
     <section class="knowledge-toolbar">
-      <div class="knowledge-search-mode" role="tablist" aria-label="Search index" data-knowledge-search-mode>
-        <button class="button" type="button" role="tab" aria-selected="true" data-knowledge-mode="pages">Wiki pages</button>
-        <button class="button" type="button" role="tab" aria-selected="false" data-knowledge-mode="web">Web links</button>
+      <div class="knowledge-search-mode" role="group" aria-label="Search index" data-knowledge-search-mode>
+        <button class="button" type="button" aria-pressed="true" data-knowledge-mode="pages">Wiki pages</button>
+        <button class="button" type="button" aria-pressed="false" data-knowledge-mode="web">Web links</button>
       </div>
       <form class="knowledge-search" data-knowledge-search>
         <label>Search
@@ -2412,10 +4204,19 @@ def route_knowledge(start_response, requested_route=""):
       </aside>
     </section>
   </div>
-  <output class="knowledge-status" data-knowledge-status></output>
+  <output class="knowledge-status" role="status" aria-live="polite" aria-atomic="true" data-knowledge-status></output>
 </section>
+%s
 <script src="/static/js/knowledge.js?v=%s"></script>
-""" % (initial_route, asset_version)
+""" % (
+        "true" if demo else "false",
+        initial_route,
+        '<aside class="demo-callout knowledge-demo-callout"><div><span class="status-badge warn">Mock data</span><strong> Knowledge tour using the authenticated wiki interface</strong></div><p>Pages and citations are session-local educational objects. No protected route is called. <a href="/tour">Return to the operator tour</a> or <a href="/knowledge">open authenticated knowledge</a>.</p></aside>' if demo else "",
+        '<noscript><aside class="demo-callout demo-noscript" aria-label="JavaScript required for the knowledge tour"><strong>JavaScript is required for the interactive knowledge tour.</strong><p>The tour reuses the authenticated wiki search, tree, and article renderers, so mock knowledge is not loaded without JavaScript. <a href="/docs">Read the product guide</a> or <a href="/knowledge">open authenticated knowledge</a>.</p></aside></noscript>' if demo else "",
+        " hidden" if demo else "",
+        '<script src="/static/js/mock-transport.js?v=%s"></script>' % mock_version if demo else "",
+        asset_version,
+    )
     return response(start_response, "200 OK", html_page("Knowledge", body), "text/html; charset=utf-8")
 
 
@@ -2482,7 +4283,18 @@ def text_discovery(name):
     return "\n".join(lines) + "\n"
 
 
-def route_public_json(path, start_response):
+def route_public_json(path, start_response, environ=None):
+    if path == "/.well-known/memoryendpoints-connector":
+        rate_rejection = _connector_rate_rejection(start_response, _connector_operation_rate_limited(
+            environ or {}, "discovery", (environ or {}).get("REMOTE_ADDR") or "unknown"
+        ))
+        if rate_rejection:
+            return rate_rejection
+        return json_response(
+            start_response,
+            _connector_discovery(),
+            headers=[("Cache-Control", "public, max-age=300"), ("Referrer-Policy", "no-referrer")],
+        )
     if path == "/api/version":
         backend_health = store_backend_health()
         return json_response(
@@ -2691,7 +4503,8 @@ def route_admin_mysql_diagnostics(environ, start_response):
 
 
 def route_setup(environ, start_response):
-    if environ["REQUEST_METHOD"] == "GET":
+    method = environ["REQUEST_METHOD"]
+    if method == "GET":
         return json_response(
             start_response,
             {
@@ -2706,20 +4519,69 @@ def route_setup(environ, start_response):
                     "workspace": "workspace belongs to company",
                     "project": "project belongs to workspace",
                 },
-                "keyHandling": "The api key is returned once; save it outside public files and ordinary chat.",
+                "credentialHandling": "The company master token is returned once; keep it in protected secret storage and never place it in a URL, log, public file, or ordinary chat.",
+                "credentialType": "company_master",
                 "idempotencySupported": False,
                 "checkoutRequired": False,
             },
         )
+    if method != "POST":
+        return problem(
+            start_response,
+            "405 Method Not Allowed",
+            "Method not allowed",
+            "Use GET to inspect setup or POST to create a free workspace.",
+            "method_not_allowed",
+            headers=[("Allow", "GET, POST")],
+        )
     body = _read_body(environ)
     if body is None:
         return problem(start_response, "400 Bad Request", "Invalid JSON", "Request body must be JSON.", "invalid_json")
-    workspace_id, key_id, token, account_id, company_id, project_id = _store().create_free_account(
-        body.get("label") or body.get("workspaceLabel") or body.get("workspace_label"),
-        body.get("companyLabel") or body.get("company_label"),
-        body.get("projectLabel") or body.get("project_label"),
+    if not isinstance(body, dict):
+        return problem(start_response, "422 Unprocessable Entity", "Setup object required", "Free workspace setup requires a JSON object.", "setup_object_required")
+    label_fields = (
+        ("companyLabel", ("companyLabel", "company_label")),
+        ("label", ("label", "workspaceLabel", "workspace_label")),
+        ("projectLabel", ("projectLabel", "project_label")),
     )
-    return json_response(
+    setup_labels = {}
+    for canonical_name, aliases in label_fields:
+        provided_alias = next((alias for alias in aliases if alias in body), None)
+        if provided_alias is None:
+            setup_labels[canonical_name] = None
+            continue
+        value = body.get(provided_alias)
+        if not isinstance(value, str):
+            return problem(start_response, "422 Unprocessable Entity", "Invalid setup label", "%s must be a string when provided." % canonical_name, "setup_label_invalid")
+        value = value.strip()
+        if not value:
+            return problem(start_response, "422 Unprocessable Entity", "Invalid setup label", "%s must not be empty when provided." % canonical_name, "setup_label_invalid")
+        if len(value) > 120:
+            return problem(start_response, "422 Unprocessable Entity", "Setup label too long", "%s must be at most 120 characters." % canonical_name, "setup_label_too_long")
+        setup_labels[canonical_name] = value
+    try:
+        workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret = _store().create_free_account(
+            setup_labels["label"],
+            setup_labels["companyLabel"],
+            setup_labels["projectLabel"],
+        )
+    except RuntimeError as exc:
+        if "credential pepper" in str(exc).lower():
+            return _access_problem(start_response, "credential_system_not_configured")
+        backend = configured_store_backend()
+        if backend in ("mysql", "mariadb"):
+            code = backend_error_code(backend, exc)
+            return problem(
+                start_response,
+                "503 Service Unavailable",
+                "Store backend unavailable",
+                "The selected MySQL backend could not complete setup; setup did not fall back to local storage.",
+                code,
+            )
+        return _access_problem(start_response, "credential_system_not_configured")
+    human_credential_parts = str(human_recovery_secret or "").split(".", 2)
+    human_credential_id = human_credential_parts[1] if len(human_credential_parts) == 3 else None
+    return one_time_secret_response(
         start_response,
         {
             "ok": True,
@@ -2727,8 +4589,11 @@ def route_setup(environ, start_response):
             "companyId": company_id,
             "workspaceId": workspace_id,
             "projectId": project_id,
-            "keyId": key_id,
-            "apiKeySecret": token,
+            "credentialId": key_id,
+            "credentialType": "company_master",
+            "companyMasterTokenSecret": token,
+            "humanOwnerCredentialId": human_credential_id,
+            "humanOwnerRecoverySecret": human_recovery_secret,
             "hierarchy": {
                 "accountId": account_id,
                 "companyId": company_id,
@@ -2738,9 +4603,7 @@ def route_setup(environ, start_response):
                 "companyToWorkspace": True,
                 "workspaceToProject": True,
             },
-            "showKeyOnce": True,
-            "storeKeySafely": True,
-            "rawKeyStoredByServer": False,
+            "storeCredentialSafely": True,
             "storageLimitBytes": PUBLIC_STORAGE_BYTES,
             "checkoutRequired": False,
             "idempotencySupported": False,
@@ -2750,14 +4613,16 @@ def route_setup(environ, start_response):
     )
 
 
-def _idempotency_replay_or_conflict(store, start_response, workspace_id, key, operation, body):
+def _idempotency_replay_or_conflict(
+    store, start_response, workspace_id, key, operation, body, headers=None
+):
     replay = store.check_idempotency(workspace_id, key, operation, body)
     if not replay:
         return None
     if replay.get("status") == "idempotency_conflict":
-        return json_response(start_response, replay, "409 Conflict")
+        return json_response(start_response, replay, "409 Conflict", headers=headers)
     replay_status = replay.pop("_httpStatus", "200 OK")
-    return json_response(start_response, replay, replay_status)
+    return json_response(start_response, replay, replay_status, headers=headers)
 
 
 def _audit_read(store, workspace_id, auth, action, route, details=None):
@@ -2862,19 +4727,2169 @@ def _uai_error_response(start_response, code, details=None):
     )
 
 
+_ACCESS_REQUEST_DECISION_ROUTE = re.compile(r"^/api/matm/access/agent-name-requests/([^/]+)/decision$")
+_ACCESS_INVITE_REVOKE_ROUTE = re.compile(r"^/api/matm/access/invites/([^/]+)/revoke$")
+_ACCESS_TOKEN_REVOKE_ROUTE = re.compile(r"^/api/matm/access/agent-tokens/([^/]+)/revoke$")
+_HUMAN_COMPANY_ROUTE = re.compile(
+    r"^/api/matm/human/companies/([^/]+)/(export-plan|exports|closure-intents|close|delete|restore|permanent-purge|history|history/clear)$"
+)
+_HUMAN_AGENT_TOKENS_ROUTE = re.compile(
+    r"^/api/matm/human/companies/([^/]+)/agent-tokens$"
+)
+_HUMAN_AGENT_TOKEN_REPLACEMENTS_ROUTE = re.compile(
+    r"^/api/matm/human/companies/([^/]+)/agent-tokens/([^/]+)/replacements$"
+)
+_HUMAN_AGENT_TOKEN_REPLACEMENT_ROUTE = re.compile(
+    r"^/api/matm/human/companies/([^/]+)/agent-tokens/([^/]+)/replacements/([^/]+)(?:/(confirm|cancel))?$"
+)
+
+
+def _access_result_error(start_response, result, redemption=False):
+    code = (result or {}).get("status") or "access_operation_failed"
+    aliases = {
+        "access_request_not_approved": "agent_name_request_not_approved",
+        "invite_already_issued": "invite_already_active",
+    }
+    code = aliases.get(code, code)
+    if redemption and code == "invite_unavailable":
+        code = "invalid_invite"
+    return _access_problem(start_response, code)
+
+
+def _access_auth(store, environ, start_response):
+    token = _token(environ)
+    if not token:
+        return None, _access_problem(start_response, "invalid_token")
+    try:
+        auth = store.authenticate(token)
+    except RuntimeError:
+        return None, _access_problem(start_response, "credential_system_not_configured")
+    if not auth:
+        return None, _access_problem(start_response, "invalid_token")
+    return auth, None
+
+
+def _access_body(environ, start_response):
+    body = _read_body(environ)
+    if body is None:
+        return None, problem(start_response, "400 Bad Request", "Invalid JSON", "Request body must be JSON.", "invalid_json")
+    if not isinstance(body, dict):
+        return None, problem(start_response, "422 Unprocessable Entity", "Object required", "Access operations require a JSON object.", "access_object_required")
+    return body, None
+
+
+def _public_invite_with_grant(invite):
+    public = dict(invite or {})
+    public["grant"] = {
+        "scopeType": public.get("scopeType"),
+        "scopeId": public.get("scopeId"),
+        "accessRule": "scope_and_descendants",
+        "immutable": True,
+    }
+    return public
+
+
+def route_connector_pairing(environ, start_response, path):
+    """Crash-safe URL pairing for one exact connector agent."""
+    method = environ["REQUEST_METHOD"]
+    store = _store()
+    if environ.get("QUERY_STRING"):
+        return _connector_problem(start_response, "invalid_request")
+
+    if path == "/api/matm/connector-pairings/requests":
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        body, rejected = _connector_exact_body_or_problem(
+            environ,
+            start_response,
+            (
+                "schemaVersion",
+                "clientId",
+                "redirectUri",
+                "state",
+                "codeChallenge",
+                "codeChallengeMethod",
+                "requestedAgentId",
+                "requestedScopes",
+            ),
+        )
+        if rejected:
+            return rejected
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        try:
+            validate_client_id(body.get("clientId"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_client_unsupported")
+        try:
+            redirect_uri = validate_redirect_uri(body.get("redirectUri"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "redirect_uri_not_allowed")
+        state = body.get("state")
+        if not isinstance(state, str) or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", state):
+            return _connector_problem(start_response, "state_invalid")
+        if body.get("codeChallengeMethod") != CONNECTOR_PKCE_METHOD:
+            return _connector_problem(start_response, "pkce_method_unsupported")
+        code_challenge = body.get("codeChallenge")
+        if not isinstance(code_challenge, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code_challenge):
+            return _connector_problem(start_response, "pkce_challenge_invalid")
+        try:
+            requested_agent_id = normalize_connector_agent_name(body.get("requestedAgentId"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_agent_identity_invalid")
+        try:
+            requested_scopes = validate_requested_scopes(body.get("requestedScopes"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_scopes_invalid")
+        scope_digest = connector_scope_digest(requested_scopes)
+        canonical = dict(body)
+        canonical.update(
+            {
+                "clientId": CONNECTOR_CLIENT_ID,
+                "redirectUri": redirect_uri,
+                "state": state,
+                "codeChallenge": code_challenge,
+                "codeChallengeMethod": CONNECTOR_PKCE_METHOD,
+                "requestedAgentId": requested_agent_id,
+                "requestedScopes": list(requested_scopes),
+                "scopeDigest": scope_digest,
+            }
+        )
+        digest = _connector_request_digest(method, path, canonical)
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(environ, "pairingRequest"),
+        )
+        if rate_rejection:
+            return rate_rejection
+        result = store.create_connector_pairing_request(canonical, idempotency_key, digest)
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        pairing_request_proof = result.get("pairingRequestProof")
+        stored_request = result.get("pairingRequest") or {}
+        public_request_ref = stored_request.get("publicRequestRef") or result.get("publicRequestRef")
+        if not pairing_request_proof or not public_request_ref:
+            return _connector_problem(start_response, "pairing_request_unavailable")
+        try:
+            stored_scopes, stored_scope_digest = _connector_scope_binding(stored_request)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        if stored_scopes != list(requested_scopes) or not hmac.compare_digest(
+            stored_scope_digest, scope_digest
+        ):
+            return _connector_problem(start_response, "connector_service_unavailable")
+        request = _connector_public_pairing_request(
+            dict(
+                stored_request,
+                requestedScopes=list(requested_scopes),
+                scopeDigest=scope_digest,
+            ),
+            expires_in_seconds=PAIRING_REQUEST_TTL_SECONDS,
+        )
+        return _connector_one_time_secret(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "pairingRequest": request,
+                "pairingRequestProof": pairing_request_proof,
+                "authorizationUrl": build_authorization_url(public_request_ref),
+                "proofDelivery": {
+                    "bodyOnly": True,
+                    "showOnce": True,
+                    "rawProofPersisted": False,
+                    "exactRetryRecoverable": True,
+                },
+                "requestedScopes": list(requested_scopes),
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "authorize",
+                    public_request_ref,
+                    request.get("status"),
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "201 Created",
+        )
+
+    company_selection_match = _CONNECTOR_HUMAN_COMPANY_SELECTION_ROUTE.fullmatch(path)
+    if company_selection_match:
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        _session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, mutation=True
+        )
+        if rejected:
+            return rejected
+        body, rejected = _connector_exact_body_or_problem(
+            environ, start_response, ("schemaVersion", "companyRef")
+        )
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        result = store.select_human_connector_company_membership(
+            session_secret,
+            company_selection_match.group(1),
+            body.get("companyRef"),
+        )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        if not result.get("sessionSecret") or not result.get("csrfToken"):
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_one_time_secret(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "status": "company_selected",
+                "sessionRotated": True,
+                "csrfToken": result.get("csrfToken"),
+                "expiresAt": result.get("expiresAt"),
+                "tenantIdentifiersExposed": False,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "200 OK",
+            headers=[
+                ("Set-Cookie", _human_session_cookie(result.get("sessionSecret"), 30 * 60)),
+            ],
+        )
+
+    approval_match = _CONNECTOR_HUMAN_APPROVAL_ROUTE.fullmatch(path)
+    if approval_match:
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, mutation=True
+        )
+        if rejected:
+            return rejected
+        body, rejected = _connector_exact_body_or_problem(
+            environ,
+            start_response,
+            (
+                "schemaVersion",
+                "canonicalAgentApproved",
+                "approvedScopes",
+                "workspaceSelection",
+            ),
+        )
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        if body.get("canonicalAgentApproved") is not True:
+            return _connector_problem(start_response, "invalid_request")
+        try:
+            approved_scopes = validate_requested_scopes(body.get("approvedScopes"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "invalid_request")
+        scope_digest = connector_scope_digest(approved_scopes)
+        selection = body.get("workspaceSelection")
+        if not isinstance(selection, dict):
+            return _connector_problem(start_response, "invalid_request")
+        mode = selection.get("mode")
+        required_selection = (
+            {"mode", "workspaceRef"} if mode == "existing"
+            else {"mode", "workspaceLabel", "projectLabel"} if mode == "new"
+            else set()
+        )
+        if not required_selection:
+            return _connector_problem(start_response, "invalid_request")
+        if set(selection) != required_selection:
+            return _connector_problem(start_response, "invalid_request")
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        if not session.get("companyId"):
+            return _human_problem(start_response, "selected_company_required")
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        rate_rejection = _connector_rate_rejection(start_response, _connector_operation_rate_limited(
+            environ, "authorize", session.get("humanAccountId") or session_secret
+        ))
+        if rate_rejection:
+            return rate_rejection
+        digest = _connector_request_digest(method, path, body)
+        result = store.approve_connector_pairing_request(
+            session_secret,
+            approval_match.group(1),
+            body.get("workspaceSelection"),
+            list(approved_scopes),
+            idempotency_key,
+            digest,
+        )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        approval = result.get("approval") or {}
+        try:
+            stored_scopes, stored_scope_digest = _connector_scope_binding(
+                {
+                    "approvedScopes": result.get("approvedScopes")
+                    or approval.get("approvedScopes"),
+                    "scopeDigest": result.get("scopeDigest")
+                    or approval.get("scopeDigest"),
+                }
+            )
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        if stored_scopes != list(approved_scopes) or not hmac.compare_digest(
+            stored_scope_digest, scope_digest
+        ):
+            return _connector_problem(start_response, "connector_service_unavailable")
+        try:
+            wake_up_url = build_wake_up_url(result.get("wakeUpUrl"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "status": "approved_awaiting_connector_claim",
+                "approval": {
+                    "status": "approved_awaiting_connector_claim",
+                    "clientDisplayName": "LocalEndpoint Connect",
+                    "agentDisplayName": "LocalEndpoint Agent",
+                    "approvedScopes": list(approved_scopes),
+                    "scopeDigest": scope_digest,
+                    "claimExpiresAt": approval.get("claimExpiresAt")
+                    or result.get("claimExpiresAt"),
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                    "rawPayloadExposed": False,
+                },
+                "wakeUpUrl": wake_up_url,
+                "wakeUp": {
+                    "userActivationRequired": True,
+                    "authorizing": False,
+                    "parametersAdded": False,
+                    "automaticNavigation": False,
+                },
+                "claimExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                "approvedScopes": list(approved_scopes),
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "authorize",
+                    approval_match.group(1),
+                    "approved",
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    human_cancel_match = _CONNECTOR_HUMAN_CANCEL_ROUTE.fullmatch(path)
+    if human_cancel_match:
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, mutation=True
+        )
+        if rejected:
+            return rejected
+        body, rejected = _connector_exact_body_or_problem(
+            environ, start_response, ("schemaVersion", "reason")
+        )
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        reason = _connector_valid_reason(body)
+        if reason is None:
+            return _connector_problem(start_response, "invalid_request")
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        if not session.get("companyId"):
+            return _human_problem(start_response, "selected_company_required")
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        rate_rejection = _connector_rate_rejection(start_response, _connector_operation_rate_limited(
+            environ, "authorize", session.get("humanAccountId") or session_secret
+        ))
+        if rate_rejection:
+            return rate_rejection
+        digest = _connector_request_digest(method, path, body)
+        result = store.cancel_connector_pairing_request(
+            session_secret,
+            human_cancel_match.group(1),
+            reason,
+            idempotency_key,
+            digest,
+        )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        stored_request = result.get("pairingRequest") or {}
+        try:
+            requested_scopes, scope_digest = _connector_scope_binding(stored_request)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        request = _connector_public_pairing_request(stored_request)
+        receipt = _connector_receipt(
+            "cancel",
+            human_cancel_match.group(1),
+            request.get("status"),
+            result.get("idempotentReplay"),
+            scope_digest=scope_digest,
+        )
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "pairingRequest": request,
+                "requestedScopes": requested_scopes,
+                "scopeDigest": scope_digest,
+                "receipt": receipt,
+                "safeNoOpOnRetry": True,
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if path == "/api/matm/connector-pairings/authorization-code-claims":
+        if method != "POST":
+            return _connector_problem(
+                start_response, "invalid_request", headers=[("Allow", "POST")]
+            )
+        body, rejected = _connector_exact_body_or_problem(
+            environ,
+            start_response,
+            (
+                "schemaVersion",
+                "clientId",
+                "redirectUri",
+                "pairingRequestProof",
+                "state",
+            ),
+        )
+        if rejected:
+            return rejected
+        idempotency_key, rejected = _connector_idempotency_or_problem(
+            environ, start_response
+        )
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        try:
+            client_id = validate_client_id(body.get("clientId"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "authorization_claim_invalid")
+        try:
+            redirect_uri = validate_redirect_uri(body.get("redirectUri"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "authorization_claim_invalid")
+        state = body.get("state")
+        if not isinstance(state, str) or not re.fullmatch(
+            r"[A-Za-z0-9._~-]{43,128}", state
+        ):
+            return _connector_problem(start_response, "authorization_claim_invalid")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(
+                environ, "authorizationCodeClaim"
+            ),
+        )
+        if rate_rejection:
+            return rate_rejection
+        digest = _connector_request_digest(method, path, body)
+        result = store.claim_connector_authorization_code(
+            body.get("pairingRequestProof"),
+            state,
+            client_id,
+            redirect_uri,
+            idempotency_key,
+            digest,
+        )
+        claim_status = str(result.get("status") or "")
+        if result.get("pending") or claim_status in (
+            "pending_human_approval",
+            "authorization_pending",
+            "awaiting_human_approval",
+            "pairing_request_pending",
+        ):
+            retry_after = max(1, min(int(result.get("retryAfterSeconds") or 3), 30))
+            return _connector_json(
+                start_response,
+                {
+                    "ok": True,
+                    "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                    "status": "pending_human_approval",
+                    "stateVerified": True,
+                    "requestedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+                    "scopeDigest": connector_scope_digest(CONNECTOR_V1_REQUESTED_SCOPES),
+                    "retryAfterSeconds": retry_after,
+                    "idempotencyBound": False,
+                    "idempotencyKeyReserved": False,
+                    "receipt": _connector_receipt(
+                        "authorization_code_claim",
+                        result.get("publicRequestRef") or "connector-authorization-claim",
+                        "pending_human_approval",
+                        False,
+                        scope_digest=connector_scope_digest(CONNECTOR_V1_REQUESTED_SCOPES),
+                    ),
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                    "rawPayloadExposed": False,
+                },
+                "202 Accepted",
+                headers=[("Retry-After", str(retry_after))],
+            )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(result)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        authorization_code = result.get("authorizationCode")
+        if not authorization_code:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_one_time_secret(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "status": "authorization_code_issued",
+                "authorizationCode": authorization_code,
+                "expiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                "stateVerified": True,
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "authorization_code_claim",
+                    result.get("publicRequestRef") or "connector-authorization-claim",
+                    "authorization_code_issued",
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+            "200 OK",
+        )
+
+    if path == "/api/matm/connector-pairings/token":
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        body, rejected = _connector_exact_body_or_problem(
+            environ,
+            start_response,
+            (
+                "schemaVersion",
+                "grantType",
+                "clientId",
+                "redirectUri",
+                "code",
+                "codeVerifier",
+            ),
+        )
+        if rejected:
+            return rejected
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        if body.get("grantType") != "authorization_code":
+            return _connector_problem(start_response, "invalid_request")
+        try:
+            client_id = validate_client_id(body.get("clientId"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_client_unsupported")
+        try:
+            redirect_uri = validate_redirect_uri(body.get("redirectUri"))
+        except PairingPolicyError:
+            return _connector_problem(start_response, "redirect_uri_not_allowed")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(environ, "tokenExchange"),
+        )
+        if rate_rejection:
+            return rate_rejection
+        digest = _connector_request_digest(method, path, body)
+        result = store.exchange_connector_authorization_code(
+            body.get("code"),
+            body.get("codeVerifier"),
+            client_id,
+            redirect_uri,
+            idempotency_key,
+            digest,
+        )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        pairing = _connector_public_pairing(result.get("pairing"))
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(pairing)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_one_time_secret(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "pairing": pairing,
+                "connectorCredentialSecret": result.get("connectorCredentialSecret"),
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "credentialDelivery": {
+                    "showCredentialOnce": True,
+                    "exactRetryUntilActivation": True,
+                    "rawCredentialPersisted": False,
+                    "scopeDigest": scope_digest,
+                },
+                "receipt": _connector_receipt(
+                    "exchange",
+                    pairing.get("pairingId"),
+                    pairing.get("status"),
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    credentials_match = _CONNECTOR_CREDENTIALS_ROUTE.fullmatch(path)
+    if credentials_match:
+        if method != "GET":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "GET")])
+        token = _token(environ)
+        if not token:
+            return _connector_problem(start_response, "invalid_token")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(environ, "status", token),
+        )
+        if rate_rejection:
+            return rate_rejection
+        result = store.list_connector_credentials(credentials_match.group(1), token)
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(result)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        public_items = [
+            _connector_public_credential(item) for item in (result.get("items") or [])
+        ]
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "pairingId": result.get("pairingId"),
+                "currentCredentialId": result.get("currentCredentialId"),
+                "items": public_items,
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "count": len(public_items),
+                "totalCount": int(result.get("totalCount") or len(public_items)),
+                "hasMore": bool(result.get("hasMore")),
+                "limit": int(result.get("limit") or 100),
+                "receipt": _connector_receipt(
+                    "list_credentials",
+                    credentials_match.group(1),
+                    "verified",
+                    False,
+                    scope_digest=scope_digest,
+                ),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    pairing_match = _CONNECTOR_PAIRING_ROUTE.fullmatch(path)
+    if pairing_match:
+        if method != "GET":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "GET")])
+        token = _token(environ)
+        if not token:
+            return _connector_problem(start_response, "invalid_token")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(environ, "status", token),
+        )
+        if rate_rejection:
+            return rate_rejection
+        visible_principal = store.authenticate_connector_token(token, allow_pending=True)
+        if visible_principal and visible_principal.get("pairingId") != pairing_match.group(1):
+            return _connector_problem(start_response, "pairing_not_found")
+        result = store.connector_pairing_status(pairing_match.group(1), token)
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        verification = _connector_verification(result.get("verification"))
+        if not _connector_verification_passed(verification):
+            return _connector_problem(start_response, "pairing_verification_failed")
+        pairing = _connector_public_pairing(result.get("pairing"), verification=verification)
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(pairing)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "pairing": pairing,
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "verification": verification,
+                "receipt": _connector_receipt(
+                    "verify",
+                    pairing.get("pairingId"),
+                    "verified",
+                    False,
+                    scope_digest=scope_digest,
+                ),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    rotation_activation_match = _CONNECTOR_ROTATION_ACTIVATION_ROUTE.fullmatch(path)
+    if rotation_activation_match:
+        if method != "POST":
+            return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+        _authority, rejected = _connector_lifecycle_authority_or_problem(
+            store,
+            environ,
+            start_response,
+            rotation_activation_match.group(1),
+            "rotation_activate",
+            rotation_id=rotation_activation_match.group(2),
+        )
+        if rejected:
+            return rejected
+        body, rejected = _connector_exact_body_or_problem(
+            environ, start_response, ("schemaVersion",)
+        )
+        if rejected:
+            return rejected
+        if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        token = _token(environ)
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(environ, "credentialLifecycle", token),
+        )
+        if rate_rejection:
+            return rate_rejection
+        digest = _connector_request_digest(method, path, body)
+        result = store.activate_connector_rotation(
+            rotation_activation_match.group(1),
+            rotation_activation_match.group(2),
+            token,
+            idempotency_key,
+            digest,
+        )
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        rotation = _connector_public_rotation(result.get("rotation"))
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(rotation)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "rotation": rotation,
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "rotate",
+                    rotation_activation_match.group(2),
+                    "rotated",
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    action_match = _CONNECTOR_PAIRING_ACTION_ROUTE.fullmatch(path)
+    if not action_match:
+        return None
+    if method != "POST":
+        return _connector_problem(start_response, "invalid_request", headers=[("Allow", "POST")])
+    pairing_id, action = action_match.groups()
+    _authority, rejected = _connector_lifecycle_authority_or_problem(
+        store, environ, start_response, pairing_id, action
+    )
+    if rejected:
+        return rejected
+    required_fields = (
+        ("schemaVersion",)
+        if action == "activate"
+        else ("schemaVersion", "reason")
+    )
+    body, rejected = _connector_exact_body_or_problem(
+        environ, start_response, required_fields
+    )
+    if rejected:
+        return rejected
+    if body.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+        return _connector_problem(start_response, "schema_version_unsupported")
+    reason = None
+    if action != "activate":
+        reason = _connector_valid_reason(body)
+        if reason is None:
+            return _connector_problem(start_response, "invalid_request")
+    idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+    if rejected:
+        return rejected
+    token = _token(environ)
+    rate_bucket = "activation" if action in ("activate", "cancel") else "credentialLifecycle"
+    rate_rejection = _connector_rate_rejection(
+        start_response,
+        _connector_operation_rate_limited(environ, rate_bucket, token),
+    )
+    if rate_rejection:
+        return rate_rejection
+    digest = _connector_request_digest(method, path, body)
+    if action == "activate":
+        result = store.activate_connector_pairing(pairing_id, token, idempotency_key, digest)
+        success_status = "200 OK"
+    elif action == "rotations":
+        result = store.prepare_connector_rotation(
+            pairing_id, token, reason, idempotency_key, digest
+        )
+        success_status = "201 Created"
+    elif action == "revoke":
+        result = store.revoke_connector_pairing(
+            token, pairing_id, reason, idempotency_key, digest
+        )
+        success_status = "200 OK"
+    elif action == "disconnect":
+        result = store.disconnect_connector_pairing(
+            pairing_id, token, reason, idempotency_key, digest
+        )
+        success_status = "200 OK"
+    else:
+        result = store.cancel_connector_pairing(
+            pairing_id, token, reason, idempotency_key, digest
+        )
+        success_status = "200 OK"
+    if not result.get("ok"):
+        return _connector_result_error(start_response, result)
+    if action == "rotations":
+        rotation = _connector_public_rotation(result.get("rotation"))
+        try:
+            approved_scopes, scope_digest = _connector_scope_binding(rotation)
+        except PairingPolicyError:
+            return _connector_problem(start_response, "connector_service_unavailable")
+        return _connector_one_time_secret(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "rotation": rotation,
+                "connectorCredentialSecret": result.get("connectorCredentialSecret"),
+                "approvedScopes": approved_scopes,
+                "scopeDigest": scope_digest,
+                "credentialDelivery": {
+                    "showCredentialOnce": True,
+                    "exactRetryUntilActivation": True,
+                    "rawCredentialPersisted": False,
+                    "scopeDigest": scope_digest,
+                },
+                "receipt": _connector_receipt(
+                    "rotate",
+                    rotation.get("rotationId"),
+                    rotation.get("status"),
+                    result.get("idempotentReplay"),
+                    scope_digest=scope_digest,
+                ),
+                "idempotentReplay": bool(result.get("idempotentReplay")),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+            success_status,
+        )
+    pairing = _connector_public_pairing(result.get("pairing"))
+    try:
+        approved_scopes, scope_digest = _connector_scope_binding(pairing)
+    except PairingPolicyError:
+        return _connector_problem(start_response, "connector_service_unavailable")
+    receipt = result.get("receipt") or _connector_receipt(
+        action,
+        pairing_id,
+        (result.get("pairing") or {}).get("status"),
+        result.get("idempotentReplay"),
+        result.get("actorMasterKeyId") if action == "revoke" else None,
+        scope_digest=scope_digest,
+    )
+    if receipt.get("scopeDigest") != scope_digest:
+        return _connector_problem(start_response, "connector_service_unavailable")
+    return _connector_json(
+        start_response,
+        {
+            "ok": True,
+            "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+            "pairing": pairing,
+            "approvedScopes": approved_scopes,
+            "scopeDigest": scope_digest,
+            "receipt": receipt,
+            "safeNoOpOnRetry": True,
+            "idempotentReplay": bool(result.get("idempotentReplay")),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        },
+        success_status,
+    )
+
+
+def route_human(environ, start_response, path):
+    """Same-origin, cookie-authenticated human owner control plane."""
+    if not path.startswith("/api/matm/human/"):
+        return None
+    method = environ["REQUEST_METHOD"]
+    store = _store()
+    if method in ("POST", "PUT", "PATCH", "DELETE"):
+        content_type = str(environ.get("CONTENT_TYPE") or "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return problem(start_response, "415 Unsupported Media Type", "JSON required", "Human account operations accept only application/json request bodies.", "json_content_type_required")
+
+    if path == "/api/matm/human/recovery/closure-session":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to open an exceptional recovery closure session.", "method_not_allowed", headers=[("Allow", "POST")])
+        if str(environ.get("HTTP_AUTHORIZATION") or "").strip():
+            return _human_problem(start_response, "human_owner_required")
+        if not _human_same_origin(environ):
+            return _human_problem(start_response, "trusted_origin_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        recovery_secret = body.get("recoverySecret")
+        result = store.create_human_session(recovery_secret, 15 * 60)
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        session_secret = result.get("sessionSecret")
+        reauthenticated = store.reauthenticate_human_session(recovery_secret, session_secret)
+        if not reauthenticated.get("ok"):
+            store.revoke_human_session(session_secret)
+            return _human_storage_error(start_response, reauthenticated)
+        principal = {
+            "authMode": "recovery_closure",
+            "selectedCompanyId": result.get("companyId"),
+            "permissions": {
+                "canExportCompany": True,
+                "canCloseCompany": True,
+                "canLinkCompanies": False,
+                "canManageAgentTokens": False,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "principal": principal,
+                "humanSession": {
+                    "humanSessionId": result.get("humanSessionId"),
+                    "selectedCompanyId": result.get("companyId"),
+                    "authMode": "recovery_closure",
+                    "expiresAt": result.get("expiresAt"),
+                },
+                "csrfToken": result.get("csrfToken"),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "201 Created",
+            headers=[("Set-Cookie", _human_session_cookie(session_secret, 15 * 60))],
+        )
+
+    if path == "/api/matm/human/company-master-proofs":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to prove one company master credential.", "method_not_allowed", headers=[("Allow", "POST")])
+        if _token(environ):
+            return _human_problem(start_response, "human_owner_required")
+        if not _human_same_origin(environ):
+            return _human_problem(start_response, "trusted_origin_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.create_company_master_proof(body.get("companyMasterTokenSecret"), 10 * 60)
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "proof": {
+                    "masterProofId": result.get("masterProofId"),
+                    "companyId": result.get("companyId"),
+                    "masterKeyId": result.get("masterKeyId"),
+                    "status": "issued",
+                    "expiresAt": result.get("expiresAt"),
+                    "oneTime": True,
+                },
+                "companyMasterProofSecret": result.get("masterProofSecret"),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if path == "/api/matm/human/accounts":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to create a human account.", "method_not_allowed", headers=[("Allow", "POST")])
+        if _token(environ):
+            return _human_problem(start_response, "human_owner_required")
+        if not _human_same_origin(environ):
+            return _human_problem(start_response, "trusted_origin_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        if body.get("passwordConfirmation") is not None and body.get("passwordConfirmation") != body.get("password"):
+            return _human_problem(start_response, "human_password_invalid")
+        result = store.create_human_account_with_session(
+            body.get("username"),
+            body.get("password"),
+            body.get("companyMasterProofSecret"),
+            body.get("displayName"),
+            30 * 60,
+        )
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        session_secret = result.get("sessionSecret")
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "created": True,
+                "account": result.get("account"),
+                "membership": result.get("membership"),
+                "memberships": result.get("memberships") or [],
+                "humanSession": result.get("humanSession"),
+                "selectedCompanyId": None,
+                "csrfToken": result.get("csrfToken"),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            headers=[("Set-Cookie", _human_session_cookie(session_secret, 30 * 60))],
+        )
+
+    if path == "/api/matm/human/session":
+        if method == "GET":
+            session, session_secret, rejected = _human_session_auth(store, environ, start_response)
+            if rejected:
+                return rejected
+            if _human_fetch_same_origin(environ) and not str(environ.get("HTTP_X_CSRF_TOKEN") or "").strip():
+                rotated = store.rotate_human_account_session_csrf(session_secret)
+                if not rotated.get("ok"):
+                    return _human_storage_error(start_response, rotated)
+                payload = _human_complete_session_payload(store, session_secret, rotated.get("csrfToken"))
+                if payload is None:
+                    return _human_problem(start_response, "human_session_required")
+                payload["csrfRotated"] = True
+                return one_time_secret_response(start_response, payload, "200 OK")
+            payload = _human_complete_session_payload(store, session_secret)
+            if payload is None:
+                return _human_problem(start_response, "human_session_required")
+            return json_response(start_response, payload)
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to inspect or POST to open a human account session.", "method_not_allowed", headers=[("Allow", "GET, POST")])
+        if _token(environ):
+            return _human_problem(start_response, "human_owner_required")
+        if not _human_same_origin(environ):
+            return _human_problem(start_response, "trusted_origin_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        if not str(body.get("username") or "").strip() or not str(body.get("password") or ""):
+            return _human_problem(start_response, "username_password_required")
+        result = store.login_human_account(body.get("username"), body.get("password"), 30 * 60)
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        session_secret = result.get("sessionSecret")
+        payload = _human_complete_session_payload(store, session_secret, result.get("csrfToken"))
+        if payload is None:
+            return _human_problem(start_response, "human_session_required")
+        payload["humanSession"]["passwordReauthenticationRequiredForSensitiveActions"] = True
+        return one_time_secret_response(
+            start_response,
+            payload,
+            headers=[("Set-Cookie", _human_session_cookie(session_secret, 30 * 60))],
+        )
+
+    if path == "/api/matm/human/session/reauth":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to reauthenticate a human-owner session.", "method_not_allowed", headers=[("Allow", "POST")])
+        session, session_secret, rejected = _human_session_auth(store, environ, start_response, mutation=True)
+        if rejected:
+            return rejected
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.reauthenticate_and_rotate_human_account_session(session_secret, body.get("password"))
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        rotated_secret = result.get("sessionSecret")
+        payload = _human_complete_session_payload(store, rotated_secret, result.get("csrfToken"))
+        if payload is None:
+            return _human_problem(start_response, "human_session_required")
+        payload["passwordReauthenticatedAt"] = result.get("passwordReauthenticatedAt")
+        payload["sessionRotated"] = True
+        return one_time_secret_response(
+            start_response,
+            payload,
+            "200 OK",
+            headers=[("Set-Cookie", _human_session_cookie(rotated_secret, 30 * 60))],
+        )
+
+    if path == "/api/matm/human/session/logout":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to close a human-owner session.", "method_not_allowed", headers=[("Allow", "POST")])
+        _session, session_secret, rejected = _human_session_auth(store, environ, start_response, mutation=True)
+        if rejected:
+            return rejected
+        result = store.logout_human_account(session_secret)
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        return json_response(start_response, {"ok": True, "signedOut": True, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}, headers=[("Set-Cookie", _human_session_cookie("", 0))])
+
+    if path == "/api/matm/human/company-memberships":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to list linked company memberships.", "method_not_allowed", headers=[("Allow", "GET")])
+        _session, session_secret, rejected = _human_session_auth(store, environ, start_response)
+        if rejected:
+            return rejected
+        result = store.list_human_company_memberships(session_secret)
+        return json_response(start_response, result) if result.get("ok") else _human_storage_error(start_response, result)
+
+    if path == "/api/matm/human/company-memberships/link":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to prove and link one company master credential.", "method_not_allowed", headers=[("Allow", "POST")])
+        session, session_secret, rejected = _human_session_auth(store, environ, start_response, mutation=True)
+        if rejected:
+            return rejected
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "human_reauthentication_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.prove_and_link_company_master(
+            session_secret,
+            body.get("companyMasterProofSecret"),
+            body.get("role") or "owner",
+        )
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        memberships = store.list_human_company_memberships(session_secret)
+        if not memberships.get("ok"):
+            return _human_storage_error(start_response, memberships)
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "membership": result.get("membership"),
+                "memberships": memberships.get("items") or [],
+                "proofAccepted": True,
+                "rawCredentialPersisted": False,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+            "201 Created",
+        )
+
+    if path == "/api/matm/human/session/company":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to explicitly select a linked company membership.", "method_not_allowed", headers=[("Allow", "POST")])
+        _session, session_secret, rejected = _human_session_auth(store, environ, start_response, mutation=True)
+        if rejected:
+            return rejected
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.select_human_company_membership(session_secret, body.get("authorityId"))
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        if result.get("sessionSecret") and result.get("csrfToken"):
+            payload = _human_complete_session_payload(
+                store, result.get("sessionSecret"), result.get("csrfToken")
+            )
+            if payload is None:
+                return _human_problem(start_response, "human_session_required")
+            payload["sessionRotated"] = True
+            return one_time_secret_response(
+                start_response,
+                payload,
+                "200 OK",
+                headers=[("Set-Cookie", _human_session_cookie(result.get("sessionSecret"), 30 * 60))],
+            )
+        return json_response(start_response, dict(result, selectedCompanyId=result.get("companyId"), sessionRotated=False))
+
+    agent_tokens_match = _HUMAN_AGENT_TOKENS_ROUTE.fullmatch(path)
+    if agent_tokens_match:
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to list redacted agent credential metadata.", "method_not_allowed", headers=[("Allow", "GET")])
+        company_id = agent_tokens_match.group(1)
+        _session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, company_id
+        )
+        if rejected:
+            return rejected
+        result = store.list_human_agent_tokens(session_secret, company_id)
+        return json_response(start_response, result) if result.get("ok") else _human_storage_error(start_response, result)
+
+    replacements_match = _HUMAN_AGENT_TOKEN_REPLACEMENTS_ROUTE.fullmatch(path)
+    if replacements_match:
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to prepare a one-time successor credential.", "method_not_allowed", headers=[("Allow", "POST")])
+        company_id, predecessor_credential_id = replacements_match.groups()
+        session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, company_id, mutation=True
+        )
+        if rejected:
+            return rejected
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        idempotency_key = _idempotency_key(environ)
+        digest = _connector_request_digest(method, path, body)
+        result = store.prepare_human_agent_token_replacement(
+            session_secret,
+            company_id,
+            predecessor_credential_id,
+            body.get("reason"),
+            body.get("expiresInSeconds") or 900,
+            idempotency_key,
+            digest,
+        )
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        payload = {
+            "ok": True,
+            "replacement": result.get("replacement"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        if result.get("successorCredentialAlreadyDelivered"):
+            payload["successorCredentialAlreadyDelivered"] = True
+            payload["idempotentReplay"] = True
+            return json_response(start_response, payload, "200 OK")
+        payload["successorTokenSecret"] = result.get("successorTokenSecret")
+        return one_time_secret_response(start_response, payload, "201 Created")
+
+    replacement_match = _HUMAN_AGENT_TOKEN_REPLACEMENT_ROUTE.fullmatch(path)
+    if replacement_match:
+        company_id, predecessor_credential_id, replacement_id, action = replacement_match.groups()
+        if action is None:
+            if method != "GET":
+                return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to reconcile replacement status.", "method_not_allowed", headers=[("Allow", "GET")])
+            _session, session_secret, rejected = _human_session_auth(
+                store, environ, start_response, company_id
+            )
+            if rejected:
+                return rejected
+            result = store.human_agent_token_replacement_status(
+                session_secret, company_id, predecessor_credential_id, replacement_id
+            )
+            return json_response(start_response, result) if result.get("ok") else _human_storage_error(start_response, result)
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to confirm or cancel this replacement.", "method_not_allowed", headers=[("Allow", "POST")])
+        session, session_secret, rejected = _human_session_auth(
+            store, environ, start_response, company_id, mutation=True
+        )
+        if rejected:
+            return rejected
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        idempotency_key = _idempotency_key(environ)
+        digest = _connector_request_digest(method, path, body)
+        if action == "confirm":
+            result = store.confirm_human_agent_token_replacement(
+                session_secret,
+                company_id,
+                predecessor_credential_id,
+                replacement_id,
+                body.get("successorTokenProof"),
+                idempotency_key,
+                digest,
+            )
+            if result.get("ok"):
+                result = dict(
+                    result,
+                    auditActor={
+                        "humanAccountId": session.get("humanAccountId"),
+                        "username": session.get("username"),
+                        "authorityId": session.get("selectedAuthorityId"),
+                        "valuesRedacted": True,
+                    },
+                )
+        else:
+            result = store.cancel_human_agent_token_replacement(
+                session_secret,
+                company_id,
+                predecessor_credential_id,
+                replacement_id,
+                idempotency_key or None,
+                digest if idempotency_key else None,
+            )
+        return json_response(start_response, result) if result.get("ok") else _human_storage_error(start_response, result)
+
+    match = _HUMAN_COMPANY_ROUTE.fullmatch(path)
+    if not match:
+        return problem(start_response, "404 Not Found", "Route not found", "No human-owner route matched this request.", "not_found")
+    company_id, operation = match.groups()
+    mutation = method != "GET"
+    allow_recovery = operation in ("export-plan", "exports", "closure-intents", "close")
+    session, session_secret, rejected = _human_session_auth(
+        store,
+        environ,
+        start_response,
+        company_id,
+        mutation=mutation,
+        allow_recovery=allow_recovery,
+    )
+    if rejected:
+        return rejected
+
+    if operation == "export-plan":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to review the company export plan.", "method_not_allowed", headers=[("Allow", "GET")])
+        snapshot_result = store.company_export_snapshot(session_secret, company_id)
+        if not snapshot_result.get("ok"):
+            return _human_storage_error(start_response, snapshot_result)
+        company = (snapshot_result.get("snapshot") or {}).get("company") or {}
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "exportPlan": {
+                    "companyId": company_id,
+                    "companyLabel": company.get("label"),
+                    "companyStatus": company.get("status"),
+                    "completeCompanyExportAvailable": True,
+                    "exportStronglyRecommended": True,
+                    "exportBeforeClearHistoryRecommended": True,
+                    "permanentPurgeRequiresCompletedExport": True,
+                    "companyStorageLimitBytes": PUBLIC_STORAGE_BYTES,
+                    "freeCompanyQuotaBytes": PUBLIC_STORAGE_BYTES,
+                    "retention": {
+                        "freeRoutineHistoryDays": 7,
+                        "softDeletedDataRetainedIndefinitely": True,
+                        "softDeletedDataCountsTowardCompanyQuota": True,
+                    },
+                    "downloadMethod": "POST",
+                    "downloadPath": "/api/matm/human/companies/%s/exports" % company_id,
+                    "valuesRedacted": True,
+                },
+                "auditActor": _human_audit_actor(session),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if operation == "exports":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to assemble and download a complete company export.", "method_not_allowed", headers=[("Allow", "POST")])
+        snapshot_result = store.company_export_snapshot(session_secret, company_id)
+        if not snapshot_result.get("ok"):
+            return _human_storage_error(start_response, snapshot_result)
+        snapshot = snapshot_result.get("snapshot") or {}
+        snapshot = dict(snapshot, auditActor=_human_audit_actor(session))
+        company = snapshot.get("company") or {}
+        try:
+            artifact = assemble_company_export(
+                snapshot,
+                generated_at=snapshot.get("exportedAt") or utc_now(),
+                company_id=company_id,
+                company_label=company.get("label"),
+            )
+        except CompanyExportError:
+            return problem(start_response, "500 Internal Server Error", "Company export failed", "The complete company export could not be assembled safely.", "company_export_failed")
+        receipt_result = store.record_company_export_receipt(session_secret, artifact.get("exportReceiptDigest"), "zip")
+        if not receipt_result.get("ok"):
+            return _human_storage_error(start_response, receipt_result)
+        receipt = receipt_result.get("receipt") or {}
+        return response(
+            start_response,
+            "201 Created",
+            artifact["body"],
+            artifact["contentType"],
+            [
+                ("Content-Disposition", artifact["contentDisposition"]),
+                ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
+                ("Pragma", "no-cache"),
+                ("Referrer-Policy", "no-referrer"),
+                ("X-MemoryEndpoints-Export-Receipt-Id", receipt.get("exportReceiptId") or ""),
+                ("X-MemoryEndpoints-Export-Company-Id", company_id),
+                ("X-MemoryEndpoints-Export-SHA256", "sha256:" + (artifact.get("digest") or "")),
+                ("X-MemoryEndpoints-Export-Complete", "true"),
+            ],
+        )
+
+    if operation == "closure-intents":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to create a one-time lifecycle intent.", "method_not_allowed", headers=[("Allow", "POST")])
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        requested_operation = str(body.get("operation") or "").strip().lower()
+        storage_operation = "soft_delete" if requested_operation == "delete" else requested_operation
+        result = store.create_company_closure_intent(
+            session_secret,
+            storage_operation,
+            body.get("acknowledgeExportOpportunity") is True,
+            body.get("expiresInSeconds") or 900,
+        )
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        public_intent = dict(result.get("intent") or {})
+        public_intent.pop("intentHash", None)
+        public_intent["confirmationPhrase"] = public_intent.pop("typedConfirmationPhrase", None)
+        public_intent["operation"] = requested_operation
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "intent": public_intent,
+                "closureIntentSecret": result.get("intentSecret"),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if operation in ("close", "delete", "permanent-purge"):
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST for this company lifecycle action.", "method_not_allowed", headers=[("Allow", "POST")])
+        if not _human_recently_reauthenticated(session):
+            return _human_problem(start_response, "recent_reauthentication_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        intent_secret = body.get("closureIntentSecret")
+        confirmation = body.get("typedConfirmationPhrase")
+        if operation == "close":
+            result = store.close_company(session_secret, intent_secret, confirmation)
+        elif operation == "delete":
+            result = store.soft_delete_company(session_secret, intent_secret, confirmation)
+            if result.get("ok"):
+                result = dict(
+                    result,
+                    status="deleted",
+                    softDeleted=True,
+                    restorable=True,
+                    retainedIndefinitely=True,
+                    countsTowardCompanyQuota=True,
+                )
+        else:
+            result = store.permanently_purge_company(
+                session_secret,
+                intent_secret,
+                confirmation,
+                body.get("exportReceiptId"),
+                body.get("acknowledgePermanentPurgeWithoutExport") is True,
+            )
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        if operation == "permanent-purge":
+            result = dict(result, purged=True)
+        result = dict(result, auditActor=_human_audit_actor(session))
+        headers = [("Set-Cookie", _human_session_cookie("", 0))] if operation == "permanent-purge" else None
+        return json_response(start_response, result, headers=headers)
+
+    if operation == "restore":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to restore a soft-deleted company.", "method_not_allowed", headers=[("Allow", "POST")])
+        result = store.restore_company(session_secret)
+        if not result.get("ok"):
+            return _human_storage_error(start_response, result)
+        result = dict(result, restored=True)
+        return json_response(start_response, result)
+
+    if operation == "history":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to read human-only forensic history.", "method_not_allowed", headers=[("Allow", "GET")])
+        return json_response(
+            start_response,
+            {
+                "ok": True,
+                "companyId": company_id,
+                "visibility": "human_only",
+                "items": [],
+                "auditActor": _human_audit_actor(session),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+    if operation == "history/clear":
+        return problem(start_response, "501 Not Implemented", "Human history is not ready", "The human-only forensic history clear operation is not yet available.", "human_history_not_ready")
+    return None
+
+
+def route_access(environ, start_response, path):
+    """Route typed master/agent credentials and one-time invitation redemption."""
+    method = environ["REQUEST_METHOD"]
+    store = _store()
+
+    if path == "/api/matm/access/invites/redeem":
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to redeem an invitation.", "method_not_allowed", headers=[("Allow", "POST")])
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        try:
+            result = store.redeem_agent_invite(body.get("inviteSecret"))
+        except RuntimeError:
+            return _access_problem(start_response, "credential_system_not_configured")
+        if not result.get("ok"):
+            return _access_result_error(start_response, result, redemption=True)
+        invite = _public_invite_with_grant(result.get("invite") or {})
+        principal = result.get("principal") or {}
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "agentTokenSecret": result.get("agentToken"),
+                "principal": _public_auth_principal(principal),
+                "invite": invite,
+                "onboarding": {
+                    "assignmentContext": invite.get("assignmentContext") or {},
+                    "workspaceId": principal.get("workspaceId"),
+                    "projectId": principal.get("projectId") or (invite.get("assignmentContext") or {}).get("projectId"),
+                    "immutableScope": invite.get("grant"),
+                },
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    access_paths = (
+        path == "/api/matm/me"
+        or path == "/api/matm/access/agent-name-requests"
+        or path == "/api/matm/access/scope-catalog"
+        or path == "/api/matm/access/invites"
+        or path == "/api/matm/access/agent-tokens"
+        or bool(_ACCESS_REQUEST_DECISION_ROUTE.fullmatch(path))
+        or bool(_ACCESS_INVITE_REVOKE_ROUTE.fullmatch(path))
+        or bool(_ACCESS_TOKEN_REVOKE_ROUTE.fullmatch(path))
+    )
+    if not access_paths:
+        return None
+
+    auth, rejected = _access_auth(store, environ, start_response)
+    if rejected:
+        return rejected
+    if _is_connector_principal(auth) and not _connector_principal_scopes(auth):
+        return _connector_problem(start_response, "connector_service_unavailable")
+    if path == "/api/matm/me":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET for credential introspection.", "method_not_allowed", headers=[("Allow", "GET")])
+        payload = {
+            "ok": True,
+            "principal": _public_auth_principal(auth),
+            "access": {
+                "namePolicy": AGENT_NAME_POLICY,
+                "scopeLevels": []
+                if _is_connector_principal(auth)
+                else ["company", "workspace", "project", "goal", "task"],
+                "scopeRule": "exact_connector_and_agent"
+                if _is_connector_principal(auth)
+                else "exact_scope_and_descendants",
+                "grantMutable": False,
+            },
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        if _is_connector_principal(auth):
+            return _connector_json(start_response, payload)
+        return json_response(start_response, payload)
+
+    if _is_connector_principal(auth):
+        return _connector_problem(start_response, "connector_scope_forbidden")
+
+    master_rejected = _company_master_or_problem(auth, start_response)
+    if master_rejected:
+        return master_rejected
+    master_token = _token(environ)
+
+    if path == "/api/matm/access/scope-catalog":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET for the company scope catalog.", "method_not_allowed", headers=[("Allow", "GET")])
+        result = store.company_scope_catalog(master_token)
+        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+
+    if path == "/api/matm/access/agent-name-requests":
+        if method == "GET":
+            result = store.list_agent_access_requests(master_token, _query(environ).get("status"))
+            return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET or POST for agent-name requests.", "method_not_allowed", headers=[("Allow", "GET, POST")])
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        requested_grant = body.get("requestedGrant") or {}
+        if not isinstance(requested_grant, dict):
+            return _access_problem(start_response, "scope_invalid")
+        result = store.request_agent_access(
+            auth.get("companyId"),
+            body.get("requestedName"),
+            requested_grant.get("scopeType"),
+            requested_grant.get("scopeId"),
+            _auth_actor_id(auth),
+            body.get("supersedesCredentialId"),
+            body.get("memoryTransferFromCredentialId"),
+            display_name=body.get("displayName"),
+            justification=body.get("justification"),
+            assignment_context=body.get("assignmentContext"),
+        )
+        if not result.get("ok"):
+            return _access_result_error(start_response, result)
+        return json_response(start_response, result, "201 Created")
+
+    decision_match = _ACCESS_REQUEST_DECISION_ROUTE.fullmatch(path)
+    if decision_match:
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to decide an agent-name request.", "method_not_allowed", headers=[("Allow", "POST")])
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        decisions = {"approve": "approved", "deny": "denied"}
+        decision = decisions.get(str(body.get("decision") or "").strip().lower())
+        if not decision:
+            return _access_problem(start_response, "access_decision_invalid")
+        result = store.decide_agent_access_request(master_token, decision_match.group(1), decision, body.get("decisionReason"))
+        if not result.get("ok"):
+            if result.get("status") == "access_request_not_pending":
+                result = dict(result, status="approval_already_final")
+            return _access_result_error(start_response, result)
+        return json_response(start_response, result)
+
+    if path == "/api/matm/access/invites":
+        if method == "GET":
+            result = store.list_agent_invites(master_token, _query(environ).get("status"))
+            return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET or POST for agent invitations.", "method_not_allowed", headers=[("Allow", "GET, POST")])
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.issue_agent_invite(master_token, body.get("approvedRequestId"), body.get("expiresInSeconds") or 900)
+        if not result.get("ok"):
+            return _access_result_error(start_response, result)
+        invite_secret = result.get("inviteSecret")
+        invite = _public_invite_with_grant(result.get("invite") or {})
+        return one_time_secret_response(
+            start_response,
+            {
+                "ok": True,
+                "invite": invite,
+                "inviteUrl": "%s/agent-setup#invite=%s" % (SITE_URL.rstrip("/"), quote(invite_secret or "", safe="")),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    invite_revoke_match = _ACCESS_INVITE_REVOKE_ROUTE.fullmatch(path)
+    if invite_revoke_match:
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to revoke an invitation.", "method_not_allowed", headers=[("Allow", "POST")])
+        result = store.revoke_agent_invite(master_token, invite_revoke_match.group(1))
+        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+
+    if path == "/api/matm/access/agent-tokens":
+        if method != "GET":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET for agent-token inventory.", "method_not_allowed", headers=[("Allow", "GET")])
+        result = store.list_agent_tokens(master_token, _query(environ).get("status"))
+        if result.get("ok"):
+            raw_items = result.get("items") or []
+            result = dict(result)
+            result["items"] = []
+            for item in raw_items:
+                public_item = dict(item, credentialId=item.get("credentialId") or item.get("agentTokenId"))
+                public_item.pop("agentTokenId", None)
+                result["items"].append(public_item)
+        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+
+    token_revoke_match = _ACCESS_TOKEN_REVOKE_ROUTE.fullmatch(path)
+    if token_revoke_match:
+        if method != "POST":
+            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to revoke an agent token.", "method_not_allowed", headers=[("Allow", "POST")])
+        result = store.revoke_agent_token(master_token, token_revoke_match.group(1))
+        if not result.get("ok") and result.get("status") == "agent_token_already_revoked":
+            result = {"ok": True, "agentTokenId": token_revoke_match.group(1), "alreadyRevoked": True, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}
+        if result.get("ok"):
+            result = dict(result, credentialId=result.get("credentialId") or result.get("agentTokenId") or token_revoke_match.group(1))
+            result.pop("agentTokenId", None)
+        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+    return None
+
+
+def _connector_has_scope(auth, required_scope):
+    return required_scope in frozenset(_connector_principal_scopes(auth))
+
+
+def _connector_exact_parsed_body_or_problem(
+    environ, start_response, body, required, optional=()
+):
+    if not _connector_content_type_is_json(environ) or not isinstance(body, dict):
+        return None, _connector_problem(start_response, "json_content_type_required")
+    required = frozenset(required)
+    allowed = required | frozenset(optional)
+    if set(body) - allowed or not required.issubset(body):
+        return None, _connector_problem(start_response, "invalid_request")
+    return body, None
+
+
+def _connector_public_memory_item(item):
+    item = item or {}
+    return {
+        "memoryId": item.get("eventId") or item.get("memoryId"),
+        "workspaceId": item.get("workspaceId"),
+        "actorAgentId": item.get("actorAgentId"),
+        "scope": item.get("scope"),
+        "title": item.get("title"),
+        "summary": item.get("summary"),
+        "tags": list(item.get("tags") or [])[:16],
+        "memoryType": item.get("memoryType"),
+        "subject": item.get("subject"),
+        "confidence": item.get("confidence"),
+        "createdAt": item.get("createdAt"),
+        "classification": "public_safe",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _route_connector_scoped_operation(
+    environ, start_response, path, store, auth, body, query
+):
+    """Enforce the closed v1 connector route/action matrix before generic MATM."""
+    method = environ.get("REQUEST_METHOD") or "GET"
+    if query or environ.get("QUERY_STRING"):
+        return _connector_problem(start_response, "connector_scope_forbidden")
+    pairing_id = auth.get("pairingId")
+    token = _token(environ)
+    scope_digest = auth.get("scopeDigest") or connector_scope_digest(
+        CONNECTOR_V1_REQUESTED_SCOPES
+    )
+
+    if path == "/api/matm/workspace" and method == "GET":
+        if not _connector_has_scope(auth, "connector:self:readback"):
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        result = store.connector_workspace_readback(pairing_id, token)
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "workspace": result.get("workspace") or {},
+                "connectorBoundedReadback": True,
+                "approvedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "workspace_readback", pairing_id, "verified", scope_digest=scope_digest
+                ),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if path == "/api/matm/agents/register" and method == "POST":
+        if not _connector_has_scope(auth, "agent:self:register"):
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        if isinstance(body, dict) and (
+            "agentId" in body
+            or "agent_id" in body
+            or "requestedAgentId" in body
+            or "requested_agent_id" in body
+        ):
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(
+                environ,
+                "selfRegistration",
+                auth.get("connectorCredentialId") or pairing_id,
+                store=store,
+            ),
+        )
+        if rate_rejection:
+            return rate_rejection
+        parsed, rejected = _connector_exact_parsed_body_or_problem(
+            environ, start_response, body, ("schemaVersion",)
+        )
+        if rejected:
+            return rejected
+        if parsed.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        result = store.confirm_connector_agent_registration(pairing_id, token)
+        if not result.get("ok"):
+            return _connector_result_error(start_response, result)
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "registration": {
+                    "status": "already_registered",
+                    "workspaceId": auth.get("workspaceId"),
+                    "agentId": auth.get("agentId"),
+                    "created": False,
+                    "scopeDigest": scope_digest,
+                },
+                "alreadyRegistered": bool(result.get("alreadyRegistered", True)),
+                "idempotentReplay": bool(result.get("idempotentReplay", True)),
+                "approvedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "confirm_agent_registration",
+                    pairing_id,
+                    "verified",
+                    True,
+                    scope_digest=scope_digest,
+                ),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    if path == "/api/matm/memory-events/submit" and method == "POST":
+        if not _connector_has_scope(auth, "memory:public-safe:submit"):
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(
+                environ,
+                "publicSafeSubmit",
+                auth.get("connectorCredentialId") or pairing_id,
+                store=store,
+            ),
+        )
+        if rate_rejection:
+            return rate_rejection
+        if not _connector_content_type_is_json(environ):
+            return _connector_problem(start_response, "json_content_type_required")
+        required_submit_fields = {
+            "schemaVersion",
+            "payloadClass",
+            "title",
+            "summary",
+            "tags",
+        }
+        if not isinstance(body, dict) or set(body) != required_submit_fields:
+            return _connector_problem(
+                start_response, "connector_public_safe_payload_required"
+            )
+        parsed = body
+        if parsed.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        title = parsed.get("title")
+        summary = parsed.get("summary")
+        tags = parsed.get("tags")
+        if (
+            parsed.get("payloadClass") != "public_safe"
+            or not isinstance(title, str)
+            or title != title.strip()
+            or not 1 <= len(title) <= 200
+            or not isinstance(summary, str)
+            or summary != summary.strip()
+            or not 1 <= len(summary) <= 4000
+            or not isinstance(tags, list)
+            or len(tags) > 16
+            or any(
+                not isinstance(tag, str)
+                or tag != tag.strip()
+                or not 1 <= len(tag) <= 64
+                for tag in tags
+            )
+        ):
+            return _connector_problem(
+                start_response, "connector_public_safe_payload_required"
+            )
+        firewall = evaluate_memory_firewall(
+            {"title": title, "summary": summary, "tags": tags}
+        )
+        if not firewall.get("passed"):
+            return _connector_problem(
+                start_response, "connector_public_safe_payload_required"
+            )
+        idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
+        if rejected:
+            return rejected
+        replay = _idempotency_replay_or_conflict(
+            store,
+            start_response,
+            auth.get("workspaceId"),
+            idempotency_key,
+            "connector-public-safe-memory-submit",
+            parsed,
+            headers=_CONNECTOR_JSON_HEADERS,
+        )
+        if replay:
+            return replay
+        quota_payload = {"title": title, "summary": summary, "tags": tags}
+        if not store.has_quota_for(auth.get("workspaceId"), quota_payload):
+            return _connector_problem(start_response, "connector_service_unavailable")
+        event = store.submit_memory(
+            auth.get("workspaceId"),
+            auth.get("agentId"),
+            "workspace",
+            title,
+            summary,
+            tags,
+            "localendpoint-connect",
+            "note",
+            "connector:%s" % (auth.get("agentId") or "self"),
+            1.0,
+            auth.get("workspaceId"),
+        )
+        item = _connector_public_memory_item(event)
+        payload = {
+            "ok": True,
+            "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+            "memory": item,
+            "actorBinding": "connector_self",
+            "idempotentReplay": False,
+            "approvedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+            "scopeDigest": scope_digest,
+            "receipt": _connector_receipt(
+                "public_safe_memory_submit",
+                event.get("eventId"),
+                "accepted",
+                scope_digest=scope_digest,
+            ),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+        store.record_idempotency(
+            auth.get("workspaceId"),
+            idempotency_key,
+            "connector-public-safe-memory-submit",
+            parsed,
+            payload,
+            "201 Created",
+        )
+        return _connector_json(start_response, payload, "201 Created")
+
+    if path == "/api/matm/search" and method == "POST":
+        if not _connector_has_scope(auth, "memory:search:read"):
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        rate_rejection = _connector_rate_rejection(
+            start_response,
+            _connector_operation_rate_limited(
+                environ,
+                "search",
+                auth.get("connectorCredentialId") or pairing_id,
+                store=store,
+            ),
+        )
+        if rate_rejection:
+            return rate_rejection
+        if _idempotency_key(environ):
+            return _connector_problem(start_response, "idempotency_key_not_allowed")
+        parsed, rejected = _connector_exact_parsed_body_or_problem(
+            environ,
+            start_response,
+            body,
+            ("schemaVersion", "query", "limit"),
+        )
+        if rejected:
+            return rejected
+        if parsed.get("schemaVersion") != CONNECTOR_PAIRING_SCHEMA:
+            return _connector_problem(start_response, "schema_version_unsupported")
+        query_text = parsed.get("query")
+        limit = parsed.get("limit")
+        if (
+            not isinstance(query_text, str)
+            or query_text != query_text.strip()
+            or not 1 <= len(query_text) <= 1000
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 50
+        ):
+            return _connector_problem(start_response, "invalid_request")
+        items = store.search_memory(auth.get("workspaceId"), query_text, {})
+        items = [
+            item
+            for item in items
+            if (
+                item.get("scope") == "workspace"
+                and item.get("scopeId") == auth.get("workspaceId")
+            )
+            or (
+                item.get("scope") == "agent"
+                and item.get("scopeId") == auth.get("agentId")
+            )
+        ][:limit]
+        public_items = [_connector_public_memory_item(item) for item in items]
+        return _connector_json(
+            start_response,
+            {
+                "ok": True,
+                "schemaVersion": CONNECTOR_PAIRING_SCHEMA,
+                "items": public_items,
+                "count": len(public_items),
+                "limit": limit,
+                "readOnly": True,
+                "approvedScopes": list(CONNECTOR_V1_REQUESTED_SCOPES),
+                "scopeDigest": scope_digest,
+                "receipt": _connector_receipt(
+                    "memory_search", pairing_id, "verified", scope_digest=scope_digest
+                ),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            },
+        )
+
+    return _connector_problem(start_response, "connector_scope_forbidden")
+
+
 def route_protected(environ, start_response, path):
     method = environ["REQUEST_METHOD"]
+    token = _token(environ)
+    if not token:
+        return _anonymous_auth_required(start_response)
     query = _query(environ)
+    store = _store()
+    connector_auth = (
+        store.authenticate_connector_token(token, allow_pending=True) if token else None
+    )
+    if connector_auth:
+        if not connector_auth.get("active"):
+            return _connector_problem(start_response, "pending_credential_not_active")
+        allowed = {
+            ("GET", "/api/matm/workspace"),
+            ("POST", "/api/matm/agents/register"),
+            ("POST", "/api/matm/memory-events/submit"),
+            ("POST", "/api/matm/search"),
+        }
+        if (method, path) not in allowed:
+            return _connector_problem(start_response, "connector_scope_forbidden")
+        if method == "POST":
+            body, rejected = _connector_body_or_problem(environ, start_response)
+            if rejected:
+                return rejected
+        else:
+            body = {}
+        return _route_connector_scoped_operation(
+            environ, start_response, path, store, connector_auth, body, query
+        )
     body = _read_body(environ) if method in ("POST", "PUT", "PATCH") else {}
     if body is None:
         return problem(start_response, "400 Bad Request", "Invalid JSON", "Request body must be JSON.", "invalid_json")
     workspace_id = (body or {}).get("workspaceId") or (body or {}).get("workspace_id") or query.get("workspace_id") or query.get("workspaceId")
     auth = _require_auth(environ, workspace_id)
     if not auth:
-        return problem(start_response, "401 Unauthorized", "Workspace key required", "Use the free-account setup route, then send the key in Authorization: Bearer.", "auth_required")
+        if token and store.authenticate(token):
+            return _access_problem(start_response, "insufficient_scope")
+        return _access_problem(start_response, "invalid_token")
     workspace_id = auth["workspaceId"]
-    store = _store()
     idem = _idempotency_key(environ)
+    acting_identity_fields = ()
+    if method == "POST":
+        if path in (
+            "/api/matm/projects",
+            "/api/matm/external-links",
+            "/api/matm/external-links/upsert",
+            "/api/matm/knowledge-documents",
+            "/api/matm/knowledge-documents/upsert",
+            "/api/matm/sync/mutations",
+            "/api/matm/memory-events/submit",
+        ):
+            acting_identity_fields = (body.get("actorAgentId"), body.get("actor_agent_id"))
+        elif path in (
+            "/api/matm/sync/devices",
+            "/api/matm/sync/devices/rotate",
+            "/api/matm/sync/devices/revoke",
+            "/api/matm/uai-memory/packages",
+            "/api/matm/uai-memory/records",
+            "/api/matm/uai-memory/edit-claims",
+            "/api/matm/uai-memory/edit-claims/heartbeat",
+            "/api/matm/uai-memory/edit-claims/complete",
+            "/api/matm/uai-memory/edit-claims/release",
+            "/api/matm/meeting-rooms/read",
+        ):
+            acting_identity_fields = (body.get("agentId"), body.get("agent_id"))
+        elif path == "/api/matm/review-queue/decide":
+            acting_identity_fields = (body.get("reviewerAgentId"), body.get("reviewer_agent_id"))
+        elif path == "/api/matm/routing-decisions":
+            acting_identity_fields = (
+                body.get("coordinatorAgentId"),
+                body.get("coordinator_agent_id"),
+                body.get("actorAgentId"),
+                body.get("actor_agent_id"),
+            )
+        elif path == "/api/matm/meeting-messages/promote":
+            acting_identity_fields = (
+                body.get("promotedByAgentId"),
+                body.get("promoted_by_agent_id"),
+                body.get("actorAgentId"),
+                body.get("actor_agent_id"),
+            )
+        elif path == "/api/matm/meeting-rooms":
+            acting_identity_fields = (
+                body.get("creatorAgentId"),
+                body.get("creator_agent_id"),
+                body.get("agentId"),
+                body.get("agent_id"),
+            )
+        elif path in ("/api/matm/meeting-messages", "/api/matm/agent-messages"):
+            acting_identity_fields = (body.get("senderAgentId"), body.get("sender_agent_id"))
+        elif path == "/api/matm/notifications/ack":
+            acting_identity_fields = (body.get("consumerAgentId"), body.get("consumer_agent_id"))
+    if acting_identity_fields:
+        _, binding_problem = _bound_agent_id_or_problem(auth, start_response, *acting_identity_fields)
+        if binding_problem:
+            return binding_problem
     if path == "/api/matm/workspace" and method == "GET":
         status = store.workspace_status(workspace_id)
         operator_summary = _workspace_operator_summary(status)
@@ -2923,6 +6938,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "project-upsert", body)
         if replay:
             return replay
+        actor_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not (body.get("label") or body.get("projectLabel") or body.get("project_label")):
             return problem(start_response, "422 Unprocessable Entity", "Project label required", "Project upsert requires a label.", "project_label_required")
         if not store.has_quota_for(workspace_id, body):
@@ -2931,7 +6954,7 @@ def route_protected(environ, start_response, path):
             workspace_id,
             body.get("projectId") or body.get("project_id"),
             body.get("label") or body.get("projectLabel") or body.get("project_label"),
-            body.get("actorAgentId") or body.get("actor_agent_id") or "system",
+            actor_agent_id,
         )
         if error == "workspace_not_found":
             return problem(start_response, "404 Not Found", "Workspace not found", "No matching workspace exists for the authenticated key.", "workspace_not_found")
@@ -2979,9 +7002,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "external-link-upsert", body)
         if replay:
             return replay
-        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
-        if not actor_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "External link upsert requires actorAgentId.", "actor_agent_id_required")
+        actor_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not str(body.get("url") or "").strip():
             return problem(start_response, "422 Unprocessable Entity", "URL required", "External link upsert requires an HTTP or HTTPS URL.", "external_url_required")
         if not str(body.get("siteName") or body.get("site_name") or "").strip():
@@ -3097,9 +7125,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "knowledge-document-upsert", body)
         if replay:
             return replay
-        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
-        if not actor_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "Knowledge document upsert requires actorAgentId.", "actor_agent_id_required")
+        actor_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not (body.get("title") or "").strip():
             return problem(start_response, "422 Unprocessable Entity", "Title required", "Knowledge document upsert requires a title.", "title_required")
         if not (body.get("description") or ((body.get("metadata") if isinstance(body.get("metadata"), dict) else {}).get("description")) or "").strip():
@@ -3202,9 +7235,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-register", body)
         if replay:
             return replay
-        agent_id = body.get("agentId") or body.get("agent_id")
-        if not agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Sync device registration requires agentId.", "agent_id_required")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this sync device.", "quota_exceeded")
         device = store.register_sync_device(workspace_id, agent_id, body.get("deviceId") or body.get("device_id"), body.get("label"))
@@ -3243,10 +7281,15 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-" + operation, body)
         if replay:
             return replay
-        agent_id = body.get("agentId") or body.get("agent_id")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         device_id = body.get("deviceId") or body.get("device_id")
-        if not agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Sync device authority changes require agentId.", "agent_id_required")
         if not device_id:
             return problem(start_response, "422 Unprocessable Entity", "Device id required", "Sync device authority changes require deviceId.", "device_id_required")
         if operation == "rotate":
@@ -3293,9 +7336,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-mutation", body)
         if replay:
             return replay
-        actor_agent_id = body.get("actorAgentId") or body.get("actor_agent_id")
-        if not actor_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "Sync mutations require actorAgentId.", "actor_agent_id_required")
+        actor_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if len(body.get("summary") or "") > 4000:
             return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Sync mutation summaries must be at most 4000 characters.", "summary_too_long")
         if not store.has_quota_for(workspace_id, body):
@@ -3386,26 +7434,95 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/agents/register" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "agent-register", body)
-        if replay:
-            return replay
-        if not (body.get("agentId") or body.get("agent_id")):
-            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Agent registration requires agentId.", "agent_id_required")
-        if not store.has_quota_for(workspace_id, body):
-            return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this record.", "quota_exceeded")
-        agent = store.register_agent(workspace_id, body.get("agentId") or body.get("agent_id"), body.get("displayName") or body.get("display_name"))
-        payload = {
-            "ok": True,
-            "agent": agent,
-            "operatorSummary": _agent_registration_operator_summary(agent),
-            "valuesRedacted": True,
-            "rawCredentialExposed": False,
-            "rawPayloadExposed": False,
-        }
-        store.record_idempotency(workspace_id, idem, "agent-register", body, payload, "201 Created")
-        return json_response(start_response, payload, "201 Created")
+        if auth.get("credentialType") == "company_master":
+            expected_fields = {"workspaceId", "agentId", "displayName"}
+            if set(body) != expected_fields:
+                return problem(
+                    start_response,
+                    "422 Unprocessable Entity",
+                    "Exact compatibility registration required",
+                    "Company-master compatibility registration accepts only workspaceId, agentId, and displayName.",
+                    "localendpoint_registration_invalid",
+                )
+            if body.get("workspaceId") != workspace_id:
+                return _access_problem(start_response, "workspace_not_found")
+            agent_id = body.get("agentId")
+            if agent_id != CONNECTOR_AGENT_ID:
+                return problem(
+                    start_response,
+                    "409 Conflict",
+                    "Invite redemption required",
+                    "Only the exact deprecated LocalEndpoint connector identity may use this transition; every other agent identity requires an approved one-time invite.",
+                    "registration_requires_invite",
+                )
+            operation = "deprecated-localendpoint-agent-registration"
+            replay = (
+                _idempotency_replay_or_conflict(
+                    store,
+                    start_response,
+                    workspace_id,
+                    idem,
+                    operation,
+                    body,
+                )
+                if idem
+                else None
+            )
+            if replay:
+                return replay
+            agent = store.register_agent(
+                workspace_id,
+                CONNECTOR_AGENT_ID,
+                CONNECTOR_AGENT_DISPLAY_NAME,
+            )
+            payload = {
+                "ok": True,
+                "agent": agent,
+                "operatorSummary": _agent_registration_operator_summary(agent),
+                "compatibilityTransition": {
+                    "schemaVersion": "memoryendpoints.localendpoint_registration_transition.v1",
+                    "status": "deprecated",
+                    "canonicalAgentId": CONNECTOR_AGENT_ID,
+                    "idempotent": True,
+                    "tokenIssued": False,
+                    "broaderAuthorityGranted": False,
+                    "migrateTo": "memoryendpoints.connector_pairing.v1",
+                    "discoveryRoute": "/.well-known/memoryendpoints-connector",
+                },
+                "idempotentReplay": False,
+                "idempotencyKeyExposed": False,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
+            if idem:
+                store.record_idempotency(
+                    workspace_id,
+                    idem,
+                    operation,
+                    body,
+                    payload,
+                    "201 Created",
+                )
+            return json_response(start_response, payload, "201 Created")
+        return problem(
+            start_response,
+            "409 Conflict",
+            "Invite redemption required",
+            "Agent identities are registered only by redeeming an approved one-time invite.",
+            "registration_requires_invite",
+        )
     if path == "/api/matm/uai-memory/packages" and method == "GET":
         agent_id = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_id, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         package_id = query.get("package_id") or query.get("packageId") or ""
         items = store.uai_packages(workspace_id, agent_id, package_id)
         _audit_read(store, workspace_id, auth, "uai_packages.read", path, {"count": len(items), "agentId": agent_id})
@@ -3428,9 +7545,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-package-create", body)
         if replay:
             return replay
-        agent_id = body.get("agentId") or body.get("agent_id")
-        if not agent_id:
-            return _uai_error_response(start_response, "registered_agent_required")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if "workspaceId" not in body and "workspace_id" not in body:
             return problem(start_response, "422 Unprocessable Entity", "Workspace id required", "Virtual UAIX package creation requires workspaceId in the authenticated request body.", "workspace_id_required")
         if "clientClass" not in body and "client_class" not in body:
@@ -3468,6 +7590,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/uai-memory/records" and method == "GET":
         agent_id = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_id, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         package_id = query.get("package_id") or query.get("packageId") or ""
         logical_path = query.get("logical_path") or query.get("logicalPath") or ""
         record_id = query.get("record_id") or query.get("recordId") or ""
@@ -3500,12 +7631,17 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-record-upsert", body)
         if replay:
             return replay
-        agent_id = body.get("agentId") or body.get("agent_id")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         package_id = body.get("packageId") or body.get("package_id")
         logical_path = body.get("logicalPath") or body.get("logical_path")
         content = body.get("content")
-        if not agent_id:
-            return _uai_error_response(start_response, "registered_agent_required")
         if not package_id:
             return _uai_error_response(start_response, "uai_package_not_found")
         if not logical_path:
@@ -3558,6 +7694,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/uai-memory/startup" and method == "GET":
         agent_id = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_id, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         package_id = query.get("package_id") or query.get("packageId") or ""
         if not agent_id:
             return _uai_error_response(start_response, "registered_agent_required")
@@ -3579,6 +7724,15 @@ def route_protected(environ, start_response, path):
             "logicalPath": query.get("logical_path") or query.get("logicalPath") or "",
             "status": query.get("status") or "",
         }
+        if auth.get("credentialType") == "agent":
+            filters["agentId"], binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         items = store.uai_edit_claims(workspace_id, filters["projectId"], filters["agentId"], filters["logicalPath"], filters["status"])
         _audit_read(store, workspace_id, auth, "uai_edit_claims.read", path, {"count": len(items), "projectId": filters["projectId"], "agentId": filters["agentId"]})
         return json_response(start_response, {"ok": True, "schemaVersion": "memoryendpoints.uai_edit_claims.v1", "items": items, "count": len(items), "filters": {key: value for key, value in filters.items() if value}, "localContentStored": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
@@ -3589,7 +7743,14 @@ def route_protected(environ, start_response, path):
         if replay:
             return replay
         project_id = body.get("projectId") or body.get("project_id")
-        agent_id = body.get("agentId") or body.get("agent_id")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         result, error, details = store.acquire_uai_edit_claim(
             workspace_id,
             project_id,
@@ -3634,7 +7795,14 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, idem_operation, body)
         if replay:
             return replay
-        agent_id = body.get("agentId") or body.get("agent_id")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         claim_id = body.get("claimId") or body.get("claim_id")
         if operation == "heartbeat":
             result, error, details = store.heartbeat_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("leaseSeconds") or body.get("lease_seconds"))
@@ -3670,13 +7838,23 @@ def route_protected(environ, start_response, path):
         store.record_idempotency(workspace_id, idem, idem_operation, body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/memory-events/submit" and method == "POST":
+        requested_scope = (body.get("scope") or "workspace").strip().lower()
+        requested_scope_id = body.get("scopeId") or body.get("scope_id") or workspace_id
+        if not store.auth_allows_scope(auth, requested_scope, requested_scope_id):
+            return _access_problem(start_response, "insufficient_scope")
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "memory-submit", body)
         if replay:
             return replay
         summary = body.get("summary") or ""
         title = body.get("title") or "Untitled memory"
-        if not (body.get("actorAgentId") or body.get("actor_agent_id")):
-            return problem(start_response, "422 Unprocessable Entity", "Actor agent id required", "Memory events require actorAgentId.", "actor_agent_id_required")
+        actor_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not summary.strip():
             return problem(start_response, "422 Unprocessable Entity", "Summary required", "Memory events require a public-safe summary.", "summary_required")
         if len(summary) > 4000:
@@ -3685,8 +7863,8 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this memory event.", "quota_exceeded")
         event = store.submit_memory(
             workspace_id,
-            body.get("actorAgentId") or body.get("actor_agent_id"),
-            body.get("scope"),
+            actor_agent_id,
+            requested_scope,
             title,
             summary,
             body.get("tags") or [],
@@ -3694,7 +7872,7 @@ def route_protected(environ, start_response, path):
             body.get("memoryType") or body.get("memory_type"),
             body.get("subject"),
             body.get("confidence"),
-            body.get("scopeId") or body.get("scope_id"),
+            requested_scope_id,
         )
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
@@ -3730,12 +7908,17 @@ def route_protected(environ, start_response, path):
             "actorAgentId": query.get("actor_agent_id") or query.get("actorAgentId") or "",
         }
         active_review_filters = {key: value for key, value in review_filters.items() if value}
-        memory_items = store.memory_events_for_review(workspace_id)
+        memory_items = [
+            item
+            for item in store.memory_events_for_review(workspace_id)
+            if store.auth_allows_scope(auth, item.get("scope"), item.get("scopeId"))
+        ]
         memory_by_id = {item.get("eventId"): item for item in memory_items if item.get("eventId")}
         all_review_items = [
             item
             for item in store.review_queue(workspace_id, "")
-            if _review_matches_memory_filters(item, memory_by_id, active_review_filters)
+            if item.get("memoryEventId") in memory_by_id
+            and _review_matches_memory_filters(item, memory_by_id, active_review_filters)
         ]
         items = [
             item
@@ -3781,16 +7964,32 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/review-queue/decide" and method == "POST":
+        review_id = body.get("reviewId") or body.get("review_id")
+        visible_memory_by_id = {
+            item.get("eventId"): item
+            for item in store.memory_events_for_review(workspace_id)
+            if item.get("eventId") and store.auth_allows_scope(auth, item.get("scope"), item.get("scopeId"))
+        }
+        review_candidate = next(
+            (item for item in store.review_queue(workspace_id, "") if item.get("reviewId") == review_id),
+            None,
+        )
+        if review_candidate and review_candidate.get("memoryEventId") not in visible_memory_by_id:
+            return problem(start_response, "404 Not Found", "Review item not found", "No matching review queue item exists for the authenticated scope.", "review_item_not_found")
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "review-decide", body)
         if replay:
             return replay
-        review_id = body.get("reviewId") or body.get("review_id")
-        reviewer_agent_id = body.get("reviewerAgentId") or body.get("reviewer_agent_id")
+        reviewer_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("reviewerAgentId"),
+            body.get("reviewer_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         decision = body.get("decision")
         if not review_id:
             return problem(start_response, "422 Unprocessable Entity", "Review id required", "Review decisions require reviewId.", "review_id_required")
-        if not reviewer_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Reviewer agent id required", "Review decisions require reviewerAgentId.", "reviewer_agent_id_required")
         review, error = store.decide_review(workspace_id, review_id, reviewer_agent_id, decision, redact_text(body.get("reviewNote") or body.get("review_note") or ""))
         if error == "invalid_decision":
             return problem(start_response, "422 Unprocessable Entity", "Invalid review decision", "Decision must be promote, approve, reject, or quarantine.", "invalid_review_decision")
@@ -3821,6 +8020,11 @@ def route_protected(environ, start_response, path):
         active_filters = {key: value for key, value in filters.items() if value}
         query_text = query.get("q") or query.get("query") or ""
         items = store.search_memory(workspace_id, query_text, filters)
+        items = [
+            item
+            for item in items
+            if store.auth_allows_scope(auth, item.get("scope"), item.get("scopeId"))
+        ]
         operator_summary = _memory_search_operator_summary(items, query_text, active_filters)
         _audit_read(
             store,
@@ -3902,7 +8106,16 @@ def route_protected(environ, start_response, path):
         destination_room_id = str(body.get("destinationRoomId") or body.get("destination_room_id") or "").strip()
         destination_scope = str(body.get("destinationScope") or body.get("destination_scope") or "").strip().lower()
         destination_scope_id = str(body.get("destinationScopeId") or body.get("destination_scope_id") or "").strip()
-        coordinator_agent_id = str(body.get("coordinatorAgentId") or body.get("coordinator_agent_id") or body.get("actorAgentId") or body.get("actor_agent_id") or "").strip()
+        coordinator_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("coordinatorAgentId"),
+            body.get("coordinator_agent_id"),
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         routed_agent_id = str(body.get("routedAgentId") or body.get("routed_agent_id") or body.get("targetAgentId") or body.get("target_agent_id") or "").strip()
         lane = redact_text(str(body.get("lane") or "").strip())
         specific_goal = redact_text(str(body.get("specificGoal") or body.get("specific_goal") or "").strip())
@@ -3911,8 +8124,6 @@ def route_protected(environ, start_response, path):
         expected_evidence = _string_list(body.get("expectedEvidence") or body.get("expected_evidence"))
         if not source_room_id:
             return problem(start_response, "422 Unprocessable Entity", "Source room id required", "Routing decisions require sourceRoomId or roomId.", "source_room_id_required")
-        if not coordinator_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Coordinator agent id required", "Routing decisions require coordinatorAgentId or actorAgentId.", "coordinator_agent_id_required")
         if not routed_agent_id:
             return problem(start_response, "422 Unprocessable Entity", "Routed agent id required", "Routing decisions require routedAgentId or targetAgentId.", "routed_agent_id_required")
         if not lane:
@@ -4018,14 +8229,23 @@ def route_protected(environ, start_response, path):
         if replay:
             return replay
         meeting_message_id = body.get("meetingMessageId") or body.get("meeting_message_id")
-        promoted_by_agent_id = body.get("promotedByAgentId") or body.get("promoted_by_agent_id") or body.get("actorAgentId") or body.get("actor_agent_id")
+        promoted_by_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("promotedByAgentId"),
+            body.get("promoted_by_agent_id"),
+            body.get("actorAgentId"),
+            body.get("actor_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not meeting_message_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting message id required", "Meeting memory promotion requires meetingMessageId.", "meeting_message_id_required")
-        if not promoted_by_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Promoting agent id required", "Meeting memory promotion requires promotedByAgentId or actorAgentId.", "promoted_by_agent_id_required")
         message, room = store.meeting_message(workspace_id, meeting_message_id)
         if not message:
             return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this workspace.", "meeting_message_not_found")
+        if not store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
         summary = body.get("summary") or message.get("safeSummary") or ""
         if not summary.strip():
             return problem(start_response, "422 Unprocessable Entity", "Summary required", "Meeting memory promotion requires a public-safe summary.", "summary_required")
@@ -4094,7 +8314,6 @@ def route_protected(environ, start_response, path):
             return replay
         scope = str(body.get("scope") or "").strip().lower()
         scope_id = str(body.get("scopeId") or body.get("scope_id") or "").strip()
-        creator_agent_id = str(body.get("creatorAgentId") or body.get("creator_agent_id") or body.get("agentId") or body.get("agent_id") or "").strip()
         label = str(body.get("label") or "").strip()
         name = str(body.get("name") or "").strip()
         purpose = str(body.get("purpose") or "").strip()
@@ -4102,14 +8321,28 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Unsupported meeting room scope", "Create custom meeting rooms only for goal or task scope; company, workspace, and project rooms are hierarchy-derived.", "unsupported_meeting_room_scope")
         if not scope_id:
             return problem(start_response, "422 Unprocessable Entity", "Scope id required", "Goal and task meeting rooms require scopeId.", "scope_id_required")
-        if not creator_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Creator agent id required", "Meeting room creation requires creatorAgentId or agentId.", "creator_agent_id_required")
         if len(scope_id) > 160:
             return problem(start_response, "422 Unprocessable Entity", "Scope id too long", "Meeting room scopeId must be at most 160 characters.", "scope_id_too_long")
         if len(label) > 120 or len(name) > 160:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room name too long", "Meeting room label must be at most 120 characters and name must be at most 160 characters.", "meeting_room_name_too_long")
         if len(purpose) > 1000:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room purpose too long", "Meeting room purpose must be at most 1000 characters.", "meeting_room_purpose_too_long")
+        if scope and scope_id:
+            scope_allowed = store.auth_allows_scope(auth, scope, scope_id)
+            if not scope_allowed and scope in ("goal", "task"):
+                scope_allowed = store.auth_allows_scope(auth, "workspace", workspace_id)
+            if not scope_allowed:
+                return _access_problem(start_response, "insufficient_scope")
+        creator_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("creatorAgentId"),
+            body.get("creator_agent_id"),
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this meeting room.", "quota_exceeded")
         room, created = store.create_meeting_room(
@@ -4158,6 +8391,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "201 Created" if created else "200 OK")
     if path == "/api/matm/meeting-rooms" and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_filter, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         scope_filter = (query.get("scope") or "").strip().lower()
         scope_id_filter = query.get("scope_id") or query.get("scopeId") or ""
         filters = {}
@@ -4168,6 +8410,11 @@ def route_protected(environ, start_response, path):
         if scope_id_filter:
             filters["scopeId"] = scope_id_filter
         rooms = store.meeting_rooms(workspace_id, agent_filter)
+        rooms = [
+            room
+            for room in rooms
+            if store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId"))
+        ]
         if scope_filter:
             rooms = [room for room in rooms if room.get("scope") == scope_filter]
         if scope_id_filter:
@@ -4203,6 +8450,15 @@ def route_protected(environ, start_response, path):
     if path == "/api/matm/meeting-messages" and method == "GET":
         room_id = query.get("room_id") or query.get("roomId") or ""
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_filter, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         cursor_filter = query.get("cursor") or query.get("before_meeting_message_id") or query.get("beforeMeetingMessageId") or ""
         if not room_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting transcript reads require room_id.", "meeting_room_id_required")
@@ -4212,7 +8468,14 @@ def route_protected(environ, start_response, path):
         read_state = transcript_page.get("readState")
         if not room:
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        if not store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
         rooms = store.meeting_rooms(workspace_id, agent_filter)
+        rooms = [
+            item
+            for item in rooms
+            if store.auth_allows_scope(auth, item.get("scope"), item.get("scopeId"))
+        ]
         room_with_counts = next((item for item in rooms if item.get("roomId") == room_id), room)
         filters = {"roomId": room_id}
         if agent_filter:
@@ -4282,16 +8545,28 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/meeting-messages" and method == "POST":
+        requested_room_id = body.get("roomId") or body.get("room_id")
+        requested_room = next(
+            (room for room in store.meeting_rooms(workspace_id) if room.get("roomId") == requested_room_id),
+            None,
+        )
+        if requested_room and not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-submit", body)
         if replay:
             return replay
         room_id = body.get("roomId") or body.get("room_id")
-        sender_agent_id = body.get("senderAgentId") or body.get("sender_agent_id")
+        sender_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("senderAgentId"),
+            body.get("sender_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         safe_summary = body.get("safeSummary") or body.get("safe_summary") or ""
         if not room_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting posts require roomId.", "meeting_room_id_required")
-        if not sender_agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Sender agent id required", "Meeting posts require senderAgentId.", "sender_agent_id_required")
         if not safe_summary.strip():
             return problem(start_response, "422 Unprocessable Entity", "Safe summary required", "Meeting posts require a public-safe summary.", "safe_summary_required")
         if len(safe_summary) > 2000:
@@ -4322,15 +8597,27 @@ def route_protected(environ, start_response, path):
         store.record_idempotency(workspace_id, idem, "meeting-message-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-rooms/read" and method == "POST":
+        requested_room_id = body.get("roomId") or body.get("room_id")
+        requested_room = next(
+            (room for room in store.meeting_rooms(workspace_id) if room.get("roomId") == requested_room_id),
+            None,
+        )
+        if requested_room and not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-read", body)
         if replay:
             return replay
         room_id = body.get("roomId") or body.get("room_id")
-        agent_id = body.get("agentId") or body.get("agent_id")
+        agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("agentId"),
+            body.get("agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not room_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting read cursors require roomId.", "meeting_room_id_required")
-        if not agent_id:
-            return problem(start_response, "422 Unprocessable Entity", "Agent id required", "Meeting read cursors require agentId.", "agent_id_required")
         read_state, error = store.mark_meeting_room_read(workspace_id, room_id, agent_id, body.get("lastMeetingMessageId") or body.get("last_meeting_message_id"))
         if error == "message_not_found":
             return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this room.", "meeting_message_not_found")
@@ -4354,8 +8641,14 @@ def route_protected(environ, start_response, path):
         if replay:
             return replay
         safe_summary = body.get("safeSummary") or body.get("safe_summary") or ""
-        if not (body.get("senderAgentId") or body.get("sender_agent_id")):
-            return problem(start_response, "422 Unprocessable Entity", "Sender agent id required", "Current messages require senderAgentId.", "sender_agent_id_required")
+        sender_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("senderAgentId"),
+            body.get("sender_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
         if not safe_summary.strip():
             return problem(start_response, "422 Unprocessable Entity", "Safe summary required", "Current messages require a public-safe summary.", "safe_summary_required")
         if len(safe_summary) > 1000:
@@ -4365,7 +8658,7 @@ def route_protected(environ, start_response, path):
         target_agent_id = body.get("targetAgentId") or body.get("target_agent_id")
         message, notifications = store.submit_message(
             workspace_id,
-            body.get("senderAgentId") or body.get("sender_agent_id"),
+            sender_agent_id,
             target_agent_id,
             safe_summary,
             body.get("responseRequired") or body.get("response_required"),
@@ -4409,6 +8702,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload, "202 Accepted")
     if path in ("/api/matm/agent-inbox", "/api/matm/current-message") and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
+        if auth.get("credentialType") == "agent":
+            agent_filter, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("agent_id"),
+                query.get("agentId"),
+            )
+            if binding_problem:
+                return binding_problem
         message_filter = query.get("message_id") or query.get("messageId") or ""
         notification_filter = query.get("notification_id") or query.get("notificationId") or ""
         requested_limit = query.get("limit") or ""
@@ -4501,7 +8803,15 @@ def route_protected(environ, start_response, path):
         replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "notification-ack", body)
         if replay:
             return replay
-        receipt = store.ack(workspace_id, body.get("notificationId") or body.get("notification_id"), body.get("consumerAgentId") or body.get("consumer_agent_id"), body.get("status") or "read")
+        consumer_agent_id, binding_problem = _bound_agent_id_or_problem(
+            auth,
+            start_response,
+            body.get("consumerAgentId"),
+            body.get("consumer_agent_id"),
+        )
+        if binding_problem:
+            return binding_problem
+        receipt = store.ack(workspace_id, body.get("notificationId") or body.get("notification_id"), consumer_agent_id, body.get("status") or "read")
         if not receipt:
             return problem(start_response, "404 Not Found", "Notification not found", "No matching notification exists for this workspace.", "notification_not_found")
         payload = {
@@ -4516,6 +8826,15 @@ def route_protected(environ, start_response, path):
         return json_response(start_response, payload)
     if path == "/api/matm/receipts" and method == "GET":
         consumer_filter = query.get("consumer_agent_id") or query.get("consumerAgentId") or ""
+        if auth.get("credentialType") == "agent":
+            consumer_filter, binding_problem = _bound_agent_id_or_problem(
+                auth,
+                start_response,
+                query.get("consumer_agent_id"),
+                query.get("consumerAgentId"),
+            )
+            if binding_problem:
+                return binding_problem
         items = store.receipts(workspace_id, consumer_filter)
         filters = {"consumerAgentId": consumer_filter} if consumer_filter else {}
         operator_summary = _receipts_operator_summary(items, filters)
@@ -4551,13 +8870,25 @@ def route_protected(environ, start_response, path):
 def application(environ, start_response):
     path = environ.get("PATH_INFO", "/") or "/"
     method = environ.get("REQUEST_METHOD", "GET")
-    cors_api_route = path.startswith("/api/")
+    cors_api_route = path.startswith("/api/") and not path.startswith("/api/matm/human/")
     if cors_api_route:
         start_response = _cors_start_response(environ, start_response)
         if method == "OPTIONS":
             return _route_cors_preflight(environ, start_response)
     if path == "/" and method == "GET":
         return route_home(start_response)
+    connector_authorize_match = _CONNECTOR_REQUEST_HANDLE_ROUTE.fullmatch(path)
+    if connector_authorize_match and method == "GET":
+        return route_connector_authorize(
+            environ,
+            start_response,
+            public_request_ref=connector_authorize_match.group(1),
+        )
+    connector_demo_match = _CONNECTOR_DEMO_AUTHORIZE_ROUTE.fullmatch(path)
+    if connector_demo_match and method == "GET":
+        return route_connector_authorize(
+            environ, start_response, demo_state=connector_demo_match.group(1)
+        )
     if path in ("/docs", "/docs/") and method == "GET":
         return route_docs(start_response)
     if path == "/agent-setup" and method == "GET":
@@ -4565,9 +8896,17 @@ def application(environ, start_response):
     if path == "/agent-coordination" and method == "GET":
         return route_agent_coordination(start_response)
     if path == "/console" and method == "GET":
-        return route_console(start_response)
+        return route_console(start_response) if _human_page_authenticated(environ) else route_human_access_page(environ, start_response)
+    if path == "/tour" and method == "GET":
+        return route_console(start_response, demo=True)
+    if path == "/tour/human" and method == "GET":
+        return route_human_access_page(environ, start_response, demo=True)
+    if path in ("/human", "/agents") and method == "GET":
+        return route_human_access_page(environ, start_response)
     if (path == "/knowledge" or _is_knowledge_page_route(path)) and method == "GET":
-        return route_knowledge(start_response, path if path != "/knowledge" else "")
+        return route_knowledge(start_response, path if path != "/knowledge" else "") if _human_page_authenticated(environ) else route_human_access_page(environ, start_response)
+    if (path == "/tour/knowledge" or _is_tour_knowledge_page_route(path)) and method == "GET":
+        return route_knowledge(start_response, path if path != "/tour/knowledge" else "", demo=True)
     if path == "/memory-lifecycle" and method == "GET":
         return route_memory_lifecycle(start_response)
     if path == "/transparency" and method == "GET":
@@ -4580,7 +8919,7 @@ def application(environ, start_response):
     if path == "/sitemap.xml" and method == "GET":
         urls = "\n".join(["<url><loc>%s%s</loc></url>" % (SITE_URL, route) for route in PUBLIC_ROUTES if not route.startswith("/api")])
         return response(start_response, "200 OK", "<?xml version=\"1.0\"?><!-- MemoryEndpoints.com sitemap --><urlset>%s</urlset>" % urls, "application/xml; charset=utf-8")
-    public = route_public_json(path, start_response) if method == "GET" else None
+    public = route_public_json(path, start_response, environ) if method == "GET" else None
     if public:
         return public
     if path == "/api/admin/mysql-diagnostics":
@@ -4588,5 +8927,69 @@ def application(environ, start_response):
     if path == "/api/matm/agent-setup/free-account":
         return route_setup(environ, start_response)
     if path.startswith("/api/matm/"):
+        if (
+            path.startswith("/api/matm/connector-pairings/")
+            or _CONNECTOR_HUMAN_COMPANY_SELECTION_ROUTE.fullmatch(path)
+            or _CONNECTOR_HUMAN_APPROVAL_ROUTE.fullmatch(path)
+            or _CONNECTOR_HUMAN_CANCEL_ROUTE.fullmatch(path)
+        ):
+            protected_connector = bool(
+                path not in (
+                    "/api/matm/connector-pairings/requests",
+                    "/api/matm/connector-pairings/authorization-code-claims",
+                    "/api/matm/connector-pairings/token",
+                )
+                and (
+                    _CONNECTOR_PAIRING_ROUTE.fullmatch(path)
+                    or _CONNECTOR_CREDENTIALS_ROUTE.fullmatch(path)
+                    or _CONNECTOR_PAIRING_ACTION_ROUTE.fullmatch(path)
+                    or _CONNECTOR_ROTATION_ACTIVATION_ROUTE.fullmatch(path)
+                )
+            )
+            if protected_connector and not str(environ.get("HTTP_AUTHORIZATION") or "").strip():
+                return _connector_problem(start_response, "invalid_token")
+            connector = route_connector_pairing(environ, start_response, path)
+            if connector is not None:
+                return connector
+        if path == "/api/matm/human/session/resource-context" or path.startswith(
+            "/api/matm/human/operational/"
+        ):
+            operational_store = (
+                None
+                if str(environ.get("HTTP_AUTHORIZATION") or "").strip()
+                else _store()
+            )
+            human_operational = route_human_operational(
+                environ, start_response, path, operational_store, SITE_URL
+            )
+            if human_operational is not None:
+                return human_operational
+        authorization = str(environ.get("HTTP_AUTHORIZATION") or "").strip()
+        if authorization:
+            connector_token = _token(environ)
+            connector_principal = (
+                _store().authenticate_connector_token(
+                    connector_token, allow_pending=True
+                )
+                if connector_token
+                else None
+            )
+            connector_generic_actions = {
+                ("GET", "/api/matm/me"),
+                ("GET", "/api/matm/workspace"),
+                ("POST", "/api/matm/agents/register"),
+                ("POST", "/api/matm/memory-events/submit"),
+                ("POST", "/api/matm/search"),
+            }
+            if connector_principal and (method, path) not in connector_generic_actions:
+                return _connector_problem(
+                    start_response, "connector_scope_forbidden"
+                )
+        human = route_human(environ, start_response, path)
+        if human is not None:
+            return human
+        access = route_access(environ, start_response, path)
+        if access is not None:
+            return access
         return route_protected(environ, start_response, path)
     return problem(start_response, "404 Not Found", "Not found", "The requested route does not exist.", "not_found")

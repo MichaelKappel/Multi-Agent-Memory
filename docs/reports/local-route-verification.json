@@ -1,9 +1,9 @@
 {
-  "expectedSourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+  "expectedSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
   "expectedSourceShaSource": "git_head",
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+  "gitHeadAtVerification": "f79e431e643b2d2cc4916c596377c036e585ca69",
   "items": [
     {
       "leakHitCount": 0,
@@ -41,7 +41,23 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "route": "/agent-coordination",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
       "route": "/console",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "route": "/knowledge",
       "secretHitCount": 0,
       "status": 200
     },
@@ -62,15 +78,15 @@
       "status": 200
     },
     {
-      "expectedSourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+      "expectedSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+      "sourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
       "sourceShaMatchesExpected": true,
-      "sourceShaShort": "0282c8619408",
+      "sourceShaShort": "f79e431e643b",
       "status": 200
     },
     {
@@ -78,6 +94,30 @@
       "leakRules": [],
       "missing": [],
       "route": "/api/matm/live-capability-matrix",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "route": "/api/matm/agent-compatibility",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "route": "/api/matm/connector-contract",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "route": "/api/matm/openapi.json",
       "secretHitCount": 0,
       "status": 200
     },
@@ -187,10 +227,10 @@
     }
   ],
   "mode": "wsgi",
-  "observedSourceSha": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+  "observedSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
   "ok": true,
   "reportScope": "point_in_time_snapshot",
-  "routeCount": 22,
+  "routeCount": 27,
   "schemaVersion": "memoryendpoints.verifier.v1",
   "sourceShaMatchesExpected": true
 }

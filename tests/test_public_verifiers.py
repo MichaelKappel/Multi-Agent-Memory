@@ -1,6 +1,9 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
+
+from memoryendpoints.site_data import PUBLIC_ROUTES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +45,92 @@ class PublicVerifierLeakContractTests(unittest.TestCase):
                 "python_traceback_frame",
             },
         )
+
+    def test_memoryendpoints_verifier_covers_every_public_route(self):
+        self.assertEqual(set(PUBLIC_ROUTES), set(verify_memoryendpoints.ROUTES))
+
+    def test_connector_public_routes_use_non_mutating_or_safe_no_op_probes(self):
+        probes = verify_memoryendpoints.CONNECTOR_PUBLIC_PROBES
+        self.assertEqual(
+            {
+                "/.well-known/memoryendpoints-connector",
+                "/connect/authorize/{publicRequestRef}",
+                "/tour/connect/authorize/{demoState}",
+                "/api/matm/connector-pairings/requests",
+                "/api/matm/connector-pairings/authorization-code-claims",
+                "/api/matm/connector-pairings/token",
+            },
+            set(probes),
+        )
+        self.assertEqual("GET", probes["/.well-known/memoryendpoints-connector"]["method"])
+        self.assertEqual("GET", probes["/connect/authorize/{publicRequestRef}"]["method"])
+        self.assertEqual("GET", probes["/tour/connect/authorize/{demoState}"]["method"])
+        for route in (
+            "/api/matm/connector-pairings/requests",
+            "/api/matm/connector-pairings/authorization-code-claims",
+            "/api/matm/connector-pairings/token",
+        ):
+            self.assertEqual("POST", probes[route]["method"])
+            self.assertEqual(b"{}", probes[route]["body"])
+            self.assertIn(422, probes[route]["expectedStatuses"])
+
+    def test_connector_safe_no_op_probe_requires_exact_problem_envelope(self):
+        payload = {
+            "ok": False,
+            "safeNoOp": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+            "error": {
+                "code": "invalid_request",
+                "title": "Connector pairing rejected",
+                "detail": "The request body does not match the connector operation schema.",
+                "safeNoOp": True,
+                "valuesRedacted": True,
+            },
+        }
+        check = verify_memoryendpoints.connector_public_probe_check(
+            "/api/matm/connector-pairings/requests",
+            422,
+            json.dumps(payload),
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+        self.assertTrue(check["verified"])
+
+        payload["error"]["message"] = "compatibility alias"
+        rejected = verify_memoryendpoints.connector_public_probe_check(
+            "/api/matm/connector-pairings/requests",
+            422,
+            json.dumps(payload),
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+        self.assertFalse(rejected["verified"])
+
+    def test_exact_git_head_requires_explicit_clean_build_metadata(self):
+        for build in (
+            {"sourceSha": "abc123", "sourceWorktreeDirty": True},
+            {"sourceSha": "abc123"},
+        ):
+            item = {"missing": []}
+            verify_memoryendpoints.apply_build_expectations(
+                item,
+                build,
+                "abc123",
+                require_clean_build=True,
+            )
+            self.assertTrue(item["missing"])
+            self.assertFalse(item["sourceShaMatchesExpected"])
+
+        clean_item = {"missing": []}
+        verify_memoryendpoints.apply_build_expectations(
+            clean_item,
+            {"sourceSha": "abc123", "sourceWorktreeDirty": False},
+            "abc123",
+            require_clean_build=True,
+        )
+        self.assertEqual([], clean_item["missing"])
+        self.assertTrue(clean_item["cleanSourceRevision"])
+        self.assertTrue(clean_item["sourceShaMatchesExpected"])
 
     def test_static_site_verifier_flags_local_paths_and_tracebacks(self):
         text = (

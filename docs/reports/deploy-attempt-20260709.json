@@ -19,7 +19,7 @@
       "valuesRedacted": true
     },
     {
-      "errorType": "ConnectionResetError",
+      "errorType": "error_perm",
       "failedPhase": "login",
       "protocol": "ftp",
       "safeNoOp": true,
@@ -31,16 +31,16 @@
   ],
   "dryRun": {
     "packageExists": true,
-    "plannedUploadCount": 81,
-    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+    "plannedUploadCount": 108,
+    "sourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
     "status": "ready",
     "valuesRedacted": true
   },
   "freshness": {
-    "dryRunPlannedUploadCount": 81,
-    "dryRunSourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
-    "packageFileCount": 81,
-    "packageSourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+    "dryRunPlannedUploadCount": 108,
+    "dryRunSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
+    "packageFileCount": 108,
+    "packageSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
     "plannedUploadCountMatchesPackage": true,
     "sourceShaMatchesPackage": true,
     "valuesRedacted": true
@@ -51,12 +51,18 @@
     "failedPhase": null,
     "safeNoOp": false,
     "status": "uploaded",
-    "uploadedCount": 81,
+    "uploadedCount": 108,
+    "valuesRedacted": true
+  },
+  "liveLatestCode": {
+    "expectedSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
+    "observedSourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
+    "sourceShaMatchesExpected": true,
     "valuesRedacted": true
   },
   "package": {
-    "fileCount": 81,
-    "sourceSha": "239975b9b1cc30d5340c9c5fbed1592ca2699c31",
+    "fileCount": 108,
+    "sourceSha": "f79e431e643b2d2cc4916c596377c036e585ca69",
     "status": "ready",
     "valuesRedacted": true
   },

@@ -31,7 +31,33 @@ def json_response(start_response, data, status="200 OK", headers=None):
     return response(start_response, status, json_bytes(data), "application/json; charset=utf-8", headers)
 
 
-def problem(start_response, status, title, detail, code):
+def one_time_secret_payload(data):
+    """Return the exact public envelope used for an authorized one-time secret."""
+    payload = dict(data or {})
+    payload["credentialDeliveredToAuthorizedRecipient"] = True
+    payload["rawCredentialPersisted"] = False
+    payload["showCredentialOnce"] = True
+    payload.pop("rawCredentialExposed", None)
+    return payload
+
+
+def one_time_secret_response(start_response, data, status="201 Created", headers=None):
+    """Deliver one authorized one-time secret with non-cacheable browser headers."""
+    payload = one_time_secret_payload(data)
+    return json_response(
+        start_response,
+        payload,
+        status,
+        [
+            ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
+            ("Pragma", "no-cache"),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Frame-Options", "DENY"),
+        ] + list(headers or []),
+    )
+
+
+def problem(start_response, status, title, detail, code, headers=None):
     return json_response(
         start_response,
         {
@@ -49,4 +75,5 @@ def problem(start_response, status, title, detail, code):
             },
         },
         status,
+        headers,
     )

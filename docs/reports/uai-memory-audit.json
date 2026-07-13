@@ -1,17 +1,18 @@
 {
+  "accountlessBrowserVirtualLogicalRoleCreatesLocalFile": false,
   "anchorFilesPresent": true,
   "bootstrapFile": ".uai/startup-packet.uai",
   "bootstrapFilePresent": true,
   "bootstrapPointsToTotem": true,
   "dateFreeHotMemory": true,
   "expectedStartupReadOrder": [
+    ".uai/startup-packet.uai",
     ".uai/memory-maintenance.uai",
     ".uai/identity.uai",
     ".uai/world-context.uai",
     ".uai/totem.uai",
     ".uai/taboo.uai",
     ".uai/talisman.uai",
-    ".uai/startup-packet.uai",
     ".uai/system-profile.uai",
     ".uai/receiver-brief.uai",
     ".uai/index.uai",
@@ -27,6 +28,8 @@
     ".uai/risk-register.uai",
     ".uai/owners.uai",
     ".uai/agent-instructions.uai",
+    ".uai/agents/memoryendpoints-frontend-agent.uai",
+    ".uai/agents/memoryendpoints-backend-agent.uai",
     ".uai/style.uai",
     ".uai/memory.uai",
     ".uai/file-handoff.uai",
@@ -39,7 +42,7 @@
     ".uai/open-questions.uai",
     ".uai/progress.uai"
   ],
-  "fileCount": 36,
+  "fileCount": 38,
   "forbiddenActiveMemoryFileNames": [
     "active-memory.uai",
     "current-state.uai",
@@ -48,7 +51,7 @@
     "working-state.uai"
   ],
   "forbiddenActiveMemoryFiles": [],
-  "forbiddenActiveMemoryPolicy": "The .uai folder is the active startup memory suite; files named short-term-memory.uai, current-state.uai, active-memory.uai, project-state.uai, or working-state.uai are forbidden under any purpose or interpretation, even while public UAIX wizard guidance catches up.",
+  "forbiddenActiveMemoryPolicy": "The local .uai folder is the active startup memory suite; actual local files named short-term-memory.uai, current-state.uai, active-memory.uai, project-state.uai, or working-state.uai are forbidden. A protected virtual UAIX package for an accountless browser may represent its configuration-specific short-term-memory logical role in database records because it creates no local file.",
   "handoffBucketItems": [
     {
       "activePayloadCount": 0,
@@ -77,6 +80,30 @@
       "missingRequiredFields": [],
       "ok": true,
       "path": ".uai/agent-instructions.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/agents/memoryendpoints-backend-agent.uai",
+      "secretHitCount": 0,
+      "secretRules": [],
+      "valuesRedacted": true
+    },
+    {
+      "dateFree": true,
+      "dateHitCount": 0,
+      "dateRules": [],
+      "forbiddenReferences": [],
+      "missingRequiredFields": [],
+      "ok": true,
+      "path": ".uai/agents/memoryendpoints-frontend-agent.uai",
       "secretHitCount": 0,
       "secretRules": [],
       "valuesRedacted": true
@@ -505,13 +532,13 @@
   "localUaiStaysActiveAlways": true,
   "manifestForbiddenActiveMemoryFiles": [],
   "manifestReadOrder": [
+    ".uai/startup-packet.uai",
     ".uai/memory-maintenance.uai",
     ".uai/identity.uai",
     ".uai/world-context.uai",
     ".uai/totem.uai",
     ".uai/taboo.uai",
     ".uai/talisman.uai",
-    ".uai/startup-packet.uai",
     ".uai/system-profile.uai",
     ".uai/receiver-brief.uai",
     ".uai/index.uai",
@@ -527,6 +554,8 @@
     ".uai/risk-register.uai",
     ".uai/owners.uai",
     ".uai/agent-instructions.uai",
+    ".uai/agents/memoryendpoints-frontend-agent.uai",
+    ".uai/agents/memoryendpoints-backend-agent.uai",
     ".uai/style.uai",
     ".uai/memory.uai",
     ".uai/file-handoff.uai",
@@ -546,13 +575,13 @@
   "ok": true,
   "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
   "startupReadOrder": [
+    ".uai/startup-packet.uai",
     ".uai/memory-maintenance.uai",
     ".uai/identity.uai",
     ".uai/world-context.uai",
     ".uai/totem.uai",
     ".uai/taboo.uai",
     ".uai/talisman.uai",
-    ".uai/startup-packet.uai",
     ".uai/system-profile.uai",
     ".uai/receiver-brief.uai",
     ".uai/index.uai",
@@ -568,6 +597,8 @@
     ".uai/risk-register.uai",
     ".uai/owners.uai",
     ".uai/agent-instructions.uai",
+    ".uai/agents/memoryendpoints-frontend-agent.uai",
+    ".uai/agents/memoryendpoints-backend-agent.uai",
     ".uai/style.uai",
     ".uai/memory.uai",
     ".uai/file-handoff.uai",
@@ -580,8 +611,8 @@
     ".uai/open-questions.uai",
     ".uai/progress.uai"
   ],
+  "startupReadOrderBootstrapFirst": true,
   "startupReadOrderMatchesExpected": true,
-  "startupReadOrderMemoryMaintenanceFirst": true,
   "unexpectedFiles": [],
   "valuesRedacted": true
 }

@@ -8,6 +8,7 @@ from contextlib import closing
 from pathlib import Path
 
 from app import application
+from tests.governed_test_support import GovernedAgentProvisioner
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -41,6 +42,8 @@ class ExternalLinkTests(unittest.TestCase):
         self.sqlite_path = self.tempdir / "store.sqlite3"
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
         os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = str(self.sqlite_path)
+        self.agent_provisioner = GovernedAgentProvisioner(call_app).install()
+        self.addCleanup(self.agent_provisioner.restore)
 
     def tearDown(self):
         shutil.rmtree(str(self.tempdir), ignore_errors=True)
@@ -54,16 +57,25 @@ class ExternalLinkTests(unittest.TestCase):
             body={"label": "Link Search Workspace", "companyLabel": "Link Search Company", "projectLabel": "MemoryEndpoints.com"},
         )
         self.assertEqual("201 Created", status)
-        payload = json.loads(text)
-        return payload, {"HTTP_AUTHORIZATION": "Bearer " + payload["apiKeySecret"]}
+        setup = json.loads(text)
+        agent = self.agent_provisioner.provision(
+            master_bearer=setup["companyMasterTokenSecret"],
+            company_id=setup["companyId"],
+            workspace_id=setup["workspaceId"],
+            project_id=setup["projectId"],
+            requested_name="memoryendpoints-backend-agent",
+            display_name="MemoryEndpoints Backend Agent",
+            grant_scope_type="workspace",
+        )
+        return setup, agent
 
-    def create_knowledge_document(self, setup, headers):
+    def create_knowledge_document(self, setup, agent):
         status, _headers, text = call_app(
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body={
                 "workspaceId": setup["workspaceId"],
-                "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                "actorAgentId": agent.agent_id,
                 "scope": "project",
                 "scopeId": setup["projectId"],
                 "projectId": setup["projectId"],
@@ -80,17 +92,17 @@ class ExternalLinkTests(unittest.TestCase):
                 "routeOrPath": "/knowledge/project/memory-architecture/stateful-agent-memory-evidence",
                 "searchableText": "Stateful agents need durable typed memory and bounded prompt assembly.",
             },
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="external-link-test-document"),
+            headers=dict(agent.auth_headers, HTTP_IDEMPOTENCY_KEY="external-link-test-document"),
         )
         self.assertEqual("201 Created", status)
         return json.loads(text)["canonicalSearchDocumentId"]
 
     def test_external_link_is_searchable_and_cited_as_its_own_data_type(self):
-        setup, headers = self.setup_workspace()
-        document_id = self.create_knowledge_document(setup, headers)
+        setup, agent = self.setup_workspace()
+        document_id = self.create_knowledge_document(setup, agent)
         body = {
             "workspaceId": setup["workspaceId"],
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": agent.agent_id,
             "url": "HTTPS://Example.com:443/guides/stateful-agents?q=memory#typed-memory",
             "siteName": "Example Research",
             "pageTitle": "Stateful Agents and Typed Memory",
@@ -111,7 +123,7 @@ class ExternalLinkTests(unittest.TestCase):
             "/api/matm/external-links/upsert",
             method="POST",
             body=body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="external-link-upsert-one"),
+            headers=dict(agent.auth_headers, HTTP_IDEMPOTENCY_KEY="external-link-upsert-one"),
         )
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
@@ -128,7 +140,7 @@ class ExternalLinkTests(unittest.TestCase):
 
         status, _headers, text = call_app(
             "/api/matm/internet-search",
-            headers=headers,
+            headers=agent.auth_headers,
             query="workspace_id=%s&q=prompt%%20budgets" % setup["workspaceId"],
         )
         self.assertEqual("200 OK", status)
@@ -141,7 +153,7 @@ class ExternalLinkTests(unittest.TestCase):
 
         status, _headers, text = call_app(
             "/api/matm/internet-search",
-            headers=headers,
+            headers=agent.auth_headers,
             query="workspace_id=%s&q=Agent%%20Memory%%20Architecture%%20Research" % setup["workspaceId"],
         )
         self.assertEqual("200 OK", status)
@@ -151,7 +163,7 @@ class ExternalLinkTests(unittest.TestCase):
 
         status, _headers, text = call_app(
             "/api/matm/external-links",
-            headers=headers,
+            headers=agent.auth_headers,
             query="workspace_id=%s&document_id=%s" % (setup["workspaceId"], document_id),
         )
         self.assertEqual("200 OK", status)
@@ -166,10 +178,10 @@ class ExternalLinkTests(unittest.TestCase):
             )
 
     def test_external_link_rejects_credentials_and_private_hosts(self):
-        setup, headers = self.setup_workspace()
+        setup, agent = self.setup_workspace()
         base_body = {
             "workspaceId": setup["workspaceId"],
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": agent.agent_id,
             "siteName": "Unsafe Site",
             "pageTitle": "Unsafe Link",
             "description": "This URL must be rejected before persistence.",
@@ -186,7 +198,10 @@ class ExternalLinkTests(unittest.TestCase):
                 "/api/matm/external-links/upsert",
                 method="POST",
                 body=dict(base_body, url=url),
-                headers=dict(headers, HTTP_IDEMPOTENCY_KEY="unsafe-external-link-%s" % index),
+                headers=dict(
+                    agent.auth_headers,
+                    HTTP_IDEMPOTENCY_KEY="unsafe-external-link-%s" % index,
+                ),
             )
             self.assertEqual("422 Unprocessable Entity", status)
             self.assertEqual(code, json.loads(text)["error"]["code"])
@@ -195,11 +210,11 @@ class ExternalLinkTests(unittest.TestCase):
             self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM matm_external_links").fetchone()[0])
 
     def test_unreviewed_citation_preserves_existing_canonical_review(self):
-        setup, headers = self.setup_workspace()
-        document_id = self.create_knowledge_document(setup, headers)
+        setup, agent = self.setup_workspace()
+        document_id = self.create_knowledge_document(setup, agent)
         base_body = {
             "workspaceId": setup["workspaceId"],
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": agent.agent_id,
             "url": "https://example.com/guides/reviewed-agent-api",
             "siteName": "Example Research",
             "pageTitle": "Reviewed Agent API Guidance",
@@ -219,7 +234,7 @@ class ExternalLinkTests(unittest.TestCase):
             "/api/matm/external-links/upsert",
             method="POST",
             body=dict(base_body, reviewStatus="reviewed"),
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="reviewed-link-first"),
+            headers=dict(agent.auth_headers, HTTP_IDEMPOTENCY_KEY="reviewed-link-first"),
         )
         self.assertEqual("201 Created", status)
         self.assertEqual("reviewed", json.loads(text)["link"]["reviewStatus"])
@@ -237,7 +252,7 @@ class ExternalLinkTests(unittest.TestCase):
             "/api/matm/external-links/upsert",
             method="POST",
             body=source_citation,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="unreviewed-link-mention"),
+            headers=dict(agent.auth_headers, HTTP_IDEMPOTENCY_KEY="unreviewed-link-mention"),
         )
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
@@ -287,14 +302,14 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertIn("source_report_name", columns)
 
     def test_external_link_search_is_workspace_isolated(self):
-        first, first_headers = self.setup_workspace()
-        document_id = self.create_knowledge_document(first, first_headers)
+        first, first_agent = self.setup_workspace()
+        document_id = self.create_knowledge_document(first, first_agent)
         status, _headers, text = call_app(
             "/api/matm/external-links/upsert",
             method="POST",
             body={
                 "workspaceId": first["workspaceId"],
-                "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                "actorAgentId": first_agent.agent_id,
                 "url": "https://example.org/memory",
                 "siteName": "Example Organization",
                 "pageTitle": "Agent Memory",
@@ -303,15 +318,15 @@ class ExternalLinkTests(unittest.TestCase):
                 "knowledgeDocumentId": document_id,
                 "contextDescription": "Evidence for the workspace's memory architecture page.",
             },
-            headers=dict(first_headers, HTTP_IDEMPOTENCY_KEY="isolated-external-link"),
+            headers=dict(first_agent.auth_headers, HTTP_IDEMPOTENCY_KEY="isolated-external-link"),
         )
         self.assertEqual("201 Created", status)
         external_link_id = json.loads(text)["canonicalExternalLinkId"]
 
-        second, second_headers = self.setup_workspace()
+        second, second_agent = self.setup_workspace()
         status, _headers, text = call_app(
             "/api/matm/external-links",
-            headers=second_headers,
+            headers=second_agent.auth_headers,
             query="workspace_id=%s&external_link_id=%s" % (second["workspaceId"], external_link_id),
         )
         self.assertEqual("200 OK", status)

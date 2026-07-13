@@ -12,11 +12,18 @@
   const articleEl = app.querySelector("[data-knowledge-article]");
   const resultsEl = app.querySelector("[data-knowledge-results]");
   const statusEl = app.querySelector("[data-knowledge-status]");
-  const state = { workspaceId: "", workspaceKey: "", searchMode: "pages", initialRoute: app.dataset.initialRoute || "" };
+  const state = { workspaceId: "", workspaceKey: "", demoMode: app.dataset.knowledgeDemoMode === "true", searchMode: "pages", initialRoute: app.dataset.initialRoute || "" };
+  const mockTransportApi = state.demoMode ? window.MemoryEndpointsMockTransport : null;
+  const demoBootstrap = mockTransportApi && typeof mockTransportApi.bootstrap === "function"
+    ? mockTransportApi.bootstrap()
+    : null;
+  const mockTransport = mockTransportApi && demoBootstrap
+    ? mockTransportApi.create({agentId: demoBootstrap.agentId})
+    : null;
 
   function isInternalKnowledgeRoute(value) {
     const route = String(value || "");
-    return /^\/knowledge\/(company|workspace|project)\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/)*[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route);
+    return /^\/(?:knowledge|tour\/knowledge)\/(company|workspace|project)\/(?:[a-z0-9]+(?:-[a-z0-9]+)*\/)*[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route);
   }
 
   function setStatus(message, kind) {
@@ -95,8 +102,17 @@
   }
 
   function api(path, params) {
-    if (!state.workspaceId || !state.workspaceKey) {
+    if (!state.workspaceId || (!state.demoMode && !state.workspaceKey)) {
       return Promise.reject(new Error("Workspace and key are required."));
+    }
+    if (state.demoMode) {
+      if (!mockTransport) {
+        const transportError = new Error("Mock transport is unavailable; no network request was made.");
+        transportError.code = "mock_transport_unavailable";
+        transportError.safeNoOp = true;
+        return Promise.reject(transportError);
+      }
+      return mockTransport.request(path, params || {});
     }
     const query = new URLSearchParams(params || {});
     query.set("workspace_id", state.workspaceId);
@@ -118,6 +134,7 @@
       return payload;
     });
   }
+
 
   function documentButton(knowledgeDocument) {
     const button = document.createElement("button");
@@ -516,6 +533,8 @@
 
   authForm.addEventListener("submit", function (event) {
     event.preventDefault();
+    state.demoMode = false;
+    app.classList.remove("is-demo");
     const form = new FormData(authForm);
     state.workspaceId = String(form.get("workspaceId") || "").trim();
     state.workspaceKey = String(form.get("workspaceKey") || "").trim();
@@ -542,24 +561,70 @@
     button.addEventListener("click", function () {
       state.searchMode = button.dataset.knowledgeMode || "pages";
       modeButtons.forEach(function (candidate) {
-        candidate.setAttribute("aria-selected", candidate === button ? "true" : "false");
+        candidate.setAttribute("aria-pressed", candidate === button ? "true" : "false");
       });
       runSearch();
     });
   });
 
+  function startDemoKnowledge() {
+    if (!mockTransport || !demoBootstrap || !demoBootstrap.workspaceId || !demoBootstrap.initialKnowledgeDocumentId) {
+      setStatus("Mock transport is unavailable; no network request was made.", "error");
+      return Promise.resolve(null);
+    }
+    mockTransport.reset();
+    state.workspaceId = String(demoBootstrap.workspaceId);
+    state.workspaceKey = "";
+    app.classList.add("is-demo");
+    lockPrivateKnowledge(false);
+    return loadTree().then(function (payload) {
+      if (!payload) return;
+      runSearch();
+      const initialRoute = state.initialRoute;
+      state.initialRoute = "";
+      if (isInternalKnowledgeRoute(initialRoute)) loadDocumentByRoute(initialRoute, {updateLocation:false});
+      else loadDocument(String(demoBootstrap.initialKnowledgeDocumentId), {updateLocation:false});
+      setStatus("Public tour active — mock knowledge, real wiki interface, no persistence.", "ok");
+      return payload;
+    });
+  }
+
+  if (state.demoMode) startDemoKnowledge();
+
   window.addEventListener("popstate", function () {
-    if (!state.workspaceId || !state.workspaceKey) return;
+    if (!state.workspaceId || (!state.demoMode && !state.workspaceKey)) return;
     const route = window.location.pathname;
     if (isInternalKnowledgeRoute(route)) {
       loadDocumentByRoute(route, { updateLocation: false });
       return;
     }
-    if (route === "/knowledge") {
+    if (route === "/knowledge" || (state.demoMode && route === "/tour/knowledge")) {
       clearNode(articleEl);
       setActiveArticle(false);
       appendText(articleEl, "p", "Select a page.", "empty-state");
       setStatus("Wiki loaded.", "ok");
     }
+  });
+
+  function scrubKnowledgeSession(message) {
+    if (authForm && authForm.elements) {
+      if (authForm.elements.workspaceId) authForm.elements.workspaceId.value = "";
+      if (authForm.elements.workspaceKey) authForm.elements.workspaceKey.value = "";
+    }
+    lockPrivateKnowledge(true);
+    setStatus(message || "Workspace key and private knowledge cleared.", "loading");
+  }
+
+  window.addEventListener("pagehide", function () {
+    scrubKnowledgeSession("Workspace key and rendered knowledge cleared for navigation.");
+  });
+
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    if (state.demoMode) {
+      startDemoKnowledge();
+      return;
+    }
+    scrubKnowledgeSession("Workspace key cleared. Open the wiki again to continue.");
   });
 })();

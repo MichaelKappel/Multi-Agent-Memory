@@ -2,7 +2,13 @@
 
 The route table below mirrors `memoryendpoints.site_data.ROUTE_TABLE`. The test suite fails when a code route is missing from this document or the companion API reference. The live machine-readable inventory at [`/api/matm/route-inventory`](https://memoryendpoints.com/api/matm/route-inventory) remains authoritative for the deployed revision.
 
-Public routes are readable without credentials. Protected MATM routes require a workspace bearer key. Tenant knowledge is never exposed by the public `/knowledge` shell.
+Public routes are readable without a durable credential. Connector request,
+body-only authorization-code claim, and exchange routes instead require
+one-use protocol material plus exact-retry
+idempotency; they never accept a workspace key. Protected routes require the
+credential named by their contract: a legacy workspace bearer, connector
+bearer, company master, or authenticated human session. Tenant knowledge is
+never exposed by the public `/knowledge` shell.
 
 ## Public Routes
 
@@ -15,6 +21,9 @@ Public routes are readable without credentials. Protected MATM routes require a 
 | `/agent-coordination` | GET | Authenticated agent coordination quickstart with copy-safe examples. |
 | `/console` | GET | Human verification console for authenticated workspace keys. |
 | `/knowledge` | GET | Authenticated human wiki shell backed by protected database knowledge routes. |
+| `/tour` | GET | Browser-local public product tour using clearly labeled mock data. |
+| `/tour/knowledge` | GET | Browser-local public knowledge tour using clearly labeled mock data. |
+| `/tour/human` | GET | Browser-local human-access tour using the production renderer with clearly labeled session-only mock authority. |
 | `/memory-lifecycle` | GET | Memory lifecycle explanation. |
 | `/transparency` | GET | Support boundaries and no-op behavior. |
 | `/api/version` | GET | Runtime version and dependency facts. |
@@ -22,6 +31,12 @@ Public routes are readable without credentials. Protected MATM routes require a 
 | `/api/matm/agent-compatibility` | GET | L0-L7 agent ability contract, fallbacks, and route-record guidance. |
 | `/api/matm/sync/capabilities` | GET | Public distributed-sync v1 capability negotiation. |
 | `/api/matm/connector-contract` | GET | Public-safe optional connector integration contract for external agents and apps. |
+| `/.well-known/memoryendpoints-connector` | GET | Public same-origin discovery for memoryendpoints.connector_pairing.v1. |
+| `/connect/authorize/{publicRequestRef}` | GET | Human approval surface addressed only by a short-lived public, non-authorizing request reference. |
+| `/tour/connect/authorize/{demoState}` | GET | Explicit mock signed-out/company-selection/reauth/pending/success/error/expired/cancelled/permission states through the production renderer with zero protected network. |
+| `/api/matm/connector-pairings/requests` | POST | Create an idempotent PKCE-bound connector pairing request. |
+| `/api/matm/connector-pairings/authorization-code-claims` | POST | Claim a body-only, one-use authorization code after human approval using request proof, state, and an exact idempotency binding. |
+| `/api/matm/connector-pairings/token` | POST | Exchange a one-use authorization code for a pending connector credential. |
 | `/api/matm/uai-memory/contract` | GET | Public contract for protected database-backed UAIX active memory used by accountless browser agents. |
 | `/api/matm/openapi.json` | GET | Bounded OpenAPI-style golden-path route schema. |
 | `/api/matm/route-inventory` | GET | Route inventory with access boundaries. |
@@ -38,12 +53,58 @@ Public routes are readable without credentials. Protected MATM routes require a 
 | `/.well-known/mcp.json` | GET | MCP discovery pointer. |
 | `/.well-known/ai-agent.json` | GET | Agent discovery pointer. |
 
+The free-account setup route accepts only `GET` and `POST`; `PUT`, `PATCH`, and
+`DELETE` return `405` with `Allow: GET, POST`. Its `POST` body must be a JSON
+object. Company, workspace, and project labels are optional, but every supplied
+canonical or alias label must be a string whose server-trimmed value is
+nonempty and at most 120 characters. All setup responses are `no-store`.
+Repeated valid posts intentionally create distinct hierarchies and one-time
+credentials; compatibility setup does not replay or persist a raw key. New
+LocalEndpoint integrations use `memoryendpoints.connector_pairing.v1` with a
+provisional workspace and pending grant so cancellation, expiry, or a secure
+store failure before activation leaves no durable hierarchy.
+
+Connector v1 approval URLs contain only `publicRequestRef` (`pairref_` plus 43
+base64url characters). Approval returns a registered `wakeUpUrl` byte-for-byte
+with no parameters; opening it is an explicit human action and grants no
+authority. The desktop claims the code through JSON POST before PKCE exchange.
+While approval is pending, `202` includes `Retry-After`, `stateVerified=true`,
+the exact `requestedScopes`, `scopeDigest`, `idempotencyKeyReserved=false`, and
+a redacted receipt without reserving the idempotency key.
+The exact identity is `localendpoint-agent`; the immutable ordered scopes are
+`connector:self:readback`, `agent:self:register`,
+`memory:public-safe:submit`, and `memory:search:read`, with digest
+`sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594`.
+Every unlisted connector route fails closed with `403
+connector_scope_forbidden` before request-body or storage dispatch.
+
+Discovery is bounded to 16 KiB, connector JSON requests to 32 KiB, and other
+connector JSON responses to 64 KiB. The public `PairingRequest` projection uses
+`claimExpiresAt` for the nullable claim deadline and no internal request or
+tenant identifiers. The base `PairingSummary` allowlist is `pairingId`,
+`status`, `workspaceId`, `agentId`, `credentialId`, `approvedScopes`,
+`scopeDigest`, and `grant`; pending adds `activationExpiresInSeconds`, and
+authenticated status adds bounded readable `workspace` and `agent` objects.
+The grant is exactly `credentialType`, `scopeType`, `scopeId`, `workspaceId`,
+`agentId`, `approvedScopes`, `scopeDigest`, `active`, `revoked`,
+`canInvite=false`, and `canRevoke=false`.
+The base `RotationSummary` is only `rotationId`, `status`, `credentialId`,
+`approvedScopes`, and `scopeDigest`; pending adds
+`activationExpiresInSeconds`. Every one-time request-proof, approved-code,
+exchange, and rotation response attests
+`credentialDeliveredToAuthorizedRecipient=true`,
+`rawCredentialPersisted=false`, and `showCredentialOnce=true` at the top level.
+Credential inventory item fields are exactly `credentialId`, `status`,
+`isCurrent`, `approvedScopes`, `scopeDigest`, `createdAt`, `activatedAt`,
+`revokedAt`, and `lastUsedAt`; only the outer envelope carries redaction flags.
+
 ## Protected Routes
 
-Protected mutations require `Idempotency-Key` unless the route explicitly returns a one-time setup credential. Exact retries replay the original safe response; key reuse with a different body returns a conflict-safe no-op.
+Protected mutations require `Idempotency-Key` when their route contract advertises it. Exact retries replay the original safe response; key reuse with a different body returns a conflict-safe no-op. Connector `POST /api/matm/search` is read-only and rejects `Idempotency-Key`.
 
 | Route | Methods | Purpose |
 | --- | --- | --- |
+| `/api/matm/me` | GET | Credential-derived principal, immutable scope, permission, and resource-context introspection. |
 | `/api/matm/workspace` | GET | Workspace quota and status. |
 | `/api/matm/projects` | GET, POST | Workspace project list and project upsert for company/workspace/project hierarchy. |
 | `/api/matm/knowledge-tree` | GET | Database-backed company/workspace/project wiki tree for humans and agents. |
@@ -52,7 +113,18 @@ Protected mutations require `Idempotency-Key` unless the route explicitly return
 | `/api/matm/external-links` | GET, POST | Search and store first-class external links with site, page, description, crawl state, and knowledge citations. |
 | `/api/matm/external-links/upsert` | POST | Idempotent protected external-link and knowledge-citation upsert alias. |
 | `/api/matm/internet-search` | GET | Search the workspace's reviewed curated-web link index. |
-| `/api/matm/agents/register` | POST | Agent registration. |
+| `/api/matm/agents/register` | POST | Invite-only agent registration, connector self-confirmation, or the deprecated exact LocalEndpoint single-agent transition. |
+| `/api/matm/human/connector-pairings/{publicRequestRef}/company-selection` | POST | Resolve a short-lived opaque company reference and rotate the authenticated human session for connector approval. |
+| `/api/matm/human/connector-pairings/{publicRequestRef}/approve` | POST | Approve the exact canonical agent, exact four scopes, and an existing or provisional workspace through an authenticated human session. |
+| `/api/matm/human/connector-pairings/{publicRequestRef}/cancel` | POST | Cancel a pending human approval request idempotently before any connector grant exists. |
+| `/api/matm/connector-pairings/{pairingId}` | GET | Verify exact workspace, agent, connector scope, and active grant state. |
+| `/api/matm/connector-pairings/{pairingId}/activate` | POST | Activate a securely stored pending connector grant idempotently. |
+| `/api/matm/connector-pairings/{pairingId}/rotations` | POST | Prepare and reveal a pending connector credential rotation once. |
+| `/api/matm/connector-pairings/{pairingId}/rotations/{rotationId}/activate` | POST | Activate a pending rotation and revoke its predecessor atomically. |
+| `/api/matm/connector-pairings/{pairingId}/credentials` | GET | Read redacted connector credential lifecycle metadata with no credential or verifier material. |
+| `/api/matm/connector-pairings/{pairingId}/revoke` | POST | Revoke a connector grant with a company master credential. |
+| `/api/matm/connector-pairings/{pairingId}/disconnect` | POST | Disconnect and revoke the calling connector credential. |
+| `/api/matm/connector-pairings/{pairingId}/cancel` | POST | Cancel an unactivated connector grant without durable workspace or agent creation. |
 | `/api/matm/uai-memory/packages` | GET, POST | Create or inspect a registered agent's protected virtual UAIX active-memory package. |
 | `/api/matm/uai-memory/records` | GET, POST | Read or revision-safely write one date-free public-safe virtual UAIX record at a time. |
 | `/api/matm/uai-memory/startup` | GET | Read an agent-bound virtual UAIX package in deterministic startup order with readiness evidence. |
@@ -63,7 +135,7 @@ Protected mutations require `Idempotency-Key` unless the route explicitly return
 | `/api/matm/uai-memory/edit-claims/release` | POST | Release an owned local .uai edit claim without changing the observed file head. |
 | `/api/matm/memory-events/submit` | POST | Workspace memory summary write with hosted search and review-queue readback confirmation. |
 | `/api/matm/memory-events` | GET | Workspace memory event search. |
-| `/api/matm/search` | GET | Hosted workspace memory search. |
+| `/api/matm/search` | GET, POST | Hosted workspace memory search; connectors use exact body-only POST search. |
 | `/api/matm/review-queue` | GET | Memory review and promotion queue readback. |
 | `/api/matm/review-queue/decide` | POST | Idempotent memory promotion, rejection, or quarantine decision. |
 | `/api/matm/meeting-rooms` | GET, POST | Always-present company, workspace, project room discovery plus goal/task room creation. |

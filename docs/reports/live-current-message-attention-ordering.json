@@ -1,0 +1,24 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": {
+    "fullOrderRequiredThenAck": true,
+    "limitOneReturnsOlderRequiredSummary": true,
+    "limitOneReturnsRequired": true,
+    "sourceShaMatchesHead": true,
+    "storeBackendVerified": true
+  },
+  "fullDispositions": [
+    "required_response",
+    "viewed_acknowledgement"
+  ],
+  "limitedDisposition": "required_response",
+  "limitedSummary": "Live smoke older required-response current message for backend attention ordering.",
+  "ok": true,
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "schemaVersion": "memoryendpoints.live_current_message_attention_ordering.v1",
+  "sourceSha": "62f7540e16be688ecd6f38866c3c99047c2a85c0",
+  "storeBackend": "mysql",
+  "valuesRedacted": true,
+  "workspaceId": "workspace-2dc0b4935c1648caae9c"
+}

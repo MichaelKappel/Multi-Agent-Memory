@@ -7,6 +7,7 @@ import time
 import unittest
 
 from app import application
+from tests.governed_test_support import GovernedAgentProvisioner
 
 
 ENV_KEYS = (
@@ -46,6 +47,8 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.mkdtemp(prefix="memoryendpoints-attention-order-")
         self.previous_env = {key: os.environ.get(key) for key in ENV_KEYS}
+        self.agent_provisioner = GovernedAgentProvisioner(call_app).install()
+        self.addCleanup(self.agent_provisioner.restore)
         os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = os.path.join(self.tempdir, "missing-mysql.json")
         os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = os.path.join(self.tempdir, "missing-admin-diagnostics.json")
 
@@ -73,29 +76,28 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
             },
         )
         self.assertEqual("201 Created", status)
-        setup = json.loads(text)
-        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
-        return setup["workspaceId"], auth
+        return json.loads(text)
 
-    def register_agents(self, workspace_id, auth):
-        for agent_id in ("MemoryEndpoints-Backend-Agent", "human-verifier-agent"):
-            status, _headers, _text = call_app(
-                "/api/matm/agents/register",
-                method="POST",
-                headers=auth,
-                body={"workspaceId": workspace_id, "agentId": agent_id, "displayName": agent_id},
-            )
-            self.assertEqual("201 Created", status)
+    def provision_agent(self, setup, requested_name, display_name):
+        return self.agent_provisioner.provision(
+            master_bearer=setup["companyMasterTokenSecret"],
+            company_id=setup["companyId"],
+            workspace_id=setup["workspaceId"],
+            project_id=setup["projectId"],
+            requested_name=requested_name,
+            display_name=display_name,
+            grant_scope_type="workspace",
+        )
 
-    def post_message(self, workspace_id, auth, summary, response_required):
+    def post_message(self, workspace_id, sender, target_agent_id, summary, response_required):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=auth,
+            headers=sender.auth_headers,
             body={
                 "workspaceId": workspace_id,
-                "senderAgentId": "human-verifier-agent",
-                "targetAgentId": "MemoryEndpoints-Backend-Agent",
+                "senderAgentId": sender.agent_id,
+                "targetAgentId": target_agent_id,
                 "safeSummary": summary,
                 "responseRequired": response_required,
             },
@@ -103,26 +105,46 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
         self.assertEqual("202 Accepted", status)
         return json.loads(text)
 
-    def read_current_messages(self, workspace_id, auth, limit=None, cursor=None):
-        query = "workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id
+    def read_current_messages(self, workspace_id, agent, limit=None, cursor=None):
+        query = "workspace_id=%s&agent_id=%s" % (workspace_id, agent.agent_id)
         if limit is not None:
             query += "&limit=%s" % limit
         if cursor is not None:
             query += "&cursor=%s" % cursor
-        status, _headers, text = call_app("/api/matm/current-message", headers=auth, query=query)
+        status, _headers, text = call_app(
+            "/api/matm/current-message", headers=agent.auth_headers, query=query
+        )
         self.assertEqual("200 OK", status)
         return json.loads(text)
 
     def assert_required_response_is_attention_first(self, backend):
         self.configure_backend(backend)
-        workspace_id, auth = self.create_workspace()
-        self.register_agents(workspace_id, auth)
+        setup = self.create_workspace()
+        workspace_id = setup["workspaceId"]
+        backend_agent = self.provision_agent(
+            setup, "memoryendpoints-backend-agent", "MemoryEndpoints Backend Agent"
+        )
+        sender_agent = self.provision_agent(
+            setup, "human-verifier-agent", "Human Verifier Agent"
+        )
 
-        self.post_message(workspace_id, auth, "Older message that needs a backend response.", True)
+        self.post_message(
+            workspace_id,
+            sender_agent,
+            backend_agent.agent_id,
+            "Older message that needs a backend response.",
+            True,
+        )
         time.sleep(0.01)
-        self.post_message(workspace_id, auth, "Newer acknowledgement-only coordination message.", False)
+        self.post_message(
+            workspace_id,
+            sender_agent,
+            backend_agent.agent_id,
+            "Newer acknowledgement-only coordination message.",
+            False,
+        )
 
-        inbox = self.read_current_messages(workspace_id, auth)
+        inbox = self.read_current_messages(workspace_id, backend_agent)
         self.assertEqual(2, inbox["unreadCount"])
         self.assertEqual(
             ["required_response", "viewed_acknowledgement"],
@@ -135,7 +157,7 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
             inbox["operatorSummary"]["responseDispositionCounts"],
         )
 
-        limited = self.read_current_messages(workspace_id, auth, limit=1)
+        limited = self.read_current_messages(workspace_id, backend_agent, limit=1)
         self.assertEqual(1, limited["unreadCount"])
         self.assertEqual(1, limited["visibleUnreadCount"])
         self.assertEqual(2, limited["totalUnreadCount"])
@@ -155,7 +177,9 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
         self.assertEqual(2, limited["operatorSummary"]["totalUnreadCount"])
         self.assertTrue(limited["operatorSummary"]["pagination"]["hasMore"])
 
-        next_page = self.read_current_messages(workspace_id, auth, limit=1, cursor=limited["nextCursor"])
+        next_page = self.read_current_messages(
+            workspace_id, backend_agent, limit=1, cursor=limited["nextCursor"]
+        )
         self.assertEqual(1, next_page["unreadCount"])
         self.assertEqual(1, next_page["visibleUnreadCount"])
         self.assertEqual(2, next_page["totalUnreadCount"])

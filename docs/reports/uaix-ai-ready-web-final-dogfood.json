@@ -1,0 +1,25 @@
+{
+  "agentId": "MemoryEndpoints-Backend-Agent",
+  "baseUrl": "https://memoryendpoints.com",
+  "schemaVersion": "memoryendpoints.uaix_compatibility_final_dogfood.v1",
+  "steps": [
+    {
+      "messageId": "meetmsg-01783783412612024579-eeddcf46",
+      "ok": true,
+      "persisted": true,
+      "roomId": "room-0148ae1a609c2c282969",
+      "status": 201,
+      "step": "post_final_project_room_status",
+      "visibleToSender": true
+    },
+    {
+      "memoryEventId": "mem-deb01fe583744309b18b",
+      "ok": true,
+      "persisted": true,
+      "source": "memoryendpoints://matm/meeting-messages/meetmsg-01783783412612024579-eeddcf46",
+      "status": 201,
+      "step": "promote_final_status_to_memory"
+    }
+  ],
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

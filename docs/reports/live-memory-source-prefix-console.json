@@ -1,0 +1,85 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": [
+    {
+      "detail": {
+        "sourceSha": "8b84f11f980458219bc5b0ab612f6bdbac3057a3"
+      },
+      "name": "version_sha_matches",
+      "ok": true
+    },
+    {
+      "detail": {
+        "storeBackend": "mysql",
+        "storeBackendVerified": true
+      },
+      "name": "mysql_verified",
+      "ok": true
+    },
+    {
+      "detail": {
+        "status": 200
+      },
+      "name": "console_has_memory_source_prefix_control",
+      "ok": true
+    },
+    {
+      "detail": {
+        "status": 200
+      },
+      "name": "production_js_sends_source_prefix",
+      "ok": true
+    },
+    {
+      "detail": {},
+      "name": "production_js_has_source_ledger_actions",
+      "ok": true
+    },
+    {
+      "detail": {
+        "sample": "docs/long-term-memory/api-contract-summary.md",
+        "sourcePathCount": 8,
+        "status": 200
+      },
+      "name": "long_term_summary_has_source_samples",
+      "ok": true
+    },
+    {
+      "detail": {
+        "count": 1,
+        "sourcePath": "docs/long-term-memory/api-contract-summary.md",
+        "status": 200
+      },
+      "name": "source_prefix_filter_returns_only_selected_source",
+      "ok": true
+    },
+    {
+      "detail": {
+        "filters": {
+          "sourcePrefix": "docs/long-term-memory/api-contract-summary.md",
+          "tag": "long-term-memory-migration"
+        }
+      },
+      "name": "filtered_response_reports_source_filter",
+      "ok": true
+    },
+    {
+      "detail": {
+        "filesystemDocsIncluded": false,
+        "rawCredentialExposed": false
+      },
+      "name": "filtered_long_term_summary_remains_hosted_redacted",
+      "ok": true
+    }
+  ],
+  "filteredCount": 1,
+  "generatedAtEpochSeconds": 1783737612,
+  "ok": true,
+  "rawCredentialExposed": false,
+  "schemaVersion": "memoryendpoints.live_memory_source_prefix_console.v1",
+  "selectedSourcePath": "docs/long-term-memory/api-contract-summary.md",
+  "sourceSha": "8b84f11f980458219bc5b0ab612f6bdbac3057a3",
+  "storeBackend": "mysql",
+  "storeBackendVerified": true,
+  "valuesRedacted": true
+}

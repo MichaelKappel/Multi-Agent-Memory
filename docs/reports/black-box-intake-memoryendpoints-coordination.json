@@ -1,0 +1,17 @@
+{
+  "coordinationMessageId": "meetmsg-01783700145984965114-dbcbd824",
+  "goalRoomId": "room-ebe4c456389f6c0599de",
+  "memoryEventId": "mem-d3f6bfe985fb44c39347",
+  "memorySearchReadbackCount": 1,
+  "ok": true,
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "reviewId": "review-03bf292ff61644eb90b6",
+  "routingDecisionId": "route-01783700144420147720-fea283c0",
+  "routingMessageId": "meetmsg-01783700144420124210-e737055c",
+  "routingReadbackCount": 1,
+  "sourceRoomId": "room-72e9679363d78bc8a28b",
+  "transcriptReadbackCount": 1,
+  "valuesRedacted": true,
+  "visibleToRoutedAgent": true
+}

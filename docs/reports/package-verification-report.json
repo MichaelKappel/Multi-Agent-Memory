@@ -1,18 +1,21 @@
 {
   "build": {
     "buildInfoFile": "memoryendpoints/build_info.generated.json",
-    "sourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
-    "sourceShaShort": "8b438977eb24",
+    "contentHash": "733e55a5ddd401a8020b7368a7393c9bd7218012fb7dc170c5e419954e27d3c0",
+    "sourceDirtyPathCount": 81,
+    "sourceSha": "73c50b14b07899a032cb0442889bda2e99142cd9",
+    "sourceShaShort": "73c50b14b078",
+    "sourceWorktreeDirty": true,
     "valuesRedacted": true
   },
-  "bytes": 197987,
-  "checkOnly": false,
+  "checkOnly": true,
   "excludedDirs": [
     ".git",
     ".github",
     ".local-secrets",
     ".pytest_cache",
     ".uai",
+    ".vs",
     "__pycache__",
     "dist",
     "reports",
@@ -29,7 +32,8 @@
     "agent-file-handoff/Archive",
     "agent-file-handoff/Content",
     "agent-file-handoff/Improvement",
-    "docs/prompts"
+    "docs/prompts",
+    "docs/reports"
   ],
   "excludedSuffixes": [
     ".bak",
@@ -43,15 +47,54 @@
   ],
   "excludesLocalRuntimeState": true,
   "excludesSecrets": true,
-  "fileCount": 91,
-  "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
-  "productionDatabaseBackend": "mysql_or_mariadb_required",
-  "reportScope": "point_in_time_snapshot",
-  "schemaVersion": "memoryendpoints.package_plan.v1",
-  "status": "ready",
-  "thirdPartyRuntimeDependencies": true,
-  "thirdPartyRuntimeDependencyNames": [
-    "PyMySQL"
+  "fileCount": 168,
+  "hostProvidedRuntimeAdapters": [
+    {
+      "name": "mysql_python_driver",
+      "packagedWithRepository": false,
+      "requiredWhen": "MEMORYENDPOINTS_STORE_BACKEND=mysql",
+      "source": "host_environment"
+    }
   ],
-  "written": true
+  "package": "E:\\MemoryEndpoints.com\\dist\\MemoryEndpoints.com-Production.zip",
+  "packageManagedThirdPartyRuntimeDependencies": false,
+  "productionDatabaseBackend": "mysql_or_mariadb_verified_when_host_adapter_available",
+  "reportScope": "point_in_time_snapshot",
+  "safeNoOp": true,
+  "schemaVersion": "memoryendpoints.package_plan.v1",
+  "sourceContentHash": "733e55a5ddd401a8020b7368a7393c9bd7218012fb7dc170c5e419954e27d3c0",
+  "sourceDirtyPathCount": 81,
+  "sourceDirtyPaths": [
+    "docs/api-contract.md",
+    "docs/connector-pairing-threat-model.md",
+    "docs/connector-pairing-v1.md",
+    "docs/database-schema-canonical.sql",
+    "docs/human-one-time-access-contract.md",
+    "docs/route-inventory.md",
+    "memoryendpoints/app.py",
+    "memoryendpoints/change_history.py",
+    "memoryendpoints/company_export.py",
+    "memoryendpoints/connector_authorize_ui.py",
+    "memoryendpoints/connector_pairing.py",
+    "memoryendpoints/http.py",
+    "memoryendpoints/human_access_ui.py",
+    "memoryendpoints/human_auth.py",
+    "memoryendpoints/human_operational.py",
+    "memoryendpoints/security.py",
+    "memoryendpoints/site_data.py",
+    "memoryendpoints/storage.py",
+    "scripts/build_readiness_reports.py",
+    "scripts/ftp_deploy_memoryendpoints.py",
+    "scripts/package_memoryendpoints.py",
+    "scripts/provision_credential_pepper.py",
+    "scripts/secret_scan.py",
+    "scripts/verify_live_connector_contract.py",
+    "scripts/verify_memoryendpoints.py"
+  ],
+  "sourceRevisionVerified": false,
+  "sourceWorktreeDirty": true,
+  "status": "dirty_packaged_source",
+  "thirdPartyRuntimeDependencies": false,
+  "thirdPartyRuntimeDependencyNames": [],
+  "written": false
 }

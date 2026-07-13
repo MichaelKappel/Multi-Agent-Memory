@@ -60,7 +60,59 @@ class KnowledgeWikiTests(unittest.TestCase):
         )
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
-        return payload, {"HTTP_AUTHORIZATION": "Bearer " + payload["apiKeySecret"]}
+        return payload, {"HTTP_AUTHORIZATION": "Bearer " + payload["companyMasterTokenSecret"]}
+
+    def provision_agent_via_invite(self, token, scope_type, scope_id, agent_id="MemoryEndpoints-Backend-Agent", display_name=None):
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+        status, _headers, text = call_app(
+            "/api/matm/access/agent-name-requests",
+            method="POST",
+            headers=auth,
+            body={
+                "requestedName": agent_id,
+                "displayName": display_name or agent_id,
+                "requestedGrant": {"scopeType": scope_type, "scopeId": scope_id},
+                "assignmentContext": {"testFixture": self._testMethodName},
+                "justification": "Knowledge wiki fixture needs a governed agent credential.",
+            },
+        )
+        self.assertEqual("201 Created", status, text)
+        requested = json.loads(text)
+        status, _headers, text = call_app(
+            "/api/matm/access/agent-name-requests/%s/decision" % requested["request"]["requestId"],
+            method="POST",
+            headers=auth,
+            body={"decision": "approve", "decisionReason": "Approved by knowledge wiki test fixture."},
+        )
+        self.assertEqual("200 OK", status, text)
+        self.assertEqual("approved", json.loads(text)["request"]["status"])
+        status, _headers, text = call_app(
+            "/api/matm/access/invites",
+            method="POST",
+            headers=auth,
+            body={"approvedRequestId": requested["request"]["requestId"], "expiresInSeconds": 900},
+        )
+        self.assertEqual("201 Created", status, text)
+        invite_secret = json.loads(text)["inviteUrl"].split("#invite=", 1)[1]
+        status, _headers, text = call_app(
+            "/api/matm/access/invites/redeem",
+            method="POST",
+            body={"inviteSecret": invite_secret},
+        )
+        self.assertEqual("201 Created", status, text)
+        redeemed = json.loads(text)
+        self.assertEqual(agent_id.lower(), redeemed["principal"]["agentId"])
+        return redeemed
+
+    def setup_workspace_with_agent(self):
+        setup, master_headers = self.setup_workspace()
+        redeemed = self.provision_agent_via_invite(
+            setup["companyMasterTokenSecret"],
+            "company",
+            setup["companyId"],
+        )
+        agent_headers = {"HTTP_AUTHORIZATION": "Bearer " + redeemed["agentTokenSecret"]}
+        return setup, master_headers, agent_headers, redeemed["principal"]["agentId"]
 
     def test_existing_sqlite_knowledge_schema_adds_lifecycle_columns_before_index(self):
         connection = sqlite3.connect(str(self.sqlite_path))
@@ -105,16 +157,19 @@ class KnowledgeWikiTests(unittest.TestCase):
             connection.close()
 
     def test_database_backed_knowledge_wiki_human_and_agent_routes(self):
-        setup, headers = self.setup_workspace()
+        setup, headers, agent_headers, actor_agent_id = self.setup_workspace_with_agent()
         workspace_id = setup["workspaceId"]
 
         status, _headers, text = call_app("/knowledge")
         self.assertEqual("200 OK", status)
-        self.assertIn("data-knowledge-app", text)
+        self.assertIn("data-human-preauth-shell", text)
+        self.assertIn("data-human-access-preauth-only", text)
+        self.assertNotIn("data-knowledge-app", text)
+        self.assertNotIn("data-knowledge-private", text)
 
         project_body = {
             "workspaceId": workspace_id,
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": actor_agent_id,
             "projectId": "project-memoryendpoints-com",
             "label": "MemoryEndpoints.com",
         }
@@ -122,14 +177,14 @@ class KnowledgeWikiTests(unittest.TestCase):
             "/api/matm/projects",
             method="POST",
             body=project_body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-project-upsert"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="knowledge-project-upsert"),
         )
         self.assertEqual("201 Created", status)
         self.assertTrue(json.loads(text)["persisted"])
 
         doc_body = {
             "workspaceId": workspace_id,
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": actor_agent_id,
             "scope": "project",
             "scopeId": "project-memoryendpoints-com",
             "projectId": "project-memoryendpoints-com",
@@ -152,7 +207,7 @@ class KnowledgeWikiTests(unittest.TestCase):
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body=doc_body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-doc-upsert"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="knowledge-doc-upsert"),
         )
         self.assertEqual("201 Created", status)
         payload = json.loads(text)
@@ -248,8 +303,11 @@ class KnowledgeWikiTests(unittest.TestCase):
     def test_private_knowledge_shell_and_routes_require_workspace_authentication(self):
         status, _headers, text = call_app("/knowledge")
         self.assertEqual("200 OK", status)
-        self.assertIn("Private company knowledge", text)
-        self.assertIn("data-knowledge-private hidden", text)
+        self.assertIn("data-human-preauth-shell", text)
+        self.assertIn("data-human-access-preauth-only", text)
+        self.assertNotIn("Private company knowledge", text)
+        self.assertNotIn("data-knowledge-app", text)
+        self.assertNotIn("data-knowledge-private", text)
         self.assertNotIn("Company Wiki", text)
         self.assertNotIn("localStorage", (Path(__file__).resolve().parents[1] / "static" / "js" / "knowledge.js").read_text(encoding="utf-8"))
         self.assertNotIn("sessionStorage", (Path(__file__).resolve().parents[1] / "static" / "js" / "knowledge.js").read_text(encoding="utf-8"))
@@ -268,8 +326,10 @@ class KnowledgeWikiTests(unittest.TestCase):
         deep_route = "/knowledge/project/architecture/private-deep-link"
         status, _headers, deep_text = call_app(deep_route)
         self.assertEqual("200 OK", status)
-        self.assertIn('data-initial-route="%s"' % deep_route, deep_text)
-        self.assertIn("data-knowledge-private hidden", deep_text)
+        self.assertIn("data-human-preauth-shell", deep_text)
+        self.assertIn("data-human-access-preauth-only", deep_text)
+        self.assertNotIn("data-initial-route", deep_text)
+        self.assertNotIn("data-knowledge-private", deep_text)
         self.assertNotIn("Company Wiki", deep_text)
 
         for invalid_route in (
@@ -347,10 +407,10 @@ class KnowledgeWikiTests(unittest.TestCase):
                     headers=first_headers,
                     query="workspace_id=%s" % second["workspaceId"],
                 )
-                self.assertEqual("401 Unauthorized", status)
+                self.assertEqual("403 Forbidden", status)
                 payload = json.loads(text)
-                self.assertEqual("auth_required", payload["error"]["code"])
-                self.assertNotIn(first["apiKeySecret"], text)
+                self.assertEqual("insufficient_scope", payload["error"]["code"])
+                self.assertNotIn(first["companyMasterTokenSecret"], text)
 
     def test_account_company_membership_is_many_to_many_but_not_a_knowledge_scope(self):
         setup, headers = self.setup_workspace()
@@ -402,7 +462,7 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertEqual({setup["accountId"], second_account_id}, account_ids)
 
     def test_only_company_workspace_and_project_knowledge_scopes_are_allowed(self):
-        setup, headers = self.setup_workspace()
+        setup, _headers, agent_headers, actor_agent_id = self.setup_workspace_with_agent()
         workspace_id = setup["workspaceId"]
         for scope in ("account", "user", "goal", "task"):
             with self.subTest(scope=scope):
@@ -411,7 +471,7 @@ class KnowledgeWikiTests(unittest.TestCase):
                     method="POST",
                     body={
                         "workspaceId": workspace_id,
-                        "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                        "actorAgentId": actor_agent_id,
                         "scope": scope,
                         "scopeId": scope + "-one",
                         "title": "Should Not Persist",
@@ -420,20 +480,20 @@ class KnowledgeWikiTests(unittest.TestCase):
                         "taxonomyPaths": [[scope, "Rejected"]],
                         "searchableText": "Durable knowledge is limited to company, workspace, and project scopes.",
                     },
-                    headers=dict(headers, HTTP_IDEMPOTENCY_KEY=scope + "-knowledge-rejected"),
+                    headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY=scope + "-knowledge-rejected"),
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
                 payload = json.loads(text)
                 self.assertEqual("unsupported_knowledge_scope", payload["error"]["code"])
 
     def test_knowledge_lifecycle_supersession_is_first_class_and_ranking_aware(self):
-        setup, headers = self.setup_workspace()
+        setup, headers, agent_headers, actor_agent_id = self.setup_workspace_with_agent()
         workspace_id = setup["workspaceId"]
         project_id = setup["projectId"]
 
         current_body = {
             "workspaceId": workspace_id,
-            "actorAgentId": "MemoryEndpoints-Backend-Agent",
+            "actorAgentId": actor_agent_id,
             "scope": "project",
             "scopeId": project_id,
             "projectId": project_id,
@@ -453,7 +513,7 @@ class KnowledgeWikiTests(unittest.TestCase):
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body=current_body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-current-contract"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="knowledge-current-contract"),
         )
         self.assertEqual("201 Created", status)
         current = json.loads(text)["document"]
@@ -473,7 +533,7 @@ class KnowledgeWikiTests(unittest.TestCase):
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body=invalid_body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-invalid-superseded"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="knowledge-invalid-superseded"),
         )
         self.assertEqual("422 Unprocessable Entity", status)
         self.assertEqual("superseded_by_document_id_required", json.loads(text)["error"]["code"])
@@ -495,7 +555,7 @@ class KnowledgeWikiTests(unittest.TestCase):
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body=superseded_body,
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="knowledge-valid-superseded"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="knowledge-valid-superseded"),
         )
         self.assertEqual("201 Created", status)
         superseded = json.loads(text)["document"]
@@ -630,7 +690,7 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertEqual(500, json.loads(text)["count"])
 
     def test_one_canonical_source_can_supply_company_and_project_pages(self):
-        setup, headers = self.setup_workspace()
+        setup, headers, agent_headers, actor_agent_id = self.setup_workspace_with_agent()
         workspace_id = setup["workspaceId"]
         company_id = setup["companyId"]
         project_id = setup["projectId"]
@@ -645,7 +705,7 @@ class KnowledgeWikiTests(unittest.TestCase):
                 method="POST",
                 body={
                     "workspaceId": workspace_id,
-                    "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                    "actorAgentId": actor_agent_id,
                     "scope": scope,
                     "scopeId": scope_id,
                     "projectId": project_id if scope == "project" else None,
@@ -660,7 +720,7 @@ class KnowledgeWikiTests(unittest.TestCase):
                     "routeOrPath": route,
                     "searchableText": title + " is stored at its narrowest durable scope.",
                 },
-                headers=dict(headers, HTTP_IDEMPOTENCY_KEY="shared-source-" + scope),
+                headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="shared-source-" + scope),
             )
             self.assertEqual("201 Created", status)
             self.assertTrue(json.loads(text)["persisted"])
@@ -685,14 +745,14 @@ class KnowledgeWikiTests(unittest.TestCase):
             connection.close()
 
     def test_contextual_search_can_land_on_a_taxonomy_branch_without_exact_phrase_match(self):
-        setup, headers = self.setup_workspace()
+        setup, headers, agent_headers, actor_agent_id = self.setup_workspace_with_agent()
         workspace_id = setup["workspaceId"]
         status, _headers, text = call_app(
             "/api/matm/knowledge-documents/upsert",
             method="POST",
             body={
                 "workspaceId": workspace_id,
-                "actorAgentId": "MemoryEndpoints-Backend-Agent",
+                "actorAgentId": actor_agent_id,
                 "scope": "workspace",
                 "title": "Bounded prompt assembly",
                 "description": "Context selection guidance for bounded agent prompts.",
@@ -701,7 +761,7 @@ class KnowledgeWikiTests(unittest.TestCase):
                 "category": "context-management",
                 "searchableText": "Retrieve a compact diverse memory backbone before expanding detailed evidence.",
             },
-            headers=dict(headers, HTTP_IDEMPOTENCY_KEY="contextual-taxonomy-search-document"),
+            headers=dict(agent_headers, HTTP_IDEMPOTENCY_KEY="contextual-taxonomy-search-document"),
         )
         self.assertEqual("201 Created", status)
 

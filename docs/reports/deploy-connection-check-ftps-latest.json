@@ -1,0 +1,43 @@
+{
+  "build": {
+    "buildInfoFile": "memoryendpoints/build_info.generated.json",
+    "contentHash": "733e55a5ddd401a8020b7368a7393c9bd7218012fb7dc170c5e419954e27d3c0",
+    "sourceDirtyPathCount": 81,
+    "sourceSha": "73c50b14b07899a032cb0442889bda2e99142cd9",
+    "sourceShaShort": "73c50b14b078",
+    "sourceWorktreeDirty": true,
+    "valuesRedacted": true
+  },
+  "credentialSource": "handoff",
+  "dryRun": false,
+  "errorType": "error_perm",
+  "failedPhase": "login",
+  "hasResolvedHost": true,
+  "hasResolvedPassword": true,
+  "hasResolvedPort": true,
+  "hasResolvedUser": true,
+  "packageExists": true,
+  "passengerRestartPlanned": true,
+  "plannedUploadCount": 168,
+  "protocol": "ftps",
+  "remoteDirFingerprint": "c0ff8ba8c55560d6",
+  "remoteDirResolved": true,
+  "remoteDirSource": "argument_or_handoff",
+  "safeNoOp": true,
+  "schemaVersion": "memoryendpoints.ftp_deploy.v1",
+  "signals": {
+    "hasFtp": true,
+    "hasHost": true,
+    "hasPassword": true,
+    "hasUser": true,
+    "mentionsMemoryEndpoints": true,
+    "sectionCount": 6,
+    "selectedSectionMentionsMemoryEndpoints": true,
+    "valuesRedacted": true
+  },
+  "sourceRevisionVerified": false,
+  "status": "connection_check_failed",
+  "transportSecurity": "explicit_ftps",
+  "uploadedCount": 0,
+  "valuesRedacted": true
+}

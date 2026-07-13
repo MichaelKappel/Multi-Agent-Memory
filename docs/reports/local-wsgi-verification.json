@@ -1,14 +1,16 @@
 {
-  "expectedSourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
-  "expectedSourceShaSource": "git_head",
+  "expectedSourceSha": null,
+  "expectedSourceShaSource": null,
   "failureCount": 0,
   "failures": [],
-  "gitHeadAtVerification": "8b438977eb24a77fc4a9700c8d8216754641d76c",
+  "gitHeadAtVerification": "73c50b14b07899a032cb0442889bda2e99142cd9",
   "items": [
     {
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/",
       "route": "/",
       "secretHitCount": 0,
       "status": 200
@@ -17,6 +19,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/docs",
       "route": "/docs",
       "secretHitCount": 0,
       "status": 200
@@ -25,6 +29,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/docs/",
       "route": "/docs/",
       "secretHitCount": 0,
       "status": 200
@@ -33,6 +39,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/agent-setup",
       "route": "/agent-setup",
       "secretHitCount": 0,
       "status": 200
@@ -41,6 +49,18 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/agent-coordination",
+      "route": "/agent-coordination",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/console",
       "route": "/console",
       "secretHitCount": 0,
       "status": 200
@@ -49,6 +69,48 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/knowledge",
+      "route": "/knowledge",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/tour",
+      "route": "/tour",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/tour/knowledge",
+      "route": "/tour/knowledge",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/tour/human",
+      "route": "/tour/human",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/memory-lifecycle",
       "route": "/memory-lifecycle",
       "secretHitCount": 0,
       "status": 200
@@ -57,26 +119,33 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/transparency",
       "route": "/transparency",
       "secretHitCount": 0,
       "status": 200
     },
     {
-      "expectedSourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
+      "cleanSourceRevision": false,
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/version",
       "route": "/api/version",
       "secretHitCount": 0,
-      "sourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
-      "sourceShaMatchesExpected": true,
-      "sourceShaShort": "8b438977eb24",
+      "sourceSha": "73c50b14b07899a032cb0442889bda2e99142cd9",
+      "sourceShaShort": "73c50b14b078",
+      "sourceWorktreeDirty": true,
+      "sourceWorktreeDirtyPresent": true,
       "status": 200
     },
     {
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/live-capability-matrix",
       "route": "/api/matm/live-capability-matrix",
       "secretHitCount": 0,
       "status": 200
@@ -85,6 +154,187 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/agent-compatibility",
+      "route": "/api/matm/agent-compatibility",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/sync/capabilities",
+      "route": "/api/matm/sync/capabilities",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/connector-contract",
+      "route": "/api/matm/connector-contract",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "connectorProbe": {
+        "contentType": "application/json",
+        "expectedStatuses": [
+          200
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "GET",
+        "probePath": "/.well-known/memoryendpoints-connector",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/.well-known/memoryendpoints-connector",
+      "route": "/.well-known/memoryendpoints-connector",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "connectorProbe": {
+        "contentType": "text/html",
+        "expectedStatuses": [
+          200
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "GET",
+        "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/connect/authorize/pairref_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "route": "/connect/authorize/{publicRequestRef}",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "connectorProbe": {
+        "contentType": "text/html",
+        "expectedStatuses": [
+          200
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "GET",
+        "probePath": "/tour/connect/authorize/signed_out",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/tour/connect/authorize/signed_out",
+      "route": "/tour/connect/authorize/{demoState}",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "connectorProbe": {
+        "contentType": "application/json",
+        "expectedStatuses": [
+          405,
+          422
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "POST",
+        "probePath": "/api/matm/connector-pairings/requests",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "POST",
+      "probePath": "/api/matm/connector-pairings/requests",
+      "route": "/api/matm/connector-pairings/requests",
+      "secretHitCount": 0,
+      "status": 422
+    },
+    {
+      "connectorProbe": {
+        "contentType": "application/json",
+        "expectedStatuses": [
+          405,
+          422
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "POST",
+        "probePath": "/api/matm/connector-pairings/authorization-code-claims",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "POST",
+      "probePath": "/api/matm/connector-pairings/authorization-code-claims",
+      "route": "/api/matm/connector-pairings/authorization-code-claims",
+      "secretHitCount": 0,
+      "status": 422
+    },
+    {
+      "connectorProbe": {
+        "contentType": "application/json",
+        "expectedStatuses": [
+          405,
+          422
+        ],
+        "failures": [],
+        "noRedirectObserved": true,
+        "probeMethod": "POST",
+        "probePath": "/api/matm/connector-pairings/token",
+        "verified": true
+      },
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "POST",
+      "probePath": "/api/matm/connector-pairings/token",
+      "route": "/api/matm/connector-pairings/token",
+      "secretHitCount": 0,
+      "status": 422
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/uai-memory/contract",
+      "route": "/api/matm/uai-memory/contract",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/openapi.json",
+      "route": "/api/matm/openapi.json",
+      "secretHitCount": 0,
+      "status": 200
+    },
+    {
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/route-inventory",
       "route": "/api/matm/route-inventory",
       "secretHitCount": 0,
       "status": 200
@@ -93,6 +343,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/readiness-result",
       "route": "/api/matm/readiness-result",
       "secretHitCount": 0,
       "status": 200
@@ -101,6 +353,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/redacted-example-receipts",
       "route": "/api/matm/redacted-example-receipts",
       "secretHitCount": 0,
       "status": 200
@@ -109,6 +363,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/api/matm/agent-setup/free-account",
       "route": "/api/matm/agent-setup/free-account",
       "secretHitCount": 0,
       "status": 200
@@ -117,6 +373,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/mcp/resources",
       "route": "/mcp/resources",
       "secretHitCount": 0,
       "status": 200
@@ -125,6 +383,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/robots.txt",
       "route": "/robots.txt",
       "secretHitCount": 0,
       "status": 200
@@ -133,6 +393,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/sitemap.xml",
       "route": "/sitemap.xml",
       "secretHitCount": 0,
       "status": 200
@@ -141,6 +403,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/llms.txt",
       "route": "/llms.txt",
       "secretHitCount": 0,
       "status": 200
@@ -149,6 +413,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/llms-full.txt",
       "route": "/llms-full.txt",
       "secretHitCount": 0,
       "status": 200
@@ -157,6 +423,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/ai.txt",
       "route": "/ai.txt",
       "secretHitCount": 0,
       "status": 200
@@ -165,6 +433,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/ai-manifest.json",
       "route": "/ai-manifest.json",
       "secretHitCount": 0,
       "status": 200
@@ -173,6 +443,8 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/.well-known/mcp.json",
       "route": "/.well-known/mcp.json",
       "secretHitCount": 0,
       "status": 200
@@ -181,16 +453,20 @@
       "leakHitCount": 0,
       "leakRules": [],
       "missing": [],
+      "probeMethod": "GET",
+      "probePath": "/.well-known/ai-agent.json",
       "route": "/.well-known/ai-agent.json",
       "secretHitCount": 0,
       "status": 200
     }
   ],
   "mode": "wsgi",
-  "observedSourceSha": "8b438977eb24a77fc4a9700c8d8216754641d76c",
+  "observedSourceSha": "73c50b14b07899a032cb0442889bda2e99142cd9",
+  "observedSourceWorktreeDirty": true,
   "ok": true,
   "reportScope": "point_in_time_snapshot",
-  "routeCount": 22,
+  "routeCount": 38,
   "schemaVersion": "memoryendpoints.verifier.v1",
-  "sourceShaMatchesExpected": true
+  "sourceShaMatchesExpected": null,
+  "sourceShaValueMatchesExpected": null
 }

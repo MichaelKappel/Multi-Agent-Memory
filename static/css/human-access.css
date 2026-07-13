@@ -1,0 +1,382 @@
+.human-access {
+  --human-access-ink: var(--ink, #10222b);
+  --human-access-muted: var(--muted, #52656d);
+  --human-access-line: var(--line, #cbd8dc);
+  --human-access-surface: var(--surface, #ffffff);
+  --human-access-accent: var(--accent, #0d7181);
+  color: var(--human-access-ink);
+  container-type: inline-size;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.human-access [hidden] {
+  display: none !important;
+}
+
+.human-access :where(button, input, select, textarea, .button) {
+  box-sizing: border-box;
+  min-block-size: 44px;
+}
+
+.human-access :where(button, .button) {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+.human-access :where(button, input, select, textarea):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--human-access-accent) 75%, white);
+  outline-offset: 3px;
+}
+
+.human-access-shell,
+.human-access-panel {
+  background: var(--human-access-surface);
+  border: 1px solid var(--human-access-line);
+  border-radius: 18px;
+  box-shadow: 0 16px 42px rgb(16 34 43 / 8%);
+  min-inline-size: 0;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+
+.human-access-hero {
+  border-block-end: 1px solid var(--human-access-line);
+  margin-block-end: clamp(1rem, 3vw, 2rem);
+  padding-block-end: clamp(1rem, 3vw, 1.6rem);
+}
+
+.human-access-hero > :where(h1, p) {
+  max-inline-size: 70ch;
+}
+
+.human-access-hero h1 {
+  font-size: clamp(1.75rem, 5vw, 3rem);
+  line-height: 1.08;
+  margin-block: 0.45rem 0.8rem;
+  text-wrap: balance;
+}
+
+.human-access-auth-grid {
+  display: grid;
+  gap: clamp(1rem, 3vw, 1.5rem);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-inline-size: 0;
+}
+
+.human-access-card {
+  background: var(--human-access-surface);
+  border: 1px solid var(--human-access-line);
+  border-radius: 16px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: clamp(1rem, 3vw, 1.5rem);
+}
+
+.human-access-card :where(form, .human-access-account-step) {
+  display: grid;
+  gap: 0.9rem;
+  min-inline-size: 0;
+}
+
+.human-access-toolbar {
+  align-items: end;
+  background: color-mix(in srgb, var(--human-access-surface) 92%, var(--human-access-accent));
+  border: 1px solid var(--human-access-line);
+  border-radius: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-block-end: 1rem;
+  min-inline-size: 0;
+  padding: 1rem;
+}
+
+.human-access-toolbar > form,
+.human-access-toolbar-actions,
+.human-access-actions {
+  align-items: end;
+  display: flex;
+  flex: 1 1 18rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-inline-size: 0;
+}
+
+.human-access-toolbar-actions {
+  justify-content: flex-end;
+}
+
+.human-access-section-heading {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-block-end: 1rem;
+  min-inline-size: 0;
+}
+
+.human-access-section-heading > * {
+  flex: 1 1 16rem;
+  margin-block: 0;
+  min-inline-size: 0;
+}
+
+.human-access-form-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.human-access-form-grid > * {
+  min-inline-size: 0;
+}
+
+.human-access-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.human-access-field.compact {
+  flex: 1 1 14rem;
+  gap: 0.3rem;
+  margin: 0;
+  min-inline-size: min(100%, 14rem);
+}
+
+.human-access-field > :where(input, select, textarea) {
+  background: #fff;
+  border: 1px solid var(--human-access-line);
+  border-radius: 10px;
+  color: var(--human-access-ink);
+  inline-size: 100%;
+  padding: 0.7rem 0.8rem;
+}
+
+.human-access-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.human-access-status {
+  border-inline-start: 3px solid var(--human-access-line);
+  display: block;
+  margin-block: 1rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: 0.75rem 1rem;
+}
+
+.human-access-status[data-tone="success"] {
+  border-color: #1c7c54;
+}
+
+.human-access-status[data-tone="error"] {
+  border-color: #b4232c;
+}
+
+.human-access-demo-label {
+  background: #e9f7f8;
+  border: 1px solid #9bcdd2;
+  border-radius: 999px;
+  color: #075662;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-block-end: 1rem;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  padding: 0.5rem 0.8rem;
+}
+
+.human-access-roster-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.human-access-roster,
+.human-access-roster-list {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.human-access-roster-list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+
+.human-access-roster-card {
+  background: var(--human-access-surface);
+  border: 1px solid var(--human-access-line);
+  border-radius: 14px;
+  display: grid;
+  gap: 0.55rem;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+}
+
+.human-access-roster-card > * {
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.human-access-eyebrow {
+  color: var(--human-access-accent);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.human-access-card-title {
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.human-access-agent-name,
+.human-access-scope,
+.human-access-status-line,
+.human-access-credential-id {
+  color: var(--human-access-muted);
+  font-size: 0.9rem;
+}
+
+.human-access-credential-id,
+.human-access-secret-control {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.human-access dialog {
+  background: var(--human-access-surface);
+  border: 1px solid var(--human-access-line);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgb(16 34 43 / 24%);
+  color: var(--human-access-ink);
+  inline-size: min(38rem, calc(100% - 2rem));
+  max-block-size: calc(100dvh - 2rem);
+  max-inline-size: calc(100% - 2rem);
+  overflow: auto;
+  padding: clamp(1rem, 4vw, 2rem);
+}
+
+.human-access dialog::backdrop {
+  background: rgb(7 28 36 / 62%);
+  backdrop-filter: blur(3px);
+}
+
+.human-access-dialog-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-block-start: 1rem;
+  min-inline-size: 0;
+}
+
+.human-access-dialog-actions.wrap {
+  flex-wrap: wrap;
+}
+
+.human-access-dialog-actions > :where(button, .button) {
+  flex: 0 1 auto;
+}
+
+.human-access-check {
+  align-items: start;
+  color: var(--human-access-ink);
+  display: flex;
+  gap: 0.65rem;
+  margin-block: 1rem;
+  min-block-size: 44px;
+}
+
+.human-access-check > input {
+  flex: 0 0 auto;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+}
+
+.human-access-live {
+  background: #f2f7f8;
+  border-inline-start: 3px solid var(--human-access-accent);
+  color: var(--human-access-ink);
+  min-block-size: 2.75rem;
+  overflow-wrap: anywhere;
+  padding: 0.7rem 0.85rem;
+}
+
+.human-access dialog[open]:not(:modal),
+.human-access dialog.human-access-dialog-fallback[open] {
+  inset: 50% auto auto 50%;
+  margin: 0;
+  position: fixed;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+}
+
+.human-access-empty {
+  border: 1px dashed var(--human-access-line);
+  border-radius: 12px;
+  color: var(--human-access-muted);
+  padding: 1rem;
+}
+
+@container (max-width: 560px) {
+  .human-access-auth-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .human-access-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .human-access-actions > :where(button, .button) {
+    inline-size: 100%;
+  }
+
+  .human-access-toolbar,
+  .human-access-toolbar > form,
+  .human-access-toolbar-actions,
+  .human-access-dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .human-access-toolbar :where(button, .button),
+  .human-access-dialog-actions :where(button, .button) {
+    inline-size: 100%;
+  }
+}
+
+@media (max-width: 320px) {
+  .human-access-shell,
+  .human-access-panel {
+    border-radius: 12px;
+    padding: 0.85rem;
+  }
+
+  .human-access dialog {
+    inline-size: calc(100% - 1rem);
+    max-inline-size: calc(100% - 1rem);
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .human-access *,
+  .human-access *::before,
+  .human-access *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

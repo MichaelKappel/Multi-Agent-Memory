@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from app import application
+from tests.governed_test_support import GovernedAgentProvisioner
 
 
 ENV_KEYS = (
@@ -45,6 +46,8 @@ class MeetingMessagePaginationTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.mkdtemp(prefix="memoryendpoints-meeting-pagination-")
         self.previous_env = {key: os.environ.get(key) for key in ENV_KEYS}
+        self.agent_provisioner = GovernedAgentProvisioner(call_app).install()
+        self.addCleanup(self.agent_provisioner.restore)
         os.environ["MEMORYENDPOINTS_MYSQL_CONFIG_PATH"] = os.path.join(self.tempdir, "missing-mysql.json")
         os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = os.path.join(self.tempdir, "missing-admin-diagnostics.json")
 
@@ -72,53 +75,68 @@ class MeetingMessagePaginationTests(unittest.TestCase):
             },
         )
         self.assertEqual("201 Created", status)
-        setup = json.loads(text)
-        return setup["workspaceId"], {"HTTP_AUTHORIZATION": "Bearer " + setup["apiKeySecret"]}
+        return json.loads(text)
 
-    def project_room(self, workspace_id, auth):
+    def project_room(self, workspace_id, agent):
         status, _headers, text = call_app(
             "/api/matm/meeting-rooms",
-            headers=auth,
-            query="workspace_id=%s&agent_id=MemoryEndpoints-Backend-Agent" % workspace_id,
+            headers=agent.auth_headers,
+            query="workspace_id=%s&agent_id=%s" % (workspace_id, agent.agent_id),
         )
         self.assertEqual("200 OK", status)
         rooms = json.loads(text)["items"]
         return [room for room in rooms if room["scope"] == "project"][0]
 
-    def post_message(self, workspace_id, auth, room_id, index):
+    def post_message(self, workspace_id, agent, room_id, index):
         status, _headers, text = call_app(
             "/api/matm/meeting-messages",
             method="POST",
-            headers=auth,
+            headers=agent.auth_headers,
             body={
                 "workspaceId": workspace_id,
                 "roomId": room_id,
-                "senderAgentId": "MemoryEndpoints-Backend-Agent",
+                "senderAgentId": agent.agent_id,
                 "safeSummary": "Meeting pagination message %d" % index,
             },
         )
         self.assertEqual("201 Created", status)
         return json.loads(text)["messageId"]
 
-    def read_transcript(self, workspace_id, auth, room_id, limit=2, cursor=None):
-        query = "workspace_id=%s&room_id=%s&agent_id=MemoryEndpoints-Backend-Agent&limit=%s" % (
+    def read_transcript(self, workspace_id, agent, room_id, limit=2, cursor=None):
+        query = "workspace_id=%s&room_id=%s&agent_id=%s&limit=%s" % (
             workspace_id,
             room_id,
+            agent.agent_id,
             limit,
         )
         if cursor:
             query += "&cursor=%s" % cursor
-        status, _headers, text = call_app("/api/matm/meeting-messages", headers=auth, query=query)
+        status, _headers, text = call_app(
+            "/api/matm/meeting-messages", headers=agent.auth_headers, query=query
+        )
         self.assertEqual("200 OK", status)
         return json.loads(text)
 
     def assert_transcript_pages_older_messages(self, backend):
         self.configure_backend(backend)
-        workspace_id, auth = self.create_workspace()
-        room = self.project_room(workspace_id, auth)
-        posted_ids = [self.post_message(workspace_id, auth, room["roomId"], index) for index in range(5)]
+        setup = self.create_workspace()
+        workspace_id = setup["workspaceId"]
+        agent = self.agent_provisioner.provision(
+            master_bearer=setup["companyMasterTokenSecret"],
+            company_id=setup["companyId"],
+            workspace_id=workspace_id,
+            project_id=setup["projectId"],
+            requested_name="memoryendpoints-backend-agent",
+            display_name="MemoryEndpoints Backend Agent",
+            grant_scope_type="workspace",
+        )
+        room = self.project_room(workspace_id, agent)
+        posted_ids = [
+            self.post_message(workspace_id, agent, room["roomId"], index)
+            for index in range(5)
+        ]
 
-        page_one = self.read_transcript(workspace_id, auth, room["roomId"], limit=2)
+        page_one = self.read_transcript(workspace_id, agent, room["roomId"], limit=2)
         self.assertEqual(posted_ids[-2:], [item["meetingMessageId"] for item in page_one["items"]])
         self.assertEqual(["Meeting pagination message 3", "Meeting pagination message 4"], [item["safeSummary"] for item in page_one["items"]])
         self.assertEqual(2, page_one["count"])
@@ -133,7 +151,9 @@ class MeetingMessagePaginationTests(unittest.TestCase):
         self.assertEqual(2, page_one["operatorSummary"]["visibleMessageCount"])
         self.assertTrue(page_one["operatorSummary"]["pagination"]["hasMore"])
 
-        page_two = self.read_transcript(workspace_id, auth, room["roomId"], limit=2, cursor=page_one["nextCursor"])
+        page_two = self.read_transcript(
+            workspace_id, agent, room["roomId"], limit=2, cursor=page_one["nextCursor"]
+        )
         self.assertEqual(posted_ids[1:3], [item["meetingMessageId"] for item in page_two["items"]])
         self.assertEqual(["Meeting pagination message 1", "Meeting pagination message 2"], [item["safeSummary"] for item in page_two["items"]])
         self.assertEqual(2, page_two["visibleMessageCount"])
@@ -142,7 +162,9 @@ class MeetingMessagePaginationTests(unittest.TestCase):
         self.assertTrue(page_two["cursorAccepted"])
         self.assertEqual(page_one["nextCursor"], page_two["cursor"])
 
-        page_three = self.read_transcript(workspace_id, auth, room["roomId"], limit=2, cursor=page_two["nextCursor"])
+        page_three = self.read_transcript(
+            workspace_id, agent, room["roomId"], limit=2, cursor=page_two["nextCursor"]
+        )
         self.assertEqual([posted_ids[0]], [item["meetingMessageId"] for item in page_three["items"]])
         self.assertEqual(["Meeting pagination message 0"], [item["safeSummary"] for item in page_three["items"]])
         self.assertEqual(1, page_three["visibleMessageCount"])

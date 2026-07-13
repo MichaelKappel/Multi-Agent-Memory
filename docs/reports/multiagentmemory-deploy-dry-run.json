@@ -1,0 +1,41 @@
+{
+  "credentialSource": "filezilla_site_manager",
+  "dryRun": true,
+  "filezilla": {
+    "hasRemoteDir": false,
+    "siteIndex": 2,
+    "siteMatch": "multiagentmemory",
+    "siteNameFingerprint": "38b335b62203862b",
+    "status": "filezilla_site_matched",
+    "valuesRedacted": true
+  },
+  "hasResolvedHost": true,
+  "hasResolvedPassword": true,
+  "hasResolvedPort": true,
+  "hasResolvedUser": true,
+  "plannedUploadCount": 13,
+  "protocol": "ftps",
+  "remoteDirFingerprint": "cdb4ee2aea69cc6a",
+  "remoteDirResolved": true,
+  "remoteDirSource": "filezilla_login_root",
+  "safeNoOp": true,
+  "schemaVersion": "static_site.ftp_deploy.v1",
+  "signals": {
+    "hasFtp": true,
+    "hasHost": true,
+    "hasPassword": true,
+    "hasUser": true,
+    "mentionsTarget": true,
+    "sectionCount": null,
+    "selectedSectionIndex": null,
+    "selectedSectionMentionsTarget": true,
+    "selectedSectionScore": 100,
+    "valuesRedacted": true
+  },
+  "siteRoot": "sites\\multiagentmemory.com",
+  "siteRootExists": true,
+  "status": "ready",
+  "targetDomain": "multiagentmemory.com",
+  "transportSecurity": "explicit_ftps",
+  "valuesRedacted": true
+}

@@ -1,0 +1,819 @@
+{
+  "auditLogCount": 18,
+  "auditTrailReadbackVerified": true,
+  "currentMessageAckVerified": true,
+  "currentMessagePostAckVerified": true,
+  "currentMessageReadbackVerified": true,
+  "currentMessageUnreadCount": 1,
+  "generatedAt": "2026-07-10T22:00:00.348547Z",
+  "latestDogfoodContractVerified": true,
+  "liveAuditTrailReadbackVerified": false,
+  "liveCoreDogfoodVerified": false,
+  "liveDogfoodVerified": false,
+  "localAuditTrailReadbackVerified": true,
+  "localDogfoodVerified": true,
+  "meetingMemoryPromotionVerified": true,
+  "meetingMemoryReadbackVerified": true,
+  "meetingMemorySourceReadbackVerified": true,
+  "meetingMessageReadbackVerified": true,
+  "meetingReadVerified": true,
+  "memoryReadbackVerified": true,
+  "mode": "local_wsgi",
+  "ok": true,
+  "oneTimeKeyReturned": true,
+  "optionalStepFailureCount": 0,
+  "postAckUnreadCount": 0,
+  "rawCredentialValuesStored": false,
+  "rawPrivatePayloadsStored": false,
+  "rawWorkspaceIdStoredInReport": false,
+  "receiptCount": 1,
+  "requiredStepFailureCount": 0,
+  "runs": [
+    {
+      "auditLogCount": 18,
+      "auditTrailReadbackVerified": true,
+      "coreDogfoodWorkflowVerified": true,
+      "currentMessageAckVerified": true,
+      "currentMessagePostAckVerified": true,
+      "currentMessageReadbackVerified": true,
+      "currentMessageUnreadCount": 1,
+      "generatedAt": "2026-07-10T21:59:59.029905Z",
+      "latestDogfoodContractVerified": true,
+      "liveCoreDogfoodVerified": false,
+      "liveDogfoodVerified": false,
+      "localDogfoodVerified": true,
+      "meetingMemoryPromotionVerified": true,
+      "meetingMemoryReadbackVerified": true,
+      "meetingMemorySourceReadbackVerified": true,
+      "meetingMessageCount": 1,
+      "meetingMessageReadbackVerified": true,
+      "meetingReadVerified": true,
+      "meetingRoomCount": 3,
+      "memoryReadbackVerified": true,
+      "mode": "local_wsgi",
+      "ok": true,
+      "oneTimeKeyReturned": true,
+      "optionalStepFailureCount": 0,
+      "postAckUnreadCount": 0,
+      "rawCredentialValuesStored": false,
+      "rawPrivatePayloadsStored": false,
+      "rawWorkspaceIdStoredInReport": false,
+      "receiptCount": 1,
+      "requiredStepFailureCount": 0,
+      "searchReadbackCount": 1,
+      "steps": [
+        {
+          "httpStatus": "201 Created",
+          "name": "create_free_workspace",
+          "ok": true,
+          "payloadShape": [
+            "accountId",
+            "apiKeySecret",
+            "checkoutRequired",
+            "companyId",
+            "hierarchy",
+            "idempotencySupported",
+            "keyId",
+            "ok",
+            "operatorSummary",
+            "projectId",
+            "rawKeyStoredByServer",
+            "showKeyOnce",
+            "storageLimitBytes",
+            "storeKeySafely",
+            "workspaceId"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "workspace_key_ready",
+          "ok": true,
+          "payloadShape": [
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted",
+            "workspace"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "register_agent",
+          "ok": true,
+          "payloadShape": [
+            "agent",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "submit_memory",
+          "ok": true,
+          "payloadShape": [
+            "auditLogUrl",
+            "canonicalMemoryEventId",
+            "confirmation",
+            "event",
+            "memoryQueryUrl",
+            "ok",
+            "operatorSummary",
+            "persisted",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "reviewId",
+            "reviewQueueUrl",
+            "submission",
+            "valuesRedacted",
+            "visibleInAuditLog",
+            "visibleInReviewQueue",
+            "visibleInSearch"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "search_memory",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filesystemDocsIncluded",
+            "filters",
+            "items",
+            "memorySource",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_review_queue",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "promotionRoute",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "statusCounts",
+            "valuesRedacted"
+          ],
+          "required": false
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_meeting_rooms",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "schemaVersion",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "201 Created",
+          "name": "post_meeting_message",
+          "ok": true,
+          "payloadShape": [
+            "canonicalRoomId",
+            "confirmation",
+            "message",
+            "messageId",
+            "ok",
+            "operatorSummary",
+            "persisted",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "room",
+            "transcriptQueryUrl",
+            "valuesRedacted",
+            "visibleToSender"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_meeting_messages",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "readState",
+            "room",
+            "schemaVersion",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "201 Created",
+          "name": "promote_meeting_message_to_memory",
+          "ok": true,
+          "payloadShape": [
+            "auditLogUrl",
+            "canonicalMemoryEventId",
+            "confirmation",
+            "event",
+            "memoryQueryUrl",
+            "ok",
+            "operatorSummary",
+            "persisted",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "reviewId",
+            "reviewQueueUrl",
+            "room",
+            "sourceMeetingMessage",
+            "submission",
+            "valuesRedacted",
+            "visibleInAuditLog",
+            "visibleInReviewQueue",
+            "visibleInSearch"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_promoted_meeting_memory",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filesystemDocsIncluded",
+            "filters",
+            "items",
+            "memorySource",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_promoted_meeting_memory_by_source",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filesystemDocsIncluded",
+            "filters",
+            "items",
+            "memorySource",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "mark_meeting_room_read",
+          "ok": true,
+          "payloadShape": [
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "readState",
+            "room",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "202 Accepted",
+          "name": "create_current_message",
+          "ok": true,
+          "payloadShape": [
+            "canonicalTargetAgentId",
+            "confirmation",
+            "delivery",
+            "deliveryCounts",
+            "expectedRecipientCount",
+            "inboxQueryUrl",
+            "message",
+            "messageId",
+            "notification",
+            "notificationId",
+            "notificationIds",
+            "notifications",
+            "ok",
+            "operatorSummary",
+            "persisted",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted",
+            "visibleRecipientCount",
+            "visibleToAgents",
+            "visibleToTarget"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_current_message",
+          "ok": true,
+          "payloadShape": [
+            "currentMessageLane",
+            "deliveryCounts",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "responseStates",
+            "unreadCount",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "acknowledge_notification",
+          "ok": true,
+          "payloadShape": [
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "receipt",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_redacted_receipts",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "httpStatus": "200 OK",
+          "name": "read_audit_log",
+          "ok": true,
+          "payloadShape": [
+            "count",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "schemaVersion",
+            "valuesRedacted"
+          ],
+          "required": true
+        },
+        {
+          "contractVerified": true,
+          "httpStatus": "200 OK",
+          "name": "read_current_message_after_ack",
+          "ok": true,
+          "payloadShape": [
+            "currentMessageLane",
+            "deliveryCounts",
+            "filters",
+            "items",
+            "ok",
+            "operatorSummary",
+            "rawCredentialExposed",
+            "rawPayloadExposed",
+            "responseStates",
+            "unreadCount",
+            "valuesRedacted"
+          ],
+          "required": true
+        }
+      ],
+      "target": "local_wsgi_application",
+      "valuesRedacted": true,
+      "workspaceIdHash": "sha256:28f61440d755e830a4285208234f86b93d8e454d5f25c45588963deb83abd98a"
+    }
+  ],
+  "schemaVersion": "memoryendpoints.dogfood_run.v3",
+  "searchReadbackCount": 1,
+  "steps": [
+    {
+      "httpStatus": "201 Created",
+      "name": "create_free_workspace",
+      "ok": true,
+      "payloadShape": [
+        "accountId",
+        "apiKeySecret",
+        "checkoutRequired",
+        "companyId",
+        "hierarchy",
+        "idempotencySupported",
+        "keyId",
+        "ok",
+        "operatorSummary",
+        "projectId",
+        "rawKeyStoredByServer",
+        "showKeyOnce",
+        "storageLimitBytes",
+        "storeKeySafely",
+        "workspaceId"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "workspace_key_ready",
+      "ok": true,
+      "payloadShape": [
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted",
+        "workspace"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "register_agent",
+      "ok": true,
+      "payloadShape": [
+        "agent",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "submit_memory",
+      "ok": true,
+      "payloadShape": [
+        "auditLogUrl",
+        "canonicalMemoryEventId",
+        "confirmation",
+        "event",
+        "memoryQueryUrl",
+        "ok",
+        "operatorSummary",
+        "persisted",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "reviewId",
+        "reviewQueueUrl",
+        "submission",
+        "valuesRedacted",
+        "visibleInAuditLog",
+        "visibleInReviewQueue",
+        "visibleInSearch"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "search_memory",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filesystemDocsIncluded",
+        "filters",
+        "items",
+        "memorySource",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_review_queue",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "promotionRoute",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "statusCounts",
+        "valuesRedacted"
+      ],
+      "required": false
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_meeting_rooms",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "201 Created",
+      "name": "post_meeting_message",
+      "ok": true,
+      "payloadShape": [
+        "canonicalRoomId",
+        "confirmation",
+        "message",
+        "messageId",
+        "ok",
+        "operatorSummary",
+        "persisted",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "room",
+        "transcriptQueryUrl",
+        "valuesRedacted",
+        "visibleToSender"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_meeting_messages",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "readState",
+        "room",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "201 Created",
+      "name": "promote_meeting_message_to_memory",
+      "ok": true,
+      "payloadShape": [
+        "auditLogUrl",
+        "canonicalMemoryEventId",
+        "confirmation",
+        "event",
+        "memoryQueryUrl",
+        "ok",
+        "operatorSummary",
+        "persisted",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "reviewId",
+        "reviewQueueUrl",
+        "room",
+        "sourceMeetingMessage",
+        "submission",
+        "valuesRedacted",
+        "visibleInAuditLog",
+        "visibleInReviewQueue",
+        "visibleInSearch"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_promoted_meeting_memory",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filesystemDocsIncluded",
+        "filters",
+        "items",
+        "memorySource",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_promoted_meeting_memory_by_source",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filesystemDocsIncluded",
+        "filters",
+        "items",
+        "memorySource",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "mark_meeting_room_read",
+      "ok": true,
+      "payloadShape": [
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "readState",
+        "room",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "202 Accepted",
+      "name": "create_current_message",
+      "ok": true,
+      "payloadShape": [
+        "canonicalTargetAgentId",
+        "confirmation",
+        "delivery",
+        "deliveryCounts",
+        "expectedRecipientCount",
+        "inboxQueryUrl",
+        "message",
+        "messageId",
+        "notification",
+        "notificationId",
+        "notificationIds",
+        "notifications",
+        "ok",
+        "operatorSummary",
+        "persisted",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted",
+        "visibleRecipientCount",
+        "visibleToAgents",
+        "visibleToTarget"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_current_message",
+      "ok": true,
+      "payloadShape": [
+        "currentMessageLane",
+        "deliveryCounts",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "responseStates",
+        "unreadCount",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "acknowledge_notification",
+      "ok": true,
+      "payloadShape": [
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "receipt",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_redacted_receipts",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "httpStatus": "200 OK",
+      "name": "read_audit_log",
+      "ok": true,
+      "payloadShape": [
+        "count",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "schemaVersion",
+        "valuesRedacted"
+      ],
+      "required": true
+    },
+    {
+      "contractVerified": true,
+      "httpStatus": "200 OK",
+      "name": "read_current_message_after_ack",
+      "ok": true,
+      "payloadShape": [
+        "currentMessageLane",
+        "deliveryCounts",
+        "filters",
+        "items",
+        "ok",
+        "operatorSummary",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+        "responseStates",
+        "unreadCount",
+        "valuesRedacted"
+      ],
+      "required": true
+    }
+  ],
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:28f61440d755e830a4285208234f86b93d8e454d5f25c45588963deb83abd98a"
+}

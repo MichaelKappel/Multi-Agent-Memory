@@ -1,0 +1,16 @@
+{
+  "agentId": "MemoryEndpoints-Backend-Agent",
+  "generatedAtEpochSeconds": 1783736764,
+  "memoryEventId": "mem-fe467ef3a4254d55a80b",
+  "ok": true,
+  "projectEvidenceMessageId": "meetmsg-01783736763749670917-e86a4494",
+  "projectRoomId": "room-0148ae1a609c2c282969",
+  "rawCredentialExposed": false,
+  "reviewDecisionStatus": 200,
+  "reviewId": "review-57cba402cfa54d1f962b",
+  "reviewStatus": "promoted",
+  "runId": "coord-meeting-pagination-e908552bd9",
+  "schemaVersion": "memoryendpoints.coordination_evidence_post.v1",
+  "sourceSha": "c96e836bf302feca42f01017e18abfb27739917f",
+  "valuesRedacted": true
+}

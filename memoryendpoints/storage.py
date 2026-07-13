@@ -1,4 +1,6 @@
+import base64
 import hashlib
+import hmac
 import datetime
 import json
 import os
@@ -18,6 +20,50 @@ from .external_links import (
     normalize_relationship_type,
     stable_external_link_id,
     stable_external_link_mention_id,
+)
+from .human_auth import (
+    HumanAuthPolicyError,
+    canonicalize_username,
+    encode_password_verifier,
+    reauthentication_is_recent,
+    verify_password,
+    verify_password_or_dummy,
+)
+from .connector_pairing import (
+    AUTHORIZATION_CODE_TTL_SECONDS,
+    CANONICAL_AGENT_DISPLAY_NAME,
+    CANONICAL_AGENT_ID,
+    CLIENT_ID as CONNECTOR_CLIENT_ID,
+    PAIRING_REQUEST_TTL_SECONDS,
+    PENDING_ACTIVATION_TTL_SECONDS,
+    PKCE_METHOD as CONNECTOR_PKCE_METHOD,
+    PairingPolicyError,
+    V1_REQUESTED_SCOPES,
+    authorization_code_verifier,
+    build_wake_up_url,
+    connector_scope_digest,
+    connector_scope_impacts,
+    connector_secret_verifier,
+    contextual_hmac_verifier,
+    derive_pairing_request_proof,
+    derive_pending_connector_secret,
+    derive_authorization_code,
+    generate_connector_credential_id,
+    generate_public_request_ref,
+    normalize_connector_agent_name,
+    pairing_request_proof_verifier,
+    pairing_state_verifier,
+    parse_authorization_code,
+    parse_pairing_request_proof,
+    validate_public_request_ref,
+    validate_requested_scopes,
+    validate_pkce_s256,
+    validate_persisted_connector_scope,
+    verify_connector_secret,
+    verify_authorization_code_binding,
+    verify_contextual_hmac,
+    verify_pairing_request_proof,
+    verify_pairing_state,
 )
 from .security import evaluate_memory_firewall, redact_text
 from .uai_memory import (
@@ -55,6 +101,56 @@ def _time_ordered_id(prefix):
 
 def _hash(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _credential_pepper():
+    pepper = os.environ.get("MEMORYENDPOINTS_CREDENTIAL_PEPPER") or ""
+    if not pepper:
+        configured = os.environ.get("MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH")
+        path = Path(configured) if configured else ROOT / ".local-secrets" / "credential-pepper.json"
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise RuntimeError("Credential pepper config is unavailable or invalid.") from exc
+            if isinstance(payload, dict):
+                pepper = str(payload.get("credentialPepper") or payload.get("pepper") or "")
+    if len(pepper.encode("utf-8")) < 32:
+        raise RuntimeError("A protected credential pepper of at least 32 bytes is required.")
+    return pepper.encode("utf-8")
+
+
+def _governed_credential(kind, company_id, credential_id):
+    secret = secrets.token_urlsafe(32)
+    token = "me_%s_v1.%s.%s" % (kind, credential_id, secret)
+    return token, _governed_credential_digest(kind, company_id, credential_id, secret)
+
+
+def _governed_credential_digest(kind, company_id, credential_id, secret):
+    context = "v1|%s|%s|%s|%s" % (kind, company_id, credential_id, secret)
+    digest = hmac.new(_credential_pepper(), context.encode("utf-8"), hashlib.sha256).hexdigest()
+    return "v1:" + digest
+
+
+def _parse_governed_credential(token, expected_kind):
+    parts = str(token or "").split(".")
+    if len(parts) != 3 or parts[0] != "me_%s_v1" % expected_kind or not parts[1] or not parts[2]:
+        return None, None
+    return parts[1], parts[2]
+
+
+def _normalize_human_username(value):
+    try:
+        return canonicalize_username(value)
+    except HumanAuthPolicyError:
+        return None
+
+
+def _scrypt_password_verifier(password, username):
+    try:
+        return encode_password_verifier(password, username=username)
+    except HumanAuthPolicyError:
+        return None
 
 
 def _canonical_hash(value):
@@ -308,6 +404,159 @@ def _meeting_transcript_page(messages, cursor, limit_value):
         "cursor": cursor,
         "cursorAccepted": cursor_accepted,
     }
+
+
+_HUMAN_OPERATIONAL_AUDIT_ACTOR_FIELDS = (
+    "humanAccountId",
+    "humanAccountSessionId",
+    "username",
+    "authorityId",
+    "companyId",
+    "workspaceId",
+    "projectId",
+    "authMode",
+)
+
+
+def _human_operational_resource_context(record):
+    record = record or {}
+    return {
+        "authorityId": record.get("authorityId"),
+        "companyId": record.get("companyId"),
+        "workspaceId": record.get("workspaceId"),
+        "projectId": record.get("projectId"),
+        "contextVersion": record.get("contextVersion"),
+    }
+
+
+def _human_operational_audit_actor(session, context):
+    session = session or {}
+    context = context or {}
+    return {
+        "humanAccountId": session.get("humanAccountId"),
+        "humanAccountSessionId": session.get("humanAccountSessionId"),
+        "username": session.get("username"),
+        "authorityId": context.get("authorityId"),
+        "companyId": context.get("companyId"),
+        "workspaceId": context.get("workspaceId"),
+        "projectId": context.get("projectId"),
+        "authMode": "human_account",
+    }
+
+
+def _valid_human_operational_audit_actor(actor):
+    if not isinstance(actor, dict) or set(actor) != set(_HUMAN_OPERATIONAL_AUDIT_ACTOR_FIELDS):
+        return False
+    required = (
+        "humanAccountId",
+        "humanAccountSessionId",
+        "username",
+        "authorityId",
+        "companyId",
+        "workspaceId",
+        "projectId",
+    )
+    return (
+        actor.get("authMode") == "human_account"
+        and all(isinstance(actor.get(key), str) and actor.get(key) for key in required)
+    )
+
+
+def _human_memory_material(workspace_id, audit_actor, payload):
+    if not _valid_human_operational_audit_actor(audit_actor):
+        return None
+    payload = payload or {}
+    memory_type = str(payload.get("memoryType") or "note").strip().lower()
+    if memory_type not in (
+        "fact",
+        "decision",
+        "status",
+        "procedure",
+        "risk",
+        "evidence",
+        "handoff",
+        "note",
+    ):
+        memory_type = "note"
+    try:
+        confidence_value = float(payload.get("confidence"))
+    except (TypeError, ValueError):
+        confidence_value = 0.75
+    confidence_value = max(0.0, min(1.0, confidence_value))
+    title = payload.get("title") or "Human-submitted memory"
+    summary = payload.get("summary") or ""
+    tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+    source = "human-operational://public-safe-submit"
+    subject = payload.get("subject") or title
+    firewall = evaluate_memory_firewall(
+        {
+            "title": title,
+            "summary": summary,
+            "tags": tags,
+            "source": source,
+            "memoryType": memory_type,
+            "subject": subject,
+        }
+    )
+    sanitized = firewall["sanitizedPayload"]
+    redacted_tags = sanitized.get("tags") if isinstance(sanitized.get("tags"), list) else []
+    event_status = "quarantined" if firewall["decision"] == "quarantine_for_review" else "active"
+    review_status = "quarantined" if event_status == "quarantined" else "pending"
+    promotion_state = "quarantined" if event_status == "quarantined" else "review_pending"
+    now = utc_now()
+    memory_id = _id("mem")
+    review_id = _id("review")
+    actor = dict(audit_actor)
+    event = {
+        "eventId": memory_id,
+        "workspaceId": workspace_id,
+        "auditActor": actor,
+        "scope": "project",
+        "scopeId": actor["projectId"],
+        "memoryType": memory_type,
+        "subject": sanitized.get("subject") or redact_text(subject),
+        "title": sanitized.get("title") or redact_text(title),
+        "summary": sanitized.get("summary") or redact_text(summary),
+        "tags": [redact_text(tag) for tag in redacted_tags],
+        "source": sanitized.get("source") or source,
+        "confidence": confidence_value,
+        "promotionState": promotion_state,
+        "reviewStatus": review_status,
+        "bodyHash": _canonical_hash(sanitized),
+        "revision": 1,
+        "firewall": {
+            "schemaVersion": firewall["schemaVersion"],
+            "decision": firewall["decision"],
+            "riskScore": firewall["riskScore"],
+            "detectedThreats": firewall["detectedThreats"],
+            "redactionApplied": firewall["valuesRedacted"],
+            "valuesRedacted": True,
+        },
+        "createdAt": now,
+        "status": event_status,
+        "rawPrivatePayloadStored": False,
+        "valuesRedacted": True,
+        "reviewId": review_id,
+    }
+    review = {
+        "reviewId": review_id,
+        "workspaceId": workspace_id,
+        "memoryEventId": memory_id,
+        "proposedByAgentId": None,
+        "auditActor": actor,
+        "reviewType": "memory_promotion",
+        "status": review_status,
+        "publicSafeSummary": event["summary"][:1000],
+        "firewallDecision": firewall["decision"],
+        "riskScore": firewall["riskScore"],
+        "detectedThreats": firewall["detectedThreats"],
+        "createdAt": now,
+        "decidedAt": None,
+        "reviewerAgentId": None,
+        "reviewerNoteHash": None,
+        "valuesRedacted": True,
+    }
+    return event, review, firewall
 
 
 def _public_memory_event(event, query="", linked_document=None):
@@ -1149,6 +1398,936 @@ def _knowledge_tree_from_documents(documents):
     }
 
 
+_AGENT_ACCESS_SCOPE_LEVEL = {"company": 0, "workspace": 1, "project": 2, "goal": 3, "task": 4}
+_AGENT_GRANT_SCOPE_TYPES = set(_AGENT_ACCESS_SCOPE_LEVEL)
+_MIN_AGENT_INVITE_TTL_SECONDS = 60
+_MAX_AGENT_INVITE_TTL_SECONDS = 24 * 60 * 60
+_MIN_HUMAN_SESSION_TTL_SECONDS = 5 * 60
+_MAX_HUMAN_SESSION_TTL_SECONDS = 60 * 60
+_MAX_CLOSURE_INTENT_TTL_SECONDS = 30 * 60
+_CONNECTOR_CREDENTIAL_INVENTORY_LIMIT = 100
+_CONNECTOR_WORKSPACE_REF_TTL_SECONDS = 300
+_CONNECTOR_WORKSPACE_REF_PATTERN = re.compile(r"workref_([A-Za-z0-9_-]{43})")
+_CONNECTOR_COMPANY_REF_PATTERN = re.compile(r"companyref_([A-Za-z0-9_-]{43})")
+_CONNECTOR_RATE_BUCKETS = frozenset(
+    (
+        "discovery",
+        "authorize",
+        "pairingRequest",
+        "authorizationCodeClaim",
+        "tokenExchange",
+        "activation",
+        "status",
+        "credentialLifecycle",
+        "selfRegistration",
+        "publicSafeSubmit",
+        "search",
+    )
+)
+_CONNECTOR_RATE_CLEANUP_BATCH = 128
+_CONNECTOR_RATE_MAX_LIMIT = 10000
+_CONNECTOR_RATE_MAX_WINDOW_SECONDS = 86400
+
+
+def _connector_rate_now_epoch(now=None):
+    if now is None:
+        return int(time.time())
+    if isinstance(now, datetime.datetime):
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("connector_rate_time_invalid")
+        return int(now.timestamp())
+    if isinstance(now, bool):
+        raise ValueError("connector_rate_time_invalid")
+    try:
+        value = int(now)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("connector_rate_time_invalid") from exc
+    if value < 0:
+        raise ValueError("connector_rate_time_invalid")
+    return value
+
+
+def _connector_rate_policy(bucket, limit, window_seconds):
+    if bucket not in _CONNECTOR_RATE_BUCKETS:
+        raise ValueError("connector_rate_bucket_invalid")
+    try:
+        limit = int(limit)
+        window_seconds = int(window_seconds)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("connector_rate_policy_invalid") from exc
+    if not 1 <= limit <= _CONNECTOR_RATE_MAX_LIMIT:
+        raise ValueError("connector_rate_policy_invalid")
+    if not 1 <= window_seconds <= _CONNECTOR_RATE_MAX_WINDOW_SECONDS:
+        raise ValueError("connector_rate_policy_invalid")
+    return limit, window_seconds
+
+
+def _connector_rate_partition_hash(bucket, partition):
+    value = str(partition or "unknown")
+    material = ("memoryendpoints.connector-rate.v1\x00%s\x00%s" % (bucket, value)).encode(
+        "utf-8", "surrogatepass"
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
+def _connector_rate_result(
+    bucket,
+    partition_hash,
+    limit,
+    window_seconds,
+    count,
+    reset_epoch,
+    now_epoch,
+    allowed,
+):
+    return {
+        "allowed": bool(allowed),
+        "bucket": bucket,
+        "partitionHash": partition_hash,
+        "limit": int(limit),
+        "windowSeconds": int(window_seconds),
+        "remaining": max(0, int(limit) - int(count)),
+        "retryAfterSeconds": 0 if allowed else max(1, int(reset_epoch) - int(now_epoch)),
+        "resetAfterSeconds": max(0, int(reset_epoch) - int(now_epoch)),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _connector_begin_immediate(connection):
+    """Acquire SQLite's write reservation before a connector state transition.
+
+    MySQL starts its transaction on the first statement and relies on the
+    companion ``_connector_select_for_update`` row lock.
+    """
+    if getattr(connection, "dialect", "sqlite") == "mysql":
+        return False
+    connection.execute("BEGIN IMMEDIATE")
+    return True
+
+
+def _connector_select_for_update(connection, sql, params=()):
+    """Select one connector row, adding a MySQL row lock when applicable."""
+    statement = str(sql or "").strip().rstrip(";")
+    if getattr(connection, "dialect", "sqlite") == "mysql":
+        statement += " FOR UPDATE"
+    return connection.execute(statement, params).fetchone()
+
+
+def _connector_pairing_error(code, **details):
+    result = {
+        "ok": False,
+        "status": str(code or "connector_pairing_error"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "safeNoOp": True,
+    }
+    if details:
+        result["details"] = _public_value(details)
+    return result
+
+
+def _connector_timestamp(seconds):
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=int(seconds))
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _connector_idempotency_material(idempotency_key, request_digest):
+    if (
+        not isinstance(idempotency_key, str)
+        or not 1 <= len(idempotency_key) <= 200
+        or idempotency_key != idempotency_key.strip()
+        or any(ord(character) < 33 or ord(character) > 126 for character in idempotency_key)
+        or not isinstance(request_digest, str)
+        or not re.fullmatch(r"sha256-v1:[a-f0-9]{64}", request_digest)
+    ):
+        return None, None
+    try:
+        pepper = _credential_pepper()
+        combined = json.dumps(
+            [idempotency_key, request_digest], ensure_ascii=True, separators=(",", ":")
+        )
+        return (
+            contextual_hmac_verifier(idempotency_key, pepper, "idempotency_key"),
+            contextual_hmac_verifier(combined, pepper, "idempotency_key"),
+        )
+    except (PairingPolicyError, RuntimeError):
+        return None, None
+
+
+def _connector_action_replay(record, action, idempotency_key, request_digest):
+    key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+    if not key_hash:
+        return "invalid", key_hash, combined_hash
+    prefix = str(action or "")
+    stored_key = record.get(prefix + "IdempotencyKeyHash")
+    stored_digest = record.get(prefix + "RequestDigest")
+    stored_combined = record.get(prefix + "IdempotencyDigest")
+    if not stored_key:
+        return "first", key_hash, combined_hash
+    if secrets.compare_digest(str(stored_key), key_hash):
+        if (
+            secrets.compare_digest(str(stored_digest or ""), str(request_digest or ""))
+            and secrets.compare_digest(str(stored_combined or ""), combined_hash)
+        ):
+            return "exact", key_hash, combined_hash
+        return "conflict", key_hash, combined_hash
+    return "used", key_hash, combined_hash
+
+
+def _connector_record_action(record, action, key_hash, request_digest, combined_hash):
+    prefix = str(action or "")
+    record[prefix + "IdempotencyKeyHash"] = key_hash
+    record[prefix + "RequestDigest"] = request_digest
+    record[prefix + "IdempotencyDigest"] = combined_hash
+
+
+def _connector_audit_reference(kind, value):
+    """Return a stable, non-authorizing correlation ref for protected audit rows."""
+    safe_kind = str(kind or "subject").strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", safe_kind):
+        safe_kind = "subject"
+    raw_value = str(value or "")
+    if not raw_value:
+        return "connector-%s" % safe_kind
+    try:
+        material = (
+            "memoryendpoints.connector-audit-reference.v1\x00%s\x00%s"
+            % (safe_kind, raw_value)
+        ).encode("utf-8")
+        digest = hmac.new(_credential_pepper(), material, hashlib.sha256).digest()[:18]
+        encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+        return "connector-%s-ref-%s" % (safe_kind, encoded)
+    except RuntimeError:
+        # Logging must never expose the raw value merely because the credential
+        # system is unavailable. The event category remains auditable.
+        return "connector-%s" % safe_kind
+
+
+def _connector_audit_details(workspace_id=None, details=None):
+    """Project connector audit metadata onto a closed, identifier-free shape."""
+    source = details if isinstance(details, dict) else {}
+    result = {
+        "correlationScheme": "hmac-sha256-v1",
+        "privateIdentifiersLogged": False,
+    }
+    scope_digest = source.get("scopeDigest")
+    if isinstance(scope_digest, str) and re.fullmatch(r"sha256-v1:[a-f0-9]{64}", scope_digest):
+        result["scopeDigest"] = scope_digest
+    public_request_ref = source.get("publicRequestRef")
+    if public_request_ref:
+        result["publicRequestAuditRef"] = _connector_audit_reference(
+            "request", public_request_ref
+        )
+    if workspace_id:
+        result["workspaceAuditRef"] = _connector_audit_reference(
+            "workspace", workspace_id
+        )
+    return result
+
+
+def _parse_connector_credential(token):
+    parts = str(token or "").split(".")
+    if len(parts) != 3 or parts[0] != "me_connector_v1" or not parts[1] or not parts[2]:
+        return None, None
+    return parts[1], parts[2]
+
+
+def _parse_connector_authorization_code(code):
+    try:
+        return parse_authorization_code(code)
+    except PairingPolicyError:
+        return None
+
+
+def _public_connector_pairing_request(record):
+    scopes = list(record.get("requestedScopes") or ())
+    approved_scopes = list(record.get("approvedScopes") or ())
+    return {
+        "publicRequestRef": record.get("publicRequestRef"),
+        "status": record.get("status"),
+        "clientDisplayName": "LocalEndpoint Connect",
+        "agentDisplayName": CANONICAL_AGENT_DISPLAY_NAME,
+        "requestedScopes": scopes,
+        "approvedScopes": approved_scopes,
+        "scopeDigest": record.get("scopeDigest"),
+        "scopeImpacts": connector_scope_impacts(scopes) if scopes else [],
+        "createdAt": record.get("createdAt"),
+        "expiresAt": record.get("expiresAt"),
+        "claimExpiresAt": record.get("authorizationCodeExpiresAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _connector_scope_chain_valid(
+    request=None, pairing=None, credentials=(), rotations=()
+):
+    """Fail closed unless every persisted connector scope copy is canonical.
+
+    Each record is checked against the protocol's immutable v1 policy rather
+    than only against another persisted copy.  This prevents a coordinated
+    pairing/credential/rotation edit from manufacturing broader authority.
+    """
+    credentials = tuple(credentials or ())
+    rotations = tuple(rotations or ())
+    if (pairing or credentials or rotations) and not request:
+        return False
+    if (credentials or rotations) and not pairing:
+        return False
+    if pairing and (not credentials or any(item is None for item in credentials)):
+        return False
+    if any(item is None for item in rotations):
+        return False
+    try:
+        if request:
+            validate_persisted_connector_scope(
+                request.get("requestedScopes"), request.get("scopeDigest")
+            )
+            if (
+                request.get("approvedScopes")
+                or request.get("approvedAgentId") is not None
+                or request.get("pairingId") is not None
+                or request.get("status")
+                in (
+                    "approved",
+                    "authorization_code_issued",
+                    "authorization_code_expired",
+                    "exchanged",
+                    "active",
+                )
+            ):
+                validate_persisted_connector_scope(
+                    request.get("approvedScopes"), request.get("scopeDigest")
+                )
+        if pairing:
+            validate_persisted_connector_scope(
+                pairing.get("approvedScopes"), pairing.get("scopeDigest")
+            )
+        for credential in credentials:
+            validate_persisted_connector_scope(
+                credential.get("approvedScopes"), credential.get("scopeDigest")
+            )
+        for rotation in rotations:
+            validate_persisted_connector_scope(
+                rotation.get("approvedScopes"), rotation.get("scopeDigest")
+            )
+    except PairingPolicyError:
+        return False
+    return True
+
+
+def _public_connector_pairing(record):
+    status = record.get("status")
+    active = status == "active"
+    scopes = list(record.get("approvedScopes") or ())
+    return {
+        "pairingId": record.get("pairingId"),
+        "requestId": record.get("requestId"),
+        "companyId": record.get("companyId"),
+        "workspaceId": record.get("workspaceId"),
+        "projectId": record.get("projectId"),
+        "agentId": record.get("agentId"),
+        "credentialId": record.get("currentCredentialId"),
+        "status": status,
+        "approvedScopes": scopes,
+        "scopeDigest": record.get("scopeDigest"),
+        "createdAt": record.get("createdAt"),
+        "activationExpiresAt": record.get("activationExpiresAt"),
+        "activatedAt": record.get("activatedAt"),
+        "endedAt": record.get("endedAt"),
+        "grant": {
+            "credentialType": "connector_agent",
+            "scopeType": "agent",
+            "scopeId": record.get("agentId"),
+            "workspaceId": record.get("workspaceId"),
+            "agentId": record.get("agentId"),
+            "approvedScopes": scopes,
+            "scopeDigest": record.get("scopeDigest"),
+            "active": active,
+            "revoked": status in ("revoked", "disconnected", "canceled", "expired"),
+            "canInvite": False,
+            "canRevoke": False,
+        },
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_connector_rotation(record):
+    return {
+        "rotationId": record.get("rotationId"),
+        "pairingId": record.get("pairingId"),
+        "predecessorCredentialId": record.get("predecessorCredentialId"),
+        "credentialId": record.get("successorCredentialId"),
+        "status": record.get("status"),
+        "approvedScopes": list(record.get("approvedScopes") or ()),
+        "scopeDigest": record.get("scopeDigest"),
+        "reason": record.get("reason"),
+        "createdAt": record.get("createdAt"),
+        "activationExpiresAt": record.get("activationExpiresAt"),
+        "activatedAt": record.get("activatedAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_connector_credential(record, current_credential_id=None):
+    """Return connector credential lifecycle metadata without verifier material."""
+    return {
+        "credentialId": record.get("credentialId"),
+        "status": record.get("status"),
+        "isCurrent": bool(
+            current_credential_id
+            and record.get("credentialId") == current_credential_id
+        ),
+        "createdAt": record.get("createdAt"),
+        "activatedAt": record.get("activatedAt"),
+        "lastUsedAt": record.get("lastUsedAt"),
+        "revokedAt": record.get("revokedAt"),
+        "approvedScopes": list(record.get("approvedScopes") or ()),
+        "scopeDigest": record.get("scopeDigest"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _connector_verification_facts(
+    pairing, principal, workspace, agent_registration, agent_identity, credential
+):
+    """Derive readback facts only from authoritative persisted records."""
+    pairing = pairing or {}
+    principal = principal or {}
+    workspace = workspace or {}
+    agent_registration = agent_registration or {}
+    agent_identity = agent_identity or {}
+    credential = credential or {}
+    workspace_readable = workspace.get("status") == "active"
+    workspace_matches = bool(
+        workspace_readable
+        and workspace.get("workspaceId") == pairing.get("workspaceId")
+        and workspace.get("companyId") == pairing.get("companyId")
+    )
+
+
+    agent_readable = agent_registration.get("status") == "active"
+    agent_matches = bool(
+        agent_readable
+        and agent_registration.get("workspaceId") == pairing.get("workspaceId")
+        and agent_registration.get("agentId") == pairing.get("agentId")
+    )
+    identity_readable = agent_identity.get("status") == "active"
+    identity_matches = bool(
+        identity_readable
+        and agent_identity.get("agentIdentityId") == pairing.get("agentIdentityId")
+        and agent_identity.get("companyId") == pairing.get("companyId")
+        and agent_identity.get("agentId") == pairing.get("agentId")
+    )
+    credential_readable = bool(credential) and credential.get("status") == "active"
+    current_credential_matches = bool(
+        credential_readable
+        and credential.get("credentialId") == pairing.get("currentCredentialId")
+        and credential.get("credentialId") == principal.get("connectorCredentialId")
+        and credential.get("pairingId") == pairing.get("pairingId")
+    )
+    scope_matches = bool(
+        current_credential_matches
+        and principal.get("credentialType") == "connector_agent"
+        and principal.get("pairingId") == pairing.get("pairingId")
+        and principal.get("companyId") == pairing.get("companyId")
+        and principal.get("workspaceId") == pairing.get("workspaceId")
+        and principal.get("agentId") == pairing.get("agentId")
+        and principal.get("scopeType") == "agent"
+        and principal.get("scopeId") == pairing.get("agentId")
+    )
+    grant_active = bool(
+        pairing.get("status") == "active"
+        and principal.get("active") is True
+        and workspace_matches
+        and agent_matches
+        and identity_matches
+        and scope_matches
+    )
+    revoked_statuses = {"revoked", "disconnected", "canceled", "expired", "superseded"}
+    grant_revoked = bool(
+        pairing.get("status") in revoked_statuses
+        or credential.get("status") in revoked_statuses
+    )
+    return {
+        "canonicalWorkspaceReadable": workspace_readable,
+        "canonicalWorkspaceIdMatches": workspace_matches,
+        "exactAgentReadable": agent_readable,
+        "exactAgentIdMatches": agent_matches,
+        "exactAgentIdentityReadable": identity_readable,
+        "exactAgentIdentityMatches": identity_matches,
+        "currentCredentialReadable": credential_readable,
+        "currentCredentialIdMatches": current_credential_matches,
+        "credentialScopedToConnectorAndAgent": scope_matches,
+        "grantActive": grant_active,
+        "grantRevoked": grant_revoked,
+        "rawCredentialExposed": False,
+        "privatePayloadExposed": False,
+        "valuesRedacted": True,
+        "verified": grant_active and not grant_revoked,
+    }
+
+
+def _connector_selector_ref(
+    prefix,
+    actor,
+    public_request_ref,
+    resource_id,
+    binding_id,
+    expires_epoch=None,
+):
+    public_request_ref = validate_public_request_ref(public_request_ref)
+    """Return a short-lived opaque ref bound to one selected human session."""
+    if expires_epoch is None:
+        expires_epoch = int(time.time()) + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS
+    expires_epoch = int(expires_epoch)
+    session_id = str(actor.get("humanAccountSessionId") or actor.get("humanSessionId") or "")
+    account_id = str(actor.get("humanAccountId") or "")
+    resource_id = str(resource_id or "")
+    binding_id = str(binding_id or "")
+    if prefix not in ("workref", "companyref"):
+        raise ValueError("selector_ref_kind_invalid")
+    if not session_id or not account_id or not resource_id or not binding_id:
+        raise ValueError("workspace_ref_context_invalid")
+    payload = "\x00".join(
+        (
+            "memoryendpoints.connector-workspace-ref.v1",
+            prefix,
+            session_id,
+            account_id,
+            public_request_ref,
+            resource_id,
+            binding_id,
+            str(expires_epoch),
+        )
+    ).encode("utf-8")
+    expires_bytes = expires_epoch.to_bytes(4, "big", signed=False)
+    digest = hmac.new(_credential_pepper(), payload, hashlib.sha256).digest()[:28]
+    material = base64.urlsafe_b64encode(expires_bytes + digest).decode("ascii").rstrip("=")
+    return prefix + "_" + material
+
+
+def _connector_selector_ref_expiry(value, pattern):
+    match = pattern.fullmatch(str(value or ""))
+    if not match:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(match.group(1) + "=")
+        if len(raw) != 32:
+            return None
+        expires_epoch = int.from_bytes(raw[:4], "big", signed=False)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return expires_epoch
+
+
+def _connector_workspace_ref(actor, public_request_ref, workspace_id, expires_epoch=None):
+    return _connector_selector_ref(
+        "workref",
+        actor,
+        public_request_ref,
+        workspace_id,
+        actor.get("selectedAuthorityId"),
+        expires_epoch,
+    )
+
+
+def _connector_company_ref(
+    actor, public_request_ref, authority_id, company_id, expires_epoch=None
+):
+    return _connector_selector_ref(
+        "companyref",
+        actor,
+        public_request_ref,
+        company_id,
+        authority_id,
+        expires_epoch,
+    )
+
+
+def _connector_resolve_workspace_ref(
+    actor, public_request_ref, workspace_ref, workspaces
+):
+    expires_epoch = _connector_selector_ref_expiry(
+        workspace_ref, _CONNECTOR_WORKSPACE_REF_PATTERN
+    )
+    if expires_epoch is None:
+        return None, "workspace_ref_invalid"
+    company_id = actor.get("companyId")
+    for workspace in workspaces:
+        if workspace.get("companyId") != company_id or workspace.get("status") != "active":
+            continue
+        try:
+            candidate = _connector_workspace_ref(
+                actor,
+                public_request_ref,
+                workspace.get("workspaceId"),
+                expires_epoch=expires_epoch,
+            )
+        except (RuntimeError, ValueError):
+            return None, "workspace_ref_invalid"
+        if secrets.compare_digest(candidate, str(workspace_ref)):
+            now_epoch = int(time.time())
+            if expires_epoch < now_epoch:
+                return None, "workspace_ref_expired"
+            if expires_epoch > now_epoch + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS + 5:
+                return None, "workspace_ref_invalid"
+            return workspace, None
+    return None, "workspace_ref_invalid"
+
+
+def _connector_resolve_company_ref(
+    actor, public_request_ref, company_ref, authorities, companies
+):
+    expires_epoch = _connector_selector_ref_expiry(
+        company_ref, _CONNECTOR_COMPANY_REF_PATTERN
+    )
+    if expires_epoch is None:
+        return None, "company_ref_invalid"
+    account_id = actor.get("humanAccountId")
+    for authority in authorities:
+        company = companies.get(authority.get("companyId"))
+        if (
+            authority.get("humanAccountId") != account_id
+            or authority.get("status") not in (None, "active")
+            or not company
+            or company.get("status") != "active"
+        ):
+            continue
+        try:
+            candidate = _connector_company_ref(
+                actor,
+                public_request_ref,
+                authority.get("authorityId"),
+                authority.get("companyId"),
+                expires_epoch=expires_epoch,
+            )
+        except (RuntimeError, ValueError):
+            return None, "company_ref_invalid"
+        if secrets.compare_digest(candidate, str(company_ref)):
+            now_epoch = int(time.time())
+            if expires_epoch < now_epoch:
+                return None, "company_ref_expired"
+            if expires_epoch > now_epoch + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS + 5:
+                return None, "company_ref_invalid"
+            return authority, None
+    return None, "company_ref_invalid"
+
+
+def _agent_access_error(code, **details):
+    result = {
+        "ok": False,
+        "status": code,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+    if details:
+        result["details"] = _public_value(details)
+    return result
+
+
+def _normalize_agent_access_name(value):
+    requested_name = str(value or "").strip().lower()
+    if not 3 <= len(requested_name) <= 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", requested_name):
+        return None, None
+    return requested_name, requested_name
+
+
+def _normalize_agent_display_name(value, fallback):
+    display_name = " ".join(str(value or fallback or "").strip().split())
+    if not 1 <= len(display_name) <= 80 or any(ord(character) < 32 or ord(character) == 127 for character in display_name):
+        return None
+    return redact_text(display_name)
+
+
+def _agent_invite_ttl_seconds(value):
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = 15 * 60
+    return max(_MIN_AGENT_INVITE_TTL_SECONDS, min(_MAX_AGENT_INVITE_TTL_SECONDS, seconds))
+
+
+def _agent_invite_expiry(seconds):
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=_agent_invite_ttl_seconds(seconds))
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _timestamp_expired(value):
+    if not value:
+        return True
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    return parsed <= datetime.datetime.now(datetime.timezone.utc)
+
+
+def _bounded_ttl_seconds(value, default, minimum, maximum):
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        seconds = default
+    return max(minimum, min(maximum, seconds))
+
+
+def _expires_at(seconds):
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
+    ).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _safe_company_export_value(value):
+    credential_fields = {
+        "tokenhash",
+        "secrethash",
+        "sessionhash",
+        "csrfdigest",
+        "csrfhash",
+        "confirmationdigest",
+        "intenthash",
+        "proofhash",
+        "password",
+        "passwordverifier",
+        "passwordsalt",
+        "secret",
+    }
+    if isinstance(value, dict):
+        return {
+            str(key): _safe_company_export_value(item)
+            for key, item in value.items()
+            if re.sub(r"[^a-z0-9]", "", str(key).lower()) not in credential_fields
+        }
+    if isinstance(value, list):
+        return [_safe_company_export_value(item) for item in value]
+    return _public_value(value)
+
+
+def _public_company_master_key(record):
+    return {
+        "masterKeyId": record.get("masterKeyId"),
+        "companyId": record.get("companyId"),
+        "label": record.get("label"),
+        "principalName": record.get("principalName"),
+        "createdAt": record.get("createdAt"),
+        "lastUsedAt": record.get("lastUsedAt"),
+        "revokedAt": record.get("revokedAt"),
+        "status": "revoked" if record.get("revokedAt") else "active",
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_agent_access_request(record):
+    return {
+        "requestId": record.get("requestId"),
+        "companyId": record.get("companyId"),
+        "agentName": record.get("agentName"),
+        "requestedName": record.get("agentName"),
+        "displayName": record.get("displayName") or record.get("agentName"),
+        "justification": record.get("justification"),
+        "assignmentContext": _public_value(record.get("assignmentContext") or {}),
+        "scopeType": record.get("scopeType"),
+        "scopeId": record.get("scopeId"),
+        "status": record.get("status"),
+        "createdAt": record.get("createdAt"),
+        "approvedAt": record.get("approvedAt"),
+        "agentIdentityId": record.get("agentIdentityId"),
+        "inviteId": record.get("inviteId"),
+        "decisionReason": record.get("decisionReason"),
+        "supersedesTokenId": record.get("supersedesTokenId"),
+        "memoryTransferFromTokenId": record.get("memoryTransferFromTokenId"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_agent_invite(record):
+    return {
+        "inviteId": record.get("inviteId"),
+        "requestId": record.get("requestId"),
+        "companyId": record.get("companyId"),
+        "agentIdentityId": record.get("agentIdentityId"),
+        "agentId": record.get("agentId"),
+        "agentName": record.get("agentName"),
+        "scopeType": record.get("scopeType"),
+        "scopeId": record.get("scopeId"),
+        "status": record.get("status"),
+        "createdAt": record.get("createdAt"),
+        "expiresAt": record.get("expiresAt"),
+        "redeemedAt": record.get("redeemedAt"),
+        "grantId": record.get("grantId"),
+        "agentTokenId": record.get("agentTokenId"),
+        "assignmentContext": _public_value(record.get("assignmentContext") or {}),
+        "singleUse": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_agent_principal(identity, grant, token_record):
+    public_grant_id = grant.get("publicGrantId") or grant.get("grantId")
+    return {
+        "authType": "agent",
+        "credentialType": "agent",
+        "companyId": grant.get("companyId"),
+        "agentIdentityId": identity.get("agentIdentityId"),
+        "agentId": identity.get("agentId"),
+        "agentName": identity.get("displayName") or identity.get("agentName"),
+        "agentTokenId": token_record.get("agentTokenId"),
+        "credentialId": token_record.get("agentTokenId"),
+        "grantId": public_grant_id,
+        "scopeType": grant.get("scopeType"),
+        "scopeId": grant.get("scopeId"),
+        "credentialStatus": grant.get("status") or "active",
+        "workspaceId": grant.get("workspaceId"),
+        "projectId": grant.get("projectId"),
+        "supersedesTokenId": grant.get("supersedesTokenId"),
+        "memoryTransferFromTokenId": grant.get("memoryTransferFromTokenId"),
+        "supersedesCredentialId": grant.get("supersedesTokenId"),
+        "memoryTransferFromCredentialId": grant.get("memoryTransferFromTokenId"),
+        "canInvite": False,
+        "canRevoke": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _human_membership_permissions(role):
+    role = str(role or "").strip().lower()
+    permissions = ["agent_inventory_read"]
+    if role in ("owner", "credential_admin"):
+        permissions.append("credential_admin")
+    if role == "owner":
+        permissions.extend(["company_export", "company_lifecycle"])
+    return permissions
+
+
+def _public_human_membership(authority, company=None):
+    authority = authority or {}
+    company = company or {}
+    return {
+        "authorityId": authority.get("authorityId"),
+        "companyId": authority.get("companyId"),
+        "companyLabel": company.get("label") or authority.get("companyLabel"),
+        "companyStatus": company.get("status") or authority.get("companyStatus"),
+        "role": authority.get("role"),
+        "permissions": _human_membership_permissions(authority.get("role")),
+        "linkedAt": authority.get("linkedAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_human_account(account):
+    account = account or {}
+    return {
+        "humanAccountId": account.get("humanAccountId"),
+        "username": account.get("username"),
+        "displayName": account.get("displayName") or account.get("username"),
+        "status": account.get("status") or "active",
+        "createdAt": account.get("createdAt"),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_human_agent_token(token_record, identity, grant):
+    token_record = token_record or {}
+    identity = identity or {}
+    grant = grant or {}
+    return {
+        "credentialId": token_record.get("agentTokenId"),
+        "agentIdentityId": token_record.get("agentIdentityId") or identity.get("agentIdentityId"),
+        "agentId": identity.get("agentId"),
+        "displayName": identity.get("displayName") or identity.get("agentName"),
+        "status": "revoked" if token_record.get("revokedAt") else grant.get("status"),
+        "createdAt": token_record.get("createdAt"),
+        "lastUsedAt": token_record.get("lastUsedAt"),
+        "revokedAt": token_record.get("revokedAt"),
+        "grant": {
+            "grantId": grant.get("grantId"),
+            "scopeType": grant.get("scopeType"),
+            "scopeId": grant.get("scopeId"),
+            "workspaceId": grant.get("workspaceId"),
+            "projectId": grant.get("projectId"),
+            "immutable": True,
+        },
+        "oneTimeSecretRetrievable": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _public_agent_token_replacement(record, identity=None, grant=None):
+    record = record or {}
+    identity = identity or {}
+    grant = grant or {}
+    status = record.get("status") or "prepared"
+    public_grant = {
+        "grantId": record.get("predecessorGrantId") or grant.get("grantId"),
+        "scopeType": grant.get("scopeType") or record.get("scopeType"),
+        "scopeId": grant.get("scopeId") or record.get("scopeId"),
+        "workspaceId": grant.get("workspaceId") or record.get("workspaceId"),
+        "projectId": grant.get("projectId") or record.get("projectId"),
+        "immutable": True,
+    }
+    return {
+        "replacementId": record.get("replacementId"),
+        "companyId": record.get("companyId"),
+        "predecessorCredentialId": record.get("predecessorCredentialId"),
+        "successorCredentialId": record.get("successorCredentialId"),
+        "agentIdentityId": record.get("agentIdentityId"),
+        "agentId": identity.get("agentId"),
+        "displayName": identity.get("displayName") or identity.get("agentName"),
+        "status": status,
+        "reason": record.get("reason") or "",
+        "createdAt": record.get("createdAt"),
+        "expiresAt": record.get("expiresAt"),
+        "confirmedAt": record.get("confirmedAt"),
+        "canceledAt": record.get("canceledAt"),
+        "revokedCredentialId": record.get("revokedCredentialId"),
+        "activatedCredentialId": record.get("activatedCredentialId"),
+        "grant": dict(public_grant),
+        "immutableGrant": dict(public_grant),
+        "predecessorRemainsActive": status == "prepared",
+        "oneTimeSecretRetrievable": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _human_replacement_idempotency_material(idempotency_key, request_digest):
+    key = str(idempotency_key or "").strip()
+    digest = str(request_digest or "").strip()
+    if not key:
+        return None, None
+    if len(key) > 200 or not digest or len(digest) > 160:
+        return None, None
+    return "sha256:" + _hash(key), digest
+
+
 def _blank_store():
     return {
         "schemaVersion": "memoryendpoints.file_store.v1",
@@ -1158,7 +2337,29 @@ def _blank_store():
         "accountCompanies": {},
         "workspaces": {},
         "projects": {},
+        "scopeNodes": {},
         "apiKeys": {},
+        "companyMasterKeys": {},
+        "humanOwnerCredentials": {},
+        "humanSessions": {},
+        "humanAccounts": {},
+        "humanCompanyAuthorities": {},
+        "humanAccountSessions": {},
+        "humanOperationalContexts": {},
+        "companyMasterProofs": {},
+        "companyClosureIntents": {},
+        "companyExportReceipts": {},
+        "agentAccessRequests": {},
+        "agentIdentities": {},
+        "agentInvites": {},
+        "agentAccessGrants": {},
+        "agentTokens": {},
+        "agentTokenReplacements": {},
+        "connectorPairingRequests": {},
+        "connectorPairings": {},
+        "connectorCredentials": {},
+        "connectorRotations": {},
+        "connectorRateLimits": {},
         "agents": {},
         "uaiMemoryPackages": {},
         "uaiMemoryRecords": {},
@@ -1253,6 +2454,75 @@ class FileStore(object):
                 except OSError:
                     pass
 
+    def consume_connector_rate_limit(
+        self,
+        bucket,
+        partition,
+        limit,
+        window_seconds,
+        now=None,
+    ):
+        """Atomically consume one persistent connector rate-limit allowance."""
+        limit, window_seconds = _connector_rate_policy(bucket, limit, window_seconds)
+        now_epoch = _connector_rate_now_epoch(now)
+        partition_hash = _connector_rate_partition_hash(bucket, partition)
+        record_key = "%s:%s" % (bucket, partition_hash)
+        with _LOCK:
+            data = self._load()
+            records = data.setdefault("connectorRateLimits", {})
+            expired_keys = [
+                key
+                for key, item in records.items()
+                if int((item or {}).get("expiresAtEpoch") or 0) <= now_epoch
+                and key != record_key
+            ]
+            expired_keys.sort()
+            for key in expired_keys[:_CONNECTOR_RATE_CLEANUP_BATCH]:
+                records.pop(key, None)
+
+            record = records.get(record_key) or {}
+            expired = int(record.get("expiresAtEpoch") or 0) <= now_epoch
+            if not record or expired:
+                window_started = now_epoch
+                reset_epoch = now_epoch + window_seconds
+                count = 1
+                allowed = True
+            else:
+                window_started = int(record.get("windowStartedAtEpoch") or now_epoch)
+                reset_epoch = window_started + window_seconds
+                current_count = max(0, int(record.get("requestCount") or 0))
+                if reset_epoch <= now_epoch:
+                    window_started = now_epoch
+                    reset_epoch = now_epoch + window_seconds
+                    count = 1
+                    allowed = True
+                else:
+                    allowed = current_count < limit
+                    count = current_count + 1 if allowed else current_count
+            records[record_key] = {
+                "bucket": bucket,
+                "partitionHash": partition_hash,
+                "windowStartedAtEpoch": window_started,
+                "expiresAtEpoch": reset_epoch,
+                "requestCount": count,
+                "requestLimit": limit,
+                "windowSeconds": window_seconds,
+                "updatedAtEpoch": now_epoch,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+            }
+            self._save(data)
+        return _connector_rate_result(
+            bucket,
+            partition_hash,
+            limit,
+            window_seconds,
+            count,
+            reset_epoch,
+            now_epoch,
+            allowed,
+        )
+
     def audit(self, data, action, actor, target, workspace_id=None, details=None):
         data["auditLog"].append(
             {
@@ -1268,6 +2538,26 @@ class FileStore(object):
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
             }
+        )
+
+    def _audit_connector(
+        self,
+        data,
+        action,
+        actor_kind,
+        actor_value,
+        target_kind,
+        target_value,
+        workspace_id=None,
+        details=None,
+    ):
+        self.audit(
+            data,
+            action,
+            _connector_audit_reference(actor_kind, actor_value),
+            _connector_audit_reference(target_kind, target_value),
+            None,
+            _connector_audit_details(workspace_id, details),
         )
 
     def record_audit(self, workspace_id, action, actor, target, details=None):
@@ -1518,6 +2808,27 @@ class FileStore(object):
             }
         )
         data["meetingRooms"][room_id] = room
+        if scope in ("goal", "task"):
+            workspace = data.get("workspaces", {}).get(workspace_id) or {}
+            project = next((item for item in data.get("projects", {}).values() if item.get("workspaceId") == workspace_id), {})
+            company_id = workspace.get("companyId") or ""
+            parent_scope_type = "project" if project.get("projectId") else "workspace"
+            parent_scope_id = project.get("projectId") or workspace_id
+            node_key = "%s:%s:%s" % (company_id, scope, scope_id)
+            data.setdefault("scopeNodes", {}).setdefault(
+                node_key,
+                {
+                    "scopeNodeId": _id("scopenode"),
+                    "companyId": company_id,
+                    "scopeType": scope,
+                    "scopeId": scope_id,
+                    "parentScopeType": parent_scope_type,
+                    "parentScopeId": parent_scope_id,
+                    "workspaceId": workspace_id,
+                    "projectId": project.get("projectId"),
+                    "createdAt": now,
+                },
+            )
         self._append_storage_ledger(data, workspace_id, "meeting_room", room_id, room)
         self.audit(
             data,
@@ -2626,8 +3937,10 @@ class FileStore(object):
         membership_id = _id("membership")
         workspace_id = _id("workspace")
         project_id = _id("project")
-        token = "me_live_" + secrets.token_urlsafe(32)
-        key_id = _id("key")
+        key_id = _id("masterkey")
+        token, token_digest = _governed_credential("master", company_id, key_id)
+        human_credential_id = _id("humancred")
+        human_recovery_secret, human_token_digest = _governed_credential("human", company_id, human_credential_id)
         data.setdefault("accounts", {})[account_id] = {
             "accountId": account_id,
             "label": redact_text((company_label or label or "Free Agent Account") + " Account"),
@@ -2639,6 +3952,9 @@ class FileStore(object):
             "companyId": company_id,
             "label": redact_text(company_label or label or "Free Agent Company"),
             "status": "active",
+            "historyRetentionDays": 7,
+            "softDeletedAt": None,
+            "preDeleteStatus": None,
             "createdAt": created_at,
             "valuesRedacted": True,
         }
@@ -2670,10 +3986,21 @@ class FileStore(object):
             "createdAt": created_at,
             "valuesRedacted": True,
         }
-        data["apiKeys"][key_id] = {
-            "keyId": key_id,
-            "workspaceId": workspace_id,
-            "tokenHash": _hash(token),
+        data.setdefault("companyMasterKeys", {})[key_id] = {
+            "masterKeyId": key_id,
+            "companyId": company_id,
+            "tokenHash": token_digest,
+            "label": "Initial company master",
+            "principalName": "account-owner",
+            "createdAt": created_at,
+            "lastUsedAt": None,
+            "revokedAt": None,
+        }
+        data.setdefault("humanOwnerCredentials", {})[human_credential_id] = {
+            "humanCredentialId": human_credential_id,
+            "companyId": company_id,
+            "tokenHash": human_token_digest,
+            "principalName": "account-owner",
             "createdAt": created_at,
             "lastUsedAt": None,
             "revokedAt": None,
@@ -2694,21 +4021,4489 @@ class FileStore(object):
             },
         )
         self._save(data)
-        return workspace_id, key_id, token, account_id, company_id, project_id
+        return workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret
 
     def authenticate(self, token, workspace_id=None):
+        """Authenticate only governed company-master or immutable agent credentials."""
+        master = self.authenticate_company_master(token)
+        if master:
+            data = self._load()
+            workspace = data.get("workspaces", {}).get(workspace_id) if workspace_id else None
+            if workspace_id and (not workspace or workspace.get("companyId") != master.get("companyId")):
+                return None
+            master.update(
+                {
+                    "credentialType": "company_master",
+                    "scopeType": "company",
+                    "scopeId": master.get("companyId"),
+                    "workspaceId": workspace_id,
+                    "projectId": None,
+                    "agentId": None,
+                }
+            )
+            return master
+        principal = self.authenticate_agent_token(token)
+        if not principal:
+            connector = self.authenticate_connector_token(token)
+            if not connector:
+                return None
+            if workspace_id and connector.get("workspaceId") != workspace_id:
+                return None
+            connector["grantId"] = connector.get("pairingId")
+            return connector
+        if workspace_id and principal.get("workspaceId") != workspace_id:
+            if principal.get("scopeType") != "company":
+                return None
+            data = self._load()
+            workspace = data.get("workspaces", {}).get(workspace_id)
+            if not workspace or workspace.get("companyId") != principal.get("companyId"):
+                return None
+            principal["workspaceId"] = workspace_id
+        return principal
+
+    def _agent_access_scope_company_data(self, data, scope_type, scope_id):
+        scope_type = str(scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        if scope_type == "company":
+            return scope_id if scope_id in data.get("companies", {}) else None
+        if scope_type == "workspace":
+            workspace = data.get("workspaces", {}).get(scope_id)
+            return workspace.get("companyId") if workspace else None
+        if scope_type == "project":
+            project = data.get("projects", {}).get(scope_id)
+            workspace = data.get("workspaces", {}).get(project.get("workspaceId")) if project else None
+            return workspace.get("companyId") if workspace else None
+        if scope_type in ("goal", "task"):
+            node = data.get("scopeNodes", {}).get("%s:%s:%s" % (scope_type, scope_id, "node"))
+            if not node:
+                node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
+            return node.get("companyId") if node else None
+        return None
+
+    def _agent_access_scope_workspace_data(self, data, scope_type, scope_id):
+        if scope_type == "workspace":
+            return scope_id if scope_id in data.get("workspaces", {}) else None
+        if scope_type == "project":
+            project = data.get("projects", {}).get(scope_id)
+            return project.get("workspaceId") if project else None
+        if scope_type in ("goal", "task"):
+            node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
+            return node.get("workspaceId") if node else None
+        return None
+
+    def _agent_grant_allows_data(self, data, grant, target_scope_type, target_scope_id):
+        target_scope_type = str(target_scope_type or "").strip().lower()
+        target_scope_id = str(target_scope_id or "").strip()
+        if grant.get("scopeType") not in _AGENT_ACCESS_SCOPE_LEVEL or target_scope_type not in _AGENT_ACCESS_SCOPE_LEVEL:
+            return False
+        if self._agent_access_scope_company_data(data, target_scope_type, target_scope_id) != grant.get("companyId"):
+            return False
+        current = (target_scope_type, target_scope_id)
+        seen = set()
+        while current not in seen:
+            seen.add(current)
+            if current == (grant.get("scopeType"), grant.get("scopeId")):
+                return True
+            scope_type, scope_id = current
+            if scope_type == "company":
+                break
+            if scope_type == "workspace":
+                workspace = data.get("workspaces", {}).get(scope_id)
+                current = ("company", workspace.get("companyId")) if workspace else (None, None)
+            elif scope_type == "project":
+                project = data.get("projects", {}).get(scope_id)
+                current = ("workspace", project.get("workspaceId")) if project else (None, None)
+            else:
+                node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
+                current = (node.get("parentScopeType"), node.get("parentScopeId")) if node else (None, None)
+            if current[0] is None:
+                break
+        return False
+
+    def bootstrap_company_master_token(self, company_id, label=None, principal_name=None):
+        """Create the first company master credential; the raw token is returned once."""
+        with _LOCK:
+            data = self._load()
+            if company_id not in data.get("companies", {}):
+                return _agent_access_error("company_not_found")
+            if any(record.get("companyId") == company_id for record in data.get("companyMasterKeys", {}).values()):
+                return _agent_access_error("company_master_already_bootstrapped")
+            master_key_id = _id("masterkey")
+            token, token_digest = _governed_credential("master", company_id, master_key_id)
+            record = {
+                "masterKeyId": master_key_id,
+                "companyId": company_id,
+                "tokenHash": token_digest,
+                "label": redact_text(label or "Company master"),
+                "principalName": redact_text(principal_name or "company-owner"),
+                "createdAt": utc_now(),
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            data.setdefault("companyMasterKeys", {})[master_key_id] = record
+            self.audit(data, "company_master.bootstrap", "trusted-bootstrap", master_key_id, None, {"companyId": company_id})
+            self._save(data)
+            return {
+                "ok": True,
+                "masterKey": _public_company_master_key(record),
+                "token": token,
+                "credentialReturnedOnce": True,
+                "valuesRedacted": True,
+            }
+
+    def authenticate_company_master(self, token, company_id=None):
         if not token:
             return None
-        data = self._load()
-        token_hash = _hash(token)
-        for key in data["apiKeys"].values():
-            if key.get("tokenHash") == token_hash and not key.get("revokedAt"):
-                if workspace_id and key.get("workspaceId") != workspace_id:
-                    return None
-                key["lastUsedAt"] = utc_now()
-                self._save(data)
-                return {"workspaceId": key["workspaceId"], "keyId": key["keyId"]}
+        master_key_id, secret = _parse_governed_credential(token, "master")
+        if not master_key_id:
+            return None
+        with _LOCK:
+            data = self._load()
+            record = data.get("companyMasterKeys", {}).get(master_key_id)
+            if not record or record.get("revokedAt") or (company_id and record.get("companyId") != company_id):
+                return None
+            company = data.get("companies", {}).get(record.get("companyId"))
+            if not company or company.get("status") != "active":
+                return None
+            expected = _governed_credential_digest("master", record.get("companyId"), master_key_id, secret)
+            if not secrets.compare_digest(str(record.get("tokenHash") or ""), expected):
+                return None
+            record["lastUsedAt"] = utc_now()
+            self._save(data)
+            return {
+                "authType": "company_master",
+                "credentialType": "company_master",
+                "companyId": record.get("companyId"),
+                "masterKeyId": record.get("masterKeyId"),
+                "principalName": record.get("principalName"),
+                "canInvite": True,
+                "canRevoke": True,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
         return None
+
+    def authenticate_human_owner(self, recovery_secret, company_id=None):
+        credential_id, secret = _parse_governed_credential(recovery_secret, "human")
+        if not credential_id:
+            return None
+        with _LOCK:
+            data = self._load()
+            record = data.get("humanOwnerCredentials", {}).get(credential_id)
+            if not record or record.get("revokedAt") or (company_id and record.get("companyId") != company_id):
+                return None
+            expected = _governed_credential_digest("human", record.get("companyId"), credential_id, secret)
+            if not secrets.compare_digest(str(record.get("tokenHash") or ""), expected):
+                return None
+            record["lastUsedAt"] = utc_now()
+            self._save(data)
+            return {
+                "credentialType": "human_owner_recovery",
+                "companyId": record.get("companyId"),
+                "humanCredentialId": credential_id,
+                "principalName": record.get("principalName"),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+            }
+
+    def create_human_session(self, recovery_secret, ttl_seconds=900):
+        owner = self.authenticate_human_owner(recovery_secret)
+        if not owner:
+            return _agent_access_error("human_owner_recovery_required")
+        seconds = _bounded_ttl_seconds(ttl_seconds, 900, _MIN_HUMAN_SESSION_TTL_SECONDS, _MAX_HUMAN_SESSION_TTL_SECONDS)
+        session_id = _id("humansession")
+        session_secret, session_digest = _governed_credential("hsession", owner["companyId"], session_id)
+        csrf_token, csrf_digest = _governed_credential("csrf", owner["companyId"], session_id)
+        record = {
+            "humanSessionId": session_id,
+            "humanCredentialId": owner["humanCredentialId"],
+            "companyId": owner["companyId"],
+            "sessionHash": session_digest,
+            "csrfHash": csrf_digest,
+            "createdAt": utc_now(),
+            "expiresAt": _expires_at(seconds),
+            "lastSeenAt": None,
+            "reauthenticatedAt": None,
+            "revokedAt": None,
+        }
+        with _LOCK:
+            data = self._load()
+            data.setdefault("humanSessions", {})[session_id] = record
+            self._save(data)
+        return {
+            "ok": True,
+            "humanSessionId": session_id,
+            "companyId": owner["companyId"],
+            "sessionSecret": session_secret,
+            "csrfToken": csrf_token,
+            "expiresAt": record["expiresAt"],
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def authenticate_human_session(self, session_secret, csrf_token=None, require_csrf=False):
+        session_id, secret = _parse_governed_credential(session_secret, "hsession")
+        if not session_id:
+            return None
+        with _LOCK:
+            data = self._load()
+            record = data.get("humanSessions", {}).get(session_id)
+            if not record or record.get("revokedAt") or _timestamp_expired(record.get("expiresAt")):
+                return None
+            expected = _governed_credential_digest("hsession", record.get("companyId"), session_id, secret)
+            if not secrets.compare_digest(str(record.get("sessionHash") or ""), expected):
+                return None
+            if require_csrf:
+                csrf_id, csrf_secret = _parse_governed_credential(csrf_token, "csrf")
+                if csrf_id != session_id:
+                    return None
+                expected_csrf = _governed_credential_digest("csrf", record.get("companyId"), session_id, csrf_secret)
+                if not secrets.compare_digest(str(record.get("csrfHash") or ""), expected_csrf):
+                    return None
+            record["lastSeenAt"] = utc_now()
+            self._save(data)
+            return {
+                "credentialType": "human_session",
+                "companyId": record.get("companyId"),
+                "humanCredentialId": record.get("humanCredentialId"),
+                "humanSessionId": session_id,
+                "reauthenticatedAt": record.get("reauthenticatedAt"),
+                "expiresAt": record.get("expiresAt"),
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+            }
+
+    def reauthenticate_human_session(self, recovery_secret, session_secret):
+        owner = self.authenticate_human_owner(recovery_secret)
+        session = self.authenticate_human_session(session_secret)
+        if not owner or not session or owner["companyId"] != session["companyId"] or owner["humanCredentialId"] != session["humanCredentialId"]:
+            return _agent_access_error("human_reauthentication_failed")
+        with _LOCK:
+            data = self._load()
+            now = utc_now()
+            data["humanSessions"][session["humanSessionId"]]["reauthenticatedAt"] = now
+            self._save(data)
+        return {"ok": True, "humanSessionId": session["humanSessionId"], "reauthenticatedAt": now, "valuesRedacted": True}
+
+    def revoke_human_session(self, session_secret):
+        session = self.authenticate_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        with _LOCK:
+            data = self._load()
+            now = utc_now()
+            data["humanSessions"][session["humanSessionId"]]["revokedAt"] = now
+            self._save(data)
+        return {"ok": True, "humanSessionId": session["humanSessionId"], "revokedAt": now, "valuesRedacted": True}
+
+    def create_company_master_proof(self, master_token, ttl_seconds=300):
+        master = self.authenticate_company_master(master_token)
+        if not master:
+            return _agent_access_error("company_master_proof_invalid")
+        proof_id = _id("masterproof")
+        proof_secret, proof_digest = _governed_credential("masterproof", master["companyId"], proof_id)
+        record = {"masterProofId": proof_id, "companyId": master["companyId"], "masterKeyId": master["masterKeyId"], "proofHash": proof_digest, "status": "issued", "createdAt": utc_now(), "expiresAt": _expires_at(_bounded_ttl_seconds(ttl_seconds, 300, 60, 10 * 60)), "consumedAt": None}
+        with _LOCK:
+            data = self._load()
+            data.setdefault("companyMasterProofs", {})[proof_id] = record
+            self._save(data)
+        return {"ok": True, "masterProofId": proof_id, "companyId": master["companyId"], "masterKeyId": master["masterKeyId"], "masterProofSecret": proof_secret, "expiresAt": record["expiresAt"], "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def _verify_master_proof_data(self, data, proof_secret):
+        proof_id, secret = _parse_governed_credential(proof_secret, "masterproof")
+        if not proof_id:
+            return None, "company_master_proof_required" if not proof_secret else "company_master_proof_invalid"
+        record = data.get("companyMasterProofs", {}).get(proof_id)
+        if not record:
+            return None, "company_master_proof_invalid"
+        expected = _governed_credential_digest("masterproof", record.get("companyId"), proof_id, secret)
+        if not secrets.compare_digest(str(record.get("proofHash") or ""), expected):
+            return None, "company_master_proof_invalid"
+        if record.get("status") == "consumed" or record.get("consumedAt"):
+            return None, "company_master_proof_consumed"
+        if record.get("status") != "issued":
+            return None, "company_master_proof_unavailable"
+        if _timestamp_expired(record.get("expiresAt")):
+            record["status"] = "expired"
+            return None, "company_master_proof_expired"
+        return record, None
+
+    def create_human_account(self, username, password, master_proof_secret=None, display_name=None):
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("human_username_invalid")
+        normalized_display_name = _normalize_agent_display_name(display_name, normalized)
+        if not normalized_display_name:
+            return _agent_access_error("human_display_name_invalid")
+        password_verifier = _scrypt_password_verifier(password, normalized)
+        if not password_verifier:
+            return _agent_access_error("human_password_invalid")
+        with _LOCK:
+            data = self._load()
+            proof, proof_error = self._verify_master_proof_data(data, master_proof_secret)
+            if not proof:
+                if proof_error == "company_master_proof_expired":
+                    self._save(data)
+                return _agent_access_error(proof_error)
+            if any(item.get("usernameNormalized") == normalized for item in data.get("humanAccounts", {}).values()):
+                return _agent_access_error("human_username_unavailable")
+            account_id = _id("humanaccount")
+            record = {
+                "humanAccountId": account_id,
+                "username": normalized,
+                "usernameNormalized": normalized,
+                "displayName": normalized_display_name,
+                "passwordVerifier": password_verifier,
+                "status": "active",
+                "createdAt": utc_now(),
+                "updatedAt": None,
+            }
+            data.setdefault("humanAccounts", {})[account_id] = record
+            authority_id = _id("authority")
+            authority = {"authorityId": authority_id, "humanAccountId": account_id, "companyId": proof["companyId"], "masterKeyId": proof["masterKeyId"], "role": "owner", "linkedAt": utc_now(), "linkedByAccountId": account_id}
+            data.setdefault("humanCompanyAuthorities", {})[authority_id] = authority
+            proof.update({"status": "consumed", "consumedAt": utc_now()})
+            self._save(data)
+        return {"ok": True, "account": _public_human_account(record), "authority": _safe_company_export_value(authority), "valuesRedacted": True}
+
+    def create_human_account_with_session(
+        self,
+        username,
+        password,
+        master_proof_secret=None,
+        display_name=None,
+        ttl_seconds=1800,
+    ):
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("human_username_invalid")
+        normalized_display_name = _normalize_agent_display_name(display_name, normalized)
+        if not normalized_display_name:
+            return _agent_access_error("human_display_name_invalid")
+        password_verifier = _scrypt_password_verifier(password, normalized)
+        if not password_verifier:
+            return _agent_access_error("human_password_invalid")
+        seconds = _bounded_ttl_seconds(
+            ttl_seconds,
+            1800,
+            _MIN_HUMAN_SESSION_TTL_SECONDS,
+            _MAX_HUMAN_SESSION_TTL_SECONDS,
+        )
+        with _LOCK:
+            data = self._load()
+            proof, proof_error = self._verify_master_proof_data(data, master_proof_secret)
+            if not proof:
+                if proof_error == "company_master_proof_expired":
+                    self._save(data)
+                return _agent_access_error(proof_error)
+            if any(item.get("usernameNormalized") == normalized for item in data.get("humanAccounts", {}).values()):
+                return _agent_access_error("human_username_unavailable")
+            now = utc_now()
+            account_id = _id("humanaccount")
+            authority_id = _id("authority")
+            session_id = _id("accountsession")
+            session_secret, session_digest = _governed_credential("accountsession", account_id, session_id)
+            csrf_token, csrf_digest = _governed_credential("accountcsrf", account_id, session_id)
+            account = {
+                "humanAccountId": account_id,
+                "username": normalized,
+                "usernameNormalized": normalized,
+                "displayName": normalized_display_name,
+                "passwordVerifier": password_verifier,
+                "status": "active",
+                "createdAt": now,
+                "updatedAt": None,
+            }
+            authority = {
+                "authorityId": authority_id,
+                "humanAccountId": account_id,
+                "companyId": proof["companyId"],
+                "masterKeyId": proof["masterKeyId"],
+                "role": "owner",
+                "linkedAt": now,
+                "linkedByAccountId": account_id,
+            }
+            session = {
+                "humanAccountSessionId": session_id,
+                "humanAccountId": account_id,
+                "selectedAuthorityId": None,
+                "selectedCompanyId": None,
+                "sessionHash": session_digest,
+                "csrfHash": csrf_digest,
+                "createdAt": now,
+                "expiresAt": _expires_at(seconds),
+                "lastSeenAt": None,
+                "passwordReauthenticatedAt": None,
+                "rotatedFromSessionId": None,
+                "revokedAt": None,
+            }
+            data.setdefault("humanAccounts", {})[account_id] = account
+            data.setdefault("humanCompanyAuthorities", {})[authority_id] = authority
+            data.setdefault("humanAccountSessions", {})[session_id] = session
+            proof.update({"status": "consumed", "consumedAt": now})
+            self._save(data)
+        company = data.get("companies", {}).get(authority["companyId"]) or {}
+        membership = _public_human_membership(authority, company)
+        return {
+            "ok": True,
+            "account": _public_human_account(account),
+            "membership": membership,
+            "memberships": [membership],
+            "humanSession": {
+                "humanAccountSessionId": session_id,
+                "humanAccountId": account_id,
+                "username": normalized,
+                "selectedAuthorityId": None,
+                "selectedCompanyId": None,
+                "role": None,
+                "expiresAt": session["expiresAt"],
+                "passwordReauthenticatedAt": None,
+            },
+            "sessionSecret": session_secret,
+            "csrfToken": csrf_token,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def login_human_account(self, username, password, ttl_seconds=1800):
+        normalized = _normalize_human_username(username)
+        data = self._load()
+        account = next((item for item in data.get("humanAccounts", {}).values() if item.get("usernameNormalized") == normalized), None)
+        verifier = account.get("passwordVerifier") if account else None
+        if not verify_password_or_dummy(password, verifier) or not account or account.get("status") != "active":
+            return _agent_access_error("human_login_failed")
+        seconds = _bounded_ttl_seconds(ttl_seconds, 1800, _MIN_HUMAN_SESSION_TTL_SECONDS, _MAX_HUMAN_SESSION_TTL_SECONDS)
+        session_id = _id("accountsession")
+        session_secret, session_digest = _governed_credential("accountsession", account["humanAccountId"], session_id)
+        csrf_token, csrf_digest = _governed_credential("accountcsrf", account["humanAccountId"], session_id)
+        record = {
+            "humanAccountSessionId": session_id,
+            "humanAccountId": account["humanAccountId"],
+            "selectedAuthorityId": None,
+            "selectedCompanyId": None,
+            "sessionHash": session_digest,
+            "csrfHash": csrf_digest,
+            "createdAt": utc_now(),
+            "expiresAt": _expires_at(seconds),
+            "lastSeenAt": None,
+            "passwordReauthenticatedAt": None,
+            "rotatedFromSessionId": None,
+            "revokedAt": None,
+        }
+        with _LOCK:
+            data = self._load()
+            data.setdefault("humanAccountSessions", {})[session_id] = record
+            self._save(data)
+        return {"ok": True, "humanAccountSessionId": session_id, "sessionSecret": session_secret, "csrfToken": csrf_token, "expiresAt": record["expiresAt"], "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def authenticate_human_account_session(self, session_secret, csrf_token=None, require_csrf=False):
+        session_id, secret = _parse_governed_credential(session_secret, "accountsession")
+        if not session_id:
+            return None
+        with _LOCK:
+            data = self._load()
+            record = data.get("humanAccountSessions", {}).get(session_id)
+            account = data.get("humanAccounts", {}).get(record.get("humanAccountId")) if record else None
+            if not record or not account or account.get("status") != "active" or record.get("revokedAt") or _timestamp_expired(record.get("expiresAt")):
+                return None
+            expected = _governed_credential_digest("accountsession", account["humanAccountId"], session_id, secret)
+            if not secrets.compare_digest(str(record.get("sessionHash") or ""), expected):
+                return None
+            if require_csrf:
+                csrf_id, csrf_secret = _parse_governed_credential(csrf_token, "accountcsrf")
+                if csrf_id != session_id:
+                    return None
+                expected_csrf = _governed_credential_digest("accountcsrf", account["humanAccountId"], session_id, csrf_secret)
+                if not secrets.compare_digest(str(record.get("csrfHash") or ""), expected_csrf):
+                    return None
+            authority = data.get("humanCompanyAuthorities", {}).get(record.get("selectedAuthorityId")) if record.get("selectedAuthorityId") else None
+            if authority and (authority.get("humanAccountId") != account["humanAccountId"] or authority.get("companyId") != record.get("selectedCompanyId")):
+                return None
+            record["lastSeenAt"] = utc_now()
+            self._save(data)
+        return {
+            "credentialType": "human_account_session",
+            "humanAccountSessionId": session_id,
+            "humanAccountId": account["humanAccountId"],
+            "username": account["username"],
+            "displayName": account.get("displayName") or account["username"],
+            "selectedAuthorityId": authority.get("authorityId") if authority else None,
+            "companyId": authority.get("companyId") if authority else None,
+            "role": authority.get("role") if authority else None,
+            "masterKeyId": authority.get("masterKeyId") if authority else None,
+            "passwordReauthenticatedAt": record.get("passwordReauthenticatedAt"),
+            "expiresAt": record.get("expiresAt"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+        }
+
+    def rotate_human_account_session_csrf(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        csrf_token, csrf_digest = _governed_credential(
+            "accountcsrf", session["humanAccountId"], session["humanAccountSessionId"]
+        )
+        with _LOCK:
+            data = self._load()
+            record = data.get("humanAccountSessions", {}).get(session["humanAccountSessionId"])
+            if not record or record.get("revokedAt"):
+                return _agent_access_error("human_account_session_required")
+            record["csrfHash"] = csrf_digest
+            record["lastSeenAt"] = utc_now()
+            self._save(data)
+        return {
+            "ok": True,
+            "humanAccountSessionId": session["humanAccountSessionId"],
+            "csrfToken": csrf_token,
+            "rotated": True,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def reauthenticate_human_account_session(self, session_secret, password):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        data = self._load()
+        account = data.get("humanAccounts", {}).get(session["humanAccountId"])
+        if not account or not verify_password(password, account.get("passwordVerifier")):
+            return _agent_access_error("human_reauthentication_failed")
+        now = utc_now()
+        with _LOCK:
+            data = self._load()
+            data["humanAccountSessions"][session["humanAccountSessionId"]]["passwordReauthenticatedAt"] = now
+            self._save(data)
+        return {"ok": True, "humanAccountSessionId": session["humanAccountSessionId"], "passwordReauthenticatedAt": now, "valuesRedacted": True}
+
+    def reauthenticate_and_rotate_human_account_session(self, session_secret, password):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            data = self._load()
+            account = data.get("humanAccounts", {}).get(session["humanAccountId"])
+            predecessor = data.get("humanAccountSessions", {}).get(session["humanAccountSessionId"])
+            if (
+                not account
+                or not predecessor
+                or predecessor.get("revokedAt")
+                or not verify_password(password, account.get("passwordVerifier"))
+            ):
+                return _agent_access_error("human_reauthentication_failed")
+            now = utc_now()
+            new_session_id = _id("accountsession")
+            new_secret, new_digest = _governed_credential("accountsession", session["humanAccountId"], new_session_id)
+            new_csrf, new_csrf_digest = _governed_credential("accountcsrf", session["humanAccountId"], new_session_id)
+            predecessor["revokedAt"] = now
+            record = {
+                "humanAccountSessionId": new_session_id,
+                "humanAccountId": session["humanAccountId"],
+                "selectedAuthorityId": predecessor.get("selectedAuthorityId"),
+                "selectedCompanyId": predecessor.get("selectedCompanyId"),
+                "sessionHash": new_digest,
+                "csrfHash": new_csrf_digest,
+                "createdAt": now,
+                "expiresAt": predecessor.get("expiresAt"),
+                "lastSeenAt": None,
+                "passwordReauthenticatedAt": now,
+                "rotatedFromSessionId": session["humanAccountSessionId"],
+                "revokedAt": None,
+            }
+            data.setdefault("humanAccountSessions", {})[new_session_id] = record
+            self._save(data)
+        return {
+            "ok": True,
+            "humanAccountSessionId": new_session_id,
+            "humanAccountId": session["humanAccountId"],
+            "username": account.get("username"),
+            "displayName": account.get("displayName") or account.get("username"),
+            "selectedAuthorityId": record.get("selectedAuthorityId"),
+            "selectedCompanyId": record.get("selectedCompanyId"),
+            "companyId": record.get("selectedCompanyId"),
+            "role": session.get("role"),
+            "passwordReauthenticatedAt": now,
+            "expiresAt": record.get("expiresAt"),
+            "sessionSecret": new_secret,
+            "csrfToken": new_csrf,
+            "rotatedFromSessionId": session["humanAccountSessionId"],
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def logout_human_account(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        now = utc_now()
+        with _LOCK:
+            data = self._load()
+            data["humanAccountSessions"][session["humanAccountSessionId"]]["revokedAt"] = now
+            self._save(data)
+        return {"ok": True, "humanAccountSessionId": session["humanAccountSessionId"], "revokedAt": now, "valuesRedacted": True}
+
+    def prove_and_link_company_master(self, session_secret, master_proof_secret, role="owner"):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("passwordReauthenticatedAt")):
+            return _agent_access_error("human_reauthentication_required")
+        role = str(role or "owner").strip().lower()
+        if role not in ("owner", "credential_admin"):
+            return _agent_access_error("human_authority_role_invalid")
+        with _LOCK:
+            data = self._load()
+            proof, proof_error = self._verify_master_proof_data(data, master_proof_secret)
+            if not proof:
+                if proof_error == "company_master_proof_expired":
+                    self._save(data)
+                return _agent_access_error(proof_error)
+            if any(item.get("humanAccountId") == session["humanAccountId"] and item.get("companyId") == proof["companyId"] for item in data.get("humanCompanyAuthorities", {}).values()):
+                return _agent_access_error("human_company_authority_exists")
+            authority_id = _id("authority")
+            record = {"authorityId": authority_id, "humanAccountId": session["humanAccountId"], "companyId": proof["companyId"], "masterKeyId": proof["masterKeyId"], "role": role, "linkedAt": utc_now(), "linkedByAccountId": session["humanAccountId"]}
+            data.setdefault("humanCompanyAuthorities", {})[authority_id] = record
+            proof.update({"status": "consumed", "consumedAt": utc_now()})
+            self._save(data)
+        company = data.get("companies", {}).get(record["companyId"]) or {}
+        return {"ok": True, "authority": _safe_company_export_value(record), "membership": _public_human_membership(record, company), "valuesRedacted": True}
+
+    def list_human_company_memberships(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        data = self._load()
+        items = []
+        for item in data.get("humanCompanyAuthorities", {}).values():
+            if item.get("humanAccountId") != session["humanAccountId"]:
+                continue
+            company = data.get("companies", {}).get(item.get("companyId")) or {}
+            items.append(_public_human_membership(item, company))
+        items.sort(key=lambda item: (item.get("companyLabel") or "", item.get("authorityId") or ""))
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def list_human_agent_tokens(self, session_secret, company_id):
+        actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        data = self._load()
+        items = []
+        for token_record in data.get("agentTokens", {}).values():
+            grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId"))
+            identity = data.get("agentIdentities", {}).get(token_record.get("agentIdentityId"))
+            if not grant or grant.get("companyId") != company_id or not identity:
+                continue
+            items.append(_public_human_agent_token(token_record, identity, grant))
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("credentialId") or ""))
+        return {
+            "ok": True,
+            "items": items,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def select_human_company_membership(self, session_secret, authority_id):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            data = self._load()
+            authority = data.get("humanCompanyAuthorities", {}).get(authority_id)
+            if not authority or authority.get("humanAccountId") != session["humanAccountId"]:
+                return _agent_access_error("human_company_authority_not_found")
+            predecessor = data["humanAccountSessions"][session["humanAccountSessionId"]]
+            new_session_id = _id("accountsession")
+            new_secret, new_digest = _governed_credential("accountsession", session["humanAccountId"], new_session_id)
+            new_csrf, new_csrf_digest = _governed_credential("accountcsrf", session["humanAccountId"], new_session_id)
+            predecessor["revokedAt"] = utc_now()
+            record = {
+                "humanAccountSessionId": new_session_id, "humanAccountId": session["humanAccountId"],
+                "selectedAuthorityId": authority_id, "selectedCompanyId": authority.get("companyId"),
+                "sessionHash": new_digest, "csrfHash": new_csrf_digest, "createdAt": utc_now(),
+                "expiresAt": predecessor.get("expiresAt"), "lastSeenAt": None,
+                "passwordReauthenticatedAt": predecessor.get("passwordReauthenticatedAt"),
+                "rotatedFromSessionId": predecessor.get("humanAccountSessionId"), "revokedAt": None,
+            }
+            data.setdefault("humanAccountSessions", {})[new_session_id] = record
+            self._save(data)
+        return {"ok": True, "humanAccountSessionId": new_session_id, "selectedAuthorityId": authority_id, "companyId": authority.get("companyId"), "role": authority.get("role"), "sessionSecret": new_secret, "csrfToken": new_csrf, "expiresAt": record["expiresAt"], "rotatedFromSessionId": session["humanAccountSessionId"], "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def human_actor_context(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session or not session.get("selectedAuthorityId") or not session.get("companyId"):
+            return None
+        return session
+
+    def _human_operational_session_data(
+        self, data, session_secret, csrf_token=None, require_csrf=False
+    ):
+        session_id, secret = _parse_governed_credential(
+            session_secret, "accountsession"
+        )
+        if not session_id:
+            return None
+        record = data.get("humanAccountSessions", {}).get(session_id)
+        account = (
+            data.get("humanAccounts", {}).get(record.get("humanAccountId"))
+            if record
+            else None
+        )
+        if (
+            not record
+            or not account
+            or account.get("status") != "active"
+            or record.get("revokedAt")
+            or _timestamp_expired(record.get("expiresAt"))
+        ):
+            return None
+        expected = _governed_credential_digest(
+            "accountsession", account["humanAccountId"], session_id, secret
+        )
+        if not secrets.compare_digest(str(record.get("sessionHash") or ""), expected):
+            return None
+        if require_csrf:
+            csrf_id, csrf_secret = _parse_governed_credential(
+                csrf_token, "accountcsrf"
+            )
+            if csrf_id != session_id:
+                return None
+            expected_csrf = _governed_credential_digest(
+                "accountcsrf",
+                account["humanAccountId"],
+                session_id,
+                csrf_secret,
+            )
+            if not secrets.compare_digest(
+                str(record.get("csrfHash") or ""), expected_csrf
+            ):
+                return None
+        authority = data.get("humanCompanyAuthorities", {}).get(
+            record.get("selectedAuthorityId")
+        )
+        company = data.get("companies", {}).get(record.get("selectedCompanyId"))
+        if (
+            not authority
+            or authority.get("humanAccountId") != account.get("humanAccountId")
+            or authority.get("companyId") != record.get("selectedCompanyId")
+            or not company
+            or company.get("status") != "active"
+        ):
+            return None
+        return {
+            "credentialType": "human_account_session",
+            "humanAccountSessionId": session_id,
+            "humanAccountId": account.get("humanAccountId"),
+            "username": account.get("username"),
+            "displayName": account.get("displayName") or account.get("username"),
+            "selectedAuthorityId": authority.get("authorityId"),
+            "companyId": authority.get("companyId"),
+            "role": authority.get("role"),
+            "passwordReauthenticatedAt": record.get("passwordReauthenticatedAt"),
+            "expiresAt": record.get("expiresAt"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+        }
+
+    def _human_operational_context_data(self, data, session, create=True):
+        session_id = (session or {}).get("humanAccountSessionId")
+        if not session_id:
+            return None
+        contexts = data.setdefault("humanOperationalContexts", {})
+        record = contexts.get(session_id)
+        if not record and create:
+            now = utc_now()
+            record = {
+                "humanAccountSessionId": session_id,
+                "humanAccountId": session.get("humanAccountId"),
+                "authorityId": session.get("selectedAuthorityId"),
+                "companyId": session.get("companyId"),
+                "workspaceId": None,
+                "projectId": None,
+                "contextVersion": _id("context"),
+                "createdAt": now,
+                "updatedAt": None,
+            }
+            contexts[session_id] = record
+        if (
+            not record
+            or record.get("humanAccountId") != session.get("humanAccountId")
+            or record.get("authorityId") != session.get("selectedAuthorityId")
+            or record.get("companyId") != session.get("companyId")
+            or not record.get("contextVersion")
+        ):
+            return None
+        return record
+
+    def human_operational_context(
+        self, session_secret, csrf_token=None, require_csrf=True
+    ):
+        with _LOCK:
+            data = self._load()
+            session = self._human_operational_session_data(
+                data, session_secret, csrf_token, require_csrf=require_csrf
+            )
+            if not session:
+                return _agent_access_error("human_operational_session_required")
+            context = self._human_operational_context_data(data, session)
+            if not context:
+                return _agent_access_error("human_resource_context_invalid")
+            data["humanAccountSessions"][session["humanAccountSessionId"]][
+                "lastSeenAt"
+            ] = utc_now()
+            self._save(data)
+        resource_context = _human_operational_resource_context(context)
+        return {
+            "ok": True,
+            "session": session,
+            "resourceContext": resource_context,
+            "auditActor": _human_operational_audit_actor(
+                session, resource_context
+            ),
+            "valuesRedacted": True,
+        }
+
+    def human_operational_context_catalog(self, session_secret, csrf_token):
+        current = self.human_operational_context(
+            session_secret, csrf_token, require_csrf=True
+        )
+        if not current.get("ok"):
+            return current
+        session = current["session"]
+        data = self._load()
+        workspaces = []
+        for workspace in data.get("workspaces", {}).values():
+            if (
+                workspace.get("companyId") != session.get("companyId")
+                or workspace.get("status") != "active"
+            ):
+                continue
+            projects = [
+                {
+                    "projectId": project.get("projectId"),
+                    "workspaceId": project.get("workspaceId"),
+                    "label": project.get("label"),
+                    "status": project.get("status") or "active",
+                    "valuesRedacted": True,
+                }
+                for project in data.get("projects", {}).values()
+                if project.get("workspaceId") == workspace.get("workspaceId")
+                and project.get("status", "active") == "active"
+            ]
+            projects.sort(key=lambda item: (item.get("label") or "", item.get("projectId") or ""))
+            workspaces.append(
+                {
+                    "workspaceId": workspace.get("workspaceId"),
+                    "companyId": workspace.get("companyId"),
+                    "label": workspace.get("label"),
+                    "plan": workspace.get("plan"),
+                    "status": workspace.get("status"),
+                    "projects": projects,
+                    "valuesRedacted": True,
+                }
+            )
+        workspaces.sort(key=lambda item: (item.get("label") or "", item.get("workspaceId") or ""))
+        return dict(current, workspaces=workspaces, items=workspaces)
+
+    def transition_human_operational_context(
+        self,
+        session_secret,
+        csrf_token,
+        expected_context_version,
+        authority_id,
+        workspace_id,
+        project_id,
+    ):
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                expected_context_version,
+                authority_id,
+                workspace_id,
+                project_id,
+            )
+        ):
+            return _agent_access_error("human_resource_context_fields_required")
+        with _LOCK:
+            data = self._load()
+            session = self._human_operational_session_data(
+                data, session_secret, csrf_token, require_csrf=True
+            )
+            if not session:
+                return _agent_access_error("human_operational_session_required")
+            context = self._human_operational_context_data(data, session)
+            if not context:
+                return _agent_access_error("human_resource_context_invalid")
+            if not secrets.compare_digest(
+                str(context.get("contextVersion") or ""),
+                str(expected_context_version),
+            ):
+                return _agent_access_error("human_resource_context_stale")
+            if authority_id != session.get("selectedAuthorityId"):
+                return _agent_access_error("human_resource_context_cross_company")
+            workspace = data.get("workspaces", {}).get(workspace_id)
+            project = data.get("projects", {}).get(project_id)
+            if (
+                not workspace
+                or workspace.get("companyId") != session.get("companyId")
+                or workspace.get("status") != "active"
+            ):
+                return _agent_access_error("human_resource_context_cross_company")
+            if (
+                not project
+                or project.get("workspaceId") != workspace_id
+                or project.get("status", "active") != "active"
+            ):
+                return _agent_access_error("human_resource_context_project_invalid")
+            predecessor = data["humanAccountSessions"].get(
+                session["humanAccountSessionId"]
+            )
+            if not predecessor or predecessor.get("revokedAt"):
+                return _agent_access_error("human_operational_session_required")
+            now = utc_now()
+            new_session_id = _id("accountsession")
+            new_secret, new_digest = _governed_credential(
+                "accountsession", session["humanAccountId"], new_session_id
+            )
+            new_csrf, new_csrf_digest = _governed_credential(
+                "accountcsrf", session["humanAccountId"], new_session_id
+            )
+            predecessor["revokedAt"] = now
+            successor = {
+                "humanAccountSessionId": new_session_id,
+                "humanAccountId": session["humanAccountId"],
+                "selectedAuthorityId": authority_id,
+                "selectedCompanyId": session["companyId"],
+                "sessionHash": new_digest,
+                "csrfHash": new_csrf_digest,
+                "createdAt": now,
+                "expiresAt": predecessor.get("expiresAt"),
+                "lastSeenAt": None,
+                "passwordReauthenticatedAt": predecessor.get(
+                    "passwordReauthenticatedAt"
+                ),
+                "rotatedFromSessionId": session["humanAccountSessionId"],
+                "revokedAt": None,
+            }
+            data["humanAccountSessions"][new_session_id] = successor
+            successor_context = {
+                "humanAccountSessionId": new_session_id,
+                "humanAccountId": session["humanAccountId"],
+                "authorityId": authority_id,
+                "companyId": session["companyId"],
+                "workspaceId": workspace_id,
+                "projectId": project_id,
+                "contextVersion": _id("context"),
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            data["humanOperationalContexts"][new_session_id] = successor_context
+            successor_session = dict(
+                session,
+                humanAccountSessionId=new_session_id,
+                expiresAt=successor.get("expiresAt"),
+            )
+            resource_context = _human_operational_resource_context(
+                successor_context
+            )
+            audit_actor = _human_operational_audit_actor(
+                successor_session, resource_context
+            )
+            self.audit(
+                data,
+                "human.resource_context.transition",
+                audit_actor["humanAccountId"],
+                resource_context["contextVersion"],
+                workspace_id,
+                {"auditActor": audit_actor},
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "session": successor_session,
+            "humanAccountSessionId": new_session_id,
+            "sessionSecret": new_secret,
+            "csrfToken": new_csrf,
+            "expiresAt": successor.get("expiresAt"),
+            "rotatedFromSessionId": session["humanAccountSessionId"],
+            "resourceContext": resource_context,
+            "auditActor": audit_actor,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def submit_human_operational_memory(
+        self,
+        session_secret,
+        csrf_token,
+        expected_context_version,
+        idempotency_key,
+        payload,
+    ):
+        payload = dict(payload or {})
+        allowed_fields = {
+            "title",
+            "summary",
+            "tags",
+            "memoryType",
+            "subject",
+            "confidence",
+        }
+        if set(payload) - allowed_fields:
+            return _agent_access_error("human_memory_payload_invalid")
+        if (
+            not isinstance(payload.get("summary"), str)
+            or not 1 <= len(payload.get("summary").strip()) <= 4000
+            or not isinstance(idempotency_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,199}", idempotency_key)
+        ):
+            return _agent_access_error("human_memory_payload_invalid")
+        with _LOCK:
+            data = self._load()
+            session = self._human_operational_session_data(
+                data, session_secret, csrf_token, require_csrf=True
+            )
+            if not session:
+                return _agent_access_error("human_operational_session_required")
+            context = self._human_operational_context_data(data, session)
+            if not context or not context.get("workspaceId") or not context.get("projectId"):
+                return _agent_access_error("human_resource_context_required")
+            if not secrets.compare_digest(
+                str(context.get("contextVersion") or ""),
+                str(expected_context_version or ""),
+            ):
+                return _agent_access_error("human_resource_context_stale")
+            if session.get("role") != "owner":
+                return _agent_access_error("human_operation_not_permitted")
+            resource_context = _human_operational_resource_context(context)
+            audit_actor = _human_operational_audit_actor(
+                session, resource_context
+            )
+            request_material = {
+                "contextVersion": expected_context_version,
+                "payload": payload,
+            }
+            record_key = "%s:%s:%s" % (
+                context["workspaceId"],
+                "human-operational-memory-submit",
+                idempotency_key,
+            )
+            stored = data.get("idempotency", {}).get(record_key)
+            if stored:
+                if stored.get("bodyHash") != _canonical_hash(request_material):
+                    return _agent_access_error("idempotency_conflict")
+                replay = dict(stored.get("response") or {})
+                replay["idempotentReplay"] = True
+                replay["_httpStatus"] = stored.get("httpStatus") or "201 Created"
+                return replay
+            material = _human_memory_material(
+                context["workspaceId"], audit_actor, payload
+            )
+            if not material:
+                return _agent_access_error("human_audit_actor_invalid")
+            event, review, firewall = material
+            workspace = data.get("workspaces", {}).get(context["workspaceId"])
+            limit = int((workspace or {}).get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+            if not workspace or self.workspace_usage_bytes(data, context["workspaceId"]) + _json_size(event) > limit:
+                return _agent_access_error("workspace_quota_exceeded")
+            data["memoryEvents"].append(event)
+            data.setdefault("reviewQueue", []).append(review)
+            self._append_outbox(
+                data,
+                context["workspaceId"],
+                "matm.memory_event.submitted",
+                "memory_event",
+                event["eventId"],
+                event,
+            )
+            self._append_storage_ledger(
+                data,
+                context["workspaceId"],
+                "memory_event",
+                event["eventId"],
+                event,
+            )
+            self.audit(
+                data,
+                "human.memory.submit",
+                audit_actor["humanAccountId"],
+                event["eventId"],
+                context["workspaceId"],
+                {
+                    "auditActor": audit_actor,
+                    "reviewId": review["reviewId"],
+                    "firewallDecision": firewall["decision"],
+                },
+            )
+            result = {
+                "ok": True,
+                "event": event,
+                "resourceContext": resource_context,
+                "auditActor": audit_actor,
+                "idempotentReplay": False,
+                "valuesRedacted": True,
+            }
+            data.setdefault("idempotency", {})[record_key] = {
+                "workspaceId": context["workspaceId"],
+                "operation": "human-operational-memory-submit",
+                "bodyHash": _canonical_hash(request_material),
+                "response": result,
+                "httpStatus": "201 Created",
+                "createdAt": utc_now(),
+                "idempotencyKeyExposed": False,
+            }
+            self._save(data)
+        return result
+
+    def _management_human_session(self, session_secret):
+        session = self.human_actor_context(session_secret)
+        if not session or session.get("role") != "owner":
+            return None
+        normalized = dict(session)
+        normalized["humanSessionId"] = session.get("humanAccountSessionId")
+        normalized["reauthenticatedAt"] = session.get("passwordReauthenticatedAt")
+        return normalized
+
+    def _recovery_closure_human_session(self, session_secret):
+        session = self.authenticate_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return None
+        return {
+            "humanSessionId": session.get("humanSessionId"),
+            "companyId": session.get("companyId"),
+            "humanCredentialId": session.get("humanCredentialId"),
+            "reauthenticatedAt": session.get("reauthenticatedAt"),
+            "authMode": "recovery_closure",
+            "username": None,
+        }
+
+    def _credential_management_human_session(self, session_secret, require_recent_reauth=True):
+        session = self.human_actor_context(session_secret)
+        if not session or session.get("role") not in ("owner", "credential_admin"):
+            return None
+        if require_recent_reauth and not reauthentication_is_recent(session.get("passwordReauthenticatedAt")):
+            return None
+        return session
+
+    def _company_export_snapshot_data(self, data, company_id):
+        company = data.get("companies", {}).get(company_id)
+        if not company:
+            return None
+        workspace_ids = {item.get("workspaceId") for item in data.get("workspaces", {}).values() if item.get("companyId") == company_id}
+        project_ids = {item.get("projectId") for item in data.get("projects", {}).values() if item.get("workspaceId") in workspace_ids}
+        identity_ids = {item.get("agentIdentityId") for item in data.get("agentIdentities", {}).values() if item.get("companyId") == company_id}
+        collections = {}
+        excluded = {"apiKeys", "companyMasterKeys", "humanOwnerCredentials", "humanSessions", "humanAccounts", "humanAccountSessions", "humanOperationalContexts", "companyMasterProofs", "agentTokens", "idempotency", "accounts", "accountCompanies", "companies", "workspaces", "projects"}
+        for key, collection in data.items():
+            if key in excluded or not isinstance(collection, (dict, list)):
+                continue
+            values = list(collection.values()) if isinstance(collection, dict) else list(collection)
+            selected = []
+            for item in values:
+                if not isinstance(item, dict):
+                    continue
+                if (
+                    item.get("companyId") == company_id
+                    or item.get("workspaceId") in workspace_ids
+                    or item.get("projectId") in project_ids
+                    or item.get("agentIdentityId") in identity_ids
+                ):
+                    selected.append(_safe_company_export_value(item))
+            if selected:
+                collections[key] = selected
+        return {
+            "schemaVersion": "memoryendpoints.company_export.v1",
+            "exportedAt": utc_now(),
+            "company": _safe_company_export_value(company),
+            "workspaces": [_safe_company_export_value(item) for item in data.get("workspaces", {}).values() if item.get("workspaceId") in workspace_ids],
+            "projects": [_safe_company_export_value(item) for item in data.get("projects", {}).values() if item.get("projectId") in project_ids],
+            "collections": collections,
+            "credentialsExcluded": True,
+            "verifierSecretsExcluded": True,
+            "valuesRedacted": True,
+        }
+
+    def company_export_snapshot(self, session_secret, company_id=None):
+        session = self._management_human_session(session_secret) or self._recovery_closure_human_session(session_secret)
+        if not session or (company_id and session["companyId"] != company_id):
+            return _agent_access_error("human_session_required")
+        snapshot = self._company_export_snapshot_data(self._load(), session["companyId"])
+        if not snapshot:
+            return _agent_access_error("company_not_found")
+        return {"ok": True, "snapshot": snapshot, "valuesRedacted": True}
+
+    def record_company_export_receipt(self, session_secret, artifact_digest, artifact_format="json"):
+        session = self._management_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        digest = str(artifact_digest or "").strip().lower()
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        if not re.fullmatch(r"[a-f0-9]{64}", digest):
+            return _agent_access_error("artifact_digest_invalid")
+        receipt_id = _id("exportreceipt")
+        record = {
+            "exportReceiptId": receipt_id,
+            "companyId": session["companyId"],
+            "humanSessionId": session["humanSessionId"],
+            "artifactDigest": "sha256:" + digest,
+            "artifactFormat": str(artifact_format or "json").strip().lower()[:32],
+            "createdAt": utc_now(),
+        }
+        with _LOCK:
+            data = self._load()
+            data.setdefault("companyExportReceipts", {})[receipt_id] = record
+            self._save(data)
+        return {"ok": True, "receipt": _safe_company_export_value(record), "valuesRedacted": True}
+
+    def create_company_closure_intent(self, session_secret, purpose, acknowledge_export_opportunity, ttl_seconds=900):
+        session = self._management_human_session(session_secret)
+        recovery_session = None
+        if not session:
+            recovery_session = self._recovery_closure_human_session(session_secret)
+            session = recovery_session
+        if not session:
+            return _agent_access_error("human_session_required")
+        if not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_reauthentication_required")
+        purpose = str(purpose or "").strip().lower()
+        if recovery_session and purpose != "close":
+            return _agent_access_error("recovery_session_restricted")
+        if purpose not in ("close", "soft_delete", "permanent_purge", "clear_history"):
+            return _agent_access_error("closure_purpose_invalid")
+        if not acknowledge_export_opportunity:
+            return _agent_access_error("export_opportunity_acknowledgement_required")
+        with _LOCK:
+            data = self._load()
+            company = data.get("companies", {}).get(session["companyId"])
+            if not company:
+                return _agent_access_error("company_not_found")
+            if purpose == "permanent_purge" and company.get("status") not in ("closed", "soft_deleted"):
+                return _agent_access_error("company_must_be_closed")
+            intent_id = _id("closureintent")
+            intent_secret, intent_digest = _governed_credential("closure", session["companyId"], intent_id)
+            seconds = _bounded_ttl_seconds(ttl_seconds, 900, 60, _MAX_CLOSURE_INTENT_TTL_SECONDS)
+            confirmation_phrase = "PERMANENTLY PURGE %s" % company.get("label") if purpose == "permanent_purge" else company.get("label")
+            record = {
+                "closureIntentId": intent_id,
+                "companyId": session["companyId"],
+                "humanSessionId": session["humanSessionId"],
+                "authMode": session.get("authMode") or "human_account",
+                "intentHash": intent_digest,
+                "purpose": purpose,
+                "typedConfirmationPhrase": confirmation_phrase,
+                "acknowledgeExportOpportunity": True,
+                "status": "pending",
+                "createdAt": utc_now(),
+                "expiresAt": _expires_at(seconds),
+                "consumedAt": None,
+            }
+            data.setdefault("companyClosureIntents", {})[intent_id] = record
+            self._save(data)
+        return {"ok": True, "intent": _safe_company_export_value(record), "intentSecret": intent_secret, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def close_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase):
+        session = self._management_human_session(session_secret) or self._recovery_closure_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        closure_intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not closure_intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        with _LOCK:
+            data = self._load()
+            intent = data.get("companyClosureIntents", {}).get(closure_intent_id)
+            company = data.get("companies", {}).get(session["companyId"])
+            if not intent or intent.get("companyId") != session["companyId"] or intent.get("humanSessionId") != session["humanSessionId"] or intent.get("purpose") != "close":
+                return _agent_access_error("closure_intent_invalid")
+            expected_intent = _governed_credential_digest("closure", session["companyId"], closure_intent_id, intent_secret)
+            if not secrets.compare_digest(str(intent.get("intentHash") or ""), expected_intent):
+                return _agent_access_error("closure_intent_invalid")
+            if intent.get("status") != "pending" or _timestamp_expired(intent.get("expiresAt")):
+                return _agent_access_error("closure_intent_unavailable")
+            if not company or str(typed_confirmation_phrase or "") != str(company.get("label") or ""):
+                return _agent_access_error("typed_confirmation_mismatch")
+            now = utc_now()
+            company.update({"status": "closed", "updatedAt": now})
+            workspace_ids = {item.get("workspaceId") for item in data.get("workspaces", {}).values() if item.get("companyId") == session["companyId"]}
+            for item in data.get("workspaces", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": "closed", "updatedAt": now})
+            for item in data.get("projects", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": "closed", "updatedAt": now})
+            for item in data.get("companyMasterKeys", {}).values():
+                if item.get("companyId") == session["companyId"] and not item.get("revokedAt"):
+                    item["revokedAt"] = now
+            for grant in data.get("agentAccessGrants", {}).values():
+                if grant.get("companyId") == session["companyId"]:
+                    grant.update({"status": "revoked", "revokedAt": grant.get("revokedAt") or now})
+            grant_ids = {item.get("grantId") for item in data.get("agentAccessGrants", {}).values() if item.get("companyId") == session["companyId"]}
+            for item in data.get("agentTokens", {}).values():
+                if item.get("grantId") in grant_ids and not item.get("revokedAt"):
+                    item["revokedAt"] = now
+            for item in data.get("agentInvites", {}).values():
+                if item.get("companyId") == session["companyId"] and item.get("status") == "issued":
+                    item.update({"status": "revoked", "revokedAt": now})
+            connector_pairing_ids = {
+                item.get("pairingId")
+                for item in data.get("connectorPairings", {}).values()
+                if item.get("companyId") == session["companyId"]
+            }
+            for item in data.get("connectorPairings", {}).values():
+                if item.get("pairingId") in connector_pairing_ids and item.get("status") not in ("revoked", "disconnected", "canceled", "expired"):
+                    item.update({"status": "revoked", "endedAt": now, "endedReason": "company_closed"})
+            for item in data.get("connectorCredentials", {}).values():
+                if item.get("pairingId") in connector_pairing_ids and item.get("status") not in ("revoked", "superseded", "expired"):
+                    item.update({"status": "revoked", "revokedAt": now})
+            intent.update({"status": "consumed", "consumedAt": now})
+            self._save(data)
+        return {"ok": True, "companyId": session["companyId"], "status": "closed", "closedAt": now, "valuesRedacted": True}
+
+    def soft_delete_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase):
+        session = self._management_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        with _LOCK:
+            data = self._load()
+            company = data.get("companies", {}).get(session["companyId"])
+            intent = data.get("companyClosureIntents", {}).get(intent_id)
+            if not company or not intent or intent.get("companyId") != session["companyId"] or intent.get("humanSessionId") != session["humanSessionId"] or intent.get("purpose") != "soft_delete" or intent.get("status") != "pending" or _timestamp_expired(intent.get("expiresAt")):
+                return _agent_access_error("closure_intent_invalid")
+            expected = _governed_credential_digest("closure", session["companyId"], intent_id, intent_secret)
+            if not secrets.compare_digest(str(intent.get("intentHash") or ""), expected):
+                return _agent_access_error("closure_intent_invalid")
+            if str(typed_confirmation_phrase or "") != str(company.get("label") or ""):
+                return _agent_access_error("typed_confirmation_mismatch")
+            now = utc_now()
+            prior_status = company.get("status") or "active"
+            company.update({"status": "soft_deleted", "preDeleteStatus": prior_status, "softDeletedAt": now, "updatedAt": now})
+            workspace_ids = {item.get("workspaceId") for item in data.get("workspaces", {}).values() if item.get("companyId") == session["companyId"]}
+            for item in data.get("workspaces", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": "soft_deleted", "updatedAt": now})
+            for item in data.get("projects", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": "soft_deleted", "updatedAt": now})
+            intent.update({"status": "consumed", "consumedAt": now})
+            self._save(data)
+        return {"ok": True, "companyId": session["companyId"], "status": "soft_deleted", "softDeleted": True, "softDeletedAt": now, "dataRetained": True, "valuesRedacted": True}
+
+    def restore_company(self, session_secret):
+        session = self._management_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        with _LOCK:
+            data = self._load()
+            company = data.get("companies", {}).get(session["companyId"])
+            if not company or company.get("status") != "soft_deleted":
+                return _agent_access_error("company_not_soft_deleted")
+            now = utc_now()
+            restored_status = company.get("preDeleteStatus") or "active"
+            company.update({"status": restored_status, "preDeleteStatus": None, "softDeletedAt": None, "updatedAt": now})
+            workspace_ids = {item.get("workspaceId") for item in data.get("workspaces", {}).values() if item.get("companyId") == session["companyId"]}
+            for item in data.get("workspaces", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": restored_status, "updatedAt": now})
+            for item in data.get("projects", {}).values():
+                if item.get("workspaceId") in workspace_ids:
+                    item.update({"status": restored_status, "updatedAt": now})
+            self._save(data)
+        return {"ok": True, "companyId": session["companyId"], "status": restored_status, "restoredAt": now, "valuesRedacted": True}
+
+    def permanently_purge_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase, export_receipt_id=None, acknowledge_no_export=False):
+        session = self._management_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        closure_intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not closure_intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        with _LOCK:
+            data = self._load()
+            company_id = session["companyId"]
+            company = data.get("companies", {}).get(company_id)
+            intent = data.get("companyClosureIntents", {}).get(closure_intent_id)
+            if not company or company.get("status") not in ("closed", "soft_deleted"):
+                return _agent_access_error("company_must_be_closed")
+            if not intent or intent.get("companyId") != company_id or intent.get("humanSessionId") != session["humanSessionId"] or intent.get("purpose") != "permanent_purge" or intent.get("status") != "pending" or _timestamp_expired(intent.get("expiresAt")):
+                return _agent_access_error("closure_intent_invalid")
+            expected_intent = _governed_credential_digest("closure", company_id, closure_intent_id, intent_secret)
+            if not secrets.compare_digest(str(intent.get("intentHash") or ""), expected_intent):
+                return _agent_access_error("closure_intent_invalid")
+            if str(typed_confirmation_phrase or "") != "PERMANENTLY PURGE %s" % str(company.get("label") or ""):
+                return _agent_access_error("typed_confirmation_mismatch")
+            receipt = data.get("companyExportReceipts", {}).get(export_receipt_id) if export_receipt_id else None
+            if (not receipt or receipt.get("companyId") != company_id) and not acknowledge_no_export:
+                return _agent_access_error("export_receipt_or_no_export_acknowledgement_required")
+            workspace_ids = {item.get("workspaceId") for item in data.get("workspaces", {}).values() if item.get("companyId") == company_id}
+            project_ids = {item.get("projectId") for item in data.get("projects", {}).values() if item.get("workspaceId") in workspace_ids}
+            identity_ids = {item.get("agentIdentityId") for item in data.get("agentIdentities", {}).values() if item.get("companyId") == company_id}
+            grant_ids = {item.get("grantId") for item in data.get("agentAccessGrants", {}).values() if item.get("companyId") == company_id}
+            connector_pairing_ids = {item.get("pairingId") for item in data.get("connectorPairings", {}).values() if item.get("companyId") == company_id}
+            for account_session in data.get("humanAccountSessions", {}).values():
+                if account_session.get("selectedCompanyId") == company_id:
+                    account_session.update({"selectedAuthorityId": None, "selectedCompanyId": None})
+            for key, collection in list(data.items()):
+                if isinstance(collection, dict):
+                    data[key] = {
+                        item_key: item for item_key, item in collection.items()
+                        if not isinstance(item, dict) or not (
+                            item.get("companyId") == company_id
+                            or item.get("workspaceId") in workspace_ids
+                            or item.get("projectId") in project_ids
+                            or item.get("agentIdentityId") in identity_ids
+                            or item.get("grantId") in grant_ids
+                            or item.get("pairingId") in connector_pairing_ids
+                        )
+                    }
+                elif isinstance(collection, list):
+                    data[key] = [
+                        item for item in collection
+                        if not isinstance(item, dict) or not (
+                            item.get("companyId") == company_id
+                            or item.get("workspaceId") in workspace_ids
+                            or item.get("projectId") in project_ids
+                            or item.get("agentIdentityId") in identity_ids
+                            or item.get("grantId") in grant_ids
+                            or item.get("pairingId") in connector_pairing_ids
+                        )
+                    ]
+            data.get("companies", {}).pop(company_id, None)
+            referenced_account_ids = {item.get("accountId") for item in data.get("accountCompanies", {}).values()}
+            data["accounts"] = {key: item for key, item in data.get("accounts", {}).items() if item.get("accountId") in referenced_account_ids}
+            self._save(data)
+        return {"ok": True, "companyId": company_id, "status": "purged", "purgedAt": utc_now(), "valuesRedacted": True}
+
+    def request_agent_access(
+        self,
+        company_id,
+        agent_name,
+        scope_type,
+        scope_id,
+        requested_by=None,
+        supersedes_token_id=None,
+        memory_transfer_from_token_id=None,
+        display_name=None,
+        justification=None,
+        assignment_context=None,
+    ):
+        scope_type = str(scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        canonical_name, normalized_name = _normalize_agent_access_name(agent_name)
+        if not canonical_name:
+            return _agent_access_error("agent_name_invalid", namePolicy="3-64 lowercase ASCII characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$")
+        normalized_display_name = _normalize_agent_display_name(display_name, canonical_name)
+        if not normalized_display_name:
+            return _agent_access_error("display_name_invalid")
+        if scope_type not in _AGENT_GRANT_SCOPE_TYPES:
+            return _agent_access_error("scope_invalid")
+        with _LOCK:
+            data = self._load()
+            if self._agent_access_scope_company_data(data, scope_type, scope_id) != company_id:
+                return _agent_access_error("scope_not_in_company")
+            reference_ids = [item for item in (supersedes_token_id, memory_transfer_from_token_id) if item]
+            for reference_id in reference_ids:
+                reference_token = data.get("agentTokens", {}).get(reference_id)
+                reference_grant = data.get("agentAccessGrants", {}).get(reference_token.get("grantId")) if reference_token else None
+                reference_identity = data.get("agentIdentities", {}).get(reference_token.get("agentIdentityId")) if reference_token else None
+                if (
+                    not reference_token
+                    or not reference_grant
+                    or reference_grant.get("companyId") != company_id
+                    or not reference_identity
+                    or reference_identity.get("agentNameNormalized") != normalized_name
+                    or (reference_id == supersedes_token_id and (reference_token.get("revokedAt") or reference_grant.get("status") != "active"))
+                ):
+                    return _agent_access_error("referenced_agent_token_invalid")
+            name_exists = any(
+                item.get("companyId") == company_id and item.get("agentNameNormalized") == normalized_name
+                for item in data.get("agentIdentities", {}).values()
+            ) or any(
+                item.get("companyId") == company_id
+                and item.get("agentNameNormalized") == normalized_name
+                and item.get("status") in ("pending", "approved")
+                for item in data.get("agentAccessRequests", {}).values()
+            )
+            if name_exists and not reference_ids:
+                return _agent_access_error("agent_name_unavailable")
+            request_id = _id("accessreq")
+            record = {
+                "requestId": request_id,
+                "companyId": company_id,
+                "agentName": canonical_name,
+                "agentNameNormalized": normalized_name,
+                "displayName": normalized_display_name,
+                "justification": redact_text(justification or ""),
+                "assignmentContext": _public_value(assignment_context or {}),
+                "scopeType": scope_type,
+                "scopeId": scope_id,
+                "requestedBy": redact_text(requested_by or canonical_name),
+                "status": "pending",
+                "createdAt": utc_now(),
+                "approvedAt": None,
+                "approvedByMasterKeyId": None,
+                "agentIdentityId": None,
+                "inviteId": None,
+                "supersedesTokenId": supersedes_token_id,
+                "memoryTransferFromTokenId": memory_transfer_from_token_id,
+            }
+            data.setdefault("agentAccessRequests", {})[request_id] = record
+            workspace_id = self._agent_access_scope_workspace_data(data, scope_type, scope_id)
+            self.audit(data, "agent_access.request", canonical_name, request_id, workspace_id, {"scopeType": scope_type, "scopeId": scope_id})
+            self._save(data)
+            return {"ok": True, "request": _public_agent_access_request(record), "valuesRedacted": True}
+
+    def decide_agent_access_request(self, master_token, request_id, decision, reason=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        decision = str(decision or "").strip().lower()
+        if decision not in ("approved", "denied"):
+            return _agent_access_error("access_decision_invalid")
+        with _LOCK:
+            data = self._load()
+            request = data.get("agentAccessRequests", {}).get(request_id)
+            if not request or request.get("companyId") != principal.get("companyId"):
+                return _agent_access_error("access_request_not_found")
+            if request.get("status") != "pending":
+                return _agent_access_error("access_request_not_pending")
+            workspace_id = self._agent_access_scope_workspace_data(data, request["scopeType"], request["scopeId"])
+            if decision == "denied":
+                request.update(
+                    {
+                        "status": "denied",
+                        "deniedAt": utc_now(),
+                        "deniedByMasterKeyId": principal.get("masterKeyId"),
+                        "decisionReason": redact_text(reason or ""),
+                    }
+                )
+                self.audit(data, "agent_access.deny", principal["masterKeyId"], request_id, workspace_id, {"scopeType": request["scopeType"], "scopeId": request["scopeId"]})
+                self._save(data)
+                return {"ok": True, "request": _public_agent_access_request(request), "valuesRedacted": True}
+            identity = next(
+                (
+                    item
+                    for item in data.get("agentIdentities", {}).values()
+                    if item.get("companyId") == request.get("companyId")
+                    and item.get("agentNameNormalized") == request.get("agentNameNormalized")
+                ),
+                None,
+            )
+            if not identity:
+                identity_id = _id("agentidentity")
+                identity = {
+                    "agentIdentityId": identity_id,
+                    "companyId": request.get("companyId"),
+                    "agentId": request.get("agentNameNormalized"),
+                    "agentName": request.get("agentName"),
+                    "agentNameNormalized": request.get("agentNameNormalized"),
+                    "displayName": request.get("displayName") or request.get("agentName"),
+                    "status": "active",
+                    "createdAt": utc_now(),
+                    "updatedAt": None,
+                }
+                data.setdefault("agentIdentities", {})[identity_id] = identity
+            if identity.get("status") != "active":
+                return _agent_access_error("agent_identity_inactive")
+            request.update(
+                {
+                    "status": "approved",
+                    "approvedAt": utc_now(),
+                    "approvedByMasterKeyId": principal.get("masterKeyId"),
+                    "agentIdentityId": identity.get("agentIdentityId"),
+                    "decisionReason": redact_text(reason or ""),
+                }
+            )
+            self.audit(data, "agent_access.approve", principal["masterKeyId"], request_id, workspace_id, {"scopeType": request["scopeType"], "scopeId": request["scopeId"]})
+            self._save(data)
+            return {"ok": True, "request": _public_agent_access_request(request), "valuesRedacted": True}
+
+    def approve_agent_access_request(self, master_token, request_id, expires_in_seconds=None):
+        return self.decide_agent_access_request(master_token, request_id, "approved")
+
+    def issue_agent_invite(self, master_token, request_id, expires_in_seconds=900, assignment_context=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            data = self._load()
+            request = data.get("agentAccessRequests", {}).get(request_id)
+            if not request or request.get("companyId") != principal.get("companyId"):
+                return _agent_access_error("access_request_not_found")
+            if request.get("status") != "approved" or not request.get("agentIdentityId"):
+                return _agent_access_error("access_request_not_approved")
+            if request.get("inviteId"):
+                return _agent_access_error("invite_already_issued")
+            identity = data.get("agentIdentities", {}).get(request.get("agentIdentityId"))
+            if not identity or identity.get("status") != "active":
+                return _agent_access_error("agent_identity_inactive")
+            invite_id = _id("invite")
+            invite_secret, invite_digest = _governed_credential("invite", request.get("companyId"), invite_id)
+            invite = {
+                "inviteId": invite_id,
+                "requestId": request_id,
+                "companyId": request.get("companyId"),
+                "agentIdentityId": identity.get("agentIdentityId"),
+                "agentId": identity.get("agentId"),
+                "agentName": identity.get("displayName") or identity.get("agentName"),
+                "secretHash": invite_digest,
+                "scopeType": request.get("scopeType"),
+                "scopeId": request.get("scopeId"),
+                "status": "issued",
+                "createdAt": utc_now(),
+                "expiresAt": _agent_invite_expiry(expires_in_seconds),
+                "redeemedAt": None,
+                "approvedByMasterKeyId": principal.get("masterKeyId"),
+                "grantId": None,
+                "agentTokenId": None,
+                "assignmentContext": _public_value(assignment_context or request.get("assignmentContext") or {}),
+            }
+            data.setdefault("agentInvites", {})[invite_id] = invite
+            request["inviteId"] = invite_id
+            workspace_id = self._agent_access_scope_workspace_data(data, invite["scopeType"], invite["scopeId"])
+            self.audit(data, "agent_invite.issue", principal["masterKeyId"], invite_id, workspace_id, {"requestId": request_id, "scopeType": invite["scopeType"], "scopeId": invite["scopeId"]})
+            self._save(data)
+            return {
+                "ok": True,
+                "request": _public_agent_access_request(request),
+                "invite": _public_agent_invite(invite),
+                "inviteSecret": invite_secret,
+                "credentialReturnedOnce": True,
+                "valuesRedacted": True,
+            }
+
+    def redeem_agent_invite(self, invite_secret):
+        if not invite_secret:
+            return _agent_access_error("invite_unavailable")
+        invite_id, secret = _parse_governed_credential(invite_secret, "invite")
+        if not invite_id:
+            return _agent_access_error("invite_unavailable")
+        with _LOCK:
+            data = self._load()
+            invite = data.get("agentInvites", {}).get(invite_id)
+            if invite:
+                expected = _governed_credential_digest("invite", invite.get("companyId"), invite_id, secret)
+                if not secrets.compare_digest(str(invite.get("secretHash") or ""), expected):
+                    invite = None
+            if invite and (invite.get("status") == "redeemed" or invite.get("redeemedAt")):
+                return _agent_access_error("invite_redeemed")
+            if invite and invite.get("status") == "revoked":
+                return _agent_access_error("invite_revoked")
+            if invite and invite.get("status") == "expired":
+                return _agent_access_error("invite_expired")
+            if not invite or invite.get("status") != "issued":
+                return _agent_access_error("invite_unavailable")
+            if _timestamp_expired(invite.get("expiresAt")):
+                invite["status"] = "expired"
+                self._save(data)
+                return _agent_access_error("invite_expired")
+            identity = data.get("agentIdentities", {}).get(invite.get("agentIdentityId"))
+            request = data.get("agentAccessRequests", {}).get(invite.get("requestId"))
+            if not identity or identity.get("status") != "active" or not request or request.get("status") != "approved":
+                return _agent_access_error("invite_unavailable")
+            predecessor_token = None
+            predecessor_grant = None
+            original_grant_id = None
+            supersedes_token_id = request.get("supersedesTokenId")
+            if supersedes_token_id:
+                predecessor_token = data.get("agentTokens", {}).get(supersedes_token_id)
+                predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor_token.get("grantId")) if predecessor_token else None
+                if (
+                    not predecessor_token
+                    or predecessor_token.get("revokedAt")
+                    or not predecessor_grant
+                    or predecessor_grant.get("status") != "active"
+                    or predecessor_grant.get("revokedAt")
+                    or predecessor_grant.get("companyId") != invite.get("companyId")
+                    or predecessor_token.get("agentIdentityId") != identity.get("agentIdentityId")
+                    or predecessor_grant.get("agentIdentityId") != identity.get("agentIdentityId")
+                ):
+                    return _agent_access_error("referenced_agent_token_invalid")
+                cursor_token = predecessor_token
+                seen_token_ids = set()
+                while cursor_token:
+                    cursor_token_id = cursor_token.get("agentTokenId")
+                    if not cursor_token_id or cursor_token_id in seen_token_ids:
+                        return _agent_access_error("referenced_agent_token_invalid")
+                    seen_token_ids.add(cursor_token_id)
+                    cursor_grant = data.get("agentAccessGrants", {}).get(cursor_token.get("grantId"))
+                    if not cursor_grant or cursor_grant.get("companyId") != invite.get("companyId"):
+                        return _agent_access_error("referenced_agent_token_invalid")
+                    original_grant_id = cursor_grant.get("grantId")
+                    ancestor_token_id = cursor_grant.get("supersedesTokenId")
+                    cursor_token = data.get("agentTokens", {}).get(ancestor_token_id) if ancestor_token_id else None
+                    if ancestor_token_id and not cursor_token:
+                        return _agent_access_error("referenced_agent_token_invalid")
+            grant_id = _id("grant")
+            agent_token_id = _id("agenttoken")
+            agent_token, agent_token_digest = _governed_credential("agent", invite.get("companyId"), agent_token_id)
+            now = utc_now()
+            workspace_id = self._agent_access_scope_workspace_data(data, invite.get("scopeType"), invite.get("scopeId"))
+            project_id = invite.get("scopeId") if invite.get("scopeType") == "project" else None
+            if invite.get("scopeType") in ("goal", "task"):
+                scope_node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == invite.get("scopeType") and item.get("scopeId") == invite.get("scopeId")), None)
+                project_id = scope_node.get("projectId") if scope_node else None
+            grant = {
+                "grantId": grant_id,
+                "companyId": invite.get("companyId"),
+                "agentIdentityId": identity.get("agentIdentityId"),
+                "scopeType": invite.get("scopeType"),
+                "scopeId": invite.get("scopeId"),
+                "workspaceId": workspace_id,
+                "projectId": project_id,
+                "supersedesTokenId": request.get("supersedesTokenId"),
+                "memoryTransferFromTokenId": request.get("memoryTransferFromTokenId"),
+                "assignmentContext": _public_value(invite.get("assignmentContext") or {}),
+                "status": "active",
+                "createdAt": now,
+                "pendingExpiresAt": None,
+                "predecessorTokenId": request.get("supersedesTokenId"),
+                "activatedAt": now,
+                "cancelledAt": None,
+                "revokedAt": None,
+                "revokedByMasterKeyId": None,
+            }
+            token_record = {
+                "agentTokenId": agent_token_id,
+                "grantId": grant_id,
+                "agentIdentityId": identity.get("agentIdentityId"),
+                "tokenHash": agent_token_digest,
+                "createdAt": now,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            data.setdefault("agentAccessGrants", {})[grant_id] = grant
+            data.setdefault("agentTokens", {})[agent_token_id] = token_record
+            if predecessor_token and predecessor_grant:
+                predecessor_token["revokedAt"] = now
+                predecessor_grant.update(
+                    {
+                        "status": "revoked",
+                        "revokedAt": now,
+                        "revokedByMasterKeyId": invite.get("approvedByMasterKeyId"),
+                    }
+                )
+            invite.update({"status": "redeemed", "redeemedAt": now, "grantId": grant_id, "agentTokenId": agent_token_id})
+            if workspace_id:
+                agent_key = "%s:%s" % (workspace_id, identity.get("agentId"))
+                data.setdefault("agents", {})[agent_key] = {
+                    "workspaceId": workspace_id,
+                    "agentId": identity.get("agentId"),
+                    "displayName": identity.get("displayName") or identity.get("agentName"),
+                    "registeredAt": now,
+                    "status": "active",
+                }
+            self.audit(data, "agent_invite.redeem", identity["agentId"], invite["inviteId"], workspace_id, {"grantId": grant_id, "agentTokenId": agent_token_id, "scopeType": grant["scopeType"], "scopeId": grant["scopeId"], "atomicReplacement": bool(predecessor_token), "supersedesTokenId": supersedes_token_id})
+            self._save(data)
+            public_grant = dict(grant)
+            if original_grant_id:
+                public_grant["publicGrantId"] = original_grant_id
+            return {
+                "ok": True,
+                "invite": _public_agent_invite(invite),
+                "principal": _public_agent_principal(identity, public_grant, token_record),
+                "agentToken": agent_token,
+                "credentialReturnedOnce": True,
+                "valuesRedacted": True,
+            }
+
+    def authenticate_agent_token(self, token, scope_type=None, scope_id=None):
+        if not token:
+            return None
+        agent_token_id, secret = _parse_governed_credential(token, "agent")
+        if not agent_token_id:
+            return None
+        with _LOCK:
+            data = self._load()
+            token_record = data.get("agentTokens", {}).get(agent_token_id)
+            if not token_record or token_record.get("revokedAt"):
+                return None
+            grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId"))
+            identity = data.get("agentIdentities", {}).get(token_record.get("agentIdentityId"))
+            if not grant or grant.get("status") != "active" or grant.get("revokedAt") or not identity or identity.get("status") != "active":
+                return None
+            company = data.get("companies", {}).get(grant.get("companyId"))
+            if not company or company.get("status") != "active":
+                return None
+            expected = _governed_credential_digest("agent", grant.get("companyId"), agent_token_id, secret)
+            if not secrets.compare_digest(str(token_record.get("tokenHash") or ""), expected):
+                return None
+            if scope_type is not None or scope_id is not None:
+                if not self._agent_grant_allows_data(data, grant, scope_type, scope_id):
+                    return None
+            token_record["lastUsedAt"] = utc_now()
+            self._save(data)
+            public_grant = dict(grant)
+            cursor_grant = grant
+            seen_token_ids = set()
+            while cursor_grant.get("supersedesTokenId"):
+                predecessor_token_id = cursor_grant.get("supersedesTokenId")
+                if predecessor_token_id in seen_token_ids:
+                    break
+                seen_token_ids.add(predecessor_token_id)
+                predecessor = data.get("agentTokens", {}).get(predecessor_token_id)
+                predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+                if not predecessor_grant:
+                    break
+                public_grant["publicGrantId"] = predecessor_grant.get("grantId")
+                cursor_grant = predecessor_grant
+            return _public_agent_principal(identity, public_grant, token_record)
+
+    def _verify_agent_credential_data(self, data, token):
+        token_id, secret = _parse_governed_credential(token, "agent")
+        if not token_id:
+            return None, None, None
+        token_record = data.get("agentTokens", {}).get(token_id)
+        grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId")) if token_record else None
+        if not token_record or not grant:
+            return None, None, None
+        expected = _governed_credential_digest("agent", grant.get("companyId"), token_id, secret)
+        if not secrets.compare_digest(str(token_record.get("tokenHash") or ""), expected):
+            return None, None, None
+        return token_record, grant, data.get("agentIdentities", {}).get(token_record.get("agentIdentityId"))
+
+    def prepare_agent_token_replacement(self, session_secret, predecessor_credential_id, expires_in_seconds=900):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        with _LOCK:
+            data = self._load()
+            predecessor = data.get("agentTokens", {}).get(predecessor_credential_id)
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            if not predecessor or predecessor.get("revokedAt") or not predecessor_grant or predecessor_grant.get("companyId") != actor.get("companyId") or predecessor_grant.get("status") != "active":
+                return _agent_access_error("agent_token_replacement_predecessor_inactive")
+            if any(item.get("predecessorTokenId") == predecessor_credential_id and item.get("status") == "pending_activation" for item in data.get("agentAccessGrants", {}).values()):
+                return _agent_access_error("agent_token_replacement_pending")
+            successor_id = _id("agenttoken")
+            successor_secret, successor_digest = _governed_credential("agent", actor["companyId"], successor_id)
+            grant_id = _id("grant")
+            now = utc_now()
+            grant = {
+                "grantId": grant_id, "companyId": actor["companyId"], "agentIdentityId": predecessor.get("agentIdentityId"),
+                "scopeType": predecessor_grant.get("scopeType"), "scopeId": predecessor_grant.get("scopeId"),
+                "workspaceId": predecessor_grant.get("workspaceId"), "projectId": predecessor_grant.get("projectId"),
+                "supersedesTokenId": predecessor_credential_id, "memoryTransferFromTokenId": predecessor_credential_id,
+                "status": "pending_activation", "createdAt": now,
+                "pendingExpiresAt": _expires_at(_bounded_ttl_seconds(expires_in_seconds, 900, 60, 60 * 60)),
+                "predecessorTokenId": predecessor_credential_id, "activatedAt": None, "cancelledAt": None,
+                "revokedAt": None, "revokedByMasterKeyId": None,
+            }
+            token_record = {"agentTokenId": successor_id, "grantId": grant_id, "agentIdentityId": predecessor.get("agentIdentityId"), "tokenHash": successor_digest, "createdAt": now, "lastUsedAt": None, "revokedAt": None}
+            data.setdefault("agentAccessGrants", {})[grant_id] = grant
+            data.setdefault("agentTokens", {})[successor_id] = token_record
+            self.audit(data, "agent_token.replacement_prepare", actor.get("humanAccountId"), successor_id, grant.get("workspaceId"), {"predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")})
+            self._save(data)
+        return {"ok": True, "predecessorCredentialId": predecessor_credential_id, "successorCredentialId": successor_id, "successorTokenSecret": successor_secret, "status": "pending_activation", "expiresAt": grant["pendingExpiresAt"], "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def confirm_agent_token_replacement(self, successor_token_proof):
+        with _LOCK:
+            data = self._load()
+            successor, successor_grant, successor_identity = self._verify_agent_credential_data(data, successor_token_proof)
+            predecessor = data.get("agentTokens", {}).get(successor_grant.get("predecessorTokenId")) if successor_grant else None
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            predecessor_identity = data.get("agentIdentities", {}).get(predecessor.get("agentIdentityId")) if predecessor else None
+            if not predecessor or not successor or not predecessor_grant or not successor_grant:
+                return _agent_access_error("agent_token_replacement_proof_invalid")
+            if successor_grant.get("predecessorTokenId") != predecessor.get("agentTokenId") or successor.get("agentIdentityId") != predecessor.get("agentIdentityId") or successor_grant.get("companyId") != predecessor_grant.get("companyId"):
+                return _agent_access_error("agent_token_replacement_mismatch")
+            if successor_grant.get("status") == "active" and predecessor.get("revokedAt") and predecessor_grant.get("status") == "superseded":
+                return {"ok": True, "idempotentReplay": True, "predecessorCredentialId": predecessor.get("agentTokenId"), "successorCredentialId": successor.get("agentTokenId"), "status": "active", "valuesRedacted": True}
+            if successor_grant.get("status") != "pending_activation" or successor.get("revokedAt"):
+                return _agent_access_error("agent_token_replacement_unavailable")
+            if _timestamp_expired(successor_grant.get("pendingExpiresAt")):
+                now = utc_now()
+                successor_grant.update({"status": "expired", "revokedAt": now})
+                successor["revokedAt"] = now
+                self._save(data)
+                return _agent_access_error("agent_token_replacement_expired")
+            if predecessor.get("revokedAt") or predecessor_grant.get("status") != "active" or not predecessor_identity or not successor_identity:
+                return _agent_access_error("agent_token_replacement_predecessor_inactive")
+            now = utc_now()
+            successor_grant.update({"status": "active", "activatedAt": now, "pendingExpiresAt": None})
+            predecessor.update({"revokedAt": now})
+            predecessor_grant.update({"status": "superseded", "revokedAt": now})
+            self.audit(data, "agent_token.replacement_confirm", predecessor_identity.get("agentId"), successor.get("agentTokenId"), successor_grant.get("workspaceId"), {"predecessorCredentialId": predecessor.get("agentTokenId"), "successorCredentialId": successor.get("agentTokenId")})
+            self._save(data)
+        return {"ok": True, "idempotentReplay": False, "predecessorCredentialId": predecessor.get("agentTokenId"), "successorCredentialId": successor.get("agentTokenId"), "status": "active", "activatedAt": now, "valuesRedacted": True}
+
+    def cancel_agent_token_replacement(self, session_secret, successor_credential_id):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        with _LOCK:
+            data = self._load()
+            successor = data.get("agentTokens", {}).get(successor_credential_id)
+            successor_grant = data.get("agentAccessGrants", {}).get(successor.get("grantId")) if successor else None
+            predecessor = data.get("agentTokens", {}).get(successor_grant.get("predecessorTokenId")) if successor_grant else None
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            identity = data.get("agentIdentities", {}).get(predecessor.get("agentIdentityId")) if predecessor else None
+            if not predecessor or predecessor.get("revokedAt") or not predecessor_grant or predecessor_grant.get("status") != "active":
+                return _agent_access_error("agent_token_replacement_predecessor_inactive")
+            if not successor or not successor_grant or successor_grant.get("companyId") != actor.get("companyId") or successor.get("agentIdentityId") != predecessor.get("agentIdentityId"):
+                return _agent_access_error("agent_token_replacement_mismatch")
+            if successor_grant.get("status") != "pending_activation":
+                return _agent_access_error("agent_token_replacement_unavailable")
+            now = utc_now()
+            successor_grant.update({"status": "cancelled", "cancelledAt": now, "revokedAt": now})
+            successor["revokedAt"] = now
+            self.audit(data, "agent_token.replacement_cancel", identity.get("agentId") if identity else "agent", successor_credential_id, successor_grant.get("workspaceId"), {"predecessorCredentialId": predecessor.get("agentTokenId")})
+            self._save(data)
+        return {"ok": True, "predecessorCredentialId": predecessor.get("agentTokenId"), "successorCredentialId": successor_credential_id, "status": "cancelled", "valuesRedacted": True}
+
+    def expire_pending_agent_token_replacements(self):
+        now = utc_now()
+        count = 0
+        with _LOCK:
+            data = self._load()
+            for grant in data.get("agentAccessGrants", {}).values():
+                if grant.get("status") != "pending_activation" or not _timestamp_expired(grant.get("pendingExpiresAt")):
+                    continue
+                grant.update({"status": "expired", "revokedAt": now})
+                for token_record in data.get("agentTokens", {}).values():
+                    if token_record.get("grantId") == grant.get("grantId"):
+                        token_record["revokedAt"] = now
+                        break
+                count += 1
+            if count:
+                self._save(data)
+        return {"ok": True, "expiredCount": count, "valuesRedacted": True}
+
+    def _human_agent_replacement_public_data(self, data, record):
+        identity = data.get("agentIdentities", {}).get(record.get("agentIdentityId")) or {}
+        grant = data.get("agentAccessGrants", {}).get(record.get("successorGrantId")) or {}
+        return _public_agent_token_replacement(record, identity, grant)
+
+    def prepare_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        reason="",
+        expires_in_seconds=900,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        if not str(idempotency_key or "").strip():
+            return _agent_access_error("idempotency_key_required")
+        key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        bounded_reason = redact_text(" ".join(str(reason or "").strip().split())[:240])
+        with _LOCK:
+            data = self._load()
+            for existing in data.get("agentTokenReplacements", {}).values():
+                if existing.get("companyId") != company_id or existing.get("prepareIdempotencyHash") != key_hash:
+                    continue
+                exact = (
+                    existing.get("predecessorCredentialId") == predecessor_credential_id
+                    and secrets.compare_digest(str(existing.get("prepareRequestDigest") or ""), digest)
+                )
+                if not exact:
+                    return _agent_access_error("idempotency_conflict")
+                return {
+                    "ok": True,
+                    "replacement": self._human_agent_replacement_public_data(data, existing),
+                    "successorCredentialAlreadyDelivered": True,
+                    "idempotentReplay": True,
+                    "valuesRedacted": True,
+                }
+            predecessor = data.get("agentTokens", {}).get(predecessor_credential_id)
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            identity = data.get("agentIdentities", {}).get(predecessor.get("agentIdentityId")) if predecessor else None
+            if (
+                not predecessor
+                or predecessor.get("revokedAt")
+                or not predecessor_grant
+                or predecessor_grant.get("companyId") != company_id
+                or predecessor_grant.get("status") != "active"
+                or not identity
+            ):
+                return _agent_access_error("replacement_predecessor_inactive")
+            for existing in data.get("agentTokenReplacements", {}).values():
+                if existing.get("predecessorCredentialId") != predecessor_credential_id or existing.get("status") != "prepared":
+                    continue
+                if _timestamp_expired(existing.get("expiresAt")):
+                    expired_at = utc_now()
+                    existing.update({"status": "expired", "expiredAt": expired_at})
+                    successor = data.get("agentTokens", {}).get(existing.get("successorCredentialId"))
+                    successor_grant = data.get("agentAccessGrants", {}).get(existing.get("successorGrantId"))
+                    if successor:
+                        successor["revokedAt"] = expired_at
+                    if successor_grant:
+                        successor_grant.update({"status": "expired", "revokedAt": expired_at})
+                    continue
+                return _agent_access_error("replacement_pending")
+            replacement_id = _id("replacement")
+            successor_id = _id("agenttoken")
+            successor_secret, successor_digest = _governed_credential("agent", company_id, successor_id)
+            successor_grant_id = _id("grant")
+            now = utc_now()
+            expires_at = _expires_at(_bounded_ttl_seconds(expires_in_seconds, 900, 60, 60 * 60))
+            successor_grant = {
+                "grantId": successor_grant_id,
+                "companyId": company_id,
+                "agentIdentityId": predecessor.get("agentIdentityId"),
+                "scopeType": predecessor_grant.get("scopeType"),
+                "scopeId": predecessor_grant.get("scopeId"),
+                "workspaceId": predecessor_grant.get("workspaceId"),
+                "projectId": predecessor_grant.get("projectId"),
+                "supersedesTokenId": predecessor_credential_id,
+                "memoryTransferFromTokenId": predecessor_credential_id,
+                "status": "pending_activation",
+                "createdAt": now,
+                "pendingExpiresAt": expires_at,
+                "predecessorTokenId": predecessor_credential_id,
+                "activatedAt": None,
+                "cancelledAt": None,
+                "revokedAt": None,
+                "revokedByMasterKeyId": None,
+            }
+            successor = {
+                "agentTokenId": successor_id,
+                "grantId": successor_grant_id,
+                "agentIdentityId": predecessor.get("agentIdentityId"),
+                "tokenHash": successor_digest,
+                "createdAt": now,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            replacement = {
+                "replacementId": replacement_id,
+                "companyId": company_id,
+                "humanAccountId": actor.get("humanAccountId"),
+                "authorityId": actor.get("selectedAuthorityId"),
+                "predecessorCredentialId": predecessor_credential_id,
+                "predecessorGrantId": predecessor.get("grantId"),
+                "successorCredentialId": successor_id,
+                "successorGrantId": successor_grant_id,
+                "agentIdentityId": predecessor.get("agentIdentityId"),
+                "scopeType": predecessor_grant.get("scopeType"),
+                "scopeId": predecessor_grant.get("scopeId"),
+                "workspaceId": predecessor_grant.get("workspaceId"),
+                "projectId": predecessor_grant.get("projectId"),
+                "reason": bounded_reason,
+                "status": "prepared",
+                "createdAt": now,
+                "expiresAt": expires_at,
+                "prepareIdempotencyHash": key_hash,
+                "prepareRequestDigest": digest,
+                "successorDeliveredAt": now,
+                "confirmIdempotencyHash": None,
+                "confirmRequestDigest": None,
+                "confirmedAt": None,
+                "cancelIdempotencyHash": None,
+                "cancelRequestDigest": None,
+                "canceledAt": None,
+                "revokedCredentialId": None,
+                "activatedCredentialId": None,
+            }
+            data.setdefault("agentAccessGrants", {})[successor_grant_id] = successor_grant
+            data.setdefault("agentTokens", {})[successor_id] = successor
+            data.setdefault("agentTokenReplacements", {})[replacement_id] = replacement
+            self.audit(
+                data,
+                "agent_token.replacement_prepare",
+                actor.get("humanAccountId"),
+                successor_id,
+                predecessor_grant.get("workspaceId"),
+                {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "replacement": _public_agent_token_replacement(replacement, identity, successor_grant),
+            "successorTokenSecret": successor_secret,
+            "credentialReturnedOnce": True,
+            "idempotentReplay": False,
+            "valuesRedacted": True,
+        }
+
+    def human_agent_token_replacement_status(
+        self, session_secret, company_id, predecessor_credential_id, replacement_id
+    ):
+        actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        with _LOCK:
+            data = self._load()
+            record = data.get("agentTokenReplacements", {}).get(replacement_id)
+            if (
+                not record
+                or record.get("companyId") != company_id
+                or record.get("predecessorCredentialId") != predecessor_credential_id
+            ):
+                return _agent_access_error("replacement_not_found")
+            if record.get("status") == "prepared" and _timestamp_expired(record.get("expiresAt")):
+                now = utc_now()
+                record.update({"status": "expired", "expiredAt": now})
+                successor = data.get("agentTokens", {}).get(record.get("successorCredentialId"))
+                grant = data.get("agentAccessGrants", {}).get(record.get("successorGrantId"))
+                if successor:
+                    successor["revokedAt"] = now
+                if grant:
+                    grant.update({"status": "expired", "revokedAt": now})
+                self._save(data)
+            public_record = self._human_agent_replacement_public_data(data, record)
+        return {"ok": True, "replacement": public_record, "valuesRedacted": True}
+
+    def confirm_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        replacement_id,
+        successor_token_proof,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        if not str(idempotency_key or "").strip():
+            return _agent_access_error("idempotency_key_required")
+        key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        with _LOCK:
+            data = self._load()
+            record = data.get("agentTokenReplacements", {}).get(replacement_id)
+            if (
+                not record
+                or record.get("companyId") != company_id
+                or record.get("predecessorCredentialId") != predecessor_credential_id
+            ):
+                return _agent_access_error("replacement_not_found")
+            if record.get("status") == "confirmed":
+                exact = (
+                    record.get("confirmIdempotencyHash") == key_hash
+                    and secrets.compare_digest(str(record.get("confirmRequestDigest") or ""), digest)
+                )
+                if not exact:
+                    return _agent_access_error("idempotency_conflict")
+                return {"ok": True, "replacement": self._human_agent_replacement_public_data(data, record), "idempotentReplay": True, "valuesRedacted": True}
+            if record.get("confirmIdempotencyHash") and record.get("confirmIdempotencyHash") == key_hash:
+                return _agent_access_error("idempotency_conflict")
+            if record.get("status") != "prepared":
+                return _agent_access_error("replacement_unavailable")
+            if _timestamp_expired(record.get("expiresAt")):
+                now = utc_now()
+                record.update({"status": "expired", "expiredAt": now})
+                successor = data.get("agentTokens", {}).get(record.get("successorCredentialId"))
+                successor_grant = data.get("agentAccessGrants", {}).get(record.get("successorGrantId"))
+                if successor:
+                    successor["revokedAt"] = now
+                if successor_grant:
+                    successor_grant.update({"status": "expired", "revokedAt": now})
+                self._save(data)
+                return _agent_access_error("replacement_expired")
+            if not successor_token_proof:
+                return _agent_access_error("successor_token_proof_required")
+            successor, successor_grant, identity = self._verify_agent_credential_data(data, successor_token_proof)
+            predecessor = data.get("agentTokens", {}).get(predecessor_credential_id)
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            if (
+                not successor
+                or not successor_grant
+                or successor.get("agentTokenId") != record.get("successorCredentialId")
+                or successor.get("agentIdentityId") != record.get("agentIdentityId")
+                or successor_grant.get("grantId") != record.get("successorGrantId")
+                or not predecessor
+                or predecessor.get("revokedAt")
+                or not predecessor_grant
+                or predecessor_grant.get("status") != "active"
+            ):
+                return _agent_access_error("replacement_binding_invalid")
+            now = utc_now()
+            successor_grant.update({"status": "active", "activatedAt": now, "pendingExpiresAt": None})
+            predecessor["revokedAt"] = now
+            predecessor_grant.update({"status": "superseded", "revokedAt": now})
+            record.update(
+                {
+                    "status": "confirmed",
+                    "confirmIdempotencyHash": key_hash,
+                    "confirmRequestDigest": digest,
+                    "confirmedAt": now,
+                    "revokedCredentialId": predecessor_credential_id,
+                    "activatedCredentialId": successor.get("agentTokenId"),
+                }
+            )
+            self.audit(
+                data,
+                "agent_token.replacement_confirm",
+                actor.get("humanAccountId"),
+                successor.get("agentTokenId"),
+                successor_grant.get("workspaceId"),
+                {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+            )
+            self._save(data)
+        return {"ok": True, "replacement": _public_agent_token_replacement(record, identity, successor_grant), "idempotentReplay": False, "valuesRedacted": True}
+
+    def cancel_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        replacement_id,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        key_hash = digest = None
+        if str(idempotency_key or "").strip():
+            key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+            if not key_hash:
+                return _agent_access_error("idempotency_key_invalid")
+        with _LOCK:
+            data = self._load()
+            record = data.get("agentTokenReplacements", {}).get(replacement_id)
+            if (
+                not record
+                or record.get("companyId") != company_id
+                or record.get("predecessorCredentialId") != predecessor_credential_id
+            ):
+                return _agent_access_error("replacement_not_found")
+            if record.get("status") in ("canceled", "expired"):
+                if key_hash and record.get("cancelIdempotencyHash") and (
+                    record.get("cancelIdempotencyHash") != key_hash
+                    or not secrets.compare_digest(str(record.get("cancelRequestDigest") or ""), digest)
+                ):
+                    return _agent_access_error("idempotency_conflict")
+                return {"ok": True, "replacement": self._human_agent_replacement_public_data(data, record), "idempotentReplay": True, "valuesRedacted": True}
+            if record.get("status") != "prepared":
+                return _agent_access_error("replacement_unavailable")
+            predecessor = data.get("agentTokens", {}).get(predecessor_credential_id)
+            predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            successor = data.get("agentTokens", {}).get(record.get("successorCredentialId"))
+            successor_grant = data.get("agentAccessGrants", {}).get(record.get("successorGrantId"))
+            if not predecessor or predecessor.get("revokedAt") or not predecessor_grant or predecessor_grant.get("status") != "active" or not successor or not successor_grant:
+                return _agent_access_error("replacement_binding_invalid")
+            now = utc_now()
+            successor["revokedAt"] = now
+            successor_grant.update({"status": "cancelled", "cancelledAt": now, "revokedAt": now})
+            record.update(
+                {
+                    "status": "canceled",
+                    "cancelIdempotencyHash": key_hash,
+                    "cancelRequestDigest": digest,
+                    "canceledAt": now,
+                }
+            )
+            self.audit(
+                data,
+                "agent_token.replacement_cancel",
+                actor.get("humanAccountId"),
+                successor.get("agentTokenId"),
+                successor_grant.get("workspaceId"),
+                {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+            )
+            self._save(data)
+        return {"ok": True, "replacement": _public_agent_token_replacement(record, data.get("agentIdentities", {}).get(record.get("agentIdentityId")), successor_grant), "idempotentReplay": False, "valuesRedacted": True}
+
+    def auth_allows_scope(self, principal, scope_type, scope_id):
+        if not principal:
+            return False
+        with _LOCK:
+            data = self._load()
+            if principal.get("credentialType") == "company_master":
+                return self._agent_access_scope_company_data(data, scope_type, scope_id) == principal.get("companyId")
+            if principal.get("credentialType") != "agent":
+                return False
+            if principal.get("publicCredentialType") == "connector_agent":
+                scope_type = str(scope_type or "").strip().lower()
+                scope_id = str(scope_id or "").strip()
+                if scope_type == "agent":
+                    return scope_id == principal.get("agentId")
+                if scope_type == "workspace":
+                    return scope_id == principal.get("workspaceId")
+                if scope_type == "project":
+                    project = data.get("projects", {}).get(scope_id)
+                    return bool(project and project.get("workspaceId") == principal.get("workspaceId"))
+                if scope_type in ("goal", "task"):
+                    node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
+                    return bool(node and node.get("workspaceId") == principal.get("workspaceId"))
+                return False
+            token_record = data.get("agentTokens", {}).get(
+                principal.get("agentTokenId") or principal.get("credentialId")
+            )
+            grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId")) if token_record else None
+            return bool(grant and grant.get("status") == "active" and not grant.get("revokedAt") and self._agent_grant_allows_data(data, grant, scope_type, scope_id))
+
+    def auth_scope_visible(self, principal, scope_type, scope_id):
+        return self.auth_allows_scope(principal, scope_type, scope_id)
+
+    def deny_agent_access_request(self, master_token, request_id):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            data = self._load()
+            request = data.get("agentAccessRequests", {}).get(request_id)
+            if not request or request.get("companyId") != principal.get("companyId"):
+                return _agent_access_error("access_request_not_found")
+            if request.get("status") != "pending":
+                return _agent_access_error("access_request_not_pending")
+            request.update({"status": "denied", "deniedAt": utc_now(), "deniedByMasterKeyId": principal.get("masterKeyId")})
+            workspace_id = self._agent_access_scope_workspace_data(data, request["scopeType"], request["scopeId"])
+            self.audit(data, "agent_access.deny", principal["masterKeyId"], request_id, workspace_id, {"scopeType": request["scopeType"], "scopeId": request["scopeId"]})
+            self._save(data)
+            return {"ok": True, "request": _public_agent_access_request(request), "valuesRedacted": True}
+
+    def revoke_agent_invite(self, master_token, invite_id):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            data = self._load()
+            invite = data.get("agentInvites", {}).get(invite_id)
+            if not invite or invite.get("companyId") != principal.get("companyId"):
+                return _agent_access_error("invite_not_found")
+            if invite.get("status") != "issued" or invite.get("redeemedAt"):
+                return _agent_access_error("invite_not_revocable")
+            invite.update({"status": "revoked", "revokedAt": utc_now(), "revokedByMasterKeyId": principal.get("masterKeyId")})
+            workspace_id = self._agent_access_scope_workspace_data(data, invite["scopeType"], invite["scopeId"])
+            self.audit(data, "agent_invite.revoke", principal["masterKeyId"], invite_id, workspace_id, {"scopeType": invite["scopeType"], "scopeId": invite["scopeId"]})
+            self._save(data)
+            return {"ok": True, "invite": _public_agent_invite(invite), "valuesRedacted": True}
+
+    def revoke_agent_token(self, master_token, agent_token_id):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            data = self._load()
+            token_record = data.get("agentTokens", {}).get(agent_token_id)
+            grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId")) if token_record else None
+            if not token_record or not grant or grant.get("companyId") != principal.get("companyId"):
+                return _agent_access_error("agent_token_not_found")
+            if token_record.get("revokedAt"):
+                return _agent_access_error("agent_token_already_revoked")
+            now = utc_now()
+            token_record["revokedAt"] = now
+            grant.update({"status": "revoked", "revokedAt": now, "revokedByMasterKeyId": principal.get("masterKeyId")})
+            workspace_id = self._agent_access_scope_workspace_data(data, grant["scopeType"], grant["scopeId"])
+            self.audit(data, "agent_token.revoke", principal["masterKeyId"], agent_token_id, workspace_id, {"grantId": grant["grantId"], "scopeType": grant["scopeType"], "scopeId": grant["scopeId"]})
+            self._save(data)
+            return {
+                "ok": True,
+                "agentTokenId": agent_token_id,
+                "grantId": grant.get("grantId"),
+                "revokedAt": now,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
+
+    def register_scope_node(self, company_id, scope_type, scope_id, parent_scope_type, parent_scope_id):
+        scope_type = str(scope_type or "").strip().lower()
+        parent_scope_type = str(parent_scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        parent_scope_id = str(parent_scope_id or "").strip()
+        if scope_type not in ("goal", "task") or not scope_id:
+            return _agent_access_error("scope_invalid")
+        if scope_type == "goal" and parent_scope_type != "project":
+            return _agent_access_error("scope_parent_invalid")
+        if scope_type == "task" and parent_scope_type not in ("project", "goal"):
+            return _agent_access_error("scope_parent_invalid")
+        with _LOCK:
+            data = self._load()
+            company = self._agent_access_scope_company_data(data, parent_scope_type, parent_scope_id)
+            if company != company_id:
+                return _agent_access_error("scope_parent_invalid")
+            key = "%s:%s:%s" % (company_id, scope_type, scope_id)
+            existing = data.setdefault("scopeNodes", {}).get(key)
+            if existing and (existing.get("parentScopeType"), existing.get("parentScopeId")) != (parent_scope_type, parent_scope_id):
+                return _agent_access_error("scope_parent_immutable")
+            workspace_id = self._agent_access_scope_workspace_data(data, parent_scope_type, parent_scope_id)
+            project_id = parent_scope_id if parent_scope_type == "project" else None
+            if parent_scope_type == "goal":
+                parent = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == "goal" and item.get("scopeId") == parent_scope_id), None)
+                project_id = parent.get("projectId") if parent else None
+            node = existing or {
+                "scopeNodeId": _id("scopenode"), "companyId": company_id, "scopeType": scope_type,
+                "scopeId": scope_id, "parentScopeType": parent_scope_type, "parentScopeId": parent_scope_id,
+                "workspaceId": workspace_id, "projectId": project_id, "createdAt": utc_now(),
+            }
+            data["scopeNodes"][key] = node
+            self._save(data)
+            return dict({"ok": True, "valuesRedacted": True}, **node)
+
+    def list_agent_access_requests(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        data = self._load()
+        items = [
+            _public_agent_access_request(item)
+            for item in data.get("agentAccessRequests", {}).values()
+            if item.get("companyId") == principal.get("companyId") and (not status or item.get("status") == status)
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("requestId") or ""))
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def list_agent_invites(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        data = self._load()
+        items = [
+            _public_agent_invite(item)
+            for item in data.get("agentInvites", {}).values()
+            if item.get("companyId") == principal.get("companyId") and (not status or item.get("status") == status)
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("inviteId") or ""))
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def list_agent_tokens(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        data = self._load()
+        items = []
+        for token_record in data.get("agentTokens", {}).values():
+            grant = data.get("agentAccessGrants", {}).get(token_record.get("grantId"))
+            identity = data.get("agentIdentities", {}).get(token_record.get("agentIdentityId"))
+            if not grant or grant.get("companyId") != principal.get("companyId"):
+                continue
+            item = {
+                "agentTokenId": token_record.get("agentTokenId"), "grantId": grant.get("grantId"),
+                "credentialId": token_record.get("agentTokenId"),
+                "agentId": identity.get("agentId") if identity else None,
+                "agentName": (identity.get("displayName") or identity.get("agentName")) if identity else None,
+                "scopeType": grant.get("scopeType"), "scopeId": grant.get("scopeId"),
+                "status": "revoked" if token_record.get("revokedAt") else grant.get("status"),
+                "createdAt": token_record.get("createdAt"), "lastUsedAt": token_record.get("lastUsedAt"),
+                "revokedAt": token_record.get("revokedAt"), "valuesRedacted": True, "rawCredentialExposed": False,
+            }
+            if not status or item["status"] == status:
+                items.append(item)
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("agentTokenId") or ""))
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def company_scope_catalog(self, master_token):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        data = self._load()
+        company_id = principal["companyId"]
+        company = data.get("companies", {}).get(company_id) or {}
+        workspaces = [
+            {"workspaceId": item.get("workspaceId"), "label": item.get("label"), "status": item.get("status")}
+            for item in data.get("workspaces", {}).values() if item.get("companyId") == company_id
+        ]
+        workspace_ids = {item["workspaceId"] for item in workspaces}
+        projects = [
+            {"projectId": item.get("projectId"), "workspaceId": item.get("workspaceId"), "label": item.get("label"), "status": item.get("status")}
+            for item in data.get("projects", {}).values() if item.get("workspaceId") in workspace_ids
+        ]
+        nodes = [_public_value(item) for item in data.get("scopeNodes", {}).values() if item.get("companyId") == company_id]
+        workspaces.sort(key=lambda item: (item.get("label") or "", item.get("workspaceId") or ""))
+        projects.sort(key=lambda item: (item.get("label") or "", item.get("projectId") or ""))
+        nodes.sort(key=lambda item: (_AGENT_ACCESS_SCOPE_LEVEL.get(item.get("scopeType"), 99), item.get("scopeId") or ""))
+        return {"ok": True, "company": {"companyId": company_id, "label": company.get("label"), "status": company.get("status")}, "workspaces": workspaces, "projects": projects, "scopeNodes": nodes, "valuesRedacted": True, "rawCredentialExposed": False}
+
+    def create_connector_pairing_request(self, payload, idempotency_key, request_digest):
+        self.expire_connector_pairings()
+        payload = dict(payload or {})
+        try:
+            requested_agent_id = normalize_connector_agent_name(payload.get("requestedAgentId"))
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_agent_identity_invalid")
+        try:
+            requested_scopes = validate_requested_scopes(payload.get("requestedScopes"))
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_scopes_invalid")
+        if payload.get("clientId") != CONNECTOR_CLIENT_ID:
+            return _connector_pairing_error("connector_client_unsupported")
+        if payload.get("codeChallengeMethod") != CONNECTOR_PKCE_METHOD:
+            return _connector_pairing_error("pkce_method_unsupported")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        scope_digest = connector_scope_digest(requested_scopes)
+        with _LOCK:
+            data = self._load()
+            for existing in data.get("connectorPairingRequests", {}).values():
+                if not secrets.compare_digest(str(existing.get("requestIdempotencyKeyHash") or ""), key_hash):
+                    continue
+                if not _connector_scope_chain_valid(request=existing):
+                    return _connector_pairing_error("connector_scopes_invalid")
+                if (
+                    secrets.compare_digest(str(existing.get("requestDigest") or ""), str(request_digest or ""))
+                    and secrets.compare_digest(str(existing.get("requestIdempotencyDigest") or ""), combined_hash)
+                ):
+                    proof = derive_pairing_request_proof(
+                        pepper,
+                        existing.get("requestId"),
+                        existing.get("requestDigest"),
+                        existing.get("scopeDigest"),
+                    )
+                    return {
+                        "ok": True,
+                        "pairingRequest": _public_connector_pairing_request(existing),
+                        "publicRequestRef": existing.get("publicRequestRef"),
+                        "pairingRequestProof": proof,
+                        "requestedScopes": list(existing.get("requestedScopes") or ()),
+                        "scopeDigest": existing.get("scopeDigest"),
+                        "idempotentReplay": True,
+                        "credentialReturnedOnce": True,
+                        "valuesRedacted": True,
+                    }
+                return _connector_pairing_error("idempotency_conflict")
+            request_id = _id("pairingrequest")
+            public_request_ref = generate_public_request_ref()
+            while any(
+                item.get("publicRequestRef") == public_request_ref
+                for item in data.get("connectorPairingRequests", {}).values()
+            ):
+                public_request_ref = generate_public_request_ref()
+            proof = derive_pairing_request_proof(
+                pepper,
+                request_id,
+                request_digest,
+                scope_digest,
+            )
+            try:
+                proof_verifier = pairing_request_proof_verifier(proof, pepper, scope_digest)
+                state_verifier = pairing_state_verifier(
+                    payload.get("state"), pepper, scope_digest
+                )
+            except (PairingPolicyError, RuntimeError):
+                return _connector_pairing_error("connector_request_invalid")
+            now = utc_now()
+            record = {
+                "requestId": request_id,
+                "publicRequestRef": public_request_ref,
+                "pairingRequestProofVerifier": proof_verifier,
+                "requestIdempotencyKeyHash": key_hash,
+                "requestDigest": request_digest,
+                "requestIdempotencyDigest": combined_hash,
+                "clientId": payload.get("clientId"),
+                "redirectUri": payload.get("redirectUri"),
+                "stateVerifier": state_verifier,
+                "codeChallenge": payload.get("codeChallenge"),
+                "codeChallengeMethod": payload.get("codeChallengeMethod"),
+                "requestedAgentId": requested_agent_id,
+                "requestedScopes": list(requested_scopes),
+                "scopeDigest": scope_digest,
+                "status": "pending_human_approval",
+                "createdAt": now,
+                "expiresAt": _connector_timestamp(PAIRING_REQUEST_TTL_SECONDS),
+                "authorizationCodeExpiresAt": None,
+                "companyId": None,
+                "workspaceId": None,
+                "projectId": None,
+            }
+            data.setdefault("connectorPairingRequests", {})[request_id] = record
+            self._audit_connector(
+                data,
+                "connector_pairing.request",
+                "client",
+                payload.get("clientId"),
+                "request",
+                request_id,
+                details={"publicRequestRef": public_request_ref, "scopeDigest": scope_digest},
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "pairingRequest": _public_connector_pairing_request(record),
+            "publicRequestRef": public_request_ref,
+            "pairingRequestProof": proof,
+            "requestedScopes": list(requested_scopes),
+            "scopeDigest": scope_digest,
+            "idempotentReplay": False,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def get_connector_pairing_request(
+        self,
+        public_request_ref=None,
+        pairing_request_proof=None,
+    ):
+        self.expire_connector_pairings()
+        data = self._load()
+        record = None
+        if public_request_ref:
+            try:
+                public_request_ref = validate_public_request_ref(public_request_ref)
+            except PairingPolicyError:
+                return _connector_pairing_error("pairing_request_not_found")
+            record = next(
+                (
+                    item
+                    for item in data.get("connectorPairingRequests", {}).values()
+                    if secrets.compare_digest(
+                        str(item.get("publicRequestRef") or ""), public_request_ref
+                    )
+                ),
+                None,
+            )
+        elif pairing_request_proof:
+            try:
+                request_id = parse_pairing_request_proof(pairing_request_proof)
+                record = data.get("connectorPairingRequests", {}).get(request_id)
+                valid = bool(
+                    record
+                    and verify_pairing_request_proof(
+                        pairing_request_proof,
+                        record.get("pairingRequestProofVerifier"),
+                        _credential_pepper(),
+                        record.get("scopeDigest"),
+                    )
+                )
+            except (PairingPolicyError, RuntimeError):
+                valid = False
+            if not valid:
+                record = None
+        if not record:
+            return _connector_pairing_error("pairing_request_not_found")
+        if not _connector_scope_chain_valid(request=record):
+            return _connector_pairing_error("connector_scopes_invalid")
+        if record.get("status") == "expired" or (
+            record.get("status") == "pending_human_approval"
+            and _timestamp_expired(record.get("expiresAt"))
+        ):
+            return _connector_pairing_error("pairing_request_expired")
+        return {"ok": True, "pairingRequest": _public_connector_pairing_request(record), "valuesRedacted": True}
+
+    def approve_connector_pairing_request(
+        self,
+        session_secret,
+        public_request_ref,
+        workspace_selection,
+        approved_scopes,
+        idempotency_key,
+        request_digest,
+    ):
+        self.expire_connector_pairings()
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        try:
+            approved_scopes = validate_requested_scopes(approved_scopes)
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_scopes_invalid")
+        selection = dict(workspace_selection or {})
+        mode = str(selection.get("mode") or "").strip().lower()
+        if mode not in ("existing", "new"):
+            return _connector_pairing_error("workspace_selection_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            data = self._load()
+            record = next(
+                (
+                    item
+                    for item in data.get("connectorPairingRequests", {}).values()
+                    if secrets.compare_digest(
+                        str(item.get("publicRequestRef") or ""), public_request_ref
+                    )
+                ),
+                None,
+            )
+            if not record:
+                return _connector_pairing_error("pairing_request_not_found")
+            if not _connector_scope_chain_valid(request=record):
+                return _connector_pairing_error("connector_scopes_invalid")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                record, "approval", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and record.get("status") in (
+                "approved",
+                "authorization_code_issued",
+            ):
+                if record.get("companyId") != actor.get("companyId"):
+                    return _connector_pairing_error("pairing_request_not_found")
+                if _timestamp_expired(record.get("authorizationCodeExpiresAt")):
+                    return _connector_pairing_error("authorization_code_expired")
+                return {
+                    "ok": True,
+                    "status": record.get("status"),
+                    "approval": _public_connector_pairing_request(record),
+                    "wakeUpUrl": build_wake_up_url(record.get("redirectUri")),
+                    "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                    "approvedScopes": list(record.get("approvedScopes") or ()),
+                    "scopeDigest": record.get("scopeDigest"),
+                    "idempotentReplay": True,
+                    "valuesRedacted": True,
+                }
+            if record.get("status") == "expired":
+                return _connector_pairing_error("pairing_request_expired")
+            if record.get("status") != "pending_human_approval":
+                return _connector_pairing_error("pairing_request_unavailable")
+            if _timestamp_expired(record.get("expiresAt")):
+                record["status"] = "expired"
+                self._save(data)
+                return _connector_pairing_error("pairing_request_expired")
+            if tuple(record.get("requestedScopes") or ()) != tuple(approved_scopes):
+                return _connector_pairing_error("connector_scopes_invalid")
+            if record.get("scopeDigest") != connector_scope_digest(approved_scopes):
+                return _connector_pairing_error("connector_scopes_invalid")
+            approved_agent_id = record.get("requestedAgentId")
+            company_id = actor.get("companyId")
+            for identity in data.get("agentIdentities", {}).values():
+                if (
+                    identity.get("companyId") == company_id
+                    and identity.get("status") == "active"
+                    and identity.get("agentId") == approved_agent_id
+                ):
+                    return _connector_pairing_error("agent_name_unavailable")
+            for other in data.get("connectorPairingRequests", {}).values():
+                if other.get("requestId") == record.get("requestId") or other.get("companyId") != company_id:
+                    continue
+                if other.get("approvedAgentId") == approved_agent_id and other.get("status") in (
+                    "approved", "authorization_code_issued", "exchanged", "active"
+                ):
+                    return _connector_pairing_error("agent_name_unavailable")
+            if mode == "existing":
+                workspace, workspace_ref_error = _connector_resolve_workspace_ref(
+                    actor,
+                    public_request_ref,
+                    selection.get("workspaceRef"),
+                    data.get("workspaces", {}).values(),
+                )
+                if not workspace:
+                    return _connector_pairing_error(workspace_ref_error)
+                workspace_id = workspace.get("workspaceId")
+                project_id = workspace.get("primaryProjectId")
+                workspace_label = workspace.get("label")
+                project = data.get("projects", {}).get(project_id) if project_id else None
+                project_label = (project or {}).get("label")
+                provisional = False
+            else:
+                workspace_label = " ".join(str(selection.get("workspaceLabel") or "").strip().split())
+                project_label = " ".join(str(selection.get("projectLabel") or "").strip().split())
+                if not workspace_label or len(workspace_label) > 255 or not project_label or len(project_label) > 255:
+                    return _connector_pairing_error("workspace_selection_invalid")
+                workspace_id = _id("workspace")
+                project_id = _id("project")
+                provisional = True
+            code_id = _id("paircode")
+            code = derive_authorization_code(
+                pepper, code_id, request_digest, record.get("scopeDigest")
+            )
+            try:
+                code_hash = authorization_code_verifier(
+                    code, pepper, record.get("scopeDigest")
+                )
+            except (PairingPolicyError, RuntimeError):
+                return _connector_pairing_error("credential_system_not_configured")
+            now = utc_now()
+            record.update(
+                {
+                    "status": "approved",
+                    "companyId": company_id,
+                    "workspaceId": workspace_id,
+                    "projectId": project_id,
+                    "workspaceMode": mode,
+                    "provisionalWorkspace": provisional,
+                    "workspaceLabel": redact_text(workspace_label),
+                    "projectLabel": redact_text(project_label or "Connector Pairing"),
+                    "approvedAgentId": approved_agent_id,
+                    "approvedScopes": list(approved_scopes),
+                    "approvedByHumanAccountId": actor.get("humanAccountId"),
+                    "approvedByAuthorityId": actor.get("selectedAuthorityId"),
+                    "approvedAt": now,
+                    "authorizationCodeId": code_id,
+                    "authorizationCodeVerifier": code_hash,
+                    "authorizationCodeExpiresAt": _connector_timestamp(AUTHORIZATION_CODE_TTL_SECONDS),
+                    "authorizationCodeConsumedAt": None,
+                }
+            )
+            _connector_record_action(
+                record, "approval", key_hash, request_digest, combined_hash
+            )
+            self._audit_connector(
+                data,
+                "connector_pairing.approve",
+                "human-account",
+                actor.get("humanAccountId"),
+                "request",
+                record.get("requestId"),
+                workspace_id=workspace_id,
+                details={"publicRequestRef": public_request_ref, "scopeDigest": record.get("scopeDigest")},
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "status": "approved",
+            "approval": _public_connector_pairing_request(record),
+            "wakeUpUrl": build_wake_up_url(record.get("redirectUri")),
+            "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+            "approvedScopes": list(record.get("approvedScopes") or ()),
+            "scopeDigest": record.get("scopeDigest"),
+            "idempotentReplay": False,
+            "valuesRedacted": True,
+        }
+
+    def claim_connector_authorization_code(
+        self,
+        pairing_request_proof,
+        state,
+        client_id,
+        redirect_uri,
+        idempotency_key,
+        request_digest,
+    ):
+        """Claim an approved code using only desktop-held body credentials."""
+        try:
+            request_id = parse_pairing_request_proof(pairing_request_proof)
+            pepper = _credential_pepper()
+        except (PairingPolicyError, RuntimeError):
+            return _connector_pairing_error("authorization_claim_invalid")
+        key_hash, combined_hash = _connector_idempotency_material(
+            idempotency_key, request_digest
+        )
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        with _LOCK:
+            data = self._load()
+            record = data.get("connectorPairingRequests", {}).get(request_id)
+            if record and not _connector_scope_chain_valid(request=record):
+                return _connector_pairing_error("authorization_claim_invalid")
+            proof_valid = bool(
+                record
+                and verify_pairing_request_proof(
+                    pairing_request_proof,
+                    record.get("pairingRequestProofVerifier"),
+                    pepper,
+                    record.get("scopeDigest"),
+                )
+            )
+            if proof_valid and record.get("claimIdempotencyKeyHash"):
+                issued_replay, _issued_key_hash, _issued_combined_hash = _connector_action_replay(
+                    record, "claim", idempotency_key, request_digest
+                )
+                if issued_replay != "exact":
+                    return _connector_pairing_error("idempotency_conflict")
+            state_valid = bool(
+                record
+                and verify_pairing_state(
+                    state,
+                    record.get("stateVerifier"),
+                    pepper,
+                    record.get("scopeDigest"),
+                )
+            )
+            client_valid = bool(
+                record
+                and secrets.compare_digest(str(record.get("clientId") or ""), str(client_id or ""))
+            )
+            redirect_valid = bool(
+                record
+                and secrets.compare_digest(
+                    str(record.get("redirectUri") or ""), str(redirect_uri or "")
+                )
+            )
+            if not (proof_valid and state_valid and client_valid and redirect_valid):
+                return _connector_pairing_error("authorization_claim_invalid")
+            status = record.get("status")
+            if status == "pending_human_approval":
+                if _timestamp_expired(record.get("expiresAt")):
+                    record["status"] = "expired"
+                    self._save(data)
+                    return _connector_pairing_error("pairing_request_expired")
+                return {
+                    "ok": True,
+                    "status": "pending_human_approval",
+                    "pending": True,
+                    "retryAfterSeconds": 2,
+                    "idempotencyBound": False,
+                    "requestedScopes": list(record.get("requestedScopes") or ()),
+                    "scopeDigest": record.get("scopeDigest"),
+                    "valuesRedacted": True,
+                }
+            if status in ("expired", "authorization_code_expired"):
+                return _connector_pairing_error("authorization_code_expired")
+            if status == "canceled":
+                return _connector_pairing_error("pairing_request_canceled")
+            if status in ("exchanged", "active") or record.get("authorizationCodeConsumedAt"):
+                return _connector_pairing_error("authorization_code_redeemed")
+            if status not in ("approved", "authorization_code_issued"):
+                return _connector_pairing_error("pairing_request_unavailable")
+            if _timestamp_expired(record.get("authorizationCodeExpiresAt")):
+                record["status"] = "authorization_code_expired"
+                self._save(data)
+                return _connector_pairing_error("authorization_code_expired")
+            replay, _stored_key_hash, _stored_combined_hash = _connector_action_replay(
+                record, "claim", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay in ("conflict", "used"):
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "first" and status != "approved":
+                return _connector_pairing_error("idempotency_conflict")
+            code = derive_authorization_code(
+                pepper,
+                record.get("authorizationCodeId"),
+                record.get("approvalRequestDigest"),
+                record.get("scopeDigest"),
+            )
+            if not verify_authorization_code_binding(
+                code,
+                record.get("authorizationCodeVerifier"),
+                pepper,
+                record.get("scopeDigest"),
+            ):
+                return _connector_pairing_error("authorization_claim_invalid")
+            if replay == "first":
+                record["status"] = "authorization_code_issued"
+                record["authorizationCodeClaimedAt"] = utc_now()
+                _connector_record_action(
+                    record, "claim", key_hash, request_digest, combined_hash
+                )
+                self._audit_connector(
+                    data,
+                    "connector_pairing.authorization_code_claim",
+                    "client",
+                    record.get("clientId"),
+                    "request",
+                    record.get("requestId"),
+                    details={"publicRequestRef": record.get("publicRequestRef"), "scopeDigest": record.get("scopeDigest")},
+                )
+                self._save(data)
+            return {
+                "ok": True,
+                "status": "authorization_code_issued",
+                "authorizationCode": code,
+                "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                "approvedScopes": list(record.get("approvedScopes") or ()),
+                "scopeDigest": record.get("scopeDigest"),
+                "credentialReturnedOnce": True,
+                "idempotentReplay": replay == "exact",
+                "valuesRedacted": True,
+            }
+
+    def exchange_connector_authorization_code(
+        self,
+        code,
+        code_verifier,
+        client_id,
+        redirect_uri,
+        idempotency_key,
+        request_digest,
+    ):
+        self.expire_connector_pairings()
+        code_id = _parse_connector_authorization_code(code)
+        if not code_id:
+            return _connector_pairing_error("authorization_code_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        with _LOCK:
+            data = self._load()
+            request = next(
+                (
+                    item
+                    for item in data.get("connectorPairingRequests", {}).values()
+                    if item.get("authorizationCodeId") == code_id
+                ),
+                None,
+            )
+            if request and not _connector_scope_chain_valid(request=request):
+                return _connector_pairing_error("authorization_code_invalid")
+            if not request or not verify_authorization_code_binding(
+                code,
+                request.get("authorizationCodeVerifier"),
+                pepper,
+                request.get("scopeDigest"),
+            ):
+                return _connector_pairing_error("authorization_code_invalid")
+            if request.get("clientId") != client_id or request.get("redirectUri") != redirect_uri:
+                return _connector_pairing_error("authorization_code_invalid")
+            pairing = data.get("connectorPairings", {}).get(request.get("pairingId"))
+            if pairing:
+                persisted_credential = data.get("connectorCredentials", {}).get(
+                    pairing.get("currentCredentialId")
+                )
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=(persisted_credential,),
+                ):
+                    return _connector_pairing_error("authorization_code_invalid")
+            if request.get("authorizationCodeConsumedAt"):
+                same_key = secrets.compare_digest(
+                    str(request.get("exchangeIdempotencyKeyHash") or ""), key_hash
+                )
+                exact = (
+                    same_key
+                    and secrets.compare_digest(str(request.get("exchangeRequestDigest") or ""), str(request_digest or ""))
+                    and secrets.compare_digest(str(request.get("exchangeIdempotencyDigest") or ""), combined_hash)
+                )
+                if same_key and not exact:
+                    return _connector_pairing_error("idempotency_conflict")
+                if exact and pairing and pairing.get("status") == "pending_activation" and not _timestamp_expired(pairing.get("activationExpiresAt")):
+                    credential = derive_pending_connector_secret(
+                        pepper,
+                        pairing.get("currentCredentialId"),
+                        request_digest,
+                        pairing.get("scopeDigest"),
+                    )
+                    return {
+                        "ok": True,
+                        "pairing": _public_connector_pairing(pairing),
+                        "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                        "scopeDigest": pairing.get("scopeDigest"),
+                        "connectorCredentialSecret": credential.reveal(),
+                        "credentialReturnedOnce": True,
+                        "idempotentReplay": True,
+                        "rawCredentialPersisted": False,
+                        "valuesRedacted": True,
+                    }
+                if exact:
+                    return _connector_pairing_error("authorization_code_redeemed")
+                return _connector_pairing_error("authorization_code_already_exchanged")
+            if request.get("status") == "authorization_code_expired":
+                return _connector_pairing_error("authorization_code_expired")
+            if request.get("status") != "authorization_code_issued":
+                return _connector_pairing_error("authorization_code_invalid")
+            try:
+                validate_pkce_s256(code_verifier, request.get("codeChallenge"))
+            except PairingPolicyError:
+                return _connector_pairing_error("pkce_verification_failed")
+            if _timestamp_expired(request.get("authorizationCodeExpiresAt")):
+                request["status"] = "authorization_code_expired"
+                self._save(data)
+                return _connector_pairing_error("authorization_code_expired")
+            credential_id = generate_connector_credential_id()
+            credential = derive_pending_connector_secret(
+                pepper, credential_id, request_digest, request.get("scopeDigest")
+            )
+            credential_state = credential.persistable_state()
+            pairing_id = _id("pairing")
+            now = utc_now()
+            pairing = {
+                "pairingId": pairing_id,
+                "requestId": request.get("requestId"),
+                "companyId": request.get("companyId"),
+                "workspaceId": request.get("workspaceId"),
+                "projectId": request.get("projectId"),
+                "agentId": request.get("approvedAgentId"),
+                "workspaceMode": request.get("workspaceMode"),
+                "provisionalWorkspace": bool(request.get("provisionalWorkspace")),
+                "workspaceLabel": request.get("workspaceLabel"),
+                "projectLabel": request.get("projectLabel"),
+                "status": "pending_activation",
+                "approvedScopes": list(request.get("approvedScopes") or ()),
+                "scopeDigest": request.get("scopeDigest"),
+                "currentCredentialId": credential_id,
+                "createdAt": now,
+                "activationExpiresAt": _connector_timestamp(PENDING_ACTIVATION_TTL_SECONDS),
+                "activatedAt": None,
+                "endedAt": None,
+            }
+            credential_record = {
+                "credentialId": credential_id,
+                "pairingId": pairing_id,
+                "credentialVerifier": credential_state.get("credentialVerifier"),
+                "approvedScopes": list(request.get("approvedScopes") or ()),
+                "scopeDigest": request.get("scopeDigest"),
+                "status": "pending_activation",
+                "createdAt": now,
+                "activatedAt": None,
+                "revokedAt": None,
+                "lastUsedAt": None,
+                "rawCredentialPersisted": False,
+            }
+            request.update(
+                {
+                    "status": "exchanged",
+                    "pairingId": pairing_id,
+                    "authorizationCodeConsumedAt": now,
+                    "exchangeIdempotencyKeyHash": key_hash,
+                    "exchangeRequestDigest": request_digest,
+                    "exchangeIdempotencyDigest": combined_hash,
+                }
+            )
+            data.setdefault("connectorPairings", {})[pairing_id] = pairing
+            data.setdefault("connectorCredentials", {})[credential_id] = credential_record
+            self._audit_connector(
+                data,
+                "connector_pairing.exchange",
+                "credential",
+                credential_id,
+                "pairing",
+                pairing_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "pairing": _public_connector_pairing(pairing),
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "connectorCredentialSecret": credential.reveal(),
+            "credentialReturnedOnce": True,
+            "idempotentReplay": False,
+            "rawCredentialPersisted": False,
+            "valuesRedacted": True,
+        }
+
+    def authenticate_connector_token(
+        self,
+        token,
+        pairing_id=None,
+        allow_pending=False,
+        allow_lifecycle_terminal=False,
+    ):
+        self.expire_connector_pairings()
+        credential_id, _secret = _parse_connector_credential(token)
+        if not credential_id:
+            return None
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return None
+        with _LOCK:
+            data = self._load()
+            credential = data.get("connectorCredentials", {}).get(credential_id)
+            pairing = data.get("connectorPairings", {}).get(credential.get("pairingId")) if credential else None
+            if not credential or not pairing or (pairing_id and pairing.get("pairingId") != pairing_id):
+                return None
+            request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+            credentials = tuple(
+                item
+                for item in data.get("connectorCredentials", {}).values()
+                if item.get("pairingId") == pairing.get("pairingId")
+            )
+            rotations = tuple(
+                item
+                for item in data.get("connectorRotations", {}).values()
+                if item.get("pairingId") == pairing.get("pairingId")
+            )
+            if not _connector_scope_chain_valid(
+                request=request,
+                pairing=pairing,
+                credentials=credentials,
+                rotations=rotations,
+            ):
+                return None
+            company = data.get("companies", {}).get(pairing.get("companyId"))
+            if not company or company.get("status") != "active":
+                return None
+            if (
+                not verify_connector_secret(
+                    token,
+                    credential.get("credentialVerifier"),
+                    pepper,
+                    pairing.get("scopeDigest"),
+                )
+            ):
+                return None
+            credential_status = credential.get("status")
+            pairing_status = pairing.get("status")
+            active = credential_status == "active" and pairing_status == "active"
+            lifecycle_visible = allow_pending and (
+                (credential_status == "pending_activation" and pairing_status == "pending_activation")
+                or (credential_status == "pending_activation" and pairing_status == "active")
+                or (credential_status == "canceled" and pairing_status == "canceled")
+            )
+            lifecycle_terminal_visible = allow_lifecycle_terminal and (
+                credential_status == "disconnected" and pairing_status == "disconnected"
+            )
+            if not active and not lifecycle_visible and not lifecycle_terminal_visible:
+                return None
+            credential["lastUsedAt"] = utc_now()
+            self._save(data)
+            return {
+                "authType": "connector_agent",
+                "credentialType": "connector_agent",
+                "companyId": pairing.get("companyId"),
+                "workspaceId": pairing.get("workspaceId"),
+                "projectId": pairing.get("projectId"),
+                "agentId": pairing.get("agentId"),
+                "agentName": CANONICAL_AGENT_DISPLAY_NAME,
+                "agentIdentityId": pairing.get("agentIdentityId"),
+                "connectorCredentialId": credential_id,
+                "pairingId": pairing.get("pairingId"),
+                "credentialStatus": credential_status,
+                "pairingStatus": pairing_status,
+                "scopeType": "agent",
+                "scopeId": pairing.get("agentId"),
+                "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                "scopeDigest": pairing.get("scopeDigest"),
+                "resourceContext": {
+                    "workspaceId": pairing.get("workspaceId"),
+                    "projectId": pairing.get("projectId"),
+                },
+                "active": active,
+                "canInvite": False,
+                "canRevoke": False,
+                "valuesRedacted": True,
+                "rawCredentialExposed": False,
+                "rawPayloadExposed": False,
+            }
+
+    def connector_lifecycle_terminal_error(
+        self, token, pairing_id, rotation_id=None
+    ):
+        """Return a typed terminal error only after exact lifecycle proof."""
+        credential_id, _secret = _parse_connector_credential(token)
+        if not credential_id:
+            return None
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return None
+        with _LOCK:
+            data = self._load()
+            credential = data.get("connectorCredentials", {}).get(credential_id)
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            request = data.get("connectorPairingRequests", {}).get(
+                (pairing or {}).get("requestId")
+            )
+            if (
+                not credential
+                or not pairing
+                or credential.get("pairingId") != pairing_id
+                or not _connector_scope_chain_valid(
+                    request=request, pairing=pairing, credentials=(credential,)
+                )
+                or not verify_connector_secret(
+                    token,
+                    credential.get("credentialVerifier"),
+                    pepper,
+                    pairing.get("scopeDigest"),
+                )
+            ):
+                return None
+            if rotation_id:
+                rotation = data.get("connectorRotations", {}).get(rotation_id)
+                if (
+                    not rotation
+                    or rotation.get("pairingId") != pairing_id
+                    or rotation.get("successorCredentialId") != credential_id
+                ):
+                    return None
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=(credential,),
+                    rotations=(rotation,),
+                ):
+                    return None
+                if rotation.get("status") == "expired" and credential.get("status") == "expired":
+                    return "pending_grant_expired"
+                return None
+            if pairing.get("status") == "expired" and credential.get("status") == "expired":
+                return "pending_grant_expired"
+        return None
+
+    def connector_pairing_authorization_context(self, session_secret, public_request_ref):
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        with _LOCK:
+            data = self._load()
+            request = next(
+                (
+                    item
+                    for item in data.get("connectorPairingRequests", {}).values()
+                    if secrets.compare_digest(
+                        str(item.get("publicRequestRef") or ""), public_request_ref
+                    )
+                ),
+                None,
+            )
+            if not request:
+                return _connector_pairing_error("pairing_request_not_found")
+            if not _connector_scope_chain_valid(request=request):
+                return _connector_pairing_error("connector_scopes_invalid")
+            if request.get("companyId") and request.get("companyId") != actor.get("companyId"):
+                return _connector_pairing_error("pairing_request_not_found")
+            if request.get("status") == "pending_human_approval" and _timestamp_expired(request.get("expiresAt")):
+                request["status"] = "expired"
+                self._save(data)
+                return _connector_pairing_error("pairing_request_expired")
+            authorization_context = dict(
+                _public_connector_pairing_request(request),
+                humanAuthenticationRequired=True,
+                companySelectionRequired=True,
+                workspaceSelectionRequired=True,
+            )
+            if request.get("status") == "approved":
+                try:
+                    authorization_context["wakeUpUrl"] = build_wake_up_url(
+                        request.get("redirectUri")
+                    )
+                except PairingPolicyError:
+                    return _connector_pairing_error("pairing_request_unavailable")
+                authorization_context["workspaceLabel"] = request.get("workspaceLabel")
+            return {
+                "ok": True,
+                "authorizationContext": authorization_context,
+                "valuesRedacted": True,
+            }
+
+    def human_connector_company_catalog(self, session_secret, public_request_ref):
+        actor = self.authenticate_human_account_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_account_session_required")
+        request = self.get_connector_pairing_request(public_request_ref=public_request_ref)
+        if not request.get("ok"):
+            return request
+        with _LOCK:
+            data = self._load()
+            authorities = [
+                item
+                for item in data.get("humanCompanyAuthorities", {}).values()
+                if item.get("humanAccountId") == actor.get("humanAccountId")
+                and item.get("status") not in ("revoked", "disabled")
+                and (data.get("companies", {}).get(item.get("companyId")) or {}).get("status")
+                == "active"
+            ]
+            try:
+                expires_epoch = int(time.time()) + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS
+                companies = [
+                    {
+                        "companyRef": _connector_company_ref(
+                            actor,
+                            public_request_ref,
+                            authority.get("authorityId"),
+                            authority.get("companyId"),
+                            expires_epoch=expires_epoch,
+                        ),
+                        "label": data["companies"][authority.get("companyId")].get("label"),
+                        "valuesRedacted": True,
+                        "rawPayloadExposed": False,
+                    }
+                    for authority in authorities
+                ]
+            except (PairingPolicyError, RuntimeError, ValueError):
+                return _connector_pairing_error("credential_system_not_configured")
+        companies.sort(
+            key=lambda item: ((item.get("label") or "").lower(), item.get("companyRef") or "")
+        )
+        return {
+            "ok": True,
+            "companies": companies,
+            "companyRefsExpireAt": datetime.datetime.fromtimestamp(
+                expires_epoch, tz=datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def select_human_connector_company_membership(
+        self, session_secret, public_request_ref, company_ref
+    ):
+        actor = self.authenticate_human_account_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_account_session_required")
+        request = self.get_connector_pairing_request(public_request_ref=public_request_ref)
+        if not request.get("ok"):
+            return request
+        with _LOCK:
+            data = self._load()
+            authority, company_ref_error = _connector_resolve_company_ref(
+                actor,
+                public_request_ref,
+                company_ref,
+                data.get("humanCompanyAuthorities", {}).values(),
+                data.get("companies", {}),
+            )
+            if not authority:
+                return _connector_pairing_error(company_ref_error)
+            selected = self.select_human_company_membership(
+                session_secret, authority.get("authorityId")
+            )
+        if not selected.get("ok"):
+            return selected
+        return {
+            "ok": True,
+            "sessionSecret": selected.get("sessionSecret"),
+            "csrfToken": selected.get("csrfToken"),
+            "expiresAt": selected.get("expiresAt"),
+            "companySelected": True,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def human_connector_scope_catalog(self, session_secret, public_request_ref):
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        context = self.connector_pairing_authorization_context(
+            session_secret, public_request_ref
+        )
+        if not context.get("ok"):
+            return context
+        data = self._load()
+        company = data.get("companies", {}).get(actor.get("companyId"))
+        if not company or company.get("status") != "active":
+            return _connector_pairing_error("company_unavailable")
+        try:
+            expires_epoch = int(time.time()) + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS
+            workspaces = [
+                {
+                    "workspaceRef": _connector_workspace_ref(
+                        actor,
+                        public_request_ref,
+                        item.get("workspaceId"),
+                        expires_epoch=expires_epoch,
+                    ),
+                    "label": item.get("label"),
+                    "valuesRedacted": True,
+                    "rawPayloadExposed": False,
+                }
+                for item in data.get("workspaces", {}).values()
+                if item.get("companyId") == actor.get("companyId")
+                and item.get("status") == "active"
+            ]
+        except (RuntimeError, ValueError):
+            return _connector_pairing_error("credential_system_not_configured")
+        workspaces.sort(key=lambda item: ((item.get("label") or "").lower(), item.get("workspaceRef") or ""))
+        return {
+            "ok": True,
+            "company": {
+                "label": company.get("label"),
+                "valuesRedacted": True,
+                "rawPayloadExposed": False,
+            },
+            "workspaces": workspaces,
+            "workspaceRefsExpireAt": datetime.datetime.fromtimestamp(
+                expires_epoch, tz=datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def cancel_connector_pairing_request(
+        self, session_secret, public_request_ref, reason, idempotency_key, request_digest
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        with _LOCK:
+            data = self._load()
+            request = next(
+                (
+                    item
+                    for item in data.get("connectorPairingRequests", {}).values()
+                    if secrets.compare_digest(
+                        str(item.get("publicRequestRef") or ""), public_request_ref
+                    )
+                ),
+                None,
+            )
+            if not request:
+                return _connector_pairing_error("pairing_request_not_found")
+            if not _connector_scope_chain_valid(request=request):
+                return _connector_pairing_error("connector_scopes_invalid")
+            if request.get("companyId") and request.get("companyId") != actor.get("companyId"):
+                return _connector_pairing_error("pairing_request_not_found")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                request, "humanCancellation", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and request.get("status") == "canceled":
+                return {
+                    "ok": True,
+                    "pairingRequest": _public_connector_pairing_request(request),
+                    "idempotentReplay": True,
+                    "safeNoOpOnRetry": True,
+                    "valuesRedacted": True,
+                }
+            if request.get("status") == "pending_human_approval" and _timestamp_expired(request.get("expiresAt")):
+                request["status"] = "expired"
+                self._save(data)
+                return _connector_pairing_error("pairing_request_expired")
+            if request.get("status") != "pending_human_approval":
+                return _connector_pairing_error("pairing_request_unavailable")
+            now = utc_now()
+            request.update(
+                {
+                    "status": "canceled",
+                    "humanCancelledAt": now,
+                    "humanCancelledByAccountId": actor.get("humanAccountId"),
+                    "humanCancellationReason": redact_text(str(reason or "human_cancelled")[:255]),
+                }
+            )
+            _connector_record_action(
+                request, "humanCancellation", key_hash, request_digest, combined_hash
+            )
+            self._audit_connector(
+                data,
+                "connector_pairing.request_cancel",
+                "human-account",
+                actor.get("humanAccountId"),
+                "request",
+                request.get("requestId"),
+                details={"publicRequestRef": public_request_ref, "scopeDigest": request.get("scopeDigest")},
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "pairingRequest": _public_connector_pairing_request(request),
+            "idempotentReplay": False,
+            "safeNoOpOnRetry": True,
+            "valuesRedacted": True,
+        }
+
+    def activate_connector_pairing(
+        self, pairing_id, connector_token, idempotency_key, request_digest
+    ):
+        with _LOCK:
+            data = self._load()
+            credential_id, _secret = _parse_connector_credential(connector_token)
+            credential = data.get("connectorCredentials", {}).get(credential_id) if credential_id else None
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            if not credential or not pairing or credential.get("pairingId") != pairing_id:
+                return _connector_pairing_error("pending_credential_invalid")
+            request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+            if not _connector_scope_chain_valid(
+                request=request, pairing=pairing, credentials=(credential,)
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            try:
+                valid = verify_connector_secret(
+                    connector_token,
+                    credential.get("credentialVerifier"),
+                    _credential_pepper(),
+                    pairing.get("scopeDigest"),
+                )
+            except RuntimeError:
+                return _connector_pairing_error("credential_system_not_configured")
+            if not valid:
+                return _connector_pairing_error("pending_credential_invalid")
+            if "agent:self:register" not in tuple(pairing.get("approvedScopes") or ()):
+                return _connector_pairing_error("connector_scope_denied")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                pairing, "activation", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and pairing.get("status") == "active" and credential.get("status") == "active":
+                return {
+                    "ok": True,
+                    "pairing": _public_connector_pairing(pairing),
+                    "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                    "scopeDigest": pairing.get("scopeDigest"),
+                    "idempotentReplay": True,
+                    "valuesRedacted": True,
+                }
+            if replay in ("exact", "used") and pairing.get("status") != "pending_activation":
+                return _connector_pairing_error("pairing_not_pending_activation")
+            if pairing.get("status") != "pending_activation" or credential.get("status") != "pending_activation":
+                return _connector_pairing_error("pairing_not_pending_activation")
+            if _timestamp_expired(pairing.get("activationExpiresAt")):
+                now = utc_now()
+                pairing.update({"status": "expired", "endedAt": now})
+                credential.update({"status": "expired", "revokedAt": now})
+                self._save(data)
+                return _connector_pairing_error("pending_grant_expired")
+            company = data.get("companies", {}).get(pairing.get("companyId"))
+            if not company or company.get("status") != "active":
+                return _connector_pairing_error("company_unavailable")
+            if pairing.get("provisionalWorkspace"):
+                workspace_id = pairing.get("workspaceId")
+                project_id = pairing.get("projectId")
+                if workspace_id in data.get("workspaces", {}) or project_id in data.get("projects", {}):
+                    return _connector_pairing_error("provisional_workspace_collision")
+                membership = next(
+                    (
+                        item
+                        for item in data.get("accountCompanies", {}).values()
+                        if item.get("companyId") == pairing.get("companyId") and item.get("status") == "active"
+                    ),
+                    None,
+                )
+                now = utc_now()
+                data.setdefault("workspaces", {})[workspace_id] = {
+                    "workspaceId": workspace_id,
+                    "primaryAccountId": (membership or {}).get("accountId"),
+                    "companyId": pairing.get("companyId"),
+                    "primaryProjectId": project_id,
+                    "label": pairing.get("workspaceLabel") or "Connector Workspace",
+                    "plan": "free_agent",
+                    "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+                    "createdAt": now,
+                    "status": "active",
+                }
+                data.setdefault("projects", {})[project_id] = {
+                    "projectId": project_id,
+                    "workspaceId": workspace_id,
+                    "label": pairing.get("projectLabel") or "Connector Pairing",
+                    "status": "active",
+                    "createdAt": now,
+                    "valuesRedacted": True,
+                }
+                self._ensure_default_meeting_rooms(data, workspace_id)
+            workspace = data.get("workspaces", {}).get(pairing.get("workspaceId"))
+            if not workspace or workspace.get("companyId") != pairing.get("companyId") or workspace.get("status") != "active":
+                return _connector_pairing_error("workspace_not_found")
+            for identity in data.get("agentIdentities", {}).values():
+                if (
+                    identity.get("companyId") == pairing.get("companyId")
+                    and identity.get("agentId") == pairing.get("agentId")
+                    and identity.get("status") == "active"
+                ):
+                    return _connector_pairing_error("agent_name_unavailable")
+            identity_id = _id("agentidentity")
+            now = utc_now()
+            data.setdefault("agentIdentities", {})[identity_id] = {
+                "agentIdentityId": identity_id,
+                "companyId": pairing.get("companyId"),
+                "agentId": pairing.get("agentId"),
+                "agentName": CANONICAL_AGENT_DISPLAY_NAME,
+                "agentNameNormalized": pairing.get("agentId"),
+                "displayName": CANONICAL_AGENT_DISPLAY_NAME,
+                "status": "active",
+                "createdAt": now,
+                "updatedAt": None,
+            }
+            agent_key = "%s:%s" % (pairing.get("workspaceId"), pairing.get("agentId"))
+            data.setdefault("agents", {})[agent_key] = {
+                "workspaceId": pairing.get("workspaceId"),
+                "agentId": pairing.get("agentId"),
+                "displayName": CANONICAL_AGENT_DISPLAY_NAME,
+                "registeredAt": now,
+                "status": "active",
+            }
+            pairing.update(
+                {
+                    "status": "active",
+                    "agentIdentityId": identity_id,
+                    "activatedAt": now,
+                    "activationExpiresAt": None,
+                }
+            )
+            credential.update({"status": "active", "activatedAt": now})
+            request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+            if request:
+                request["status"] = "active"
+            _connector_record_action(pairing, "activation", key_hash, request_digest, combined_hash)
+            self._audit_connector(
+                data,
+                "connector_pairing.activate",
+                "agent-identity",
+                identity_id,
+                "pairing",
+                pairing_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "pairing": _public_connector_pairing(pairing),
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "idempotentReplay": False,
+            "valuesRedacted": True,
+        }
+
+    def connector_pairing_status(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id, allow_pending=True
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        data = self._load()
+        pairing = data.get("connectorPairings", {}).get(pairing_id)
+        if principal.get("pairingStatus") == "canceled":
+            return _connector_pairing_error("pairing_canceled")
+        if not principal.get("active"):
+            return _connector_pairing_error("pending_credential_not_active")
+        if "connector:self:readback" not in tuple(principal.get("approvedScopes") or ()):
+            return _connector_pairing_error("connector_scope_denied")
+        workspace = data.get("workspaces", {}).get(pairing.get("workspaceId")) if pairing else None
+        identity = data.get("agentIdentities", {}).get(pairing.get("agentIdentityId")) if pairing else None
+        credential = data.get("connectorCredentials", {}).get(
+            principal.get("connectorCredentialId")
+        )
+        agent = next(
+            (
+                item
+                for item in data.get("agents", {}).values()
+                if pairing
+                and item.get("workspaceId") == pairing.get("workspaceId")
+                and item.get("agentId") == pairing.get("agentId")
+            ),
+            None,
+        )
+        verification = _connector_verification_facts(
+            pairing, principal, workspace, agent, identity, credential
+        )
+        if not verification.get("verified"):
+            return _connector_pairing_error(
+                "pairing_verification_failed", verification=verification
+            )
+        return {
+            "ok": True,
+            "pairing": _public_connector_pairing(pairing),
+            "principal": principal,
+            "verification": verification,
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+        }
+
+    def connector_workspace_readback(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        if "connector:self:readback" not in tuple(principal.get("approvedScopes") or ()):
+            return _connector_pairing_error("connector_scope_denied")
+        data = self._load()
+        pairing = data.get("connectorPairings", {}).get(pairing_id)
+        workspace = data.get("workspaces", {}).get(pairing.get("workspaceId")) if pairing else None
+        if (
+            not pairing
+            or pairing.get("status") != "active"
+            or not workspace
+            or workspace.get("status") != "active"
+            or workspace.get("companyId") != pairing.get("companyId")
+            or principal.get("workspaceId") != workspace.get("workspaceId")
+        ):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "workspace": {
+                "workspaceId": workspace.get("workspaceId"),
+                "status": "active",
+            },
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def confirm_connector_agent_registration(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        if "connector:self:readback" not in tuple(principal.get("approvedScopes") or ()):
+            return _connector_pairing_error("connector_scope_denied")
+        data = self._load()
+        pairing = data.get("connectorPairings", {}).get(pairing_id)
+        identity = data.get("agentIdentities", {}).get(pairing.get("agentIdentityId")) if pairing else None
+        agent = data.get("agents", {}).get(
+            "%s:%s" % (pairing.get("workspaceId"), pairing.get("agentId"))
+        ) if pairing else None
+        if (
+            not pairing
+            or pairing.get("status") != "active"
+            or pairing.get("agentId") != CANONICAL_AGENT_ID
+            or not identity
+            or identity.get("status") != "active"
+            or identity.get("agentIdentityId") != pairing.get("agentIdentityId")
+            or identity.get("agentId") != pairing.get("agentId")
+            or not agent
+            or agent.get("status") != "active"
+            or agent.get("workspaceId") != pairing.get("workspaceId")
+            or agent.get("agentId") != pairing.get("agentId")
+        ):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "agent": {
+                "agentId": agent.get("agentId"),
+                "status": "active",
+            },
+            "identity": {
+                "agentIdentityId": identity.get("agentIdentityId"),
+                "agentId": identity.get("agentId"),
+                "status": "active",
+            },
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def list_connector_credentials(self, pairing_id, connector_token):
+        connector = self.authenticate_connector_token(connector_token)
+        master = None if connector else self.authenticate_company_master(connector_token)
+        if connector and connector.get("pairingId") != pairing_id:
+            return _connector_pairing_error("pairing_not_found")
+        if not connector and not master:
+            return _connector_pairing_error("invalid_token")
+        if connector:
+            status = self.connector_pairing_status(pairing_id, connector_token)
+            if not status.get("ok"):
+                return status
+        data = self._load()
+        pairing = data.get("connectorPairings", {}).get(pairing_id)
+        if not pairing or (master and pairing.get("companyId") != master.get("companyId")):
+            return _connector_pairing_error("pairing_not_found")
+        request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+        persisted_credentials = tuple(
+            item
+            for item in data.get("connectorCredentials", {}).values()
+            if item.get("pairingId") == pairing_id
+        )
+        rotations = tuple(
+            item
+            for item in data.get("connectorRotations", {}).values()
+            if item.get("pairingId") == pairing_id
+        )
+        if not _connector_scope_chain_valid(
+            request=request,
+            pairing=pairing,
+            credentials=persisted_credentials,
+            rotations=rotations,
+        ):
+            return _connector_pairing_error("connector_scope_denied")
+        current_id = (pairing or {}).get("currentCredentialId")
+        all_items = [
+            _public_connector_credential(item, current_id)
+            for item in persisted_credentials
+        ]
+        all_items.sort(
+            key=lambda item: (item.get("createdAt") or "", item.get("credentialId") or ""),
+            reverse=True,
+        )
+        total_count = len(all_items)
+        items = all_items[:_CONNECTOR_CREDENTIAL_INVENTORY_LIMIT]
+        current = next((item for item in items if item.get("isCurrent")), None)
+        if not current or (connector and current.get("status") != "active"):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "currentCredentialId": current_id,
+            "items": items,
+            "count": len(items),
+            "totalCount": total_count,
+            "hasMore": total_count > len(items),
+            "limit": _CONNECTOR_CREDENTIAL_INVENTORY_LIMIT,
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def prepare_connector_rotation(
+        self, pairing_id, connector_token, reason, idempotency_key, request_digest
+    ):
+        self.expire_connector_pairings()
+        principal = self.authenticate_connector_token(connector_token, pairing_id=pairing_id)
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            data = self._load()
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            request = data.get("connectorPairingRequests", {}).get(
+                (pairing or {}).get("requestId")
+            )
+            current_credential = data.get("connectorCredentials", {}).get(
+                (pairing or {}).get("currentCredentialId")
+            )
+            if pairing and not _connector_scope_chain_valid(
+                request=request,
+                pairing=pairing,
+                credentials=(current_credential,),
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            for existing in data.get("connectorRotations", {}).values():
+                if existing.get("pairingId") != pairing_id:
+                    continue
+                if not secrets.compare_digest(str(existing.get("prepareIdempotencyKeyHash") or ""), key_hash):
+                    continue
+                exact = (
+                    secrets.compare_digest(str(existing.get("prepareRequestDigest") or ""), str(request_digest or ""))
+                    and secrets.compare_digest(str(existing.get("prepareIdempotencyDigest") or ""), combined_hash)
+                )
+                if not exact:
+                    return _connector_pairing_error("idempotency_conflict")
+                if existing.get("status") != "pending_activation" or _timestamp_expired(existing.get("activationExpiresAt")):
+                    return _connector_pairing_error("rotation_unavailable")
+                existing_successor = data.get("connectorCredentials", {}).get(
+                    existing.get("successorCredentialId")
+                )
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=(current_credential, existing_successor),
+                    rotations=(existing,),
+                ):
+                    return _connector_pairing_error("connector_scope_denied")
+                successor = derive_pending_connector_secret(
+                    pepper,
+                    existing.get("successorCredentialId"),
+                    request_digest,
+                    existing.get("scopeDigest"),
+                )
+                return {
+                    "ok": True,
+                    "rotation": _public_connector_rotation(existing),
+                    "approvedScopes": list(existing.get("approvedScopes") or ()),
+                    "scopeDigest": existing.get("scopeDigest"),
+                    "connectorCredentialSecret": successor.reveal(),
+                    "idempotentReplay": True,
+                    "rawCredentialPersisted": False,
+                    "valuesRedacted": True,
+                }
+            if not pairing or pairing.get("status") != "active":
+                return _connector_pairing_error("grant_not_active")
+            if any(
+                item.get("pairingId") == pairing_id and item.get("status") == "pending_activation"
+                for item in data.get("connectorRotations", {}).values()
+            ):
+                return _connector_pairing_error("rotation_pending")
+            rotation_id = _id("rotation")
+            successor_id = generate_connector_credential_id()
+            successor = derive_pending_connector_secret(
+                pepper, successor_id, request_digest, pairing.get("scopeDigest")
+            )
+            now = utc_now()
+            rotation = {
+                "rotationId": rotation_id,
+                "pairingId": pairing_id,
+                "predecessorCredentialId": pairing.get("currentCredentialId"),
+                "successorCredentialId": successor_id,
+                "status": "pending_activation",
+                "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                "scopeDigest": pairing.get("scopeDigest"),
+                "reason": redact_text(str(reason or "scheduled_rotation")[:255]),
+                "prepareIdempotencyKeyHash": key_hash,
+                "prepareRequestDigest": request_digest,
+                "prepareIdempotencyDigest": combined_hash,
+                "createdAt": now,
+                "activationExpiresAt": _connector_timestamp(PENDING_ACTIVATION_TTL_SECONDS),
+                "activatedAt": None,
+            }
+            data.setdefault("connectorCredentials", {})[successor_id] = {
+                "credentialId": successor_id,
+                "pairingId": pairing_id,
+                "credentialVerifier": successor.persistable_state().get("credentialVerifier"),
+                "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                "scopeDigest": pairing.get("scopeDigest"),
+                "status": "pending_activation",
+                "createdAt": now,
+                "activatedAt": None,
+                "revokedAt": None,
+                "lastUsedAt": None,
+                "rawCredentialPersisted": False,
+            }
+            data.setdefault("connectorRotations", {})[rotation_id] = rotation
+            self._audit_connector(
+                data,
+                "connector_pairing.rotation_prepare",
+                "agent-identity",
+                pairing.get("agentIdentityId"),
+                "rotation",
+                rotation_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "rotation": _public_connector_rotation(rotation),
+            "approvedScopes": list(rotation.get("approvedScopes") or ()),
+            "scopeDigest": rotation.get("scopeDigest"),
+            "connectorCredentialSecret": successor.reveal(),
+            "idempotentReplay": False,
+            "rawCredentialPersisted": False,
+            "valuesRedacted": True,
+        }
+
+    def activate_connector_rotation(
+        self, pairing_id, rotation_id, successor_token, idempotency_key, request_digest
+    ):
+        with _LOCK:
+            data = self._load()
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            rotation = data.get("connectorRotations", {}).get(rotation_id)
+            credential_id, _secret = _parse_connector_credential(successor_token)
+            successor = data.get("connectorCredentials", {}).get(credential_id) if credential_id else None
+            if (
+                not pairing
+                or not rotation
+                or rotation.get("pairingId") != pairing_id
+                or credential_id != rotation.get("successorCredentialId")
+                or not successor
+            ):
+                return _connector_pairing_error("rotation_not_found")
+            request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+            predecessor = data.get("connectorCredentials", {}).get(
+                rotation.get("predecessorCredentialId")
+            )
+            if not _connector_scope_chain_valid(
+                request=request,
+                pairing=pairing,
+                credentials=(predecessor, successor),
+                rotations=(rotation,),
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            try:
+                valid = verify_connector_secret(
+                    successor_token,
+                    successor.get("credentialVerifier"),
+                    _credential_pepper(),
+                    pairing.get("scopeDigest"),
+                )
+            except RuntimeError:
+                return _connector_pairing_error("credential_system_not_configured")
+            if not valid:
+                return _connector_pairing_error("pending_credential_invalid")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                rotation, "activation", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and rotation.get("status") == "active" and successor.get("status") == "active":
+                return {"ok": True, "rotation": _public_connector_rotation(rotation), "approvedScopes": list(rotation.get("approvedScopes") or ()), "scopeDigest": rotation.get("scopeDigest"), "idempotentReplay": True, "valuesRedacted": True}
+            if rotation.get("status") != "pending_activation" or successor.get("status") != "pending_activation":
+                return _connector_pairing_error("rotation_unavailable")
+            if _timestamp_expired(rotation.get("activationExpiresAt")):
+                now = utc_now()
+                rotation["status"] = "expired"
+                successor.update({"status": "expired", "revokedAt": now})
+                self._save(data)
+                return _connector_pairing_error("pending_grant_expired")
+            if not predecessor or predecessor.get("status") != "active" or pairing.get("status") != "active":
+                return _connector_pairing_error("grant_not_active")
+            now = utc_now()
+            predecessor.update({"status": "superseded", "revokedAt": now})
+            successor.update({"status": "active", "activatedAt": now})
+            pairing["currentCredentialId"] = successor.get("credentialId")
+            rotation.update({"status": "active", "activatedAt": now, "activationExpiresAt": None})
+            _connector_record_action(rotation, "activation", key_hash, request_digest, combined_hash)
+            self._audit_connector(
+                data,
+                "connector_pairing.rotation_activate",
+                "agent-identity",
+                pairing.get("agentIdentityId"),
+                "rotation",
+                rotation_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {"ok": True, "rotation": _public_connector_rotation(rotation), "approvedScopes": list(rotation.get("approvedScopes") or ()), "scopeDigest": rotation.get("scopeDigest"), "idempotentReplay": False, "valuesRedacted": True}
+
+    def revoke_connector_pairing(
+        self, master_token, pairing_id, reason, idempotency_key, request_digest
+    ):
+        master = self.authenticate_company_master(master_token)
+        if not master:
+            return _connector_pairing_error("company_master_required")
+        with _LOCK:
+            data = self._load()
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            if not pairing or pairing.get("companyId") != master.get("companyId"):
+                return _connector_pairing_error("pairing_not_found")
+            request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+            credentials = tuple(
+                item
+                for item in data.get("connectorCredentials", {}).values()
+                if item.get("pairingId") == pairing_id
+            )
+            rotations = tuple(
+                item
+                for item in data.get("connectorRotations", {}).values()
+                if item.get("pairingId") == pairing_id
+            )
+            if not _connector_scope_chain_valid(
+                request=request,
+                pairing=pairing,
+                credentials=credentials,
+                rotations=rotations,
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                pairing, "revocation", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and pairing.get("status") == "revoked":
+                return {
+                    "ok": True,
+                    "pairing": _public_connector_pairing(pairing),
+                    "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                    "scopeDigest": pairing.get("scopeDigest"),
+                    "actorMasterKeyId": pairing.get("revokedByMasterKeyId"),
+                    "idempotentReplay": True,
+                    "safeNoOpOnRetry": True,
+                    "valuesRedacted": True,
+                }
+            if pairing.get("status") in ("disconnected", "canceled", "expired"):
+                return _connector_pairing_error("pairing_unavailable")
+            now = utc_now()
+            pairing.update(
+                {
+                    "status": "revoked",
+                    "endedAt": now,
+                    "endedReason": redact_text(str(reason or "company_master_revoked")[:255]),
+                    "revokedByMasterKeyId": master.get("masterKeyId"),
+                }
+            )
+            for credential in data.get("connectorCredentials", {}).values():
+                if credential.get("pairingId") == pairing_id and credential.get("status") not in ("revoked", "superseded", "expired"):
+                    credential.update({"status": "revoked", "revokedAt": now})
+            _connector_record_action(pairing, "revocation", key_hash, request_digest, combined_hash)
+            self._audit_connector(
+                data,
+                "connector_pairing.revoke",
+                "master-key",
+                master.get("masterKeyId"),
+                "pairing",
+                pairing_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {
+            "ok": True,
+            "pairing": _public_connector_pairing(pairing),
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "actorMasterKeyId": master.get("masterKeyId"),
+            "idempotentReplay": False,
+            "safeNoOpOnRetry": True,
+            "valuesRedacted": True,
+        }
+
+    def disconnect_connector_pairing(
+        self, pairing_id, connector_token, reason, idempotency_key, request_digest
+    ):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id, allow_pending=True
+        )
+        if not principal:
+            with _LOCK:
+                retry_data = self._load()
+                retry_pairing = retry_data.get("connectorPairings", {}).get(pairing_id)
+                retry_credential_id, _retry_secret = _parse_connector_credential(connector_token)
+                retry_credential = retry_data.get("connectorCredentials", {}).get(retry_credential_id) if retry_credential_id else None
+                retry_request = retry_data.get("connectorPairingRequests", {}).get(
+                    (retry_pairing or {}).get("requestId")
+                )
+                retry_credentials = tuple(
+                    item
+                    for item in retry_data.get("connectorCredentials", {}).values()
+                    if item.get("pairingId") == pairing_id
+                )
+                retry_rotations = tuple(
+                    item
+                    for item in retry_data.get("connectorRotations", {}).values()
+                    if item.get("pairingId") == pairing_id
+                )
+                try:
+                    valid_retry_proof = bool(
+                        retry_pairing and retry_credential
+                        and retry_credential.get("pairingId") == pairing_id
+                        and _connector_scope_chain_valid(
+                            request=retry_request,
+                            pairing=retry_pairing,
+                            credentials=retry_credentials,
+                            rotations=retry_rotations,
+                        )
+                        and verify_connector_secret(
+                            connector_token,
+                            retry_credential.get("credentialVerifier"),
+                            _credential_pepper(),
+                            retry_pairing.get("scopeDigest"),
+                        )
+                    )
+                except RuntimeError:
+                    valid_retry_proof = False
+                replay, _key_hash, _combined_hash = _connector_action_replay(retry_pairing or {}, "disconnect", idempotency_key, request_digest)
+                if valid_retry_proof and replay == "exact" and retry_pairing.get("status") == "disconnected":
+                    return {"ok": True, "pairing": _public_connector_pairing(retry_pairing), "approvedScopes": list(retry_pairing.get("approvedScopes") or ()), "scopeDigest": retry_pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+            return _connector_pairing_error("invalid_token")
+        with _LOCK:
+            data = self._load()
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            request = data.get("connectorPairingRequests", {}).get(
+                (pairing or {}).get("requestId")
+            )
+            credentials = tuple(
+                item
+                for item in data.get("connectorCredentials", {}).values()
+                if item.get("pairingId") == pairing_id
+            )
+            rotations = tuple(
+                item
+                for item in data.get("connectorRotations", {}).values()
+                if item.get("pairingId") == pairing_id
+            )
+            if not _connector_scope_chain_valid(
+                request=request,
+                pairing=pairing,
+                credentials=credentials,
+                rotations=rotations,
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                pairing, "disconnect", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and pairing.get("status") == "disconnected":
+                return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+            if pairing.get("status") != "active" or not principal.get("active"):
+                return _connector_pairing_error("grant_not_active")
+            now = utc_now()
+            pairing.update({"status": "disconnected", "endedAt": now, "endedReason": redact_text(str(reason or "connector_disconnected")[:255])})
+            for credential in data.get("connectorCredentials", {}).values():
+                if credential.get("pairingId") == pairing_id and credential.get("status") not in ("superseded", "expired"):
+                    credential.update({"status": "disconnected", "revokedAt": now})
+            _connector_record_action(pairing, "disconnect", key_hash, request_digest, combined_hash)
+            self._audit_connector(
+                data,
+                "connector_pairing.disconnect",
+                "credential",
+                principal.get("connectorCredentialId"),
+                "pairing",
+                pairing_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": False, "safeNoOpOnRetry": True, "valuesRedacted": True}
+
+    def cancel_connector_pairing(
+        self, pairing_id, connector_token, reason, idempotency_key, request_digest
+    ):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id, allow_pending=True
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        with _LOCK:
+            data = self._load()
+            pairing = data.get("connectorPairings", {}).get(pairing_id)
+            request = data.get("connectorPairingRequests", {}).get(
+                (pairing or {}).get("requestId")
+            )
+            credentials = tuple(
+                item
+                for item in data.get("connectorCredentials", {}).values()
+                if item.get("pairingId") == pairing_id
+            )
+            if not _connector_scope_chain_valid(
+                request=request, pairing=pairing, credentials=credentials
+            ):
+                return _connector_pairing_error("connector_scope_denied")
+            replay, key_hash, combined_hash = _connector_action_replay(
+                pairing, "cancellation", idempotency_key, request_digest
+            )
+            if replay == "invalid":
+                return _connector_pairing_error("idempotency_key_invalid")
+            if replay == "conflict":
+                return _connector_pairing_error("idempotency_conflict")
+            if replay == "exact" and pairing.get("status") == "canceled":
+                return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+            if pairing.get("status") != "pending_activation" or principal.get("credentialStatus") != "pending_activation":
+                return _connector_pairing_error("pairing_not_pending_activation")
+            now = utc_now()
+            pairing.update({"status": "canceled", "endedAt": now, "endedReason": redact_text(str(reason or "connector_canceled")[:255])})
+            for credential in data.get("connectorCredentials", {}).values():
+                if credential.get("pairingId") == pairing_id and credential.get("status") == "pending_activation":
+                    credential.update({"status": "canceled", "revokedAt": now})
+            if request:
+                request["status"] = "canceled"
+            _connector_record_action(pairing, "cancellation", key_hash, request_digest, combined_hash)
+            self._audit_connector(
+                data,
+                "connector_pairing.cancel",
+                "credential",
+                principal.get("connectorCredentialId"),
+                "pairing",
+                pairing_id,
+                workspace_id=pairing.get("workspaceId"),
+            )
+            self._save(data)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": False, "safeNoOpOnRetry": True, "valuesRedacted": True}
+
+    def expire_connector_pairings(self):
+        now = utc_now()
+        request_count = 0
+        code_count = 0
+        pairing_count = 0
+        rotation_count = 0
+        with _LOCK:
+            data = self._load()
+            for request in data.get("connectorPairingRequests", {}).values():
+                if not _connector_scope_chain_valid(request=request):
+                    continue
+                if request.get("status") == "pending_human_approval" and _timestamp_expired(request.get("expiresAt")):
+                    request["status"] = "expired"
+                    request_count += 1
+                elif request.get("status") in ("approved", "authorization_code_issued") and _timestamp_expired(request.get("authorizationCodeExpiresAt")):
+                    request["status"] = "authorization_code_expired"
+                    code_count += 1
+            for pairing in data.get("connectorPairings", {}).values():
+                if pairing.get("status") != "pending_activation" or not _timestamp_expired(pairing.get("activationExpiresAt")):
+                    continue
+                request = data.get("connectorPairingRequests", {}).get(pairing.get("requestId"))
+                credentials = tuple(
+                    item
+                    for item in data.get("connectorCredentials", {}).values()
+                    if item.get("pairingId") == pairing.get("pairingId")
+                )
+                if not _connector_scope_chain_valid(
+                    request=request, pairing=pairing, credentials=credentials
+                ):
+                    continue
+                pairing.update({"status": "expired", "endedAt": now})
+                for credential in data.get("connectorCredentials", {}).values():
+                    if credential.get("pairingId") == pairing.get("pairingId") and credential.get("status") == "pending_activation":
+                        credential.update({"status": "expired", "revokedAt": now})
+                pairing_count += 1
+            for rotation in data.get("connectorRotations", {}).values():
+                if rotation.get("status") != "pending_activation" or not _timestamp_expired(rotation.get("activationExpiresAt")):
+                    continue
+                pairing = data.get("connectorPairings", {}).get(rotation.get("pairingId"))
+                request = data.get("connectorPairingRequests", {}).get(
+                    (pairing or {}).get("requestId")
+                )
+                credentials = tuple(
+                    item
+                    for item in data.get("connectorCredentials", {}).values()
+                    if item.get("pairingId") == rotation.get("pairingId")
+                )
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=credentials,
+                    rotations=(rotation,),
+                ):
+                    continue
+                rotation["status"] = "expired"
+                successor = data.get("connectorCredentials", {}).get(rotation.get("successorCredentialId"))
+                if successor and successor.get("status") == "pending_activation":
+                    successor.update({"status": "expired", "revokedAt": now})
+                rotation_count += 1
+            if request_count or code_count or pairing_count or rotation_count:
+                self._save(data)
+        return {
+            "ok": True,
+            "expiredRequestCount": request_count,
+            "expiredAuthorizationCodeCount": code_count,
+            "expiredPairingCount": pairing_count,
+            "expiredRotationCount": rotation_count,
+            "valuesRedacted": True,
+        }
+
+    def purge_abandoned_connector_pairings(self, older_than_seconds=86400):
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=max(3600, int(older_than_seconds or 86400)))
+        )
+        count = 0
+        with _LOCK:
+            data = self._load()
+            for pairing_id, pairing in list(data.get("connectorPairings", {}).items()):
+                if pairing.get("status") not in ("canceled", "expired"):
+                    continue
+                ended_at = pairing.get("endedAt") or pairing.get("createdAt")
+                try:
+                    ended = datetime.datetime.fromisoformat(str(ended_at).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    continue
+                if ended > cutoff:
+                    continue
+                request_id = pairing.get("requestId")
+                request = data.get("connectorPairingRequests", {}).get(request_id)
+                credentials = tuple(
+                    item
+                    for item in data.get("connectorCredentials", {}).values()
+                    if item.get("pairingId") == pairing_id
+                )
+                rotations = tuple(
+                    item
+                    for item in data.get("connectorRotations", {}).values()
+                    if item.get("pairingId") == pairing_id
+                )
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=credentials,
+                    rotations=rotations,
+                ):
+                    continue
+                for credential_id, credential in list(data.get("connectorCredentials", {}).items()):
+                    if credential.get("pairingId") == pairing_id:
+                        data["connectorCredentials"].pop(credential_id, None)
+                for rotation_id, rotation in list(data.get("connectorRotations", {}).items()):
+                    if rotation.get("pairingId") == pairing_id:
+                        data["connectorRotations"].pop(rotation_id, None)
+                data["connectorPairings"].pop(pairing_id, None)
+                data.get("connectorPairingRequests", {}).pop(request_id, None)
+                count += 1
+            if count:
+                self._save(data)
+        return {"ok": True, "purgedCount": count, "valuesRedacted": True}
 
     def register_agent(self, workspace_id, agent_id, display_name):
         data = self._load()
@@ -3577,6 +9372,10 @@ class FileStore(object):
 
 class SQLiteStore(FileStore):
     DELETE_ORDER = [
+        "matm_connector_rotations",
+        "matm_connector_credentials",
+        "matm_connector_pairings",
+        "matm_connector_pairing_requests",
         "matm_external_link_mentions",
         "matm_external_links",
         "matm_search_documents",
@@ -3584,6 +9383,7 @@ class SQLiteStore(FileStore):
         "matm_memory_revisions",
         "matm_memory_tags",
         "matm_review_queue",
+        "matm_memory_records",
         "matm_receipts",
         "matm_notifications",
         "matm_messages",
@@ -3600,8 +9400,24 @@ class SQLiteStore(FileStore):
         "matm_audit_log",
         "matm_idempotency",
         "matm_agents",
+        "matm_agent_token_replacements",
+        "matm_agent_tokens",
+        "matm_agent_access_grants",
+        "matm_agent_invites",
+        "matm_agent_access_requests",
+        "matm_agent_identities",
+        "matm_company_closure_intents",
+        "matm_company_export_receipts",
+        "matm_human_operational_contexts",
+        "matm_human_account_sessions",
+        "matm_human_company_authorities",
+        "matm_human_accounts",
+        "matm_company_master_proofs",
+        "matm_human_sessions",
+        "matm_human_owner_credentials",
+        "matm_company_master_keys",
         "matm_api_keys",
-        "matm_memory_records",
+        "matm_scope_nodes",
         "matm_projects",
         "matm_workspaces",
         "matm_account_companies",
@@ -3635,6 +9451,133 @@ class SQLiteStore(FileStore):
     def _open_connection(self):
         return _ClosingConnection(self._connect())
 
+    def consume_connector_rate_limit(
+        self,
+        bucket,
+        partition,
+        limit,
+        window_seconds,
+        now=None,
+    ):
+        """Atomically consume a connector allowance shared by all SQL workers."""
+        limit, window_seconds = _connector_rate_policy(bucket, limit, window_seconds)
+        now_epoch = _connector_rate_now_epoch(now)
+        partition_hash = _connector_rate_partition_hash(bucket, partition)
+        reset_epoch = now_epoch + window_seconds
+        connection_manager = self._open_connection()
+        with connection_manager as connection:
+            sqlite_transaction = False
+            try:
+                sqlite_transaction = _connector_begin_immediate(connection)
+                if getattr(connection, "dialect", "sqlite") == "mysql":
+                    connection.execute(
+                        "DELETE FROM matm_connector_rate_limits "
+                        "WHERE expires_at_epoch <= ? ORDER BY expires_at_epoch LIMIT %d"
+                        % _CONNECTOR_RATE_CLEANUP_BATCH,
+                        (now_epoch,),
+                    )
+                else:
+                    connection.execute(
+                        "DELETE FROM matm_connector_rate_limits WHERE rowid IN ("
+                        "SELECT rowid FROM matm_connector_rate_limits "
+                        "WHERE expires_at_epoch <= ? ORDER BY expires_at_epoch LIMIT ?)",
+                        (now_epoch, _CONNECTOR_RATE_CLEANUP_BATCH),
+                    )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO matm_connector_rate_limits (
+                      bucket, partition_hash, window_started_at_epoch, expires_at_epoch,
+                      request_count, request_limit, window_seconds, updated_at_epoch
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+                    """,
+                    (
+                        bucket,
+                        partition_hash,
+                        now_epoch,
+                        reset_epoch,
+                        limit,
+                        window_seconds,
+                        now_epoch,
+                    ),
+                )
+                row = _connector_select_for_update(
+                    connection,
+                    "SELECT * FROM matm_connector_rate_limits "
+                    "WHERE bucket = ? AND partition_hash = ?",
+                    (bucket, partition_hash),
+                )
+                if not row:
+                    raise RuntimeError("connector_rate_limit_row_unavailable")
+                stored_expiry = int(self._sql_value(row, "expires_at_epoch", 0) or 0)
+                current_count = max(0, int(self._sql_value(row, "request_count", 0) or 0))
+                if stored_expiry <= now_epoch:
+                    count = 1
+                    allowed = True
+                    reset_epoch = now_epoch + window_seconds
+                    connection.execute(
+                        """
+                        UPDATE matm_connector_rate_limits
+                        SET window_started_at_epoch = ?, expires_at_epoch = ?, request_count = ?,
+                            request_limit = ?, window_seconds = ?, updated_at_epoch = ?
+                        WHERE bucket = ? AND partition_hash = ?
+                        """,
+                        (
+                            now_epoch,
+                            reset_epoch,
+                            count,
+                            limit,
+                            window_seconds,
+                            now_epoch,
+                            bucket,
+                            partition_hash,
+                        ),
+                    )
+                else:
+                    window_started = int(self._sql_value(row, "window_started_at_epoch", now_epoch) or now_epoch)
+                    reset_epoch = window_started + window_seconds
+                    if reset_epoch <= now_epoch:
+                        count = 1
+                        allowed = True
+                        window_started = now_epoch
+                        reset_epoch = now_epoch + window_seconds
+                    else:
+                        allowed = current_count < limit
+                        count = current_count + 1 if allowed else current_count
+                    connection.execute(
+                        """
+                        UPDATE matm_connector_rate_limits
+                        SET window_started_at_epoch = ?, expires_at_epoch = ?, request_count = ?,
+                            request_limit = ?, window_seconds = ?, updated_at_epoch = ?
+                        WHERE bucket = ? AND partition_hash = ?
+                        """,
+                        (
+                            window_started,
+                            reset_epoch,
+                            count,
+                            limit,
+                            window_seconds,
+                            now_epoch,
+                            bucket,
+                            partition_hash,
+                        ),
+                    )
+                if sqlite_transaction:
+                    connection.commit()
+            except Exception:
+                if sqlite_transaction:
+                    connection.rollback()
+                raise
+        return _connector_rate_result(
+            bucket,
+            partition_hash,
+            limit,
+            window_seconds,
+            count,
+            reset_epoch,
+            now_epoch,
+            allowed,
+        )
+
     def _ensure_schema(self, connection):
         connection.executescript(
             """
@@ -3650,6 +9593,9 @@ class SQLiteStore(FileStore):
               company_id TEXT PRIMARY KEY,
               label TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'active',
+              history_retention_days INTEGER NOT NULL DEFAULT 7,
+              soft_deleted_at TEXT,
+              pre_delete_status TEXT,
               created_at TEXT NOT NULL,
               updated_at TEXT
             );
@@ -3693,6 +9639,23 @@ class SQLiteStore(FileStore):
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_projects_workspace ON matm_projects (workspace_id);
 
+            CREATE TABLE IF NOT EXISTS matm_scope_nodes (
+              scope_node_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              parent_scope_type TEXT,
+              parent_scope_id TEXT,
+              workspace_id TEXT,
+              project_id TEXT,
+              created_at TEXT NOT NULL,
+              UNIQUE (company_id, scope_type, scope_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_scope_nodes_parent ON matm_scope_nodes (company_id, parent_scope_type, parent_scope_id);
+
             CREATE TABLE IF NOT EXISTS matm_api_keys (
               key_id TEXT PRIMARY KEY,
               workspace_id TEXT NOT NULL,
@@ -3703,6 +9666,456 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_api_keys_workspace ON matm_api_keys (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_company_master_keys (
+              master_key_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              token_hash TEXT NOT NULL UNIQUE,
+              label TEXT NOT NULL,
+              principal_name TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_company_master_keys_company ON matm_company_master_keys (company_id, revoked_at);
+
+            CREATE TABLE IF NOT EXISTS matm_human_owner_credentials (
+              human_credential_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              token_hash TEXT NOT NULL UNIQUE,
+              principal_name TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_human_owner_credentials_company ON matm_human_owner_credentials (company_id, revoked_at);
+
+            CREATE TABLE IF NOT EXISTS matm_human_sessions (
+              human_session_id TEXT PRIMARY KEY,
+              human_credential_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              session_hash TEXT NOT NULL UNIQUE,
+              csrf_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              last_seen_at TEXT,
+              reauthenticated_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (human_credential_id) REFERENCES matm_human_owner_credentials (human_credential_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_human_sessions_company ON matm_human_sessions (company_id, revoked_at, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_human_accounts (
+              human_account_id TEXT PRIMARY KEY,
+              username TEXT NOT NULL UNIQUE,
+              username_normalized TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL,
+              password_verifier TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS matm_company_master_proofs (
+              master_proof_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              master_key_id TEXT NOT NULL,
+              proof_hash TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              consumed_at TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_company_master_proofs_company ON matm_company_master_proofs (company_id, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_human_company_authorities (
+              authority_id TEXT PRIMARY KEY,
+              human_account_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              master_key_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              linked_at TEXT NOT NULL,
+              linked_by_account_id TEXT NOT NULL,
+              UNIQUE (human_account_id, company_id),
+              FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+              FOREIGN KEY (linked_by_account_id) REFERENCES matm_human_accounts (human_account_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_human_company_authorities_company ON matm_human_company_authorities (company_id, role);
+
+            CREATE TABLE IF NOT EXISTS matm_human_account_sessions (
+              human_account_session_id TEXT PRIMARY KEY,
+              human_account_id TEXT NOT NULL,
+              selected_authority_id TEXT,
+              selected_company_id TEXT,
+              session_hash TEXT NOT NULL UNIQUE,
+              csrf_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              last_seen_at TEXT,
+              password_reauthenticated_at TEXT,
+              rotated_from_session_id TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (selected_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+              FOREIGN KEY (selected_company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_human_account_sessions_account ON matm_human_account_sessions (human_account_id, revoked_at, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_human_operational_contexts (
+              human_account_session_id TEXT PRIMARY KEY,
+              human_account_id TEXT NOT NULL,
+              authority_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              workspace_id TEXT,
+              project_id TEXT,
+              context_version TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              FOREIGN KEY (human_account_session_id) REFERENCES matm_human_account_sessions (human_account_session_id),
+              FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (authority_id) REFERENCES matm_human_company_authorities (authority_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_human_operational_context_company ON matm_human_operational_contexts (company_id, human_account_id);
+
+            CREATE TABLE IF NOT EXISTS matm_company_closure_intents (
+              closure_intent_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              human_session_id TEXT NOT NULL,
+              auth_mode TEXT NOT NULL DEFAULT 'human_account',
+              intent_hash TEXT NOT NULL UNIQUE,
+              purpose TEXT NOT NULL,
+              typed_confirmation_phrase TEXT NOT NULL,
+              acknowledge_export_opportunity INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              consumed_at TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_company_closure_intents_company ON matm_company_closure_intents (company_id, purpose, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_company_export_receipts (
+              export_receipt_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              human_session_id TEXT NOT NULL,
+              artifact_digest TEXT NOT NULL,
+              artifact_format TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (human_session_id) REFERENCES matm_human_account_sessions (human_account_session_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_company_export_receipts_company ON matm_company_export_receipts (company_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_connector_rate_limits (
+              bucket TEXT NOT NULL,
+              partition_hash TEXT NOT NULL,
+              window_started_at_epoch INTEGER NOT NULL,
+              expires_at_epoch INTEGER NOT NULL,
+              request_count INTEGER NOT NULL,
+              request_limit INTEGER NOT NULL,
+              window_seconds INTEGER NOT NULL,
+              updated_at_epoch INTEGER NOT NULL,
+              PRIMARY KEY (bucket, partition_hash)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_rate_limits_expiry ON matm_connector_rate_limits (expires_at_epoch);
+
+            CREATE TABLE IF NOT EXISTS matm_connector_pairing_requests (
+              request_id TEXT PRIMARY KEY,
+              public_request_ref TEXT NOT NULL UNIQUE,
+              pairing_request_proof_verifier TEXT NOT NULL UNIQUE,
+              request_idempotency_key_hash TEXT NOT NULL UNIQUE,
+              request_digest TEXT NOT NULL,
+              request_idempotency_digest TEXT NOT NULL,
+              client_id TEXT NOT NULL,
+              redirect_uri TEXT NOT NULL,
+              state_verifier TEXT NOT NULL,
+              code_challenge TEXT NOT NULL,
+              code_challenge_method TEXT NOT NULL,
+              requested_agent_id TEXT NOT NULL,
+              requested_scopes_json TEXT NOT NULL,
+              scope_digest TEXT NOT NULL,
+              approved_agent_id TEXT,
+              approved_scopes_json TEXT,
+              company_id TEXT,
+              workspace_id TEXT,
+              project_id TEXT,
+              workspace_mode TEXT,
+              provisional_workspace INTEGER NOT NULL DEFAULT 0,
+              workspace_label TEXT,
+              project_label TEXT,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              approved_at TEXT,
+              approved_by_human_account_id TEXT,
+              approved_by_authority_id TEXT,
+              approval_idempotency_key_hash TEXT,
+              approval_request_digest TEXT,
+              approval_idempotency_digest TEXT,
+              authorization_code_id TEXT UNIQUE,
+              authorization_code_verifier TEXT UNIQUE,
+              authorization_code_expires_at TEXT,
+              authorization_code_consumed_at TEXT,
+              authorization_code_claimed_at TEXT,
+              claim_idempotency_key_hash TEXT,
+              claim_request_digest TEXT,
+              claim_idempotency_digest TEXT,
+              exchange_idempotency_key_hash TEXT,
+              exchange_request_digest TEXT,
+              exchange_idempotency_digest TEXT,
+              human_cancellation_idempotency_key_hash TEXT,
+              human_cancellation_request_digest TEXT,
+              human_cancellation_idempotency_digest TEXT,
+              human_cancelled_at TEXT,
+              human_cancelled_by_account_id TEXT,
+              human_cancellation_reason TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (approved_by_human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (approved_by_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+              FOREIGN KEY (human_cancelled_by_account_id) REFERENCES matm_human_accounts (human_account_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_requests_status ON matm_connector_pairing_requests (status, expires_at);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_requests_company_agent ON matm_connector_pairing_requests (company_id, approved_agent_id, status);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_requests_public_ref ON matm_connector_pairing_requests (public_request_ref);
+
+            CREATE TABLE IF NOT EXISTS matm_connector_pairings (
+              pairing_id TEXT PRIMARY KEY,
+              request_id TEXT NOT NULL UNIQUE,
+              company_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT,
+              agent_id TEXT NOT NULL,
+              agent_identity_id TEXT,
+              workspace_mode TEXT NOT NULL,
+              provisional_workspace INTEGER NOT NULL DEFAULT 0,
+              workspace_label TEXT,
+              project_label TEXT,
+              status TEXT NOT NULL,
+              approved_scopes_json TEXT NOT NULL,
+              scope_digest TEXT NOT NULL,
+              current_credential_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              activation_expires_at TEXT,
+              activated_at TEXT,
+              ended_at TEXT,
+              ended_reason TEXT,
+              revoked_by_master_key_id TEXT,
+              activation_idempotency_key_hash TEXT,
+              activation_request_digest TEXT,
+              activation_idempotency_digest TEXT,
+              revocation_idempotency_key_hash TEXT,
+              revocation_request_digest TEXT,
+              revocation_idempotency_digest TEXT,
+              disconnect_idempotency_key_hash TEXT,
+              disconnect_request_digest TEXT,
+              disconnect_idempotency_digest TEXT,
+              cancellation_idempotency_key_hash TEXT,
+              cancellation_request_digest TEXT,
+              cancellation_idempotency_digest TEXT,
+              FOREIGN KEY (request_id) REFERENCES matm_connector_pairing_requests (request_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+              FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_pairings_company_agent ON matm_connector_pairings (company_id, agent_id, status);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_pairings_pending ON matm_connector_pairings (status, activation_expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_connector_credentials (
+              credential_id TEXT PRIMARY KEY,
+              pairing_id TEXT NOT NULL,
+              credential_verifier TEXT NOT NULL UNIQUE,
+              approved_scopes_json TEXT NOT NULL,
+              scope_digest TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              activated_at TEXT,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              raw_credential_persisted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (pairing_id) REFERENCES matm_connector_pairings (pairing_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_credentials_pairing ON matm_connector_credentials (pairing_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_connector_rotations (
+              rotation_id TEXT PRIMARY KEY,
+              pairing_id TEXT NOT NULL,
+              predecessor_credential_id TEXT NOT NULL,
+              successor_credential_id TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL,
+              approved_scopes_json TEXT NOT NULL,
+              scope_digest TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              prepare_idempotency_key_hash TEXT NOT NULL,
+              prepare_request_digest TEXT NOT NULL,
+              prepare_idempotency_digest TEXT NOT NULL,
+              activation_idempotency_key_hash TEXT,
+              activation_request_digest TEXT,
+              activation_idempotency_digest TEXT,
+              created_at TEXT NOT NULL,
+              activation_expires_at TEXT,
+              activated_at TEXT,
+              FOREIGN KEY (pairing_id) REFERENCES matm_connector_pairings (pairing_id),
+              FOREIGN KEY (predecessor_credential_id) REFERENCES matm_connector_credentials (credential_id),
+              FOREIGN KEY (successor_credential_id) REFERENCES matm_connector_credentials (credential_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_connector_rotations_pairing ON matm_connector_rotations (pairing_id, status, activation_expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_identities (
+              agent_identity_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              agent_name TEXT NOT NULL,
+              agent_name_normalized TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (company_id, agent_id),
+              UNIQUE (company_id, agent_name_normalized),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_identities_company ON matm_agent_identities (company_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_access_requests (
+              request_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              agent_name TEXT NOT NULL,
+              agent_name_normalized TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              justification TEXT NOT NULL,
+              assignment_context_json TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              requested_by TEXT NOT NULL,
+              status TEXT NOT NULL,
+              supersedes_token_id TEXT,
+              memory_transfer_from_token_id TEXT,
+              created_at TEXT NOT NULL,
+              approved_at TEXT,
+              approved_by_master_key_id TEXT,
+              denied_at TEXT,
+              denied_by_master_key_id TEXT,
+              agent_identity_id TEXT,
+              invite_id TEXT,
+              decision_reason TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (approved_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+              FOREIGN KEY (denied_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_access_requests_company_status ON matm_agent_access_requests (company_id, status, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_invites (
+              invite_id TEXT PRIMARY KEY,
+              request_id TEXT NOT NULL UNIQUE,
+              company_id TEXT NOT NULL,
+              agent_identity_id TEXT NOT NULL,
+              token_hash TEXT NOT NULL UNIQUE,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              redeemed_at TEXT,
+              approved_by_master_key_id TEXT NOT NULL,
+              revoked_at TEXT,
+              revoked_by_master_key_id TEXT,
+              grant_id TEXT,
+              agent_token_id TEXT,
+              assignment_context_json TEXT NOT NULL,
+              FOREIGN KEY (request_id) REFERENCES matm_agent_access_requests (request_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+              FOREIGN KEY (approved_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+              FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_invites_company_status ON matm_agent_invites (company_id, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_access_grants (
+              grant_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              agent_identity_id TEXT NOT NULL,
+              scope_type TEXT NOT NULL,
+              scope_id TEXT NOT NULL,
+              workspace_id TEXT,
+              project_id TEXT,
+              supersedes_token_id TEXT,
+              memory_transfer_from_token_id TEXT,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              pending_expires_at TEXT,
+              predecessor_token_id TEXT,
+              activated_at TEXT,
+              cancelled_at TEXT,
+              revoked_at TEXT,
+              revoked_by_master_key_id TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_access_grants_identity ON matm_agent_access_grants (agent_identity_id, status);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_access_grants_scope ON matm_agent_access_grants (company_id, scope_type, scope_id, status);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_tokens (
+              agent_token_id TEXT PRIMARY KEY,
+              grant_id TEXT NOT NULL UNIQUE,
+              agent_identity_id TEXT NOT NULL,
+              token_hash TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (grant_id) REFERENCES matm_agent_access_grants (grant_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_tokens_identity ON matm_agent_tokens (agent_identity_id, revoked_at);
+
+            CREATE TABLE IF NOT EXISTS matm_agent_token_replacements (
+              replacement_id TEXT PRIMARY KEY,
+              company_id TEXT NOT NULL,
+              human_account_id TEXT NOT NULL,
+              authority_id TEXT NOT NULL,
+              predecessor_credential_id TEXT NOT NULL,
+              successor_credential_id TEXT NOT NULL UNIQUE,
+              successor_grant_id TEXT NOT NULL UNIQUE,
+              agent_identity_id TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              prepare_idempotency_hash TEXT,
+              prepare_request_digest TEXT,
+              successor_delivered_at TEXT,
+              confirm_idempotency_hash TEXT,
+              confirm_request_digest TEXT,
+              confirmed_at TEXT,
+              cancel_idempotency_hash TEXT,
+              cancel_request_digest TEXT,
+              canceled_at TEXT,
+              revoked_credential_id TEXT,
+              activated_credential_id TEXT,
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (authority_id) REFERENCES matm_human_company_authorities (authority_id),
+              FOREIGN KEY (predecessor_credential_id) REFERENCES matm_agent_tokens (agent_token_id),
+              FOREIGN KEY (successor_credential_id) REFERENCES matm_agent_tokens (agent_token_id),
+              FOREIGN KEY (successor_grant_id) REFERENCES matm_agent_access_grants (grant_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_token_replacements_company ON matm_agent_token_replacements (company_id, status, expires_at);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_agent_token_replacements_predecessor ON matm_agent_token_replacements (predecessor_credential_id, status);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_agent_token_replacements_prepare_idempotency ON matm_agent_token_replacements (company_id, prepare_idempotency_hash);
 
             CREATE TABLE IF NOT EXISTS matm_agents (
               agent_record_id TEXT PRIMARY KEY,
@@ -3845,6 +10258,12 @@ class SQLiteStore(FileStore):
               memory_id TEXT PRIMARY KEY,
               workspace_id TEXT NOT NULL,
               actor_agent_id TEXT,
+              human_account_id TEXT,
+              human_account_session_id TEXT,
+              human_username TEXT,
+              human_authority_id TEXT,
+              human_company_id TEXT,
+              auth_mode TEXT NOT NULL DEFAULT 'agent',
               scope_type TEXT NOT NULL,
               scope_id TEXT,
               memory_type TEXT NOT NULL,
@@ -3863,7 +10282,11 @@ class SQLiteStore(FileStore):
               values_redacted INTEGER NOT NULL DEFAULT 1,
               created_at TEXT NOT NULL,
               updated_at TEXT,
-              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+              FOREIGN KEY (human_account_session_id) REFERENCES matm_human_account_sessions (human_account_session_id),
+              FOREIGN KEY (human_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+              FOREIGN KEY (human_company_id) REFERENCES matm_companies (company_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_memory_workspace_status ON matm_memory_records (workspace_id, status, promotion_state);
 
@@ -4277,7 +10700,82 @@ class SQLiteStore(FileStore):
         )
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
+        self._ensure_company_lifecycle_schema_columns(connection)
+        self._ensure_human_account_schema_columns(connection)
+        self._ensure_human_operational_schema_columns(connection)
+        self._ensure_agent_replacement_schema_columns(connection)
         connection.commit()
+
+    def _ensure_company_lifecycle_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = [
+            ("history_retention_days", "INT NOT NULL DEFAULT 7" if mysql else "INTEGER NOT NULL DEFAULT 7"),
+            ("soft_deleted_at", "TIMESTAMP NULL" if mysql else "TEXT"),
+            ("pre_delete_status", "VARCHAR(32) NULL" if mysql else "TEXT"),
+        ]
+        for column, definition in additions:
+            try:
+                connection.execute("ALTER TABLE matm_companies ADD COLUMN %s %s" % (column, definition))
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
+        try:
+            connection.execute(
+                "ALTER TABLE matm_company_closure_intents ADD COLUMN auth_mode %s"
+                % ("VARCHAR(32) NOT NULL DEFAULT 'human_account'" if mysql else "TEXT NOT NULL DEFAULT 'human_account'")
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate column" not in message and "already exists" not in message:
+                raise
+
+    def _ensure_human_account_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        definition = "VARCHAR(80) NOT NULL DEFAULT ''" if mysql else "TEXT NOT NULL DEFAULT ''"
+        try:
+            connection.execute("ALTER TABLE matm_human_accounts ADD COLUMN display_name %s" % definition)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate column" not in message and "already exists" not in message:
+                raise
+
+    def _ensure_human_operational_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = [
+            ("human_account_id", "VARCHAR(96) NULL" if mysql else "TEXT"),
+            ("human_account_session_id", "VARCHAR(96) NULL" if mysql else "TEXT"),
+            ("human_username", "VARCHAR(64) NULL" if mysql else "TEXT"),
+            ("human_authority_id", "VARCHAR(96) NULL" if mysql else "TEXT"),
+            ("human_company_id", "VARCHAR(96) NULL" if mysql else "TEXT"),
+            ("auth_mode", "VARCHAR(32) NOT NULL DEFAULT 'agent'" if mysql else "TEXT NOT NULL DEFAULT 'agent'"),
+        ]
+        for column, definition in additions:
+            try:
+                connection.execute(
+                    "ALTER TABLE matm_memory_records ADD COLUMN %s %s"
+                    % (column, definition)
+                )
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
+
+    def _ensure_agent_replacement_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = [
+            ("pending_expires_at", "TIMESTAMP NULL" if mysql else "TEXT"),
+            ("predecessor_token_id", "VARCHAR(96) NULL" if mysql else "TEXT"),
+            ("activated_at", "TIMESTAMP NULL" if mysql else "TEXT"),
+            ("cancelled_at", "TIMESTAMP NULL" if mysql else "TEXT"),
+        ]
+        for column, definition in additions:
+            try:
+                connection.execute("ALTER TABLE matm_agent_access_grants ADD COLUMN %s %s" % (column, definition))
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
 
     def _ensure_knowledge_schema_columns(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
@@ -5582,9 +12080,11 @@ class SQLiteStore(FileStore):
         membership_id = _id("membership")
         workspace_id = _id("workspace")
         project_id = _id("project")
-        token = "me_live_" + secrets.token_urlsafe(32)
-        key_id = _id("key")
+        key_id = _id("masterkey")
+        token, token_digest = _governed_credential("master", company_id, key_id)
         account_label = redact_text((company_label or label or "Free Agent Account") + " Account")
+        human_credential_id = _id("humancred")
+        human_recovery_secret, human_token_digest = _governed_credential("human", company_id, human_credential_id)
         company_label = redact_text(company_label or label or "Free Agent Company")
         workspace_label = redact_text(label or "Free Agent Workspace")
         project_label = redact_text(project_label or "MemoryEndpoints Verification Project")
@@ -5630,11 +12130,21 @@ class SQLiteStore(FileStore):
                     )
                     connection.execute(
                         """
-                        INSERT INTO matm_api_keys (
-                          key_id, workspace_id, token_hash, created_at, last_used_at, revoked_at
-                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO matm_company_master_keys (
+                          master_key_id, company_id, token_hash, label, principal_name,
+                          created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (key_id, workspace_id, _hash(token), created_at, None, None),
+                        (key_id, company_id, token_digest, "Initial company master", "account-owner", created_at, None, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_human_owner_credentials (
+                          human_credential_id, company_id, token_hash, principal_name,
+                          created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (human_credential_id, company_id, human_token_digest, "account-owner", created_at, None, None),
                     )
                     created_rooms = self._ensure_default_meeting_rooms_sql(connection, workspace_id)
                     self._record_audit_sql(
@@ -5651,7 +12161,7 @@ class SQLiteStore(FileStore):
                             "meetingRoomCount": len(created_rooms),
                         },
                     )
-        return workspace_id, key_id, token, account_id, company_id, project_id
+        return workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret
 
     def register_agent(self, workspace_id, agent_id, display_name):
         now = utc_now()
@@ -6609,6 +13119,26 @@ class SQLiteStore(FileStore):
             ),
         )
 
+    def _record_connector_audit_sql(
+        self,
+        connection,
+        action,
+        actor_kind,
+        actor_value,
+        target_kind,
+        target_value,
+        workspace_id=None,
+        details=None,
+    ):
+        self._record_audit_sql(
+            connection,
+            None,
+            action,
+            _connector_audit_reference(actor_kind, actor_value),
+            _connector_audit_reference(target_kind, target_value),
+            _connector_audit_details(workspace_id, details),
+        )
+
     def _insert_outbox_sql(self, connection, workspace_id, event_type, aggregate_type, aggregate_id, payload=None):
         connection.execute(
             """
@@ -6648,32 +13178,156 @@ class SQLiteStore(FileStore):
             ),
         )
 
-    def authenticate(self, token, workspace_id=None):
-        if not token:
+    def _agent_scope_details_sql(self, connection, scope_type, scope_id):
+        scope_type = str(scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        if scope_type == "company":
+            row = connection.execute("SELECT company_id FROM matm_companies WHERE company_id = ?", (scope_id,)).fetchone()
+            return {"companyId": scope_id, "workspaceId": None, "projectId": None} if row else None
+        if scope_type == "workspace":
+            row = connection.execute("SELECT company_id FROM matm_workspaces WHERE workspace_id = ?", (scope_id,)).fetchone()
+            return {"companyId": row["company_id"], "workspaceId": scope_id, "projectId": None} if row else None
+        if scope_type == "project":
+            row = connection.execute(
+                """
+                SELECT p.project_id, p.workspace_id, w.company_id
+                FROM matm_projects p JOIN matm_workspaces w ON w.workspace_id = p.workspace_id
+                WHERE p.project_id = ?
+                """,
+                (scope_id,),
+            ).fetchone()
+            return {"companyId": row["company_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"]} if row else None
+        if scope_type in ("goal", "task"):
+            row = connection.execute(
+                "SELECT company_id, workspace_id, project_id FROM matm_scope_nodes WHERE scope_type = ? AND scope_id = ?",
+                (scope_type, scope_id),
+            ).fetchone()
+            return {"companyId": row["company_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"]} if row else None
+        return None
+
+    def _agent_grant_allows_sql(self, connection, grant, scope_type, scope_id):
+        grant = self._row_dict(grant)
+        target = self._agent_scope_details_sql(connection, scope_type, scope_id)
+        if not target or target["companyId"] != grant.get("company_id"):
+            return False
+        if grant.get("scope_type") not in _AGENT_ACCESS_SCOPE_LEVEL or scope_type not in _AGENT_ACCESS_SCOPE_LEVEL:
+            return False
+        current = (scope_type, scope_id)
+        seen = set()
+        while current not in seen:
+            seen.add(current)
+            if current == (grant.get("scope_type"), grant.get("scope_id")):
+                return True
+            current_type, current_id = current
+            if current_type == "company":
+                break
+            if current_type == "workspace":
+                row = connection.execute("SELECT company_id FROM matm_workspaces WHERE workspace_id = ?", (current_id,)).fetchone()
+                current = ("company", row["company_id"]) if row else (None, None)
+            elif current_type == "project":
+                row = connection.execute("SELECT workspace_id FROM matm_projects WHERE project_id = ?", (current_id,)).fetchone()
+                current = ("workspace", row["workspace_id"]) if row else (None, None)
+            else:
+                row = connection.execute("SELECT parent_scope_type, parent_scope_id FROM matm_scope_nodes WHERE scope_type = ? AND scope_id = ?", (current_type, current_id)).fetchone()
+                current = (row["parent_scope_type"], row["parent_scope_id"]) if row else (None, None)
+            if current[0] is None:
+                break
+        return False
+
+    def bootstrap_company_master_token(self, company_id, label=None, principal_name=None):
+        master_key_id = _id("masterkey")
+        token, token_digest = _governed_credential("master", company_id, master_key_id)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    company = connection.execute("SELECT company_id FROM matm_companies WHERE company_id = ?", (company_id,)).fetchone()
+                    if not company:
+                        return _agent_access_error("company_not_found")
+                    existing = connection.execute("SELECT master_key_id FROM matm_company_master_keys WHERE company_id = ? LIMIT 1", (company_id,)).fetchone()
+                    if existing:
+                        return _agent_access_error("company_master_already_bootstrapped")
+                    connection.execute(
+                        """
+                        INSERT INTO matm_company_master_keys (
+                          master_key_id, company_id, token_hash, label, principal_name,
+                          created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (master_key_id, company_id, token_digest, redact_text(label or "Company master"), redact_text(principal_name or "company-owner"), now, None, None),
+                    )
+                    self._record_audit_sql(connection, None, "company_master.bootstrap", "trusted-bootstrap", master_key_id, {"companyId": company_id})
+        record = {
+            "masterKeyId": master_key_id,
+            "companyId": company_id,
+            "label": redact_text(label or "Company master"),
+            "principalName": redact_text(principal_name or "company-owner"),
+            "createdAt": now,
+            "lastUsedAt": None,
+            "revokedAt": None,
+        }
+        return {"ok": True, "masterKey": _public_company_master_key(record), "token": token, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def authenticate_company_master(self, token, company_id=None):
+        master_key_id, secret = _parse_governed_credential(token, "master")
+        if not master_key_id:
             return None
-        token_hash = _hash(token)
-        for attempt in range(len(SQL_READ_AFTER_WRITE_RETRY_DELAYS) + 1):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT * FROM matm_company_master_keys WHERE master_key_id = ? AND revoked_at IS NULL", (master_key_id,)).fetchone()
+                    if not row or (company_id and row["company_id"] != company_id):
+                        return None
+                    company = connection.execute("SELECT status FROM matm_companies WHERE company_id = ?", (row["company_id"],)).fetchone()
+                    if not company or company["status"] != "active":
+                        return None
+                    expected = _governed_credential_digest("master", row["company_id"], master_key_id, secret)
+                    if not secrets.compare_digest(str(row["token_hash"] or ""), expected):
+                        return None
+                    connection.execute("UPDATE matm_company_master_keys SET last_used_at = ? WHERE master_key_id = ?", (utc_now(), master_key_id))
+                    return {
+                        "authType": "company_master",
+                        "credentialType": "company_master",
+                        "companyId": row["company_id"],
+                        "masterKeyId": row["master_key_id"],
+                        "principalName": row["principal_name"],
+                        "canInvite": True,
+                        "canRevoke": True,
+                        "valuesRedacted": True,
+                        "rawCredentialExposed": False,
+                        "rawPayloadExposed": False,
+                    }
+
+    def authenticate(self, token, workspace_id=None):
+        master = self.authenticate_company_master(token)
+        if master:
+            if workspace_id:
+                with _LOCK:
+                    with self._open_connection() as connection:
+                        target = self._agent_scope_details_sql(connection, "workspace", workspace_id)
+                if not target or target["companyId"] != master.get("companyId"):
+                    return None
+            master.update({"scopeType": "company", "scopeId": master.get("companyId"), "workspaceId": workspace_id, "projectId": None, "agentId": None})
+            return master
+        principal = self.authenticate_agent_token(token)
+        if not principal:
+            connector = self.authenticate_connector_token(token)
+            if not connector:
+                return None
+            if workspace_id and connector.get("workspaceId") != workspace_id:
+                return None
+            connector["grantId"] = connector.get("pairingId")
+            return connector
+        if workspace_id and principal.get("workspaceId") != workspace_id:
+            if principal.get("scopeType") != "company":
+                return None
             with _LOCK:
                 with self._open_connection() as connection:
-                    with connection:
-                        row = connection.execute(
-                            """
-                            SELECT * FROM matm_api_keys
-                            WHERE token_hash = ? AND revoked_at IS NULL
-                            """,
-                            (token_hash,),
-                        ).fetchone()
-                        if row:
-                            if workspace_id and row["workspace_id"] != workspace_id:
-                                return None
-                            connection.execute(
-                                "UPDATE matm_api_keys SET last_used_at = ? WHERE key_id = ?",
-                                (utc_now(), row["key_id"]),
-                            )
-                            return {"workspaceId": row["workspace_id"], "keyId": row["key_id"]}
-            if attempt < len(SQL_READ_AFTER_WRITE_RETRY_DELAYS):
-                time.sleep(SQL_READ_AFTER_WRITE_RETRY_DELAYS[attempt])
-        return None
+                    target = self._agent_scope_details_sql(connection, "workspace", workspace_id)
+            if not target or target["companyId"] != principal.get("companyId"):
+                return None
+            principal["workspaceId"] = workspace_id
+        return principal
 
     def check_idempotency(self, workspace_id, key, operation, body):
         if not key:
@@ -7026,7 +13680,6 @@ class SQLiteStore(FileStore):
             event = {
                 "eventId": row["memory_id"],
                 "workspaceId": row["workspace_id"],
-                "actorAgentId": row["actor_agent_id"],
                 "scope": row["scope_type"],
                 "scopeId": row["scope_id"],
                 "memoryType": row["memory_type"],
@@ -7046,6 +13699,19 @@ class SQLiteStore(FileStore):
                 "rawPrivatePayloadStored": self._bool(row["raw_private_payload_stored"]),
                 "valuesRedacted": self._bool(row["values_redacted"]),
             }
+            if row["actor_agent_id"]:
+                event["actorAgentId"] = row["actor_agent_id"]
+            if row["auth_mode"] == "human_account":
+                event["auditActor"] = {
+                    "humanAccountId": row["human_account_id"],
+                    "humanAccountSessionId": row["human_account_session_id"],
+                    "username": row["human_username"],
+                    "authorityId": row["human_authority_id"],
+                    "companyId": row["human_company_id"],
+                    "workspaceId": row["workspace_id"],
+                    "projectId": row["scope_id"],
+                    "authMode": "human_account",
+                }
             if row["updated_at"]:
                 event["updatedAt"] = row["updated_at"]
             if review_rows.get(row["memory_id"]):
@@ -7248,6 +13914,38 @@ class SQLiteStore(FileStore):
                         "rawPayloadExposed": False,
                     }
                     if created:
+                        if scope in ("goal", "task"):
+                            workspace = connection.execute(
+                                "SELECT company_id FROM matm_workspaces WHERE workspace_id = ?",
+                                (workspace_id,),
+                            ).fetchone()
+                            project = connection.execute(
+                                "SELECT project_id FROM matm_projects WHERE workspace_id = ? ORDER BY created_at, project_id LIMIT 1",
+                                (workspace_id,),
+                            ).fetchone()
+                            company_id = workspace["company_id"] if workspace else ""
+                            project_id = project["project_id"] if project else None
+                            parent_scope_type = "project" if project_id else "workspace"
+                            parent_scope_id = project_id or workspace_id
+                            connection.execute(
+                                """
+                                INSERT OR IGNORE INTO matm_scope_nodes (
+                                  scope_node_id, company_id, scope_type, scope_id,
+                                  parent_scope_type, parent_scope_id, workspace_id, project_id, created_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    _id("scopenode"),
+                                    company_id,
+                                    scope,
+                                    scope_id,
+                                    parent_scope_type,
+                                    parent_scope_id,
+                                    workspace_id,
+                                    project_id,
+                                    now,
+                                ),
+                            )
                         connection.execute(
                             """
                             INSERT INTO matm_meeting_rooms (
@@ -8700,6 +15398,120 @@ class SQLiteStore(FileStore):
                         "revokedAt": row["revoked_at"],
                     }
 
+                for row in connection.execute("SELECT * FROM matm_company_master_keys ORDER BY created_at, master_key_id"):
+                    data["companyMasterKeys"][row["master_key_id"]] = {
+                        "masterKeyId": row["master_key_id"],
+                        "companyId": row["company_id"],
+                        "tokenHash": row["token_hash"],
+                        "label": row["label"],
+                        "principalName": row["principal_name"],
+                        "createdAt": row["created_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_human_owner_credentials ORDER BY created_at, human_credential_id"):
+                    data["humanOwnerCredentials"][row["human_credential_id"]] = {
+                        "humanCredentialId": row["human_credential_id"],
+                        "companyId": row["company_id"],
+                        "tokenHash": row["token_hash"],
+                        "principalName": row["principal_name"],
+                        "createdAt": row["created_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agent_identities ORDER BY created_at, agent_identity_id"):
+                    data["agentIdentities"][row["agent_identity_id"]] = {
+                        "agentIdentityId": row["agent_identity_id"],
+                        "companyId": row["company_id"],
+                        "agentId": row["agent_id"],
+                        "agentName": row["agent_name"],
+                        "agentNameNormalized": row["agent_name_normalized"],
+                        "displayName": row["display_name"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agent_access_requests ORDER BY created_at, request_id"):
+                    data["agentAccessRequests"][row["request_id"]] = {
+                        "requestId": row["request_id"],
+                        "companyId": row["company_id"],
+                        "agentName": row["agent_name"],
+                        "agentNameNormalized": row["agent_name_normalized"],
+                        "displayName": row["display_name"],
+                        "justification": row["justification"],
+                        "assignmentContext": self._json_load(row["assignment_context_json"], {}),
+                        "scopeType": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "requestedBy": row["requested_by"],
+                        "status": row["status"],
+                        "supersedesTokenId": row["supersedes_token_id"],
+                        "memoryTransferFromTokenId": row["memory_transfer_from_token_id"],
+                        "createdAt": row["created_at"],
+                        "approvedAt": row["approved_at"],
+                        "approvedByMasterKeyId": row["approved_by_master_key_id"],
+                        "deniedAt": row["denied_at"],
+                        "deniedByMasterKeyId": row["denied_by_master_key_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "inviteId": row["invite_id"],
+                        "decisionReason": row["decision_reason"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agent_invites ORDER BY created_at, invite_id"):
+                    data["agentInvites"][row["invite_id"]] = {
+                        "inviteId": row["invite_id"],
+                        "requestId": row["request_id"],
+                        "companyId": row["company_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "tokenHash": row["token_hash"],
+                        "scopeType": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "expiresAt": row["expires_at"],
+                        "redeemedAt": row["redeemed_at"],
+                        "approvedByMasterKeyId": row["approved_by_master_key_id"],
+                        "revokedAt": row["revoked_at"],
+                        "revokedByMasterKeyId": row["revoked_by_master_key_id"],
+                        "grantId": row["grant_id"],
+                        "agentTokenId": row["agent_token_id"],
+                        "assignmentContext": self._json_load(row["assignment_context_json"], {}),
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agent_access_grants ORDER BY created_at, grant_id"):
+                    data["agentAccessGrants"][row["grant_id"]] = {
+                        "grantId": row["grant_id"],
+                        "companyId": row["company_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "scopeType": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "supersedesTokenId": row["supersedes_token_id"],
+                        "memoryTransferFromTokenId": row["memory_transfer_from_token_id"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "pendingExpiresAt": row["pending_expires_at"],
+                        "predecessorTokenId": row["predecessor_token_id"],
+                        "activatedAt": row["activated_at"],
+                        "cancelledAt": row["cancelled_at"],
+                        "revokedAt": row["revoked_at"],
+                        "revokedByMasterKeyId": row["revoked_by_master_key_id"],
+                    }
+
+                for row in connection.execute("SELECT * FROM matm_agent_tokens ORDER BY created_at, agent_token_id"):
+                    data["agentTokens"][row["agent_token_id"]] = {
+                        "agentTokenId": row["agent_token_id"],
+                        "grantId": row["grant_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "tokenHash": row["token_hash"],
+                        "createdAt": row["created_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    }
+
                 for row in connection.execute("SELECT * FROM matm_agents ORDER BY registered_at, agent_id"):
                     key = "%s:%s" % (row["workspace_id"], row["agent_id"])
                     data["agents"][key] = {
@@ -8717,7 +15529,6 @@ class SQLiteStore(FileStore):
                     event = {
                         "eventId": row["memory_id"],
                         "workspaceId": row["workspace_id"],
-                        "actorAgentId": row["actor_agent_id"],
                         "scope": row["scope_type"],
                         "scopeId": row["scope_id"],
                         "memoryType": row["memory_type"],
@@ -8737,6 +15548,19 @@ class SQLiteStore(FileStore):
                         "rawPrivatePayloadStored": self._bool(row["raw_private_payload_stored"]),
                         "valuesRedacted": self._bool(row["values_redacted"]),
                     }
+                    if row["actor_agent_id"]:
+                        event["actorAgentId"] = row["actor_agent_id"]
+                    if row["auth_mode"] == "human_account":
+                        event["auditActor"] = {
+                            "humanAccountId": row["human_account_id"],
+                            "humanAccountSessionId": row["human_account_session_id"],
+                            "username": row["human_username"],
+                            "authorityId": row["human_authority_id"],
+                            "companyId": row["human_company_id"],
+                            "workspaceId": row["workspace_id"],
+                            "projectId": row["scope_id"],
+                            "authMode": "human_account",
+                        }
                     if row["updated_at"]:
                         event["updatedAt"] = row["updated_at"]
                     data["memoryEvents"].append(event)
@@ -9054,6 +15878,182 @@ class SQLiteStore(FileStore):
                             ),
                         )
 
+                    for key_id, master_key in data.get("companyMasterKeys", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_company_master_keys (
+                              master_key_id, company_id, token_hash, label, principal_name,
+                              created_at, last_used_at, revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                master_key.get("masterKeyId") or key_id,
+                                master_key.get("companyId"),
+                                master_key.get("tokenHash"),
+                                master_key.get("label") or "Company master",
+                                master_key.get("principalName") or "company-owner",
+                                master_key.get("createdAt") or utc_now(),
+                                master_key.get("lastUsedAt"),
+                                master_key.get("revokedAt"),
+                            ),
+                        )
+
+                    for credential_id, credential in data.get("humanOwnerCredentials", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_human_owner_credentials (
+                              human_credential_id, company_id, token_hash, principal_name,
+                              created_at, last_used_at, revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                credential.get("humanCredentialId") or credential_id,
+                                credential.get("companyId"),
+                                credential.get("tokenHash"),
+                                credential.get("principalName") or "account-owner",
+                                credential.get("createdAt") or utc_now(),
+                                credential.get("lastUsedAt"),
+                                credential.get("revokedAt"),
+                            ),
+                        )
+
+                    for identity_id, identity in data.get("agentIdentities", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_identities (
+                              agent_identity_id, company_id, agent_id, agent_name, agent_name_normalized,
+                              display_name, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                identity.get("agentIdentityId") or identity_id,
+                                identity.get("companyId"),
+                                identity.get("agentId") or identity.get("agentNameNormalized") or identity.get("agentName"),
+                                identity.get("agentName") or identity.get("agentId"),
+                                identity.get("agentNameNormalized") or identity.get("agentId") or identity.get("agentName"),
+                                identity.get("displayName") or identity.get("agentName") or identity.get("agentId"),
+                                identity.get("status") or "active",
+                                identity.get("createdAt") or utc_now(),
+                                identity.get("updatedAt"),
+                            ),
+                        )
+
+                    for request_id, request in data.get("agentAccessRequests", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_access_requests (
+                              request_id, company_id, agent_name, agent_name_normalized, display_name,
+                              justification, assignment_context_json, scope_type, scope_id, requested_by,
+                              status, supersedes_token_id, memory_transfer_from_token_id, created_at,
+                              approved_at, approved_by_master_key_id, denied_at, denied_by_master_key_id,
+                              agent_identity_id, invite_id, decision_reason
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                request.get("requestId") or request_id,
+                                request.get("companyId"),
+                                request.get("agentName"),
+                                request.get("agentNameNormalized") or request.get("agentName") or request.get("displayName"),
+                                request.get("displayName") or request.get("agentName"),
+                                request.get("justification") or "",
+                                self._json_dump(request.get("assignmentContext") or {}),
+                                request.get("scopeType") or "workspace",
+                                request.get("scopeId"),
+                                request.get("requestedBy") or request.get("agentName") or "",
+                                request.get("status") or "pending",
+                                request.get("supersedesTokenId"),
+                                request.get("memoryTransferFromTokenId"),
+                                request.get("createdAt") or utc_now(),
+                                request.get("approvedAt"),
+                                request.get("approvedByMasterKeyId"),
+                                request.get("deniedAt"),
+                                request.get("deniedByMasterKeyId"),
+                                request.get("agentIdentityId"),
+                                request.get("inviteId"),
+                                request.get("decisionReason"),
+                            ),
+                        )
+
+                    for invite_id, invite in data.get("agentInvites", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_invites (
+                              invite_id, request_id, company_id, agent_identity_id, token_hash,
+                              scope_type, scope_id, status, created_at, expires_at, redeemed_at,
+                              approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
+                              grant_id, agent_token_id, assignment_context_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                invite.get("inviteId") or invite_id,
+                                invite.get("requestId"),
+                                invite.get("companyId"),
+                                invite.get("agentIdentityId"),
+                                invite.get("tokenHash"),
+                                invite.get("scopeType") or "workspace",
+                                invite.get("scopeId"),
+                                invite.get("status") or "issued",
+                                invite.get("createdAt") or utc_now(),
+                                invite.get("expiresAt") or utc_now(),
+                                invite.get("redeemedAt"),
+                                invite.get("approvedByMasterKeyId"),
+                                invite.get("revokedAt"),
+                                invite.get("revokedByMasterKeyId"),
+                                invite.get("grantId"),
+                                invite.get("agentTokenId"),
+                                self._json_dump(invite.get("assignmentContext") or {}),
+                            ),
+                        )
+
+                    for grant_id, grant in data.get("agentAccessGrants", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_access_grants (
+                              grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id, project_id,
+                              supersedes_token_id, memory_transfer_from_token_id, status, created_at,
+                              pending_expires_at, predecessor_token_id, activated_at, cancelled_at,
+                              revoked_at, revoked_by_master_key_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                grant.get("grantId") or grant_id,
+                                grant.get("companyId"),
+                                grant.get("agentIdentityId"),
+                                grant.get("scopeType") or "workspace",
+                                grant.get("scopeId"),
+                                grant.get("workspaceId"),
+                                grant.get("projectId"),
+                                grant.get("supersedesTokenId"),
+                                grant.get("memoryTransferFromTokenId"),
+                                grant.get("status") or "active",
+                                grant.get("createdAt") or utc_now(),
+                                grant.get("pendingExpiresAt"),
+                                grant.get("predecessorTokenId"),
+                                grant.get("activatedAt"),
+                                grant.get("cancelledAt"),
+                                grant.get("revokedAt"),
+                                grant.get("revokedByMasterKeyId"),
+                            ),
+                        )
+
+                    for token_id, token_record in data.get("agentTokens", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_tokens (
+                              agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                token_record.get("agentTokenId") or token_id,
+                                token_record.get("grantId"),
+                                token_record.get("agentIdentityId"),
+                                token_record.get("tokenHash"),
+                                token_record.get("createdAt") or utc_now(),
+                                token_record.get("lastUsedAt"),
+                                token_record.get("revokedAt"),
+                            ),
+                        )
+
                     for agent in data.get("agents", {}).values():
                         workspace_id = agent.get("workspaceId")
                         agent_id = agent.get("agentId")
@@ -9076,19 +16076,34 @@ class SQLiteStore(FileStore):
 
                     for event in data.get("memoryEvents", []):
                         memory_id = event.get("eventId")
+                        human_actor = event.get("auditActor") or {}
+                        human_auth_mode = (
+                            "human_account"
+                            if _valid_human_operational_audit_actor(human_actor)
+                            else "agent"
+                        )
                         connection.execute(
                             """
                             INSERT INTO matm_memory_records (
-                              memory_id, workspace_id, actor_agent_id, scope_type, scope_id, memory_type, subject, title,
+                              memory_id, workspace_id, actor_agent_id,
+                              human_account_id, human_account_session_id, human_username,
+                              human_authority_id, human_company_id, auth_mode,
+                              scope_type, scope_id, memory_type, subject, title,
                               public_safe_summary, source_uri, confidence, promotion_state, review_status,
                               body_hash, revision, firewall_json, status, raw_private_payload_stored,
                               values_redacted, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 memory_id,
                                 event.get("workspaceId"),
                                 event.get("actorAgentId"),
+                                human_actor.get("humanAccountId") if human_auth_mode == "human_account" else None,
+                                human_actor.get("humanAccountSessionId") if human_auth_mode == "human_account" else None,
+                                human_actor.get("username") if human_auth_mode == "human_account" else None,
+                                human_actor.get("authorityId") if human_auth_mode == "human_account" else None,
+                                human_actor.get("companyId") if human_auth_mode == "human_account" else None,
+                                human_auth_mode,
                                 event.get("scope") or "workspace",
                                 event.get("scopeId") or event.get("workspaceId"),
                                 event.get("memoryType") or "note",
@@ -9543,6 +16558,4661 @@ class SQLiteStore(FileStore):
                                 self._int_bool(item.get("idempotencyKeyExposed")),
                             ),
                         )
+    def _agent_request_public_sql(self, row):
+        row = self._row_dict(row)
+        return _public_agent_access_request(
+            {
+                "requestId": row.get("request_id"),
+                "companyId": row.get("company_id"),
+                "agentName": row.get("agent_name"),
+                "displayName": row.get("display_name"),
+                "justification": row.get("justification"),
+                "assignmentContext": self._json_load(row.get("assignment_context_json"), {}),
+                "scopeType": row.get("scope_type"),
+                "scopeId": row.get("scope_id"),
+                "status": row.get("status"),
+                "createdAt": row.get("created_at"),
+                "approvedAt": row.get("approved_at"),
+                "agentIdentityId": row.get("agent_identity_id"),
+                "inviteId": row.get("invite_id"),
+                "decisionReason": row.get("decision_reason"),
+                "supersedesTokenId": row.get("supersedes_token_id"),
+                "memoryTransferFromTokenId": row.get("memory_transfer_from_token_id"),
+            }
+        )
+
+    def request_agent_access(
+        self,
+        company_id,
+        agent_name,
+        scope_type,
+        scope_id,
+        requested_by=None,
+        supersedes_token_id=None,
+        memory_transfer_from_token_id=None,
+        display_name=None,
+        justification=None,
+        assignment_context=None,
+    ):
+        scope_type = str(scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        canonical_name, normalized_name = _normalize_agent_access_name(agent_name)
+        if not canonical_name:
+            return _agent_access_error("agent_name_invalid", namePolicy="3-64 lowercase ASCII characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$")
+        if scope_type not in _AGENT_GRANT_SCOPE_TYPES:
+            return _agent_access_error("scope_invalid")
+        normalized_display_name = _normalize_agent_display_name(display_name, canonical_name)
+        if not normalized_display_name:
+            return _agent_access_error("display_name_invalid")
+        request_id = _id("accessreq")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    target = self._agent_scope_details_sql(connection, scope_type, scope_id)
+                    if not target or target["companyId"] != company_id:
+                        return _agent_access_error("scope_not_in_company")
+                    reference_ids = [item for item in (supersedes_token_id, memory_transfer_from_token_id) if item]
+                    for reference_id in reference_ids:
+                        reference = connection.execute(
+                            """
+                            SELECT i.agent_name_normalized, g.company_id, g.status AS grant_status, t.revoked_at
+                            FROM matm_agent_tokens t
+                            JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                            JOIN matm_agent_identities i ON i.agent_identity_id = t.agent_identity_id
+                            WHERE t.agent_token_id = ?
+                            """,
+                            (reference_id,),
+                        ).fetchone()
+                        if not reference or reference["company_id"] != company_id or reference["agent_name_normalized"] != normalized_name or (reference_id == supersedes_token_id and (reference["revoked_at"] or reference["grant_status"] != "active")):
+                            return _agent_access_error("referenced_agent_token_invalid")
+                    existing_identity = connection.execute("SELECT agent_identity_id FROM matm_agent_identities WHERE company_id = ? AND agent_name_normalized = ?", (company_id, normalized_name)).fetchone()
+                    existing_request = connection.execute("SELECT request_id FROM matm_agent_access_requests WHERE company_id = ? AND agent_name_normalized = ? AND status IN ('pending', 'approved') LIMIT 1", (company_id, normalized_name)).fetchone()
+                    if (existing_identity or existing_request) and not reference_ids:
+                        return _agent_access_error("agent_name_unavailable")
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_access_requests (
+                          request_id, company_id, agent_name, agent_name_normalized, display_name,
+                          justification, assignment_context_json, scope_type, scope_id, requested_by,
+                          status, supersedes_token_id, memory_transfer_from_token_id, created_at,
+                          approved_at, approved_by_master_key_id, denied_at, denied_by_master_key_id,
+                          agent_identity_id, invite_id, decision_reason
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            request_id, company_id, canonical_name, normalized_name,
+                            normalized_display_name, redact_text(justification or ""),
+                            self._json_dump(_public_value(assignment_context or {})), scope_type, scope_id,
+                            redact_text(requested_by or canonical_name), "pending", supersedes_token_id,
+                            memory_transfer_from_token_id, now, None, None, None, None, None, None, None,
+                        ),
+                    )
+                    self._record_audit_sql(connection, target.get("workspaceId"), "agent_access.request", canonical_name, request_id, {"scopeType": scope_type, "scopeId": scope_id})
+                    row = connection.execute("SELECT * FROM matm_agent_access_requests WHERE request_id = ?", (request_id,)).fetchone()
+        return {"ok": True, "request": self._agent_request_public_sql(row), "valuesRedacted": True}
+
+    def decide_agent_access_request(self, master_token, request_id, decision, reason=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        decision = str(decision or "").strip().lower()
+        if decision not in ("approved", "denied"):
+            return _agent_access_error("access_decision_invalid")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT * FROM matm_agent_access_requests WHERE request_id = ?", (request_id,)).fetchone()
+                    if not row or row["company_id"] != principal.get("companyId"):
+                        return _agent_access_error("access_request_not_found")
+                    if row["status"] != "pending":
+                        return _agent_access_error("access_request_not_pending")
+                    identity_id = None
+                    if decision == "approved":
+                        identity = connection.execute("SELECT * FROM matm_agent_identities WHERE company_id = ? AND agent_name_normalized = ?", (row["company_id"], row["agent_name_normalized"])).fetchone()
+                        if not identity:
+                            identity_id = _id("agentidentity")
+                            connection.execute(
+                                """
+                                INSERT OR IGNORE INTO matm_agent_identities (
+                                  agent_identity_id, company_id, agent_id, agent_name, agent_name_normalized,
+                                  display_name, status, created_at, updated_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (identity_id, row["company_id"], row["agent_name_normalized"], row["agent_name"], row["agent_name_normalized"], row["display_name"], "active", now, None),
+                            )
+                            identity = connection.execute("SELECT * FROM matm_agent_identities WHERE company_id = ? AND agent_name_normalized = ?", (row["company_id"], row["agent_name_normalized"])).fetchone()
+                        if not identity or identity["status"] != "active":
+                            return _agent_access_error("agent_identity_inactive")
+                        identity_id = identity["agent_identity_id"]
+                        changed = connection.execute(
+                            "UPDATE matm_agent_access_requests SET status = 'approved', approved_at = ?, approved_by_master_key_id = ?, agent_identity_id = ?, decision_reason = ? WHERE request_id = ? AND status = 'pending'",
+                            (now, principal["masterKeyId"], identity_id, redact_text(reason or ""), request_id),
+                        )
+                    else:
+                        changed = connection.execute(
+                            "UPDATE matm_agent_access_requests SET status = 'denied', denied_at = ?, denied_by_master_key_id = ?, decision_reason = ? WHERE request_id = ? AND status = 'pending'",
+                            (now, principal["masterKeyId"], redact_text(reason or ""), request_id),
+                        )
+                    if changed.rowcount != 1:
+                        return _agent_access_error("access_request_not_pending")
+                    target = self._agent_scope_details_sql(connection, row["scope_type"], row["scope_id"])
+                    self._record_audit_sql(connection, target.get("workspaceId") if target else None, "agent_access.%s" % ("approve" if decision == "approved" else "deny"), principal["masterKeyId"], request_id, {"scopeType": row["scope_type"], "scopeId": row["scope_id"]})
+                    decided = connection.execute("SELECT * FROM matm_agent_access_requests WHERE request_id = ?", (request_id,)).fetchone()
+        return {"ok": True, "request": self._agent_request_public_sql(decided), "valuesRedacted": True}
+
+    def approve_agent_access_request(self, master_token, request_id, expires_in_seconds=None):
+        return self.decide_agent_access_request(master_token, request_id, "approved")
+
+    def deny_agent_access_request(self, master_token, request_id):
+        return self.decide_agent_access_request(master_token, request_id, "denied")
+
+    def issue_agent_invite(self, master_token, request_id, expires_in_seconds=900, assignment_context=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        invite_id = _id("invite")
+        now = utc_now()
+        expires_at = _agent_invite_expiry(expires_in_seconds)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    request = connection.execute("SELECT * FROM matm_agent_access_requests WHERE request_id = ?", (request_id,)).fetchone()
+                    if not request or request["company_id"] != principal.get("companyId"):
+                        return _agent_access_error("access_request_not_found")
+                    if request["status"] != "approved" or not request["agent_identity_id"]:
+                        return _agent_access_error("access_request_not_approved")
+                    if request["invite_id"]:
+                        return _agent_access_error("invite_already_issued")
+                    identity = connection.execute("SELECT * FROM matm_agent_identities WHERE agent_identity_id = ? AND status = 'active'", (request["agent_identity_id"],)).fetchone()
+                    if not identity:
+                        return _agent_access_error("agent_identity_inactive")
+                    invite_secret, invite_digest = _governed_credential("invite", request["company_id"], invite_id)
+                    context = _public_value(assignment_context or self._json_load(request["assignment_context_json"], {}) or {})
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_invites (
+                          invite_id, request_id, company_id, agent_identity_id, token_hash,
+                          scope_type, scope_id, status, created_at, expires_at, redeemed_at,
+                          approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
+                          grant_id, agent_token_id, assignment_context_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (invite_id, request_id, request["company_id"], identity["agent_identity_id"], invite_digest, request["scope_type"], request["scope_id"], "issued", now, expires_at, None, principal["masterKeyId"], None, None, None, None, self._json_dump(context)),
+                    )
+                    changed = connection.execute("UPDATE matm_agent_access_requests SET invite_id = ? WHERE request_id = ? AND invite_id IS NULL", (invite_id, request_id))
+                    if changed.rowcount != 1:
+                        raise RuntimeError("Concurrent invite issuance was denied.")
+                    target = self._agent_scope_details_sql(connection, request["scope_type"], request["scope_id"])
+                    self._record_audit_sql(connection, target.get("workspaceId") if target else None, "agent_invite.issue", principal["masterKeyId"], invite_id, {"requestId": request_id, "scopeType": request["scope_type"], "scopeId": request["scope_id"]})
+                    invite = {
+                        "inviteId": invite_id, "requestId": request_id, "companyId": request["company_id"],
+                        "agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"],
+                        "agentName": identity["agent_name"], "scopeType": request["scope_type"], "scopeId": request["scope_id"],
+                        "status": "issued", "createdAt": now, "expiresAt": expires_at,
+                        "assignmentContext": context,
+                    }
+        return {"ok": True, "request": self._agent_request_public_sql(dict(self._row_dict(request), invite_id=invite_id)), "invite": _public_agent_invite(invite), "inviteSecret": invite_secret, "credentialReturnedOnce": True, "valuesRedacted": True}
+    def redeem_agent_invite(self, invite_secret):
+        invite_id, secret = _parse_governed_credential(invite_secret, "invite")
+        if not invite_id:
+            return _agent_access_error("invite_unavailable")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    invite = connection.execute("SELECT * FROM matm_agent_invites WHERE invite_id = ?", (invite_id,)).fetchone()
+                    if not invite:
+                        return _agent_access_error("invite_unavailable")
+                    expected = _governed_credential_digest("invite", invite["company_id"], invite_id, secret)
+                    if not secrets.compare_digest(str(invite["token_hash"] or ""), expected):
+                        return _agent_access_error("invite_unavailable")
+                    if invite["status"] == "redeemed" or invite["redeemed_at"]:
+                        return _agent_access_error("invite_redeemed")
+                    if invite["status"] == "revoked":
+                        return _agent_access_error("invite_revoked")
+                    if invite["status"] == "expired":
+                        return _agent_access_error("invite_expired")
+                    if invite["status"] != "issued":
+                        return _agent_access_error("invite_unavailable")
+                    if _timestamp_expired(invite["expires_at"]):
+                        connection.execute("UPDATE matm_agent_invites SET status = 'expired' WHERE invite_id = ? AND status = 'issued'", (invite_id,))
+                        return _agent_access_error("invite_expired")
+                    request = connection.execute("SELECT * FROM matm_agent_access_requests WHERE request_id = ? AND status = 'approved'", (invite["request_id"],)).fetchone()
+                    identity = connection.execute("SELECT * FROM matm_agent_identities WHERE agent_identity_id = ? AND status = 'active'", (invite["agent_identity_id"],)).fetchone()
+                    if not request or not identity:
+                        return _agent_access_error("invite_unavailable")
+                    predecessor = None
+                    original_grant_id = None
+                    if request["supersedes_token_id"]:
+                        predecessor = connection.execute(
+                            """
+                            SELECT t.agent_token_id, t.agent_identity_id AS token_agent_identity_id,
+                                   t.revoked_at AS token_revoked_at, g.grant_id, g.company_id,
+                                   g.agent_identity_id AS grant_agent_identity_id,
+                                   g.status AS grant_status, g.revoked_at AS grant_revoked_at,
+                                   g.supersedes_token_id AS ancestor_token_id
+                            FROM matm_agent_tokens t
+                            JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                            WHERE t.agent_token_id = ?
+                            """,
+                            (request["supersedes_token_id"],),
+                        ).fetchone()
+                        if (
+                            not predecessor
+                            or predecessor["token_revoked_at"]
+                            or predecessor["grant_status"] != "active"
+                            or predecessor["grant_revoked_at"]
+                            or predecessor["company_id"] != invite["company_id"]
+                            or predecessor["token_agent_identity_id"] != identity["agent_identity_id"]
+                            or predecessor["grant_agent_identity_id"] != identity["agent_identity_id"]
+                        ):
+                            return _agent_access_error("referenced_agent_token_invalid")
+                        original_grant_id = predecessor["grant_id"]
+                        ancestor_token_id = predecessor["ancestor_token_id"]
+                        seen_token_ids = {predecessor["agent_token_id"]}
+                        while ancestor_token_id:
+                            if ancestor_token_id in seen_token_ids:
+                                return _agent_access_error("referenced_agent_token_invalid")
+                            seen_token_ids.add(ancestor_token_id)
+                            ancestor = connection.execute(
+                                """
+                                SELECT t.agent_token_id, g.grant_id, g.company_id,
+                                       g.supersedes_token_id AS ancestor_token_id
+                                FROM matm_agent_tokens t
+                                JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                                WHERE t.agent_token_id = ?
+                                """,
+                                (ancestor_token_id,),
+                            ).fetchone()
+                            if not ancestor or ancestor["company_id"] != invite["company_id"]:
+                                return _agent_access_error("referenced_agent_token_invalid")
+                            original_grant_id = ancestor["grant_id"]
+                            ancestor_token_id = ancestor["ancestor_token_id"]
+                    consumed = connection.execute(
+                        "UPDATE matm_agent_invites SET status = 'redeemed', redeemed_at = ? WHERE invite_id = ? AND status = 'issued' AND redeemed_at IS NULL AND expires_at > ?",
+                        (now, invite_id, now),
+                    )
+                    if consumed.rowcount != 1:
+                        current = connection.execute("SELECT status FROM matm_agent_invites WHERE invite_id = ?", (invite_id,)).fetchone()
+                        return _agent_access_error("invite_redeemed" if current and current["status"] == "redeemed" else "invite_unavailable")
+                    target = self._agent_scope_details_sql(connection, invite["scope_type"], invite["scope_id"])
+                    if not target or target["companyId"] != invite["company_id"]:
+                        raise RuntimeError("Approved invite scope no longer belongs to its company.")
+                    grant_id = _id("grant")
+                    agent_token_id = _id("agenttoken")
+                    agent_token, agent_digest = _governed_credential("agent", invite["company_id"], agent_token_id)
+                    grant_status = "active"
+                    pending_expires_at = None
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_access_grants (
+                          grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          created_at, pending_expires_at, predecessor_token_id, activated_at,
+                          cancelled_at, revoked_at, revoked_by_master_key_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (grant_id, invite["company_id"], identity["agent_identity_id"], invite["scope_type"], invite["scope_id"], target.get("workspaceId"), target.get("projectId"), request["supersedes_token_id"], request["memory_transfer_from_token_id"], grant_status, now, pending_expires_at, request["supersedes_token_id"], now, None, None, None),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (agent_token_id, grant_id, identity["agent_identity_id"], agent_digest, now, None, None),
+                    )
+                    if predecessor:
+                        revoked_token = connection.execute(
+                            "UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL",
+                            (now, predecessor["agent_token_id"]),
+                        )
+                        revoked_grant = connection.execute(
+                            "UPDATE matm_agent_access_grants SET status = 'revoked', revoked_at = ?, revoked_by_master_key_id = ? WHERE grant_id = ? AND status = 'active' AND revoked_at IS NULL",
+                            (now, invite["approved_by_master_key_id"], predecessor["grant_id"]),
+                        )
+                        if revoked_token.rowcount != 1 or revoked_grant.rowcount != 1:
+                            raise RuntimeError("Concurrent invite replacement was denied.")
+                    connection.execute("UPDATE matm_agent_invites SET grant_id = ?, agent_token_id = ? WHERE invite_id = ?", (grant_id, agent_token_id, invite_id))
+                    if target.get("workspaceId"):
+                        agent_row = connection.execute("SELECT agent_record_id FROM matm_agents WHERE workspace_id = ? AND agent_id = ?", (target["workspaceId"], identity["agent_id"])).fetchone()
+                        if agent_row:
+                            connection.execute("UPDATE matm_agents SET display_name = ?, status = 'active', last_seen_at = ? WHERE agent_record_id = ?", (identity["display_name"], now, agent_row["agent_record_id"]))
+                        else:
+                            connection.execute(
+                                "INSERT INTO matm_agents (agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (self._agent_record_id(target["workspaceId"], identity["agent_id"]), target["workspaceId"], identity["agent_id"], identity["display_name"], "active", now, now),
+                            )
+                    self._record_audit_sql(connection, target.get("workspaceId"), "agent_invite.redeem", identity["agent_id"], invite_id, {"grantId": grant_id, "agentTokenId": agent_token_id, "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "atomicReplacement": bool(predecessor), "supersedesTokenId": request["supersedes_token_id"]})
+        identity_record = {"agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"], "agentName": identity["display_name"]}
+        grant_record = {
+            "grantId": grant_id, "companyId": invite["company_id"], "agentIdentityId": identity["agent_identity_id"],
+            "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "workspaceId": target.get("workspaceId"),
+            "projectId": target.get("projectId"), "supersedesTokenId": request["supersedes_token_id"],
+            "memoryTransferFromTokenId": request["memory_transfer_from_token_id"], "status": grant_status,
+            "publicGrantId": original_grant_id or grant_id,
+        }
+        token_record = {"agentTokenId": agent_token_id, "grantId": grant_id, "agentIdentityId": identity["agent_identity_id"]}
+        public_invite = {
+            "inviteId": invite_id, "requestId": invite["request_id"], "companyId": invite["company_id"],
+            "agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"], "agentName": identity["display_name"],
+            "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "status": "redeemed",
+            "createdAt": invite["created_at"], "expiresAt": invite["expires_at"], "redeemedAt": now,
+            "grantId": grant_id, "agentTokenId": agent_token_id,
+            "assignmentContext": self._json_load(invite["assignment_context_json"], {}),
+        }
+        return {"ok": True, "invite": _public_agent_invite(public_invite), "principal": _public_agent_principal(identity_record, grant_record, token_record), "agentToken": agent_token, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def authenticate_agent_token(self, token, scope_type=None, scope_id=None):
+        agent_token_id, secret = _parse_governed_credential(token, "agent")
+        if not agent_token_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        """
+                        SELECT t.*, g.company_id, g.scope_type, g.scope_id, g.workspace_id, g.project_id,
+                               g.supersedes_token_id, g.memory_transfer_from_token_id, g.status AS grant_status,
+                               g.revoked_at AS grant_revoked_at, i.agent_id, i.agent_name, i.display_name,
+                               i.status AS identity_status, c.status AS company_status
+                        FROM matm_agent_tokens t
+                        JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                        JOIN matm_agent_identities i ON i.agent_identity_id = t.agent_identity_id
+                        JOIN matm_companies c ON c.company_id = g.company_id
+                        WHERE t.agent_token_id = ?
+                        """,
+                        (agent_token_id,),
+                    ).fetchone()
+                    if not row or row["revoked_at"] or row["grant_status"] != "active" or row["grant_revoked_at"] or row["identity_status"] != "active" or row["company_status"] != "active":
+                        return None
+                    expected = _governed_credential_digest("agent", row["company_id"], agent_token_id, secret)
+                    if not secrets.compare_digest(str(row["token_hash"] or ""), expected):
+                        return None
+                    if scope_type is not None or scope_id is not None:
+                        if not self._agent_grant_allows_sql(connection, row, scope_type, scope_id):
+                            return None
+                    connection.execute("UPDATE matm_agent_tokens SET last_used_at = ? WHERE agent_token_id = ?", (utc_now(), agent_token_id))
+                    public_grant_id = row["grant_id"]
+                    ancestor_token_id = row["supersedes_token_id"]
+                    seen_token_ids = set()
+                    while ancestor_token_id and ancestor_token_id not in seen_token_ids:
+                        seen_token_ids.add(ancestor_token_id)
+                        predecessor = connection.execute(
+                            """
+                            SELECT t.agent_token_id, g.grant_id, g.supersedes_token_id
+                            FROM matm_agent_tokens t
+                            JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                            WHERE t.agent_token_id = ?
+                            """,
+                            (ancestor_token_id,),
+                        ).fetchone()
+                        if not predecessor:
+                            break
+                        public_grant_id = predecessor["grant_id"]
+                        ancestor_token_id = predecessor["supersedes_token_id"]
+        identity = {"agentIdentityId": row["agent_identity_id"], "agentId": row["agent_id"], "agentName": row["display_name"]}
+        grant = {
+            "grantId": row["grant_id"], "companyId": row["company_id"], "scopeType": row["scope_type"],
+            "scopeId": row["scope_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"],
+            "supersedesTokenId": row["supersedes_token_id"], "memoryTransferFromTokenId": row["memory_transfer_from_token_id"],
+            "publicGrantId": public_grant_id,
+        }
+        return _public_agent_principal(identity, grant, {"agentTokenId": row["agent_token_id"], "grantId": row["grant_id"]})
+
+    def auth_allows_scope(self, principal, scope_type, scope_id):
+        if not principal:
+            return False
+        with _LOCK:
+            with self._open_connection() as connection:
+                if principal.get("credentialType") == "company_master":
+                    target = self._agent_scope_details_sql(connection, scope_type, scope_id)
+                    return bool(target and target["companyId"] == principal.get("companyId"))
+                if principal.get("credentialType") != "agent":
+                    return False
+                if principal.get("publicCredentialType") == "connector_agent":
+                    scope_type = str(scope_type or "").strip().lower()
+                    scope_id = str(scope_id or "").strip()
+                    if scope_type == "agent":
+                        return scope_id == principal.get("agentId")
+                    if scope_type == "workspace":
+                        return scope_id == principal.get("workspaceId")
+                    if scope_type == "project":
+                        project = connection.execute("SELECT workspace_id FROM matm_projects WHERE project_id = ?", (scope_id,)).fetchone()
+                        return bool(project and project["workspace_id"] == principal.get("workspaceId"))
+                    if scope_type in ("goal", "task"):
+                        node = connection.execute("SELECT workspace_id FROM matm_scope_nodes WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id)).fetchone()
+                        return bool(node and node["workspace_id"] == principal.get("workspaceId"))
+                    return False
+                grant = connection.execute(
+                    """
+                    SELECT g.*
+                    FROM matm_agent_tokens t
+                    JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                    WHERE t.agent_token_id = ? AND t.revoked_at IS NULL
+                      AND g.status = 'active' AND g.revoked_at IS NULL
+                    """,
+                    (principal.get("agentTokenId") or principal.get("credentialId"),),
+                ).fetchone()
+                return bool(grant and self._agent_grant_allows_sql(connection, grant, scope_type, scope_id))
+
+    def auth_scope_visible(self, principal, scope_type, scope_id):
+        return self.auth_allows_scope(principal, scope_type, scope_id)
+
+    def revoke_agent_invite(self, master_token, invite_id):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    invite = connection.execute("SELECT * FROM matm_agent_invites WHERE invite_id = ?", (invite_id,)).fetchone()
+                    if not invite or invite["company_id"] != principal.get("companyId"):
+                        return _agent_access_error("invite_not_found")
+                    changed = connection.execute("UPDATE matm_agent_invites SET status = 'revoked', revoked_at = ?, revoked_by_master_key_id = ? WHERE invite_id = ? AND status = 'issued' AND redeemed_at IS NULL", (now, principal["masterKeyId"], invite_id))
+                    if changed.rowcount != 1:
+                        return _agent_access_error("invite_not_revocable")
+                    target = self._agent_scope_details_sql(connection, invite["scope_type"], invite["scope_id"])
+                    self._record_audit_sql(connection, target.get("workspaceId") if target else None, "agent_invite.revoke", principal["masterKeyId"], invite_id, {"scopeType": invite["scope_type"], "scopeId": invite["scope_id"]})
+        public = {"inviteId": invite_id, "requestId": invite["request_id"], "companyId": invite["company_id"], "agentIdentityId": invite["agent_identity_id"], "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "status": "revoked", "createdAt": invite["created_at"], "expiresAt": invite["expires_at"]}
+        return {"ok": True, "invite": _public_agent_invite(public), "valuesRedacted": True}
+
+    def revoke_agent_token(self, master_token, agent_token_id):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT t.*, g.company_id, g.scope_type, g.scope_id, g.workspace_id FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (agent_token_id,)).fetchone()
+                    if not row or row["company_id"] != principal.get("companyId"):
+                        return _agent_access_error("agent_token_not_found")
+                    changed = connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, agent_token_id))
+                    if changed.rowcount != 1:
+                        return _agent_access_error("agent_token_already_revoked")
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'revoked', revoked_at = ?, revoked_by_master_key_id = ? WHERE grant_id = ? AND status = 'active'", (now, principal["masterKeyId"], row["grant_id"]))
+                    self._record_audit_sql(connection, row["workspace_id"], "agent_token.revoke", principal["masterKeyId"], agent_token_id, {"grantId": row["grant_id"], "scopeType": row["scope_type"], "scopeId": row["scope_id"]})
+        return {"ok": True, "agentTokenId": agent_token_id, "grantId": row["grant_id"], "revokedAt": now, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}
+
+    def list_agent_invites(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        sql = "SELECT v.*, i.agent_id, i.display_name FROM matm_agent_invites v JOIN matm_agent_identities i ON i.agent_identity_id = v.agent_identity_id WHERE v.company_id = ?"
+        params = [principal["companyId"]]
+        if status:
+            sql += " AND v.status = ?"
+            params.append(status)
+        sql += " ORDER BY v.created_at, v.invite_id"
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(sql, tuple(params)).fetchall()
+        items = []
+        for row in rows:
+            items.append(_public_agent_invite({"inviteId": row["invite_id"], "requestId": row["request_id"], "companyId": row["company_id"], "agentIdentityId": row["agent_identity_id"], "agentId": row["agent_id"], "agentName": row["display_name"], "scopeType": row["scope_type"], "scopeId": row["scope_id"], "status": row["status"], "createdAt": row["created_at"], "expiresAt": row["expires_at"], "redeemedAt": row["redeemed_at"], "grantId": row["grant_id"], "agentTokenId": row["agent_token_id"], "assignmentContext": self._json_load(row["assignment_context_json"], {})}))
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def list_agent_tokens(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT t.agent_token_id, t.created_at, t.last_used_at, t.revoked_at,
+                           g.grant_id, g.scope_type, g.scope_id, g.status, i.agent_id, i.display_name
+                    FROM matm_agent_tokens t
+                    JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                    JOIN matm_agent_identities i ON i.agent_identity_id = t.agent_identity_id
+                    WHERE g.company_id = ? ORDER BY t.created_at, t.agent_token_id
+                    """,
+                    (principal["companyId"],),
+                ).fetchall()
+        items = [{"agentTokenId": row["agent_token_id"], "credentialId": row["agent_token_id"], "grantId": row["grant_id"], "agentId": row["agent_id"], "agentName": row["display_name"], "scopeType": row["scope_type"], "scopeId": row["scope_id"], "status": "revoked" if row["revoked_at"] else row["status"], "createdAt": row["created_at"], "lastUsedAt": row["last_used_at"], "revokedAt": row["revoked_at"], "valuesRedacted": True, "rawCredentialExposed": False} for row in rows]
+        if status:
+            items = [item for item in items if item["status"] == status]
+        return {"ok": True, "items": items, "valuesRedacted": True}
+    def register_scope_node(self, company_id, scope_type, scope_id, parent_scope_type, parent_scope_id):
+        scope_type = str(scope_type or "").strip().lower()
+        parent_scope_type = str(parent_scope_type or "").strip().lower()
+        scope_id = str(scope_id or "").strip()
+        parent_scope_id = str(parent_scope_id or "").strip()
+        if scope_type not in ("goal", "task") or not scope_id:
+            return _agent_access_error("scope_invalid")
+        if scope_type == "goal" and parent_scope_type != "project":
+            return _agent_access_error("scope_parent_invalid")
+        if scope_type == "task" and parent_scope_type not in ("project", "goal"):
+            return _agent_access_error("scope_parent_invalid")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    parent = self._agent_scope_details_sql(connection, parent_scope_type, parent_scope_id)
+                    if not parent or parent["companyId"] != company_id:
+                        return _agent_access_error("scope_parent_invalid")
+                    existing = connection.execute("SELECT * FROM matm_scope_nodes WHERE company_id = ? AND scope_type = ? AND scope_id = ?", (company_id, scope_type, scope_id)).fetchone()
+                    if existing:
+                        if existing["parent_scope_type"] != parent_scope_type or existing["parent_scope_id"] != parent_scope_id:
+                            return _agent_access_error("scope_parent_immutable")
+                    else:
+                        connection.execute(
+                            "INSERT INTO matm_scope_nodes (scope_node_id, company_id, scope_type, scope_id, parent_scope_type, parent_scope_id, workspace_id, project_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (_id("scopenode"), company_id, scope_type, scope_id, parent_scope_type, parent_scope_id, parent.get("workspaceId"), parent.get("projectId"), utc_now()),
+                        )
+        return {"ok": True, "companyId": company_id, "scopeType": scope_type, "scopeId": scope_id, "parentScopeType": parent_scope_type, "parentScopeId": parent_scope_id, "workspaceId": parent.get("workspaceId"), "projectId": parent.get("projectId"), "valuesRedacted": True}
+
+    def list_agent_access_requests(self, master_token, status=None):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        sql = "SELECT * FROM matm_agent_access_requests WHERE company_id = ?"
+        params = [principal["companyId"]]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at, request_id"
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(sql, tuple(params)).fetchall()
+        return {"ok": True, "items": [self._agent_request_public_sql(row) for row in rows], "valuesRedacted": True}
+
+    def company_scope_catalog(self, master_token):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        company_id = principal["companyId"]
+        with _LOCK:
+            with self._open_connection() as connection:
+                company = connection.execute("SELECT company_id, label, status FROM matm_companies WHERE company_id = ?", (company_id,)).fetchone()
+                workspaces = connection.execute("SELECT workspace_id, label, status FROM matm_workspaces WHERE company_id = ? ORDER BY label, workspace_id", (company_id,)).fetchall()
+                projects = connection.execute("SELECT p.project_id, p.workspace_id, p.label, p.status FROM matm_projects p JOIN matm_workspaces w ON w.workspace_id = p.workspace_id WHERE w.company_id = ? ORDER BY p.label, p.project_id", (company_id,)).fetchall()
+                nodes = connection.execute("SELECT * FROM matm_scope_nodes WHERE company_id = ? ORDER BY scope_type, scope_id", (company_id,)).fetchall()
+        return {
+            "ok": True,
+            "company": {"companyId": company["company_id"], "label": company["label"], "status": company["status"]},
+            "workspaces": [{"workspaceId": row["workspace_id"], "label": row["label"], "status": row["status"]} for row in workspaces],
+            "projects": [{"projectId": row["project_id"], "workspaceId": row["workspace_id"], "label": row["label"], "status": row["status"]} for row in projects],
+            "scopeNodes": [{"scopeNodeId": row["scope_node_id"], "scopeType": row["scope_type"], "scopeId": row["scope_id"], "parentScopeType": row["parent_scope_type"], "parentScopeId": row["parent_scope_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"], "valuesRedacted": True} for row in nodes],
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+        }
+    def authenticate_human_owner(self, recovery_secret, company_id=None):
+        credential_id, secret = _parse_governed_credential(recovery_secret, "human")
+        if not credential_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT * FROM matm_human_owner_credentials WHERE human_credential_id = ? AND revoked_at IS NULL", (credential_id,)).fetchone()
+                    if not row or (company_id and row["company_id"] != company_id):
+                        return None
+                    expected = _governed_credential_digest("human", row["company_id"], credential_id, secret)
+                    if not secrets.compare_digest(str(row["token_hash"] or ""), expected):
+                        return None
+                    connection.execute("UPDATE matm_human_owner_credentials SET last_used_at = ? WHERE human_credential_id = ?", (utc_now(), credential_id))
+        return {"credentialType": "human_owner_recovery", "companyId": row["company_id"], "humanCredentialId": credential_id, "principalName": row["principal_name"], "valuesRedacted": True, "rawCredentialExposed": False}
+
+    def create_human_session(self, recovery_secret, ttl_seconds=900):
+        owner = self.authenticate_human_owner(recovery_secret)
+        if not owner:
+            return _agent_access_error("human_owner_recovery_required")
+        seconds = _bounded_ttl_seconds(ttl_seconds, 900, _MIN_HUMAN_SESSION_TTL_SECONDS, _MAX_HUMAN_SESSION_TTL_SECONDS)
+        session_id = _id("humansession")
+        session_secret, session_digest = _governed_credential("hsession", owner["companyId"], session_id)
+        csrf_token, csrf_digest = _governed_credential("csrf", owner["companyId"], session_id)
+        now = utc_now()
+        expires_at = _expires_at(seconds)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO matm_human_sessions (
+                          human_session_id, human_credential_id, company_id, session_hash, csrf_hash,
+                          created_at, expires_at, last_seen_at, reauthenticated_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (session_id, owner["humanCredentialId"], owner["companyId"], session_digest, csrf_digest, now, expires_at, None, None, None),
+                    )
+        return {"ok": True, "humanSessionId": session_id, "companyId": owner["companyId"], "sessionSecret": session_secret, "csrfToken": csrf_token, "expiresAt": expires_at, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def authenticate_human_session(self, session_secret, csrf_token=None, require_csrf=False):
+        session_id, secret = _parse_governed_credential(session_secret, "hsession")
+        if not session_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT * FROM matm_human_sessions WHERE human_session_id = ? AND revoked_at IS NULL", (session_id,)).fetchone()
+                    if not row or _timestamp_expired(row["expires_at"]):
+                        return None
+                    expected = _governed_credential_digest("hsession", row["company_id"], session_id, secret)
+                    if not secrets.compare_digest(str(row["session_hash"] or ""), expected):
+                        return None
+                    if require_csrf:
+                        csrf_id, csrf_secret = _parse_governed_credential(csrf_token, "csrf")
+                        if csrf_id != session_id:
+                            return None
+                        expected_csrf = _governed_credential_digest("csrf", row["company_id"], session_id, csrf_secret)
+                        if not secrets.compare_digest(str(row["csrf_hash"] or ""), expected_csrf):
+                            return None
+                    connection.execute("UPDATE matm_human_sessions SET last_seen_at = ? WHERE human_session_id = ?", (utc_now(), session_id))
+        return {"credentialType": "human_session", "companyId": row["company_id"], "humanCredentialId": row["human_credential_id"], "humanSessionId": session_id, "reauthenticatedAt": row["reauthenticated_at"], "expiresAt": row["expires_at"], "valuesRedacted": True, "rawCredentialExposed": False}
+
+    def reauthenticate_human_session(self, recovery_secret, session_secret):
+        owner = self.authenticate_human_owner(recovery_secret)
+        session = self.authenticate_human_session(session_secret)
+        if not owner or not session or owner["companyId"] != session["companyId"] or owner["humanCredentialId"] != session["humanCredentialId"]:
+            return _agent_access_error("human_reauthentication_failed")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("UPDATE matm_human_sessions SET reauthenticated_at = ? WHERE human_session_id = ?", (now, session["humanSessionId"]))
+        return {"ok": True, "humanSessionId": session["humanSessionId"], "reauthenticatedAt": now, "valuesRedacted": True}
+
+    def revoke_human_session(self, session_secret):
+        session = self.authenticate_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("UPDATE matm_human_sessions SET revoked_at = ? WHERE human_session_id = ? AND revoked_at IS NULL", (now, session["humanSessionId"]))
+        return {"ok": True, "humanSessionId": session["humanSessionId"], "revokedAt": now, "valuesRedacted": True}
+    def company_export_snapshot(self, session_secret, company_id=None):
+        session = self._management_human_session(session_secret) or self._recovery_closure_human_session(session_secret)
+        if not session or (company_id and session["companyId"] != company_id):
+            return _agent_access_error("human_session_required")
+        data = self._load()
+        snapshot = self._company_export_snapshot_data(data, session["companyId"])
+        if not snapshot:
+            return _agent_access_error("company_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                identities = connection.execute("SELECT agent_identity_id, company_id, agent_id, agent_name, display_name, status, created_at, updated_at FROM matm_agent_identities WHERE company_id = ?", (session["companyId"],)).fetchall()
+                grants = connection.execute("SELECT grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id, project_id, supersedes_token_id, memory_transfer_from_token_id, status, created_at, revoked_at FROM matm_agent_access_grants WHERE company_id = ?", (session["companyId"],)).fetchall()
+                requests = connection.execute("SELECT request_id, company_id, agent_name, display_name, justification, assignment_context_json, scope_type, scope_id, status, created_at, approved_at, denied_at, agent_identity_id, invite_id, decision_reason FROM matm_agent_access_requests WHERE company_id = ?", (session["companyId"],)).fetchall()
+        snapshot["collections"]["agentIdentities"] = [_safe_company_export_value(self._row_dict(row)) for row in identities]
+        snapshot["collections"]["agentAccessGrants"] = [_safe_company_export_value(self._row_dict(row)) for row in grants]
+        snapshot["collections"]["agentAccessRequests"] = [_safe_company_export_value(self._row_dict(row)) for row in requests]
+        return {"ok": True, "snapshot": snapshot, "valuesRedacted": True}
+
+    def record_company_export_receipt(self, session_secret, artifact_digest, artifact_format="json"):
+        session = self._management_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        digest = str(artifact_digest or "").strip().lower()
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        if not re.fullmatch(r"[a-f0-9]{64}", digest):
+            return _agent_access_error("artifact_digest_invalid")
+        receipt_id = _id("exportreceipt")
+        now = utc_now()
+        artifact_format = str(artifact_format or "json").strip().lower()[:32]
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("INSERT INTO matm_company_export_receipts (export_receipt_id, company_id, human_session_id, artifact_digest, artifact_format, created_at) VALUES (?, ?, ?, ?, ?, ?)", (receipt_id, session["companyId"], session["humanSessionId"], "sha256:" + digest, artifact_format, now))
+        return {"ok": True, "receipt": {"exportReceiptId": receipt_id, "companyId": session["companyId"], "artifactDigest": "sha256:" + digest, "artifactFormat": artifact_format, "createdAt": now, "valuesRedacted": True}, "valuesRedacted": True}
+
+    def create_company_closure_intent(self, session_secret, purpose, acknowledge_export_opportunity, ttl_seconds=900):
+        session = self._management_human_session(session_secret)
+        recovery_session = None
+        if not session:
+            recovery_session = self._recovery_closure_human_session(session_secret)
+            session = recovery_session
+        if not session:
+            return _agent_access_error("human_session_required")
+        if not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_reauthentication_required")
+        purpose = str(purpose or "").strip().lower()
+        if recovery_session and purpose != "close":
+            return _agent_access_error("recovery_session_restricted")
+        if purpose not in ("close", "soft_delete", "permanent_purge", "clear_history"):
+            return _agent_access_error("closure_purpose_invalid")
+        if not acknowledge_export_opportunity:
+            return _agent_access_error("export_opportunity_acknowledgement_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    company = connection.execute("SELECT * FROM matm_companies WHERE company_id = ?", (session["companyId"],)).fetchone()
+                    if not company:
+                        return _agent_access_error("company_not_found")
+                    if purpose == "permanent_purge" and company["status"] not in ("closed", "soft_deleted"):
+                        return _agent_access_error("company_must_be_closed")
+                    intent_id = _id("closureintent")
+                    intent_secret, intent_digest = _governed_credential("closure", session["companyId"], intent_id)
+                    now = utc_now()
+                    expires_at = _expires_at(_bounded_ttl_seconds(ttl_seconds, 900, 60, _MAX_CLOSURE_INTENT_TTL_SECONDS))
+                    confirmation_phrase = "PERMANENTLY PURGE %s" % company["label"] if purpose == "permanent_purge" else company["label"]
+                    connection.execute(
+                        "INSERT INTO matm_company_closure_intents (closure_intent_id, company_id, human_session_id, auth_mode, intent_hash, purpose, typed_confirmation_phrase, acknowledge_export_opportunity, status, created_at, expires_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (intent_id, session["companyId"], session["humanSessionId"], session.get("authMode") or "human_account", intent_digest, purpose, confirmation_phrase, 1, "pending", now, expires_at, None),
+                    )
+        return {"ok": True, "intent": {"closureIntentId": intent_id, "companyId": session["companyId"], "humanSessionId": session["humanSessionId"], "purpose": purpose, "typedConfirmationPhrase": confirmation_phrase, "acknowledgeExportOpportunity": True, "status": "pending", "createdAt": now, "expiresAt": expires_at, "valuesRedacted": True}, "intentSecret": intent_secret, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def _load_company_intent_sql(self, connection, session, intent_id, intent_secret, purpose):
+        intent = connection.execute("SELECT * FROM matm_company_closure_intents WHERE closure_intent_id = ?", (intent_id,)).fetchone()
+        if not intent or intent["company_id"] != session["companyId"] or intent["human_session_id"] != session["humanSessionId"] or intent["auth_mode"] != (session.get("authMode") or "human_account") or intent["purpose"] != purpose or intent["status"] != "pending" or _timestamp_expired(intent["expires_at"]):
+            return None
+        expected = _governed_credential_digest("closure", session["companyId"], intent_id, intent_secret)
+        if not secrets.compare_digest(str(intent["intent_hash"] or ""), expected):
+            return None
+        return intent
+
+    def close_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase):
+        session = self._management_human_session(session_secret) or self._recovery_closure_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        closure_intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not closure_intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    intent = self._load_company_intent_sql(connection, session, closure_intent_id, intent_secret, "close")
+                    company = connection.execute("SELECT * FROM matm_companies WHERE company_id = ?", (session["companyId"],)).fetchone()
+                    if not intent:
+                        return _agent_access_error("closure_intent_invalid")
+                    if not company or str(typed_confirmation_phrase or "") != str(company["label"] or ""):
+                        return _agent_access_error("typed_confirmation_mismatch")
+                    connection.execute("UPDATE matm_companies SET status = 'closed', updated_at = ? WHERE company_id = ?", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_workspaces SET status = 'closed', updated_at = ? WHERE company_id = ?", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_projects SET status = 'closed', updated_at = ? WHERE workspace_id IN (SELECT workspace_id FROM matm_workspaces WHERE company_id = ?)", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_company_master_keys SET revoked_at = ? WHERE company_id = ? AND revoked_at IS NULL", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND grant_id IN (SELECT grant_id FROM matm_agent_access_grants WHERE company_id = ?)", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'revoked', revoked_at = ? WHERE company_id = ? AND status = 'active'", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_agent_invites SET status = 'revoked', revoked_at = ? WHERE company_id = ? AND status = 'issued'", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'revoked', revoked_at = ? WHERE pairing_id IN (SELECT pairing_id FROM matm_connector_pairings WHERE company_id = ?) AND status NOT IN ('revoked','superseded','expired')", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_connector_pairings SET status = 'revoked', ended_at = ?, ended_reason = 'company_closed' WHERE company_id = ? AND status NOT IN ('revoked','disconnected','canceled','expired')", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_company_closure_intents SET status = 'consumed', consumed_at = ? WHERE closure_intent_id = ? AND status = 'pending'", (now, closure_intent_id))
+        return {"ok": True, "companyId": session["companyId"], "status": "closed", "closedAt": now, "valuesRedacted": True}
+    def soft_delete_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase):
+        session = self._management_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    intent = self._load_company_intent_sql(connection, session, intent_id, intent_secret, "soft_delete")
+                    company = connection.execute("SELECT * FROM matm_companies WHERE company_id = ?", (session["companyId"],)).fetchone()
+                    if not intent:
+                        return _agent_access_error("closure_intent_invalid")
+                    if not company or str(typed_confirmation_phrase or "") != str(company["label"] or ""):
+                        return _agent_access_error("typed_confirmation_mismatch")
+                    connection.execute("UPDATE matm_companies SET status = 'soft_deleted', pre_delete_status = ?, soft_deleted_at = ?, updated_at = ? WHERE company_id = ?", (company["status"], now, now, session["companyId"]))
+                    connection.execute("UPDATE matm_workspaces SET status = 'soft_deleted', updated_at = ? WHERE company_id = ?", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_projects SET status = 'soft_deleted', updated_at = ? WHERE workspace_id IN (SELECT workspace_id FROM matm_workspaces WHERE company_id = ?)", (now, session["companyId"]))
+                    connection.execute("UPDATE matm_company_closure_intents SET status = 'consumed', consumed_at = ? WHERE closure_intent_id = ? AND status = 'pending'", (now, intent_id))
+        return {"ok": True, "companyId": session["companyId"], "status": "soft_deleted", "softDeleted": True, "softDeletedAt": now, "dataRetained": True, "valuesRedacted": True}
+
+    def restore_company(self, session_secret):
+        session = self._management_human_session(session_secret)
+        if not session:
+            return _agent_access_error("human_session_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    company = connection.execute("SELECT * FROM matm_companies WHERE company_id = ?", (session["companyId"],)).fetchone()
+                    if not company or company["status"] != "soft_deleted":
+                        return _agent_access_error("company_not_soft_deleted")
+                    restored_status = company["pre_delete_status"] or "active"
+                    connection.execute("UPDATE matm_companies SET status = ?, pre_delete_status = NULL, soft_deleted_at = NULL, updated_at = ? WHERE company_id = ?", (restored_status, now, session["companyId"]))
+                    connection.execute("UPDATE matm_workspaces SET status = ?, updated_at = ? WHERE company_id = ?", (restored_status, now, session["companyId"]))
+                    connection.execute("UPDATE matm_projects SET status = ?, updated_at = ? WHERE workspace_id IN (SELECT workspace_id FROM matm_workspaces WHERE company_id = ?)", (restored_status, now, session["companyId"]))
+        return {"ok": True, "companyId": session["companyId"], "status": restored_status, "restoredAt": now, "valuesRedacted": True}
+    def permanently_purge_company(self, session_secret, closure_intent_secret, typed_confirmation_phrase, export_receipt_id=None, acknowledge_no_export=False):
+        session = self._management_human_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("reauthenticatedAt")):
+            return _agent_access_error("human_session_required")
+        intent_id, intent_secret = _parse_governed_credential(closure_intent_secret, "closure")
+        if not intent_id:
+            return _agent_access_error("closure_intent_invalid")
+        company_id = session["companyId"]
+        deleted_at = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    company = connection.execute("SELECT * FROM matm_companies WHERE company_id = ?", (company_id,)).fetchone()
+                    intent = self._load_company_intent_sql(connection, session, intent_id, intent_secret, "permanent_purge")
+                    if not company or company["status"] not in ("closed", "soft_deleted"):
+                        return _agent_access_error("company_must_be_closed")
+                    if not intent:
+                        return _agent_access_error("closure_intent_invalid")
+                    if str(typed_confirmation_phrase or "") != "PERMANENTLY PURGE %s" % str(company["label"] or ""):
+                        return _agent_access_error("typed_confirmation_mismatch")
+                    receipt = None
+                    if export_receipt_id:
+                        receipt = connection.execute("SELECT export_receipt_id FROM matm_company_export_receipts WHERE export_receipt_id = ? AND company_id = ?", (export_receipt_id, company_id)).fetchone()
+                    if not receipt and not acknowledge_no_export:
+                        return _agent_access_error("export_receipt_or_no_export_acknowledgement_required")
+                    workspace_subquery = "SELECT workspace_id FROM matm_workspaces WHERE company_id = ?"
+                    connection.execute("DELETE FROM matm_memory_tags WHERE memory_id IN (SELECT memory_id FROM matm_memory_records WHERE workspace_id IN (%s))" % workspace_subquery, (company_id,))
+                    connection.execute("DELETE FROM matm_memory_revisions WHERE memory_id IN (SELECT memory_id FROM matm_memory_records WHERE workspace_id IN (%s))" % workspace_subquery, (company_id,))
+                    workspace_tables = [
+                        "matm_external_link_mentions", "matm_external_links", "matm_search_documents", "matm_crawl_sources",
+                        "matm_review_queue", "matm_receipts", "matm_notifications", "matm_messages",
+                        "matm_meeting_reads", "matm_routing_decisions", "matm_meeting_messages", "matm_meeting_rooms",
+                        "matm_sync_receipts", "matm_sync_revisions", "matm_sync_heads", "matm_sync_devices",
+                        "matm_uai_record_revisions", "matm_uai_edit_claims", "matm_uai_collaboration_heads", "matm_uai_records", "matm_uai_packages",
+                        "matm_outbox_events", "matm_storage_ledger", "matm_audit_log", "matm_idempotency", "matm_agents", "matm_api_keys", "matm_memory_records",
+                    ]
+                    for table in workspace_tables:
+                        connection.execute("DELETE FROM %s WHERE workspace_id IN (%s)" % (table, workspace_subquery), (company_id,))
+                    connection.execute("DELETE FROM matm_connector_rotations WHERE pairing_id IN (SELECT pairing_id FROM matm_connector_pairings WHERE company_id = ?)", (company_id,))
+                    connection.execute("DELETE FROM matm_connector_credentials WHERE pairing_id IN (SELECT pairing_id FROM matm_connector_pairings WHERE company_id = ?)", (company_id,))
+                    connection.execute("DELETE FROM matm_connector_pairings WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_connector_pairing_requests WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_token_replacements WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_tokens WHERE grant_id IN (SELECT grant_id FROM matm_agent_access_grants WHERE company_id = ?)", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_invites WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_access_grants WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_access_requests WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_agent_identities WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_scope_nodes WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_company_closure_intents WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_company_export_receipts WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_human_operational_contexts WHERE company_id = ?", (company_id,))
+                    connection.execute("UPDATE matm_human_account_sessions SET selected_authority_id = NULL, selected_company_id = NULL WHERE selected_company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_human_company_authorities WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_human_sessions WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_human_owner_credentials WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_company_master_proofs WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_company_master_keys WHERE company_id = ?", (company_id,))
+                    account_rows = connection.execute("SELECT account_id FROM matm_account_companies WHERE company_id = ?", (company_id,)).fetchall()
+                    connection.execute("DELETE FROM matm_projects WHERE workspace_id IN (%s)" % workspace_subquery, (company_id,))
+                    connection.execute("DELETE FROM matm_workspaces WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_account_companies WHERE company_id = ?", (company_id,))
+                    connection.execute("DELETE FROM matm_companies WHERE company_id = ?", (company_id,))
+                    for account in account_rows:
+                        connection.execute("DELETE FROM matm_accounts WHERE account_id = ? AND NOT EXISTS (SELECT 1 FROM matm_account_companies WHERE account_id = ?)", (account["account_id"], account["account_id"]))
+        return {"ok": True, "companyId": company_id, "status": "purged", "purgedAt": deleted_at, "valuesRedacted": True}
+    def create_company_master_proof(self, master_token, ttl_seconds=300):
+        master = self.authenticate_company_master(master_token)
+        if not master:
+            return _agent_access_error("company_master_proof_invalid")
+        proof_id = _id("masterproof")
+        proof_secret, proof_digest = _governed_credential("masterproof", master["companyId"], proof_id)
+        now = utc_now()
+        expires_at = _expires_at(_bounded_ttl_seconds(ttl_seconds, 300, 60, 10 * 60))
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("INSERT INTO matm_company_master_proofs (master_proof_id, company_id, master_key_id, proof_hash, status, created_at, expires_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (proof_id, master["companyId"], master["masterKeyId"], proof_digest, "issued", now, expires_at, None))
+        return {"ok": True, "masterProofId": proof_id, "companyId": master["companyId"], "masterKeyId": master["masterKeyId"], "masterProofSecret": proof_secret, "expiresAt": expires_at, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def _verify_master_proof_sql(self, connection, proof_secret):
+        proof_id, secret = _parse_governed_credential(proof_secret, "masterproof")
+        if not proof_id:
+            return None, "company_master_proof_required" if not proof_secret else "company_master_proof_invalid"
+        row = connection.execute("SELECT * FROM matm_company_master_proofs WHERE master_proof_id = ?", (proof_id,)).fetchone()
+        if not row:
+            return None, "company_master_proof_invalid"
+        expected = _governed_credential_digest("masterproof", row["company_id"], proof_id, secret)
+        if not secrets.compare_digest(str(row["proof_hash"] or ""), expected):
+            return None, "company_master_proof_invalid"
+        if row["status"] == "consumed" or row["consumed_at"]:
+            return None, "company_master_proof_consumed"
+        if row["status"] != "issued":
+            return None, "company_master_proof_unavailable"
+        if _timestamp_expired(row["expires_at"]):
+            connection.execute("UPDATE matm_company_master_proofs SET status = 'expired' WHERE master_proof_id = ? AND status = 'issued'", (proof_id,))
+            return None, "company_master_proof_expired"
+        return row, None
+
+    def create_human_account(self, username, password, master_proof_secret=None, display_name=None):
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("human_username_invalid")
+        normalized_display_name = _normalize_agent_display_name(display_name, normalized)
+        if not normalized_display_name:
+            return _agent_access_error("human_display_name_invalid")
+        password_verifier = _scrypt_password_verifier(password, normalized)
+        if not password_verifier:
+            return _agent_access_error("human_password_invalid")
+        account_id = _id("humanaccount")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    proof, proof_error = self._verify_master_proof_sql(connection, master_proof_secret)
+                    if not proof:
+                        return _agent_access_error(proof_error)
+                    existing = connection.execute("SELECT human_account_id FROM matm_human_accounts WHERE username_normalized = ?", (normalized,)).fetchone()
+                    if existing:
+                        return _agent_access_error("human_username_unavailable")
+                    connection.execute(
+                        "INSERT INTO matm_human_accounts (human_account_id, username, username_normalized, display_name, password_verifier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (account_id, normalized, normalized, normalized_display_name, password_verifier, "active", now, None),
+                    )
+                    authority_id = _id("authority")
+                    connection.execute("INSERT INTO matm_human_company_authorities (authority_id, human_account_id, company_id, master_key_id, role, linked_at, linked_by_account_id) VALUES (?, ?, ?, ?, ?, ?, ?)", (authority_id, account_id, proof["company_id"], proof["master_key_id"], "owner", now, account_id))
+                    changed = connection.execute("UPDATE matm_company_master_proofs SET status = 'consumed', consumed_at = ? WHERE master_proof_id = ? AND status = 'issued' AND consumed_at IS NULL", (now, proof["master_proof_id"]))
+                    if changed.rowcount != 1:
+                        raise RuntimeError("Concurrent company master proof consumption denied.")
+        authority = {"authorityId": authority_id, "humanAccountId": account_id, "companyId": proof["company_id"], "masterKeyId": proof["master_key_id"], "role": "owner", "linkedAt": now, "linkedByAccountId": account_id}
+        return {"ok": True, "account": _public_human_account({"humanAccountId": account_id, "username": normalized, "displayName": normalized_display_name, "status": "active", "createdAt": now}), "authority": _safe_company_export_value(authority), "valuesRedacted": True}
+
+    def create_human_account_with_session(
+        self,
+        username,
+        password,
+        master_proof_secret=None,
+        display_name=None,
+        ttl_seconds=1800,
+    ):
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("human_username_invalid")
+        normalized_display_name = _normalize_agent_display_name(display_name, normalized)
+        if not normalized_display_name:
+            return _agent_access_error("human_display_name_invalid")
+        password_verifier = _scrypt_password_verifier(password, normalized)
+        if not password_verifier:
+            return _agent_access_error("human_password_invalid")
+        seconds = _bounded_ttl_seconds(
+            ttl_seconds,
+            1800,
+            _MIN_HUMAN_SESSION_TTL_SECONDS,
+            _MAX_HUMAN_SESSION_TTL_SECONDS,
+        )
+        account_id = _id("humanaccount")
+        authority_id = _id("authority")
+        session_id = _id("accountsession")
+        session_secret, session_digest = _governed_credential("accountsession", account_id, session_id)
+        csrf_token, csrf_digest = _governed_credential("accountcsrf", account_id, session_id)
+        now = utc_now()
+        expires_at = _expires_at(seconds)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    proof, proof_error = self._verify_master_proof_sql(connection, master_proof_secret)
+                    if not proof:
+                        return _agent_access_error(proof_error)
+                    existing = connection.execute(
+                        "SELECT human_account_id FROM matm_human_accounts WHERE username_normalized = ?",
+                        (normalized,),
+                    ).fetchone()
+                    if existing:
+                        return _agent_access_error("human_username_unavailable")
+                    connection.execute(
+                        "INSERT INTO matm_human_accounts (human_account_id, username, username_normalized, display_name, password_verifier, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (account_id, normalized, normalized, normalized_display_name, password_verifier, "active", now, None),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_human_company_authorities (authority_id, human_account_id, company_id, master_key_id, role, linked_at, linked_by_account_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (authority_id, account_id, proof["company_id"], proof["master_key_id"], "owner", now, account_id),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (session_id, account_id, None, None, session_digest, csrf_digest, now, expires_at, None, None, None, None),
+                    )
+                    changed = connection.execute(
+                        "UPDATE matm_company_master_proofs SET status = 'consumed', consumed_at = ? WHERE master_proof_id = ? AND status = 'issued' AND consumed_at IS NULL",
+                        (now, proof["master_proof_id"]),
+                    )
+                    if changed.rowcount != 1:
+                        raise RuntimeError("Concurrent company master proof consumption denied.")
+                    company = connection.execute(
+                        "SELECT label, status FROM matm_companies WHERE company_id = ?",
+                        (proof["company_id"],),
+                    ).fetchone()
+        account = _public_human_account(
+            {"humanAccountId": account_id, "username": normalized, "displayName": normalized_display_name, "status": "active", "createdAt": now}
+        )
+        authority = {
+            "authorityId": authority_id,
+            "humanAccountId": account_id,
+            "companyId": proof["company_id"],
+            "role": "owner",
+            "linkedAt": now,
+        }
+        membership = _public_human_membership(
+            authority,
+            {"label": company["label"] if company else None, "status": company["status"] if company else None},
+        )
+        return {
+            "ok": True,
+            "account": account,
+            "membership": membership,
+            "memberships": [membership],
+            "humanSession": {
+                "humanAccountSessionId": session_id,
+                "humanAccountId": account_id,
+                "username": normalized,
+                "selectedAuthorityId": None,
+                "selectedCompanyId": None,
+                "role": None,
+                "expiresAt": expires_at,
+                "passwordReauthenticatedAt": None,
+            },
+            "sessionSecret": session_secret,
+            "csrfToken": csrf_token,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def login_human_account(self, username, password, ttl_seconds=1800):
+        normalized = _normalize_human_username(username)
+        with _LOCK:
+            with self._open_connection() as connection:
+                account = connection.execute("SELECT * FROM matm_human_accounts WHERE username_normalized = ?", (normalized,)).fetchone() if normalized else None
+        verifier = account["password_verifier"] if account else None
+        if not verify_password_or_dummy(password, verifier) or not account or account["status"] != "active":
+            return _agent_access_error("human_login_failed")
+        session_id = _id("accountsession")
+        session_secret, session_digest = _governed_credential("accountsession", account["human_account_id"], session_id)
+        csrf_token, csrf_digest = _governed_credential("accountcsrf", account["human_account_id"], session_id)
+        now = utc_now()
+        expires_at = _expires_at(_bounded_ttl_seconds(ttl_seconds, 1800, _MIN_HUMAN_SESSION_TTL_SECONDS, _MAX_HUMAN_SESSION_TTL_SECONDS))
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (session_id, account["human_account_id"], None, None, session_digest, csrf_digest, now, expires_at, None, None, None, None),
+                    )
+        return {"ok": True, "humanAccountSessionId": session_id, "sessionSecret": session_secret, "csrfToken": csrf_token, "expiresAt": expires_at, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def authenticate_human_account_session(self, session_secret, csrf_token=None, require_csrf=False):
+        session_id, secret = _parse_governed_credential(session_secret, "accountsession")
+        if not session_id:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        """
+                        SELECT s.*, a.username, a.display_name, a.status AS account_status,
+                               h.role, h.master_key_id, h.human_account_id AS authority_account_id
+                        FROM matm_human_account_sessions s
+                        JOIN matm_human_accounts a ON a.human_account_id = s.human_account_id
+                        LEFT JOIN matm_human_company_authorities h ON h.authority_id = s.selected_authority_id
+                        WHERE s.human_account_session_id = ?
+                        """,
+                        (session_id,),
+                    ).fetchone()
+                    if not row or row["account_status"] != "active" or row["revoked_at"] or _timestamp_expired(row["expires_at"]):
+                        return None
+                    expected = _governed_credential_digest("accountsession", row["human_account_id"], session_id, secret)
+                    if not secrets.compare_digest(str(row["session_hash"] or ""), expected):
+                        return None
+                    if require_csrf:
+                        csrf_id, csrf_secret = _parse_governed_credential(csrf_token, "accountcsrf")
+                        if csrf_id != session_id:
+                            return None
+                        expected_csrf = _governed_credential_digest("accountcsrf", row["human_account_id"], session_id, csrf_secret)
+                        if not secrets.compare_digest(str(row["csrf_hash"] or ""), expected_csrf):
+                            return None
+                    if row["selected_authority_id"] and (row["authority_account_id"] != row["human_account_id"] or not row["selected_company_id"]):
+                        return None
+                    connection.execute("UPDATE matm_human_account_sessions SET last_seen_at = ? WHERE human_account_session_id = ?", (utc_now(), session_id))
+        return {"credentialType": "human_account_session", "humanAccountSessionId": session_id, "humanAccountId": row["human_account_id"], "username": row["username"], "displayName": row["display_name"] or row["username"], "selectedAuthorityId": row["selected_authority_id"], "companyId": row["selected_company_id"], "role": row["role"], "masterKeyId": row["master_key_id"], "passwordReauthenticatedAt": row["password_reauthenticated_at"], "expiresAt": row["expires_at"], "valuesRedacted": True, "rawCredentialExposed": False}
+
+    def rotate_human_account_session_csrf(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        csrf_token, csrf_digest = _governed_credential(
+            "accountcsrf", session["humanAccountId"], session["humanAccountSessionId"]
+        )
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    changed = connection.execute(
+                        "UPDATE matm_human_account_sessions SET csrf_hash = ?, last_seen_at = ? WHERE human_account_session_id = ? AND revoked_at IS NULL",
+                        (csrf_digest, utc_now(), session["humanAccountSessionId"]),
+                    )
+                    if changed.rowcount != 1:
+                        return _agent_access_error("human_account_session_required")
+        return {
+            "ok": True,
+            "humanAccountSessionId": session["humanAccountSessionId"],
+            "csrfToken": csrf_token,
+            "rotated": True,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def reauthenticate_human_account_session(self, session_secret, password):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                account = connection.execute("SELECT * FROM matm_human_accounts WHERE human_account_id = ?", (session["humanAccountId"],)).fetchone()
+        if not account or not verify_password(password, account["password_verifier"]):
+            return _agent_access_error("human_reauthentication_failed")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("UPDATE matm_human_account_sessions SET password_reauthenticated_at = ? WHERE human_account_session_id = ?", (now, session["humanAccountSessionId"]))
+        return {"ok": True, "humanAccountSessionId": session["humanAccountSessionId"], "passwordReauthenticatedAt": now, "valuesRedacted": True}
+
+    def reauthenticate_and_rotate_human_account_session(self, session_secret, password):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                account = connection.execute(
+                    "SELECT * FROM matm_human_accounts WHERE human_account_id = ?",
+                    (session["humanAccountId"],),
+                ).fetchone()
+        if not account or not verify_password(password, account["password_verifier"]):
+            return _agent_access_error("human_reauthentication_failed")
+        now = utc_now()
+        new_session_id = _id("accountsession")
+        new_secret, new_digest = _governed_credential("accountsession", session["humanAccountId"], new_session_id)
+        new_csrf, new_csrf_digest = _governed_credential("accountcsrf", session["humanAccountId"], new_session_id)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    predecessor = connection.execute(
+                        "SELECT * FROM matm_human_account_sessions WHERE human_account_session_id = ? AND revoked_at IS NULL",
+                        (session["humanAccountSessionId"],),
+                    ).fetchone()
+                    if not predecessor:
+                        return _agent_access_error("human_account_session_required")
+                    changed = connection.execute(
+                        "UPDATE matm_human_account_sessions SET revoked_at = ? WHERE human_account_session_id = ? AND revoked_at IS NULL",
+                        (now, session["humanAccountSessionId"]),
+                    )
+                    if changed.rowcount != 1:
+                        return _agent_access_error("human_account_session_required")
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            new_session_id,
+                            session["humanAccountId"],
+                            predecessor["selected_authority_id"],
+                            predecessor["selected_company_id"],
+                            new_digest,
+                            new_csrf_digest,
+                            now,
+                            predecessor["expires_at"],
+                            None,
+                            now,
+                            session["humanAccountSessionId"],
+                            None,
+                        ),
+                    )
+        return {
+            "ok": True,
+            "humanAccountSessionId": new_session_id,
+            "humanAccountId": session["humanAccountId"],
+            "username": account["username"],
+            "displayName": account["display_name"] or account["username"],
+            "selectedAuthorityId": predecessor["selected_authority_id"],
+            "selectedCompanyId": predecessor["selected_company_id"],
+            "companyId": predecessor["selected_company_id"],
+            "role": session.get("role"),
+            "passwordReauthenticatedAt": now,
+            "expiresAt": predecessor["expires_at"],
+            "sessionSecret": new_secret,
+            "csrfToken": new_csrf,
+            "rotatedFromSessionId": session["humanAccountSessionId"],
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def logout_human_account(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute("UPDATE matm_human_account_sessions SET revoked_at = ? WHERE human_account_session_id = ? AND revoked_at IS NULL", (now, session["humanAccountSessionId"]))
+        return {"ok": True, "humanAccountSessionId": session["humanAccountSessionId"], "revokedAt": now, "valuesRedacted": True}
+
+    def prove_and_link_company_master(self, session_secret, master_proof_secret, role="owner"):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session or not reauthentication_is_recent(session.get("passwordReauthenticatedAt")):
+            return _agent_access_error("human_reauthentication_required")
+        role = str(role or "owner").strip().lower()
+        if role not in ("owner", "credential_admin"):
+            return _agent_access_error("human_authority_role_invalid")
+        authority_id = _id("authority")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    proof, proof_error = self._verify_master_proof_sql(connection, master_proof_secret)
+                    if not proof:
+                        return _agent_access_error(proof_error)
+                    existing = connection.execute("SELECT authority_id FROM matm_human_company_authorities WHERE human_account_id = ? AND company_id = ?", (session["humanAccountId"], proof["company_id"])).fetchone()
+                    if existing:
+                        return _agent_access_error("human_company_authority_exists")
+                    connection.execute("INSERT INTO matm_human_company_authorities (authority_id, human_account_id, company_id, master_key_id, role, linked_at, linked_by_account_id) VALUES (?, ?, ?, ?, ?, ?, ?)", (authority_id, session["humanAccountId"], proof["company_id"], proof["master_key_id"], role, now, session["humanAccountId"]))
+                    changed = connection.execute("UPDATE matm_company_master_proofs SET status = 'consumed', consumed_at = ? WHERE master_proof_id = ? AND status = 'issued' AND consumed_at IS NULL", (now, proof["master_proof_id"]))
+                    if changed.rowcount != 1:
+                        raise RuntimeError("Concurrent company master proof consumption denied.")
+        record = {"authorityId": authority_id, "humanAccountId": session["humanAccountId"], "companyId": proof["company_id"], "masterKeyId": proof["master_key_id"], "role": role, "linkedAt": now, "linkedByAccountId": session["humanAccountId"]}
+        with _LOCK:
+            with self._open_connection() as connection:
+                company = connection.execute("SELECT label, status FROM matm_companies WHERE company_id = ?", (record["companyId"],)).fetchone()
+        return {
+            "ok": True,
+            "authority": _safe_company_export_value(record),
+            "membership": _public_human_membership(
+                record,
+                {"label": company["label"] if company else None, "status": company["status"] if company else None},
+            ),
+            "valuesRedacted": True,
+        }
+
+    def list_human_company_memberships(self, session_secret):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute("SELECT h.*, c.label, c.status AS company_status FROM matm_human_company_authorities h JOIN matm_companies c ON c.company_id = h.company_id WHERE h.human_account_id = ? ORDER BY c.label, h.authority_id", (session["humanAccountId"],)).fetchall()
+        items = []
+        for row in rows:
+            items.append(
+                _public_human_membership(
+                    {
+                        "authorityId": row["authority_id"],
+                        "companyId": row["company_id"],
+                        "role": row["role"],
+                        "linkedAt": row["linked_at"],
+                    },
+                    {"label": row["label"], "status": row["company_status"]},
+                )
+            )
+        return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def list_human_agent_tokens(self, session_secret, company_id):
+        actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT t.agent_token_id, t.agent_identity_id, t.created_at, t.last_used_at, t.revoked_at,
+                           g.grant_id, g.scope_type, g.scope_id, g.workspace_id, g.project_id, g.status,
+                           i.agent_id, i.agent_name, i.display_name
+                    FROM matm_agent_tokens t
+                    JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                    JOIN matm_agent_identities i ON i.agent_identity_id = t.agent_identity_id
+                    WHERE g.company_id = ?
+                    ORDER BY t.created_at, t.agent_token_id
+                    """,
+                    (company_id,),
+                ).fetchall()
+        items = []
+        for row in rows:
+            items.append(
+                _public_human_agent_token(
+                    {
+                        "agentTokenId": row["agent_token_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "createdAt": row["created_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    },
+                    {
+                        "agentIdentityId": row["agent_identity_id"],
+                        "agentId": row["agent_id"],
+                        "agentName": row["agent_name"],
+                        "displayName": row["display_name"],
+                    },
+                    {
+                        "grantId": row["grant_id"],
+                        "scopeType": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "status": row["status"],
+                    },
+                )
+            )
+        return {
+            "ok": True,
+            "items": items,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def select_human_company_membership(self, session_secret, authority_id):
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    authority = connection.execute("SELECT * FROM matm_human_company_authorities WHERE authority_id = ? AND human_account_id = ?", (authority_id, session["humanAccountId"])).fetchone()
+                    if not authority:
+                        return _agent_access_error("human_company_authority_not_found")
+                    predecessor = connection.execute("SELECT * FROM matm_human_account_sessions WHERE human_account_session_id = ?", (session["humanAccountSessionId"],)).fetchone()
+                    new_session_id = _id("accountsession")
+                    new_secret, new_digest = _governed_credential("accountsession", session["humanAccountId"], new_session_id)
+                    new_csrf, new_csrf_digest = _governed_credential("accountcsrf", session["humanAccountId"], new_session_id)
+                    now = utc_now()
+                    connection.execute("UPDATE matm_human_account_sessions SET revoked_at = ? WHERE human_account_session_id = ? AND revoked_at IS NULL", (now, session["humanAccountSessionId"]))
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (new_session_id, session["humanAccountId"], authority_id, authority["company_id"], new_digest, new_csrf_digest, now, predecessor["expires_at"], None, predecessor["password_reauthenticated_at"], session["humanAccountSessionId"], None),
+                    )
+        return {"ok": True, "humanAccountSessionId": new_session_id, "selectedAuthorityId": authority_id, "companyId": authority["company_id"], "role": authority["role"], "sessionSecret": new_secret, "csrfToken": new_csrf, "expiresAt": predecessor["expires_at"], "rotatedFromSessionId": session["humanAccountSessionId"], "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def _human_operational_session_sql(
+        self,
+        connection,
+        session_secret,
+        csrf_token=None,
+        require_csrf=False,
+        lock=False,
+    ):
+        session_id, secret = _parse_governed_credential(
+            session_secret, "accountsession"
+        )
+        if not session_id:
+            return None, None
+        if lock:
+            locked_session = _connector_select_for_update(
+                connection,
+                "SELECT human_account_session_id FROM matm_human_account_sessions WHERE human_account_session_id = ?",
+                (session_id,),
+            )
+            if not locked_session:
+                return None, None
+        session_query = """
+            SELECT s.*, a.username, a.display_name, a.status AS account_status,
+                   h.role AS authority_role, h.company_id AS authority_company_id,
+                   c.status AS company_status
+            FROM matm_human_account_sessions s
+            JOIN matm_human_accounts a
+              ON a.human_account_id = s.human_account_id
+            LEFT JOIN matm_human_company_authorities h
+              ON h.authority_id = s.selected_authority_id
+            LEFT JOIN matm_companies c
+              ON c.company_id = s.selected_company_id
+            WHERE s.human_account_session_id = ?
+            """
+        row = connection.execute(session_query, (session_id,)).fetchone()
+        if (
+            not row
+            or row["account_status"] != "active"
+            or row["revoked_at"]
+            or _timestamp_expired(row["expires_at"])
+            or not row["selected_authority_id"]
+            or not row["selected_company_id"]
+            or row["selected_company_id"] != row["authority_company_id"]
+            or row["company_status"] != "active"
+        ):
+            return None, row
+        expected = _governed_credential_digest(
+            "accountsession", row["human_account_id"], session_id, secret
+        )
+        if not secrets.compare_digest(str(row["session_hash"] or ""), expected):
+            return None, row
+        if require_csrf:
+            csrf_id, csrf_secret = _parse_governed_credential(
+                csrf_token, "accountcsrf"
+            )
+            if csrf_id != session_id:
+                return None, row
+            expected_csrf = _governed_credential_digest(
+                "accountcsrf", row["human_account_id"], session_id, csrf_secret
+            )
+            if not secrets.compare_digest(
+                str(row["csrf_hash"] or ""), expected_csrf
+            ):
+                return None, row
+        return {
+            "credentialType": "human_account_session",
+            "humanAccountSessionId": session_id,
+            "humanAccountId": row["human_account_id"],
+            "username": row["username"],
+            "displayName": row["display_name"] or row["username"],
+            "selectedAuthorityId": row["selected_authority_id"],
+            "companyId": row["selected_company_id"],
+            "role": row["authority_role"],
+            "passwordReauthenticatedAt": row["password_reauthenticated_at"],
+            "expiresAt": row["expires_at"],
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+        }, row
+
+    def _human_operational_context_sql(self, connection, session, lock=False):
+        session_id = session["humanAccountSessionId"]
+        context_query = "SELECT * FROM matm_human_operational_contexts WHERE human_account_session_id = ?"
+        row = (
+            _connector_select_for_update(
+                connection, context_query, (session_id,)
+            )
+            if lock
+            else connection.execute(context_query, (session_id,)).fetchone()
+        )
+        if not row:
+            now = utc_now()
+            context_version = _id("context")
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO matm_human_operational_contexts (
+                  human_account_session_id, human_account_id, authority_id,
+                  company_id, workspace_id, project_id, context_version,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    session["humanAccountId"],
+                    session["selectedAuthorityId"],
+                    session["companyId"],
+                    None,
+                    None,
+                    context_version,
+                    now,
+                    None,
+                ),
+            )
+            row = (
+                _connector_select_for_update(
+                    connection, context_query, (session_id,)
+                )
+                if lock
+                else connection.execute(
+                    context_query, (session_id,)
+                ).fetchone()
+            )
+        if (
+            not row
+            or row["human_account_id"] != session["humanAccountId"]
+            or row["authority_id"] != session["selectedAuthorityId"]
+            or row["company_id"] != session["companyId"]
+            or not row["context_version"]
+        ):
+            return None
+        return {
+            "humanAccountSessionId": row["human_account_session_id"],
+            "humanAccountId": row["human_account_id"],
+            "authorityId": row["authority_id"],
+            "companyId": row["company_id"],
+            "workspaceId": row["workspace_id"],
+            "projectId": row["project_id"],
+            "contextVersion": row["context_version"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def human_operational_context(
+        self, session_secret, csrf_token=None, require_csrf=True
+    ):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    session, _row = self._human_operational_session_sql(
+                        connection,
+                        session_secret,
+                        csrf_token,
+                        require_csrf=require_csrf,
+                    )
+                    if not session:
+                        return _agent_access_error(
+                            "human_operational_session_required"
+                        )
+                    context = self._human_operational_context_sql(
+                        connection, session
+                    )
+                    if not context:
+                        return _agent_access_error(
+                            "human_resource_context_invalid"
+                        )
+                    connection.execute(
+                        "UPDATE matm_human_account_sessions SET last_seen_at = ? WHERE human_account_session_id = ?",
+                        (utc_now(), session["humanAccountSessionId"]),
+                    )
+        resource_context = _human_operational_resource_context(context)
+        return {
+            "ok": True,
+            "session": session,
+            "resourceContext": resource_context,
+            "auditActor": _human_operational_audit_actor(
+                session, resource_context
+            ),
+            "valuesRedacted": True,
+        }
+
+    def human_operational_context_catalog(self, session_secret, csrf_token):
+        current = self.human_operational_context(
+            session_secret, csrf_token, require_csrf=True
+        )
+        if not current.get("ok"):
+            return current
+        session = current["session"]
+        workspaces = []
+        with _LOCK:
+            with self._open_connection() as connection:
+                workspace_rows = connection.execute(
+                    "SELECT workspace_id, company_id, label, plan, status FROM matm_workspaces WHERE company_id = ? AND status = 'active' ORDER BY label, workspace_id",
+                    (session["companyId"],),
+                ).fetchall()
+                for workspace in workspace_rows:
+                    project_rows = connection.execute(
+                        "SELECT project_id, workspace_id, label, status FROM matm_projects WHERE workspace_id = ? AND status = 'active' ORDER BY label, project_id",
+                        (workspace["workspace_id"],),
+                    ).fetchall()
+                    projects = [
+                        {
+                            "projectId": project["project_id"],
+                            "workspaceId": project["workspace_id"],
+                            "label": project["label"],
+                            "status": project["status"],
+                            "valuesRedacted": True,
+                        }
+                        for project in project_rows
+                    ]
+                    workspaces.append(
+                        {
+                            "workspaceId": workspace["workspace_id"],
+                            "companyId": workspace["company_id"],
+                            "label": workspace["label"],
+                            "plan": workspace["plan"],
+                            "status": workspace["status"],
+                            "projects": projects,
+                            "valuesRedacted": True,
+                        }
+                    )
+        return dict(current, workspaces=workspaces, items=workspaces)
+
+    def transition_human_operational_context(
+        self,
+        session_secret,
+        csrf_token,
+        expected_context_version,
+        authority_id,
+        workspace_id,
+        project_id,
+    ):
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                expected_context_version,
+                authority_id,
+                workspace_id,
+                project_id,
+            )
+        ):
+            return _agent_access_error("human_resource_context_fields_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    session, predecessor = self._human_operational_session_sql(
+                        connection,
+                        session_secret,
+                        csrf_token,
+                        require_csrf=True,
+                        lock=True,
+                    )
+                    if not session:
+                        return _agent_access_error(
+                            "human_operational_session_required"
+                        )
+                    context = self._human_operational_context_sql(
+                        connection, session, lock=True
+                    )
+                    if not context:
+                        return _agent_access_error(
+                            "human_resource_context_invalid"
+                        )
+                    if not secrets.compare_digest(
+                        str(context["contextVersion"]),
+                        str(expected_context_version),
+                    ):
+                        return _agent_access_error(
+                            "human_resource_context_stale"
+                        )
+                    if authority_id != session["selectedAuthorityId"]:
+                        return _agent_access_error(
+                            "human_resource_context_cross_company"
+                        )
+                    workspace = connection.execute(
+                        "SELECT * FROM matm_workspaces WHERE workspace_id = ? AND company_id = ? AND status = 'active'",
+                        (workspace_id, session["companyId"]),
+                    ).fetchone()
+                    project = connection.execute(
+                        "SELECT * FROM matm_projects WHERE project_id = ? AND workspace_id = ? AND status = 'active'",
+                        (project_id, workspace_id),
+                    ).fetchone()
+                    if not workspace:
+                        return _agent_access_error(
+                            "human_resource_context_cross_company"
+                        )
+                    if not project:
+                        return _agent_access_error(
+                            "human_resource_context_project_invalid"
+                        )
+                    now = utc_now()
+                    changed = connection.execute(
+                        "UPDATE matm_human_account_sessions SET revoked_at = ? WHERE human_account_session_id = ? AND revoked_at IS NULL",
+                        (now, session["humanAccountSessionId"]),
+                    )
+                    if changed.rowcount != 1:
+                        return _agent_access_error(
+                            "human_operational_session_required"
+                        )
+                    new_session_id = _id("accountsession")
+                    new_secret, new_digest = _governed_credential(
+                        "accountsession",
+                        session["humanAccountId"],
+                        new_session_id,
+                    )
+                    new_csrf, new_csrf_digest = _governed_credential(
+                        "accountcsrf",
+                        session["humanAccountId"],
+                        new_session_id,
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            new_session_id,
+                            session["humanAccountId"],
+                            authority_id,
+                            session["companyId"],
+                            new_digest,
+                            new_csrf_digest,
+                            now,
+                            predecessor["expires_at"],
+                            None,
+                            predecessor["password_reauthenticated_at"],
+                            session["humanAccountSessionId"],
+                            None,
+                        ),
+                    )
+                    context_version = _id("context")
+                    connection.execute(
+                        "INSERT INTO matm_human_operational_contexts (human_account_session_id, human_account_id, authority_id, company_id, workspace_id, project_id, context_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            new_session_id,
+                            session["humanAccountId"],
+                            authority_id,
+                            session["companyId"],
+                            workspace_id,
+                            project_id,
+                            context_version,
+                            now,
+                            now,
+                        ),
+                    )
+                    successor_session = dict(
+                        session,
+                        humanAccountSessionId=new_session_id,
+                        expiresAt=predecessor["expires_at"],
+                    )
+                    resource_context = {
+                        "authorityId": authority_id,
+                        "companyId": session["companyId"],
+                        "workspaceId": workspace_id,
+                        "projectId": project_id,
+                        "contextVersion": context_version,
+                    }
+                    audit_actor = _human_operational_audit_actor(
+                        successor_session, resource_context
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "human.resource_context.transition",
+                        audit_actor["humanAccountId"],
+                        context_version,
+                        {"auditActor": audit_actor},
+                    )
+        return {
+            "ok": True,
+            "session": successor_session,
+            "humanAccountSessionId": new_session_id,
+            "sessionSecret": new_secret,
+            "csrfToken": new_csrf,
+            "expiresAt": predecessor["expires_at"],
+            "rotatedFromSessionId": session["humanAccountSessionId"],
+            "resourceContext": resource_context,
+            "auditActor": audit_actor,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def submit_human_operational_memory(
+        self,
+        session_secret,
+        csrf_token,
+        expected_context_version,
+        idempotency_key,
+        payload,
+    ):
+        payload = dict(payload or {})
+        allowed_fields = {
+            "title",
+            "summary",
+            "tags",
+            "memoryType",
+            "subject",
+            "confidence",
+        }
+        if set(payload) - allowed_fields:
+            return _agent_access_error("human_memory_payload_invalid")
+        if (
+            not isinstance(payload.get("summary"), str)
+            or not 1 <= len(payload.get("summary").strip()) <= 4000
+            or not isinstance(idempotency_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,199}", idempotency_key)
+        ):
+            return _agent_access_error("human_memory_payload_invalid")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    session, _session_row = self._human_operational_session_sql(
+                        connection,
+                        session_secret,
+                        csrf_token,
+                        require_csrf=True,
+                        lock=True,
+                    )
+                    if not session:
+                        return _agent_access_error(
+                            "human_operational_session_required"
+                        )
+                    context = self._human_operational_context_sql(
+                        connection, session, lock=True
+                    )
+                    if not context or not context.get("workspaceId") or not context.get("projectId"):
+                        return _agent_access_error(
+                            "human_resource_context_required"
+                        )
+                    if not secrets.compare_digest(
+                        str(context["contextVersion"]),
+                        str(expected_context_version or ""),
+                    ):
+                        return _agent_access_error(
+                            "human_resource_context_stale"
+                        )
+                    if session.get("role") != "owner":
+                        return _agent_access_error(
+                            "human_operation_not_permitted"
+                        )
+                    resource_context = _human_operational_resource_context(
+                        context
+                    )
+                    audit_actor = _human_operational_audit_actor(
+                        session, resource_context
+                    )
+                    request_material = {
+                        "contextVersion": expected_context_version,
+                        "payload": payload,
+                    }
+                    record_key = "%s:%s:%s" % (
+                        context["workspaceId"],
+                        "human-operational-memory-submit",
+                        idempotency_key,
+                    )
+                    stored = connection.execute(
+                        "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                        (record_key,),
+                    ).fetchone()
+                    if stored:
+                        if stored["body_hash"] != _canonical_hash(
+                            request_material
+                        ):
+                            return _agent_access_error("idempotency_conflict")
+                        replay = dict(
+                            self._json_load(stored["response_json"], {}) or {}
+                        )
+                        replay["idempotentReplay"] = True
+                        replay["_httpStatus"] = stored["http_status"] or "201 Created"
+                        return replay
+                    material = _human_memory_material(
+                        context["workspaceId"], audit_actor, payload
+                    )
+                    if not material:
+                        return _agent_access_error(
+                            "human_audit_actor_invalid"
+                        )
+                    event, review, firewall = material
+                    connection.execute(
+                        """
+                        INSERT INTO matm_memory_records (
+                          memory_id, workspace_id, actor_agent_id,
+                          human_account_id, human_account_session_id,
+                          human_username, human_authority_id, human_company_id,
+                          auth_mode, scope_type, scope_id, memory_type, subject,
+                          title, public_safe_summary, source_uri, confidence,
+                          promotion_state, review_status, body_hash, revision,
+                          firewall_json, status, raw_private_payload_stored,
+                          values_redacted, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            event["eventId"],
+                            context["workspaceId"],
+                            None,
+                            audit_actor["humanAccountId"],
+                            audit_actor["humanAccountSessionId"],
+                            audit_actor["username"],
+                            audit_actor["authorityId"],
+                            audit_actor["companyId"],
+                            "human_account",
+                            event["scope"],
+                            event["scopeId"],
+                            event["memoryType"],
+                            event["subject"],
+                            event["title"],
+                            event["summary"],
+                            event["source"],
+                            event["confidence"],
+                            event["promotionState"],
+                            event["reviewStatus"],
+                            event["bodyHash"],
+                            1,
+                            self._json_dump(event["firewall"]),
+                            event["status"],
+                            self._int_bool(False),
+                            self._int_bool(True),
+                            event["createdAt"],
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_memory_revisions (revision_id, memory_id, revision_number, public_safe_summary, change_summary, body_hash, created_by_agent_id, created_at, values_redacted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            self._memory_revision_id(event["eventId"], 1),
+                            event["eventId"],
+                            1,
+                            event["summary"],
+                            "initial human memory submission",
+                            event["bodyHash"],
+                            None,
+                            event["createdAt"],
+                            self._int_bool(True),
+                        ),
+                    )
+                    for tag in event["tags"]:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO matm_memory_tags (memory_id, tag) VALUES (?, ?)",
+                            (event["eventId"], tag),
+                        )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_review_queue (
+                          review_id, workspace_id, memory_id,
+                          proposed_by_agent_id, review_type, status,
+                          public_safe_summary, firewall_decision, risk_score,
+                          detected_threats_json, created_at, decided_at,
+                          reviewer_agent_id, reviewer_note_hash, values_redacted
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            review["reviewId"],
+                            context["workspaceId"],
+                            event["eventId"],
+                            None,
+                            review["reviewType"],
+                            review["status"],
+                            review["publicSafeSummary"],
+                            review["firewallDecision"],
+                            review["riskScore"],
+                            self._json_dump(review["detectedThreats"]),
+                            review["createdAt"],
+                            None,
+                            None,
+                            None,
+                            self._int_bool(True),
+                        ),
+                    )
+                    self._insert_outbox_sql(
+                        connection,
+                        context["workspaceId"],
+                        "matm.memory_event.submitted",
+                        "memory_event",
+                        event["eventId"],
+                        event,
+                    )
+                    self._insert_storage_ledger_sql(
+                        connection,
+                        context["workspaceId"],
+                        "memory_event",
+                        event["eventId"],
+                        event,
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        context["workspaceId"],
+                        "human.memory.submit",
+                        audit_actor["humanAccountId"],
+                        event["eventId"],
+                        {
+                            "auditActor": audit_actor,
+                            "reviewId": review["reviewId"],
+                            "firewallDecision": firewall["decision"],
+                        },
+                    )
+                    result = {
+                        "ok": True,
+                        "event": event,
+                        "resourceContext": resource_context,
+                        "auditActor": audit_actor,
+                        "idempotentReplay": False,
+                        "valuesRedacted": True,
+                    }
+                    connection.execute(
+                        """
+                        INSERT INTO matm_idempotency (
+                          record_key, workspace_id, operation, body_hash,
+                          response_json, http_status, created_at,
+                          idempotency_key_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record_key,
+                            context["workspaceId"],
+                            "human-operational-memory-submit",
+                            _canonical_hash(request_material),
+                            json.dumps(
+                                result,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            "201 Created",
+                            utc_now(),
+                            self._int_bool(False),
+                        ),
+                    )
+        return result
+
+    def prepare_agent_token_replacement(self, session_secret, predecessor_credential_id, expires_in_seconds=900):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        successor_id = _id("agenttoken")
+        grant_id = _id("grant")
+        now = utc_now()
+        expires_at = _expires_at(_bounded_ttl_seconds(expires_in_seconds, 900, 60, 60 * 60))
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    predecessor = connection.execute("SELECT t.*, g.* FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (predecessor_credential_id,)).fetchone()
+                    if not predecessor or predecessor["revoked_at"] or predecessor["company_id"] != actor.get("companyId") or predecessor["status"] != "active":
+                        return _agent_access_error("agent_token_replacement_predecessor_inactive")
+                    pending = connection.execute("SELECT grant_id FROM matm_agent_access_grants WHERE predecessor_token_id = ? AND status = 'pending_activation'", (predecessor_credential_id,)).fetchone()
+                    if pending:
+                        return _agent_access_error("agent_token_replacement_pending")
+                    successor_secret, successor_digest = _governed_credential("agent", actor["companyId"], successor_id)
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_access_grants (
+                          grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          created_at, pending_expires_at, predecessor_token_id, activated_at,
+                          cancelled_at, revoked_at, revoked_by_master_key_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (grant_id, actor["companyId"], predecessor["agent_identity_id"], predecessor["scope_type"], predecessor["scope_id"], predecessor["workspace_id"], predecessor["project_id"], predecessor_credential_id, predecessor_credential_id, "pending_activation", now, expires_at, predecessor_credential_id, None, None, None, None),
+                    )
+                    connection.execute("INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (successor_id, grant_id, predecessor["agent_identity_id"], successor_digest, now, None, None))
+                    self._record_audit_sql(connection, predecessor["workspace_id"], "agent_token.replacement_prepare", actor.get("humanAccountId"), successor_id, {"predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")})
+        return {"ok": True, "predecessorCredentialId": predecessor_credential_id, "successorCredentialId": successor_id, "successorTokenSecret": successor_secret, "status": "pending_activation", "expiresAt": expires_at, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def _verify_agent_credential_sql(self, connection, token):
+        token_id, secret = _parse_governed_credential(token, "agent")
+        if not token_id:
+            return None
+        row = connection.execute("SELECT t.*, g.company_id, g.status AS grant_status, g.pending_expires_at, g.predecessor_token_id, g.workspace_id, g.scope_type, g.scope_id, g.revoked_at AS grant_revoked_at FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (token_id,)).fetchone()
+        if not row:
+            return None
+        expected = _governed_credential_digest("agent", row["company_id"], token_id, secret)
+        return row if secrets.compare_digest(str(row["token_hash"] or ""), expected) else None
+
+    def confirm_agent_token_replacement(self, successor_token_proof):
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    successor = self._verify_agent_credential_sql(connection, successor_token_proof)
+                    if not successor or not successor["predecessor_token_id"]:
+                        return _agent_access_error("agent_token_replacement_proof_invalid")
+                    predecessor = connection.execute("SELECT t.*, g.status AS grant_status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (successor["predecessor_token_id"],)).fetchone()
+                    if not predecessor or predecessor["agent_identity_id"] != successor["agent_identity_id"]:
+                        return _agent_access_error("agent_token_replacement_mismatch")
+                    if successor["grant_status"] == "active" and predecessor["revoked_at"] and predecessor["grant_status"] == "superseded":
+                        return {"ok": True, "idempotentReplay": True, "predecessorCredentialId": predecessor["agent_token_id"], "successorCredentialId": successor["agent_token_id"], "status": "active", "valuesRedacted": True}
+                    if successor["grant_status"] != "pending_activation" or successor["revoked_at"]:
+                        return _agent_access_error("agent_token_replacement_unavailable")
+                    if _timestamp_expired(successor["pending_expires_at"]):
+                        connection.execute("UPDATE matm_agent_access_grants SET status = 'expired', revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, successor["grant_id"]))
+                        connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, successor["agent_token_id"]))
+                        return _agent_access_error("agent_token_replacement_expired")
+                    if predecessor["revoked_at"] or predecessor["grant_status"] != "active":
+                        return _agent_access_error("agent_token_replacement_predecessor_inactive")
+                    activated = connection.execute("UPDATE matm_agent_access_grants SET status = 'active', activated_at = ?, pending_expires_at = NULL WHERE grant_id = ? AND status = 'pending_activation'", (now, successor["grant_id"]))
+                    if activated.rowcount != 1:
+                        return _agent_access_error("agent_token_replacement_unavailable")
+                    connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, predecessor["agent_token_id"]))
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'superseded', revoked_at = ? WHERE grant_id = ? AND status = 'active'", (now, predecessor["grant_id"]))
+                    self._record_audit_sql(connection, successor["workspace_id"], "agent_token.replacement_confirm", successor["agent_identity_id"], successor["agent_token_id"], {"predecessorCredentialId": predecessor["agent_token_id"], "successorCredentialId": successor["agent_token_id"]})
+        return {"ok": True, "idempotentReplay": False, "predecessorCredentialId": predecessor["agent_token_id"], "successorCredentialId": successor["agent_token_id"], "status": "active", "activatedAt": now, "valuesRedacted": True}
+
+    def cancel_agent_token_replacement(self, session_secret, successor_credential_id):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    successor = connection.execute("SELECT t.*, g.company_id, g.status AS grant_status, g.predecessor_token_id, g.workspace_id FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (successor_credential_id,)).fetchone()
+                    if not successor or successor["company_id"] != actor.get("companyId") or successor["grant_status"] != "pending_activation":
+                        return _agent_access_error("agent_token_replacement_unavailable")
+                    predecessor = connection.execute("SELECT t.revoked_at, g.status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (successor["predecessor_token_id"],)).fetchone()
+                    if not predecessor or predecessor["revoked_at"] or predecessor["status"] != "active":
+                        return _agent_access_error("agent_token_replacement_predecessor_inactive")
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'cancelled', cancelled_at = ?, revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, now, successor["grant_id"]))
+                    connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, successor_credential_id))
+                    self._record_audit_sql(connection, successor["workspace_id"], "agent_token.replacement_cancel", actor.get("humanAccountId"), successor_credential_id, {"predecessorCredentialId": successor["predecessor_token_id"]})
+        return {"ok": True, "predecessorCredentialId": successor["predecessor_token_id"], "successorCredentialId": successor_credential_id, "status": "cancelled", "valuesRedacted": True}
+
+    def expire_pending_agent_token_replacements(self):
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    rows = connection.execute("SELECT grant_id FROM matm_agent_access_grants WHERE status = 'pending_activation' AND pending_expires_at <= ?", (now,)).fetchall()
+                    for row in rows:
+                        connection.execute("UPDATE matm_agent_access_grants SET status = 'expired', revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, row["grant_id"]))
+                        connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL", (now, row["grant_id"]))
+        return {"ok": True, "expiredCount": len(rows), "valuesRedacted": True}
+
+    def _human_agent_replacement_public_sql(self, connection, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        identity = connection.execute(
+            "SELECT agent_id, agent_name, display_name FROM matm_agent_identities WHERE agent_identity_id = ?",
+            (row.get("agent_identity_id"),),
+        ).fetchone()
+        grant = connection.execute(
+            "SELECT grant_id, scope_type, scope_id, workspace_id, project_id FROM matm_agent_access_grants WHERE grant_id = ?",
+            (row.get("successor_grant_id"),),
+        ).fetchone()
+        predecessor = connection.execute(
+            "SELECT grant_id FROM matm_agent_tokens WHERE agent_token_id = ?",
+            (row.get("predecessor_credential_id"),),
+        ).fetchone()
+        record = {
+            "replacementId": row.get("replacement_id"),
+            "companyId": row.get("company_id"),
+            "predecessorCredentialId": row.get("predecessor_credential_id"),
+            "predecessorGrantId": predecessor["grant_id"] if predecessor else None,
+            "successorCredentialId": row.get("successor_credential_id"),
+            "successorGrantId": row.get("successor_grant_id"),
+            "agentIdentityId": row.get("agent_identity_id"),
+            "reason": row.get("reason"),
+            "status": row.get("status"),
+            "createdAt": row.get("created_at"),
+            "expiresAt": row.get("expires_at"),
+            "confirmedAt": row.get("confirmed_at"),
+            "canceledAt": row.get("canceled_at"),
+            "revokedCredentialId": row.get("revoked_credential_id"),
+            "activatedCredentialId": row.get("activated_credential_id"),
+        }
+        return _public_agent_token_replacement(
+            record,
+            {
+                "agentId": identity["agent_id"] if identity else None,
+                "agentName": identity["agent_name"] if identity else None,
+                "displayName": identity["display_name"] if identity else None,
+            },
+            {
+                "grantId": grant["grant_id"] if grant else None,
+                "scopeType": grant["scope_type"] if grant else None,
+                "scopeId": grant["scope_id"] if grant else None,
+                "workspaceId": grant["workspace_id"] if grant else None,
+                "projectId": grant["project_id"] if grant else None,
+            },
+        )
+
+    def prepare_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        reason="",
+        expires_in_seconds=900,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        if not str(idempotency_key or "").strip():
+            return _agent_access_error("idempotency_key_required")
+        key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        bounded_reason = redact_text(" ".join(str(reason or "").strip().split())[:240])
+        successor_id = _id("agenttoken")
+        successor_grant_id = _id("grant")
+        replacement_id = _id("replacement")
+        now = utc_now()
+        expires_at = _expires_at(_bounded_ttl_seconds(expires_in_seconds, 900, 60, 60 * 60))
+        successor_secret = None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    existing = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE company_id = ? AND prepare_idempotency_hash = ?",
+                        (company_id, key_hash),
+                    ).fetchone()
+                    if existing:
+                        exact = (
+                            existing["predecessor_credential_id"] == predecessor_credential_id
+                            and secrets.compare_digest(str(existing["prepare_request_digest"] or ""), digest)
+                        )
+                        if not exact:
+                            return _agent_access_error("idempotency_conflict")
+                        return {
+                            "ok": True,
+                            "replacement": self._human_agent_replacement_public_sql(connection, existing),
+                            "successorCredentialAlreadyDelivered": True,
+                            "idempotentReplay": True,
+                            "valuesRedacted": True,
+                        }
+                    predecessor = connection.execute(
+                        """
+                        SELECT t.agent_token_id, t.grant_id AS predecessor_grant_id, t.agent_identity_id,
+                               t.revoked_at AS token_revoked_at, g.company_id, g.scope_type, g.scope_id,
+                               g.workspace_id, g.project_id, g.status AS grant_status
+                        FROM matm_agent_tokens t
+                        JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                        WHERE t.agent_token_id = ?
+                        """,
+                        (predecessor_credential_id,),
+                    ).fetchone()
+                    if (
+                        not predecessor
+                        or predecessor["token_revoked_at"]
+                        or predecessor["company_id"] != company_id
+                        or predecessor["grant_status"] != "active"
+                    ):
+                        return _agent_access_error("replacement_predecessor_inactive")
+                    pending = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE predecessor_credential_id = ? AND status = 'prepared'",
+                        (predecessor_credential_id,),
+                    ).fetchone()
+                    if pending and _timestamp_expired(pending["expires_at"]):
+                        connection.execute(
+                            "UPDATE matm_agent_token_replacements SET status = 'expired' WHERE replacement_id = ? AND status = 'prepared'",
+                            (pending["replacement_id"],),
+                        )
+                        connection.execute(
+                            "UPDATE matm_agent_access_grants SET status = 'expired', revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'",
+                            (now, pending["successor_grant_id"]),
+                        )
+                        connection.execute(
+                            "UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL",
+                            (now, pending["successor_credential_id"]),
+                        )
+                        pending = None
+                    if pending:
+                        return _agent_access_error("replacement_pending")
+                    successor_secret, successor_digest = _governed_credential("agent", company_id, successor_id)
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_access_grants (
+                          grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          created_at, pending_expires_at, predecessor_token_id, activated_at,
+                          cancelled_at, revoked_at, revoked_by_master_key_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            successor_grant_id,
+                            company_id,
+                            predecessor["agent_identity_id"],
+                            predecessor["scope_type"],
+                            predecessor["scope_id"],
+                            predecessor["workspace_id"],
+                            predecessor["project_id"],
+                            predecessor_credential_id,
+                            predecessor_credential_id,
+                            "pending_activation",
+                            now,
+                            expires_at,
+                            predecessor_credential_id,
+                            None,
+                            None,
+                            None,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (successor_id, successor_grant_id, predecessor["agent_identity_id"], successor_digest, now, None, None),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_agent_token_replacements (
+                          replacement_id, company_id, human_account_id, authority_id,
+                          predecessor_credential_id, successor_credential_id, successor_grant_id,
+                          agent_identity_id, reason, status, created_at, expires_at,
+                          prepare_idempotency_hash, prepare_request_digest, successor_delivered_at,
+                          confirm_idempotency_hash, confirm_request_digest, confirmed_at,
+                          cancel_idempotency_hash, cancel_request_digest, canceled_at,
+                          revoked_credential_id, activated_credential_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            replacement_id,
+                            company_id,
+                            actor.get("humanAccountId"),
+                            actor.get("selectedAuthorityId"),
+                            predecessor_credential_id,
+                            successor_id,
+                            successor_grant_id,
+                            predecessor["agent_identity_id"],
+                            bounded_reason,
+                            "prepared",
+                            now,
+                            expires_at,
+                            key_hash,
+                            digest,
+                            now,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        ),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        predecessor["workspace_id"],
+                        "agent_token.replacement_prepare",
+                        actor.get("humanAccountId"),
+                        successor_id,
+                        {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ?",
+                        (replacement_id,),
+                    ).fetchone()
+                    public_record = self._human_agent_replacement_public_sql(connection, row)
+        return {
+            "ok": True,
+            "replacement": public_record,
+            "successorTokenSecret": successor_secret,
+            "credentialReturnedOnce": True,
+            "idempotentReplay": False,
+            "valuesRedacted": True,
+        }
+
+    def human_agent_token_replacement_status(
+        self, session_secret, company_id, predecessor_credential_id, replacement_id
+    ):
+        actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ? AND company_id = ? AND predecessor_credential_id = ?",
+                        (replacement_id, company_id, predecessor_credential_id),
+                    ).fetchone()
+                    if not row:
+                        return _agent_access_error("replacement_not_found")
+                    if row["status"] == "prepared" and _timestamp_expired(row["expires_at"]):
+                        now = utc_now()
+                        connection.execute("UPDATE matm_agent_token_replacements SET status = 'expired' WHERE replacement_id = ? AND status = 'prepared'", (replacement_id,))
+                        connection.execute("UPDATE matm_agent_access_grants SET status = 'expired', revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, row["successor_grant_id"]))
+                        connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, row["successor_credential_id"]))
+                        row = connection.execute("SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ?", (replacement_id,)).fetchone()
+                    public_record = self._human_agent_replacement_public_sql(connection, row)
+        return {"ok": True, "replacement": public_record, "valuesRedacted": True}
+
+    def confirm_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        replacement_id,
+        successor_token_proof,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        if not str(idempotency_key or "").strip():
+            return _agent_access_error("idempotency_key_required")
+        key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ? AND company_id = ? AND predecessor_credential_id = ?",
+                        (replacement_id, company_id, predecessor_credential_id),
+                    ).fetchone()
+                    if not row:
+                        return _agent_access_error("replacement_not_found")
+                    if row["status"] == "confirmed":
+                        exact = (
+                            row["confirm_idempotency_hash"] == key_hash
+                            and secrets.compare_digest(str(row["confirm_request_digest"] or ""), digest)
+                        )
+                        if not exact:
+                            return _agent_access_error("idempotency_conflict")
+                        return {"ok": True, "replacement": self._human_agent_replacement_public_sql(connection, row), "idempotentReplay": True, "valuesRedacted": True}
+                    if row["status"] != "prepared":
+                        return _agent_access_error("replacement_unavailable")
+                    if _timestamp_expired(row["expires_at"]):
+                        connection.execute("UPDATE matm_agent_token_replacements SET status = 'expired' WHERE replacement_id = ? AND status = 'prepared'", (replacement_id,))
+                        connection.execute("UPDATE matm_agent_access_grants SET status = 'expired', revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, row["successor_grant_id"]))
+                        connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, row["successor_credential_id"]))
+                        return _agent_access_error("replacement_expired")
+                    if not successor_token_proof:
+                        return _agent_access_error("successor_token_proof_required")
+                    successor = self._verify_agent_credential_sql(connection, successor_token_proof)
+                    predecessor = connection.execute(
+                        "SELECT t.*, g.status AS grant_status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?",
+                        (predecessor_credential_id,),
+                    ).fetchone()
+                    if (
+                        not successor
+                        or successor["agent_token_id"] != row["successor_credential_id"]
+                        or successor["grant_id"] != row["successor_grant_id"]
+                        or successor["agent_identity_id"] != row["agent_identity_id"]
+                        or not predecessor
+                        or predecessor["revoked_at"]
+                        or predecessor["grant_status"] != "active"
+                    ):
+                        return _agent_access_error("replacement_binding_invalid")
+                    activated = connection.execute(
+                        "UPDATE matm_agent_access_grants SET status = 'active', activated_at = ?, pending_expires_at = NULL WHERE grant_id = ? AND status = 'pending_activation'",
+                        (now, row["successor_grant_id"]),
+                    )
+                    if activated.rowcount != 1:
+                        return _agent_access_error("replacement_unavailable")
+                    connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, predecessor_credential_id))
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'superseded', revoked_at = ? WHERE grant_id = ? AND status = 'active'", (now, predecessor["grant_id"]))
+                    connection.execute(
+                        "UPDATE matm_agent_token_replacements SET status = 'confirmed', confirm_idempotency_hash = ?, confirm_request_digest = ?, confirmed_at = ?, revoked_credential_id = ?, activated_credential_id = ? WHERE replacement_id = ? AND status = 'prepared'",
+                        (key_hash, digest, now, predecessor_credential_id, row["successor_credential_id"], replacement_id),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        successor["workspace_id"],
+                        "agent_token.replacement_confirm",
+                        actor.get("humanAccountId"),
+                        row["successor_credential_id"],
+                        {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+                    )
+                    row = connection.execute("SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ?", (replacement_id,)).fetchone()
+                    public_record = self._human_agent_replacement_public_sql(connection, row)
+        return {"ok": True, "replacement": public_record, "idempotentReplay": False, "valuesRedacted": True}
+
+    def cancel_human_agent_token_replacement(
+        self,
+        session_secret,
+        company_id,
+        predecessor_credential_id,
+        replacement_id,
+        idempotency_key=None,
+        request_digest=None,
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        key_hash = digest = None
+        if str(idempotency_key or "").strip():
+            key_hash, digest = _human_replacement_idempotency_material(idempotency_key, request_digest)
+            if not key_hash:
+                return _agent_access_error("idempotency_key_invalid")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ? AND company_id = ? AND predecessor_credential_id = ?",
+                        (replacement_id, company_id, predecessor_credential_id),
+                    ).fetchone()
+                    if not row:
+                        return _agent_access_error("replacement_not_found")
+                    if row["status"] in ("canceled", "expired"):
+                        if key_hash and row["cancel_idempotency_hash"] and (
+                            row["cancel_idempotency_hash"] != key_hash
+                            or not secrets.compare_digest(str(row["cancel_request_digest"] or ""), digest)
+                        ):
+                            return _agent_access_error("idempotency_conflict")
+                        return {"ok": True, "replacement": self._human_agent_replacement_public_sql(connection, row), "idempotentReplay": True, "valuesRedacted": True}
+                    if row["status"] != "prepared":
+                        return _agent_access_error("replacement_unavailable")
+                    predecessor = connection.execute(
+                        "SELECT t.revoked_at, g.status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?",
+                        (predecessor_credential_id,),
+                    ).fetchone()
+                    if not predecessor or predecessor["revoked_at"] or predecessor["status"] != "active":
+                        return _agent_access_error("replacement_binding_invalid")
+                    connection.execute("UPDATE matm_agent_access_grants SET status = 'cancelled', cancelled_at = ?, revoked_at = ? WHERE grant_id = ? AND status = 'pending_activation'", (now, now, row["successor_grant_id"]))
+                    connection.execute("UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL", (now, row["successor_credential_id"]))
+                    connection.execute(
+                        "UPDATE matm_agent_token_replacements SET status = 'canceled', cancel_idempotency_hash = ?, cancel_request_digest = ?, canceled_at = ? WHERE replacement_id = ? AND status = 'prepared'",
+                        (key_hash, digest, now, replacement_id),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        None,
+                        "agent_token.replacement_cancel",
+                        actor.get("humanAccountId"),
+                        row["successor_credential_id"],
+                        {"replacementId": replacement_id, "predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")},
+                    )
+                    row = connection.execute("SELECT * FROM matm_agent_token_replacements WHERE replacement_id = ?", (replacement_id,)).fetchone()
+                    public_record = self._human_agent_replacement_public_sql(connection, row)
+        return {"ok": True, "replacement": public_record, "idempotentReplay": False, "valuesRedacted": True}
+
+    @staticmethod
+    def _connector_scopes_from_json(value):
+        try:
+            parsed = json.loads(value or "[]")
+        except (TypeError, ValueError):
+            return []
+        return list(parsed) if isinstance(parsed, list) else []
+
+    def _connector_request_from_row(self, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        return {
+            "requestId": row.get("request_id"),
+            "publicRequestRef": row.get("public_request_ref"),
+            "pairingRequestProofVerifier": row.get("pairing_request_proof_verifier"),
+            "requestIdempotencyKeyHash": row.get("request_idempotency_key_hash"),
+            "requestDigest": row.get("request_digest"),
+            "requestIdempotencyDigest": row.get("request_idempotency_digest"),
+            "clientId": row.get("client_id"),
+            "redirectUri": row.get("redirect_uri"),
+            "stateVerifier": row.get("state_verifier"),
+            "codeChallenge": row.get("code_challenge"),
+            "codeChallengeMethod": row.get("code_challenge_method"),
+            "requestedAgentId": row.get("requested_agent_id"),
+            "requestedScopes": self._connector_scopes_from_json(row.get("requested_scopes_json")),
+            "scopeDigest": row.get("scope_digest"),
+            "approvedAgentId": row.get("approved_agent_id"),
+            "approvedScopes": self._connector_scopes_from_json(row.get("approved_scopes_json")),
+            "companyId": row.get("company_id"),
+            "workspaceId": row.get("workspace_id"),
+            "projectId": row.get("project_id"),
+            "workspaceMode": row.get("workspace_mode"),
+            "provisionalWorkspace": bool(row.get("provisional_workspace")),
+            "workspaceLabel": row.get("workspace_label"),
+            "projectLabel": row.get("project_label"),
+            "status": row.get("status"),
+            "createdAt": row.get("created_at"),
+            "expiresAt": row.get("expires_at"),
+            "approvedAt": row.get("approved_at"),
+            "approvedByHumanAccountId": row.get("approved_by_human_account_id"),
+            "approvedByAuthorityId": row.get("approved_by_authority_id"),
+            "approvalIdempotencyKeyHash": row.get("approval_idempotency_key_hash"),
+            "approvalRequestDigest": row.get("approval_request_digest"),
+            "approvalIdempotencyDigest": row.get("approval_idempotency_digest"),
+            "authorizationCodeId": row.get("authorization_code_id"),
+            "authorizationCodeVerifier": row.get("authorization_code_verifier"),
+            "authorizationCodeExpiresAt": row.get("authorization_code_expires_at"),
+            "authorizationCodeConsumedAt": row.get("authorization_code_consumed_at"),
+            "authorizationCodeClaimedAt": row.get("authorization_code_claimed_at"),
+            "claimIdempotencyKeyHash": row.get("claim_idempotency_key_hash"),
+            "claimRequestDigest": row.get("claim_request_digest"),
+            "claimIdempotencyDigest": row.get("claim_idempotency_digest"),
+            "exchangeIdempotencyKeyHash": row.get("exchange_idempotency_key_hash"),
+            "exchangeRequestDigest": row.get("exchange_request_digest"),
+            "exchangeIdempotencyDigest": row.get("exchange_idempotency_digest"),
+            "humanCancellationIdempotencyKeyHash": row.get("human_cancellation_idempotency_key_hash"),
+            "humanCancellationRequestDigest": row.get("human_cancellation_request_digest"),
+            "humanCancellationIdempotencyDigest": row.get("human_cancellation_idempotency_digest"),
+            "humanCancelledAt": row.get("human_cancelled_at"),
+            "humanCancelledByAccountId": row.get("human_cancelled_by_account_id"),
+            "humanCancellationReason": row.get("human_cancellation_reason"),
+            "pairingId": row.get("pairing_id"),
+        }
+
+    def _connector_pairing_from_row(self, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        record = {
+            "pairingId": row.get("pairing_id"),
+            "requestId": row.get("request_id"),
+            "companyId": row.get("company_id"),
+            "workspaceId": row.get("workspace_id"),
+            "projectId": row.get("project_id"),
+            "agentId": row.get("agent_id"),
+            "agentIdentityId": row.get("agent_identity_id"),
+            "workspaceMode": row.get("workspace_mode"),
+            "provisionalWorkspace": bool(row.get("provisional_workspace")),
+            "workspaceLabel": row.get("workspace_label"),
+            "projectLabel": row.get("project_label"),
+            "status": row.get("status"),
+            "approvedScopes": self._connector_scopes_from_json(row.get("approved_scopes_json")),
+            "scopeDigest": row.get("scope_digest"),
+            "currentCredentialId": row.get("current_credential_id"),
+            "createdAt": row.get("created_at"),
+            "activationExpiresAt": row.get("activation_expires_at"),
+            "activatedAt": row.get("activated_at"),
+            "endedAt": row.get("ended_at"),
+            "endedReason": row.get("ended_reason"),
+            "revokedByMasterKeyId": row.get("revoked_by_master_key_id"),
+        }
+        for prefix in ("activation", "revocation", "disconnect", "cancellation"):
+            camel = prefix
+            record[camel + "IdempotencyKeyHash"] = row.get(prefix + "_idempotency_key_hash")
+            record[camel + "RequestDigest"] = row.get(prefix + "_request_digest")
+            record[camel + "IdempotencyDigest"] = row.get(prefix + "_idempotency_digest")
+        return record
+
+    def _connector_credential_from_row(self, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        return {
+            "credentialId": row.get("credential_id"),
+            "pairingId": row.get("pairing_id"),
+            "credentialVerifier": row.get("credential_verifier"),
+            "approvedScopes": self._connector_scopes_from_json(row.get("approved_scopes_json")),
+            "scopeDigest": row.get("scope_digest"),
+            "status": row.get("status"),
+            "createdAt": row.get("created_at"),
+            "activatedAt": row.get("activated_at"),
+            "lastUsedAt": row.get("last_used_at"),
+            "revokedAt": row.get("revoked_at"),
+            "rawCredentialPersisted": bool(row.get("raw_credential_persisted")),
+        }
+
+    def _connector_rotation_from_row(self, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        return {
+            "rotationId": row.get("rotation_id"),
+            "pairingId": row.get("pairing_id"),
+            "predecessorCredentialId": row.get("predecessor_credential_id"),
+            "successorCredentialId": row.get("successor_credential_id"),
+            "status": row.get("status"),
+            "approvedScopes": self._connector_scopes_from_json(row.get("approved_scopes_json")),
+            "scopeDigest": row.get("scope_digest"),
+            "reason": row.get("reason"),
+            "prepareIdempotencyKeyHash": row.get("prepare_idempotency_key_hash"),
+            "prepareRequestDigest": row.get("prepare_request_digest"),
+            "prepareIdempotencyDigest": row.get("prepare_idempotency_digest"),
+            "activationIdempotencyKeyHash": row.get("activation_idempotency_key_hash"),
+            "activationRequestDigest": row.get("activation_request_digest"),
+            "activationIdempotencyDigest": row.get("activation_idempotency_digest"),
+            "createdAt": row.get("created_at"),
+            "activationExpiresAt": row.get("activation_expires_at"),
+            "activatedAt": row.get("activated_at"),
+        }
+
+    def create_connector_pairing_request(self, payload, idempotency_key, request_digest):
+        self.expire_connector_pairings()
+        payload = dict(payload or {})
+        try:
+            requested_agent_id = normalize_connector_agent_name(payload.get("requestedAgentId"))
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_agent_identity_invalid")
+        try:
+            requested_scopes = validate_requested_scopes(payload.get("requestedScopes"))
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_scopes_invalid")
+        if payload.get("clientId") != CONNECTOR_CLIENT_ID:
+            return _connector_pairing_error("connector_client_unsupported")
+        if payload.get("codeChallengeMethod") != CONNECTOR_PKCE_METHOD:
+            return _connector_pairing_error("pkce_method_unsupported")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        try:
+            pepper = _credential_pepper()
+            scope_digest = connector_scope_digest(requested_scopes)
+        except (PairingPolicyError, RuntimeError):
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    existing_row = _connector_select_for_update(
+                        connection,
+                        "SELECT * FROM matm_connector_pairing_requests WHERE request_idempotency_key_hash = ?",
+                        (key_hash,),
+                    )
+                    if existing_row:
+                        existing = self._connector_request_from_row(existing_row)
+                        if not _connector_scope_chain_valid(request=existing):
+                            return _connector_pairing_error("connector_scopes_invalid")
+                        if (
+                            secrets.compare_digest(str(existing.get("requestDigest") or ""), request_digest)
+                            and secrets.compare_digest(str(existing.get("requestIdempotencyDigest") or ""), combined_hash)
+                        ):
+                            proof = derive_pairing_request_proof(
+                                pepper,
+                                existing.get("requestId"),
+                                existing.get("requestDigest"),
+                                existing.get("scopeDigest"),
+                            )
+                            return {
+                                "ok": True,
+                                "pairingRequest": _public_connector_pairing_request(existing),
+                                "publicRequestRef": existing.get("publicRequestRef"),
+                                "pairingRequestProof": proof,
+                                "requestedScopes": list(existing.get("requestedScopes") or ()),
+                                "scopeDigest": existing.get("scopeDigest"),
+                                "idempotentReplay": True,
+                                "credentialReturnedOnce": True,
+                                "valuesRedacted": True,
+                            }
+                        return _connector_pairing_error("idempotency_conflict")
+                    request_id = _id("pairingrequest")
+                    public_request_ref = generate_public_request_ref()
+                    while connection.execute(
+                        "SELECT 1 FROM matm_connector_pairing_requests WHERE public_request_ref = ?",
+                        (public_request_ref,),
+                    ).fetchone():
+                        public_request_ref = generate_public_request_ref()
+                    try:
+                        proof = derive_pairing_request_proof(
+                            pepper, request_id, request_digest, scope_digest
+                        )
+                        proof_verifier = pairing_request_proof_verifier(
+                            proof, pepper, scope_digest
+                        )
+                        state_verifier = pairing_state_verifier(
+                            payload.get("state"), pepper, scope_digest
+                        )
+                    except (PairingPolicyError, RuntimeError):
+                        return _connector_pairing_error("connector_request_invalid")
+                    now = utc_now()
+                    expires_at = _connector_timestamp(PAIRING_REQUEST_TTL_SECONDS)
+                    connection.execute(
+                        """
+                        INSERT INTO matm_connector_pairing_requests (
+                          request_id, public_request_ref, pairing_request_proof_verifier,
+                          request_idempotency_key_hash, request_digest, request_idempotency_digest,
+                          client_id, redirect_uri, state_verifier, code_challenge,
+                          code_challenge_method, requested_agent_id, requested_scopes_json,
+                          scope_digest, status, created_at, expires_at, provisional_workspace
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (request_id, public_request_ref, proof_verifier, key_hash, request_digest,
+                         combined_hash, payload.get("clientId"), payload.get("redirectUri"), state_verifier,
+                         payload.get("codeChallenge"), payload.get("codeChallengeMethod"),
+                         requested_agent_id, json.dumps(list(requested_scopes), separators=(",", ":")),
+                         scope_digest, "pending_human_approval", now, expires_at, 0),
+                    )
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.request",
+                        "client",
+                        payload.get("clientId"),
+                        "request",
+                        request_id,
+                        details={"publicRequestRef": public_request_ref, "scopeDigest": scope_digest},
+                    )
+        record = {
+            "requestId": request_id,
+            "publicRequestRef": public_request_ref,
+            "status": "pending_human_approval",
+            "requestedAgentId": requested_agent_id,
+            "requestedScopes": list(requested_scopes),
+            "scopeDigest": scope_digest,
+            "createdAt": now,
+            "expiresAt": expires_at,
+        }
+        return {
+            "ok": True,
+            "pairingRequest": _public_connector_pairing_request(record),
+            "publicRequestRef": public_request_ref,
+            "pairingRequestProof": proof,
+            "requestedScopes": list(requested_scopes),
+            "scopeDigest": scope_digest,
+            "idempotentReplay": False,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+        }
+
+    def get_connector_pairing_request(
+        self, public_request_ref=None, pairing_request_proof=None
+    ):
+        self.expire_connector_pairings()
+        row = None
+        with _LOCK:
+            with self._open_connection() as connection:
+                if public_request_ref:
+                    try:
+                        public_request_ref = validate_public_request_ref(public_request_ref)
+                    except PairingPolicyError:
+                        return _connector_pairing_error("pairing_request_not_found")
+                    row = connection.execute(
+                        "SELECT * FROM matm_connector_pairing_requests WHERE public_request_ref = ?",
+                        (public_request_ref,),
+                    ).fetchone()
+                elif pairing_request_proof:
+                    try:
+                        request_id = parse_pairing_request_proof(pairing_request_proof)
+                        row = connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            (request_id,),
+                        ).fetchone()
+                        record = self._connector_request_from_row(row)
+                        valid = bool(
+                            record
+                            and verify_pairing_request_proof(
+                                pairing_request_proof,
+                                record.get("pairingRequestProofVerifier"),
+                                _credential_pepper(),
+                                record.get("scopeDigest"),
+                            )
+                        )
+                    except (PairingPolicyError, RuntimeError):
+                        valid = False
+                    if not valid:
+                        row = None
+        record = self._connector_request_from_row(row)
+        if not record:
+            return _connector_pairing_error("pairing_request_not_found")
+        if not _connector_scope_chain_valid(request=record):
+            return _connector_pairing_error("connector_scopes_invalid")
+        if record.get("status") == "expired" or (
+            record.get("status") == "pending_human_approval"
+            and _timestamp_expired(record.get("expiresAt"))
+        ):
+            return _connector_pairing_error("pairing_request_expired")
+        return {"ok": True, "pairingRequest": _public_connector_pairing_request(record), "valuesRedacted": True}
+
+    def connector_pairing_authorization_context(self, session_secret, public_request_ref):
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM matm_connector_pairing_requests WHERE public_request_ref = ?",
+                    (public_request_ref,),
+                ).fetchone()
+        request = self._connector_request_from_row(row)
+        if not request:
+            return _connector_pairing_error("pairing_request_not_found")
+        if not _connector_scope_chain_valid(request=request):
+            return _connector_pairing_error("connector_scopes_invalid")
+        if request.get("companyId") and request.get("companyId") != actor.get("companyId"):
+            return _connector_pairing_error("pairing_request_not_found")
+        if request.get("status") == "pending_human_approval" and _timestamp_expired(
+            request.get("expiresAt")
+        ):
+            return _connector_pairing_error("pairing_request_expired")
+        authorization_context = dict(
+            _public_connector_pairing_request(request),
+            humanAuthenticationRequired=True,
+            companySelectionRequired=True,
+            workspaceSelectionRequired=True,
+        )
+        if request.get("status") == "approved":
+            try:
+                authorization_context["wakeUpUrl"] = build_wake_up_url(
+                    request.get("redirectUri")
+                )
+            except PairingPolicyError:
+                return _connector_pairing_error("pairing_request_unavailable")
+            authorization_context["workspaceLabel"] = request.get("workspaceLabel")
+        return {
+            "ok": True,
+            "authorizationContext": authorization_context,
+            "valuesRedacted": True,
+        }
+
+    def human_connector_company_catalog(self, session_secret, public_request_ref):
+        actor = self.authenticate_human_account_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_account_session_required")
+        request = self.get_connector_pairing_request(public_request_ref=public_request_ref)
+        if not request.get("ok"):
+            return request
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT h.authority_id, h.human_account_id, h.company_id, h.role,
+                           c.label, c.status AS company_status
+                      FROM matm_human_company_authorities h
+                      JOIN matm_companies c ON c.company_id = h.company_id
+                     WHERE h.human_account_id = ? AND c.status = 'active'
+                     ORDER BY c.label, h.authority_id
+                    """,
+                    (actor.get("humanAccountId"),),
+                ).fetchall()
+        try:
+            expires_epoch = int(time.time()) + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS
+            companies = [
+                {
+                    "companyRef": _connector_company_ref(
+                        actor,
+                        public_request_ref,
+                        row["authority_id"],
+                        row["company_id"],
+                        expires_epoch=expires_epoch,
+                    ),
+                    "label": row["label"],
+                    "valuesRedacted": True,
+                    "rawPayloadExposed": False,
+                }
+                for row in rows
+            ]
+        except (PairingPolicyError, RuntimeError, ValueError):
+            return _connector_pairing_error("credential_system_not_configured")
+        return {
+            "ok": True,
+            "companies": companies,
+            "companyRefsExpireAt": datetime.datetime.fromtimestamp(
+                expires_epoch, tz=datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def select_human_connector_company_membership(
+        self, session_secret, public_request_ref, company_ref
+    ):
+        actor = self.authenticate_human_account_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_account_session_required")
+        request = self.get_connector_pairing_request(public_request_ref=public_request_ref)
+        if not request.get("ok"):
+            return request
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT h.authority_id, h.human_account_id, h.company_id, h.role,
+                           c.label, c.status AS company_status
+                      FROM matm_human_company_authorities h
+                      JOIN matm_companies c ON c.company_id = h.company_id
+                     WHERE h.human_account_id = ?
+                    """,
+                    (actor.get("humanAccountId"),),
+                ).fetchall()
+        authorities = [
+            {
+                "authorityId": row["authority_id"],
+                "humanAccountId": row["human_account_id"],
+                "companyId": row["company_id"],
+                "role": row["role"],
+                "status": None,
+            }
+            for row in rows
+        ]
+        companies = {
+            row["company_id"]: {
+                "companyId": row["company_id"],
+                "label": row["label"],
+                "status": row["company_status"],
+            }
+            for row in rows
+        }
+        authority, company_ref_error = _connector_resolve_company_ref(
+            actor,
+            public_request_ref,
+            company_ref,
+            authorities,
+            companies,
+        )
+        if not authority:
+            return _connector_pairing_error(company_ref_error)
+        selected = self.select_human_company_membership(
+            session_secret, authority.get("authorityId")
+        )
+        if not selected.get("ok"):
+            return selected
+        return {
+            "ok": True,
+            "sessionSecret": selected.get("sessionSecret"),
+            "csrfToken": selected.get("csrfToken"),
+            "expiresAt": selected.get("expiresAt"),
+            "companySelected": True,
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def human_connector_scope_catalog(self, session_secret, public_request_ref):
+        actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        context = self.connector_pairing_authorization_context(
+            session_secret, public_request_ref
+        )
+        if not context.get("ok"):
+            return context
+        with _LOCK:
+            with self._open_connection() as connection:
+                company = connection.execute("SELECT company_id, label, status FROM matm_companies WHERE company_id = ?", (actor.get("companyId"),)).fetchone()
+                if not company or company["status"] != "active":
+                    return _connector_pairing_error("company_unavailable")
+                rows = connection.execute("SELECT workspace_id, label FROM matm_workspaces WHERE company_id = ? AND status = 'active' ORDER BY label, workspace_id", (actor.get("companyId"),)).fetchall()
+        try:
+            expires_epoch = int(time.time()) + _CONNECTOR_WORKSPACE_REF_TTL_SECONDS
+            workspaces = [
+                {
+                    "workspaceRef": _connector_workspace_ref(
+                        actor,
+                        public_request_ref,
+                        row["workspace_id"],
+                        expires_epoch=expires_epoch,
+                    ),
+                    "label": row["label"],
+                    "valuesRedacted": True,
+                    "rawPayloadExposed": False,
+                }
+                for row in rows
+            ]
+        except (RuntimeError, ValueError):
+            return _connector_pairing_error("credential_system_not_configured")
+        return {
+            "ok": True,
+            "company": {"label": company["label"], "valuesRedacted": True, "rawPayloadExposed": False},
+            "workspaces": workspaces,
+            "workspaceRefsExpireAt": datetime.datetime.fromtimestamp(
+                expires_epoch, tz=datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def cancel_connector_pairing_request(
+        self, session_secret, public_request_ref, reason, idempotency_key, request_digest
+    ):
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    request = self._connector_request_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_pairing_requests WHERE public_request_ref = ?",
+                            (public_request_ref,),
+                        )
+                    )
+                    if not request:
+                        return _connector_pairing_error("pairing_request_not_found")
+                    if not _connector_scope_chain_valid(request=request):
+                        return _connector_pairing_error("connector_scopes_invalid")
+                    if request.get("companyId") and request.get("companyId") != actor.get("companyId"):
+                        return _connector_pairing_error("pairing_request_not_found")
+                    replay, key_hash, combined_hash = _connector_action_replay(
+                        request, "humanCancellation", idempotency_key, request_digest
+                    )
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and request.get("status") == "canceled":
+                        return {
+                            "ok": True,
+                            "pairingRequest": _public_connector_pairing_request(request),
+                            "idempotentReplay": True,
+                            "safeNoOpOnRetry": True,
+                            "valuesRedacted": True,
+                        }
+                    if request.get("status") == "pending_human_approval" and _timestamp_expired(request.get("expiresAt")):
+                        connection.execute(
+                            "UPDATE matm_connector_pairing_requests SET status = 'expired' WHERE request_id = ? AND status = 'pending_human_approval'",
+                            (request.get("requestId"),),
+                        )
+                        return _connector_pairing_error("pairing_request_expired")
+                    if request.get("status") == "expired":
+                        return _connector_pairing_error("pairing_request_expired")
+                    if request.get("status") != "pending_human_approval":
+                        return _connector_pairing_error("pairing_request_unavailable")
+                    now = utc_now()
+                    changed = connection.execute(
+                        """
+                        UPDATE matm_connector_pairing_requests
+                           SET status = 'canceled', human_cancelled_at = ?,
+                               human_cancelled_by_account_id = ?,
+                               human_cancellation_reason = ?,
+                               human_cancellation_idempotency_key_hash = ?,
+                               human_cancellation_request_digest = ?,
+                               human_cancellation_idempotency_digest = ?
+                         WHERE request_id = ? AND status = 'pending_human_approval'
+                        """,
+                        (
+                            now,
+                            actor.get("humanAccountId"),
+                            redact_text(str(reason or "human_cancelled")[:255]),
+                            key_hash,
+                            request_digest,
+                            combined_hash,
+                            request.get("requestId"),
+                        ),
+                    )
+                    if changed.rowcount != 1:
+                        return _connector_pairing_error("pairing_request_unavailable")
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.request_cancel",
+                        "human-account",
+                        actor.get("humanAccountId"),
+                        "request",
+                        request.get("requestId"),
+                        details={
+                            "publicRequestRef": public_request_ref,
+                            "scopeDigest": request.get("scopeDigest"),
+                        },
+                    )
+                    request.update(
+                        {
+                            "status": "canceled",
+                            "humanCancelledAt": now,
+                            "humanCancelledByAccountId": actor.get("humanAccountId"),
+                            "humanCancellationReason": redact_text(
+                                str(reason or "human_cancelled")[:255]
+                            ),
+                        }
+                    )
+                    _connector_record_action(
+                        request, "humanCancellation", key_hash, request_digest, combined_hash
+                    )
+        return {
+            "ok": True,
+            "pairingRequest": _public_connector_pairing_request(request),
+            "idempotentReplay": False,
+            "safeNoOpOnRetry": True,
+            "valuesRedacted": True,
+        }
+
+    def approve_connector_pairing_request(
+        self,
+        session_secret,
+        public_request_ref,
+        workspace_selection,
+        approved_scopes,
+        idempotency_key,
+        request_digest,
+    ):
+        self.expire_connector_pairings()
+        actor = self._credential_management_human_session(session_secret)
+        if not actor:
+            return _connector_pairing_error("human_credential_authority_required")
+        try:
+            public_request_ref = validate_public_request_ref(public_request_ref)
+        except PairingPolicyError:
+            return _connector_pairing_error("pairing_request_not_found")
+        try:
+            approved_scopes = validate_requested_scopes(approved_scopes)
+        except PairingPolicyError:
+            return _connector_pairing_error("connector_scopes_invalid")
+        selection = dict(workspace_selection or {})
+        mode = str(selection.get("mode") or "").strip().lower()
+        if mode not in ("existing", "new"):
+            return _connector_pairing_error("workspace_selection_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    request_row = _connector_select_for_update(
+                        connection,
+                        "SELECT * FROM matm_connector_pairing_requests WHERE public_request_ref = ?",
+                        (public_request_ref,),
+                    )
+                    request = self._connector_request_from_row(request_row)
+                    if not request:
+                        return _connector_pairing_error("pairing_request_not_found")
+                    if not _connector_scope_chain_valid(request=request):
+                        return _connector_pairing_error("connector_scopes_invalid")
+                    replay, key_hash, combined_hash = _connector_action_replay(
+                        request, "approval", idempotency_key, request_digest
+                    )
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and request.get("status") in (
+                        "approved", "authorization_code_issued"
+                    ):
+                        if request.get("companyId") != actor.get("companyId"):
+                            return _connector_pairing_error("pairing_request_not_found")
+                        if _timestamp_expired(request.get("authorizationCodeExpiresAt")):
+                            return _connector_pairing_error("authorization_code_expired")
+                        return {
+                            "ok": True,
+                            "status": request.get("status"),
+                            "approval": _public_connector_pairing_request(request),
+                            "wakeUpUrl": build_wake_up_url(request.get("redirectUri")),
+                            "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                            "approvedScopes": list(request.get("approvedScopes") or ()),
+                            "scopeDigest": request.get("scopeDigest"),
+                            "idempotentReplay": True,
+                            "valuesRedacted": True,
+                        }
+                    if request.get("status") == "expired":
+                        return _connector_pairing_error("pairing_request_expired")
+                    if request.get("status") != "pending_human_approval":
+                        return _connector_pairing_error("pairing_request_unavailable")
+                    if _timestamp_expired(request.get("expiresAt")):
+                        connection.execute(
+                            "UPDATE matm_connector_pairing_requests SET status = 'expired' WHERE request_id = ?",
+                            (request.get("requestId"),),
+                        )
+                        return _connector_pairing_error("pairing_request_expired")
+                    if tuple(request.get("requestedScopes") or ()) != tuple(approved_scopes):
+                        return _connector_pairing_error("connector_scopes_invalid")
+                    if request.get("scopeDigest") != connector_scope_digest(approved_scopes):
+                        return _connector_pairing_error("connector_scopes_invalid")
+                    approved_agent_id = request.get("requestedAgentId")
+                    if approved_agent_id != CANONICAL_AGENT_ID:
+                        return _connector_pairing_error("connector_agent_identity_invalid")
+                    company_id = actor.get("companyId")
+                    company_lock = _connector_select_for_update(
+                        connection,
+                        "SELECT company_id FROM matm_companies WHERE company_id = ? AND status = 'active'",
+                        (company_id,),
+                    )
+                    if not company_lock:
+                        return _connector_pairing_error("company_unavailable")
+                    collision = connection.execute("SELECT agent_identity_id FROM matm_agent_identities WHERE company_id = ? AND agent_id = ? AND status = 'active'", (company_id, approved_agent_id)).fetchone()
+                    if not collision:
+                        collision = connection.execute("SELECT request_id FROM matm_connector_pairing_requests WHERE company_id = ? AND approved_agent_id = ? AND request_id <> ? AND status IN ('approved','authorization_code_issued','exchanged','active')", (company_id, approved_agent_id, request.get("requestId"))).fetchone()
+                    if collision:
+                        return _connector_pairing_error("agent_name_unavailable")
+                    if mode == "existing":
+                        workspace_rows = connection.execute(
+                            "SELECT workspace_id, company_id, label, status "
+                            "FROM matm_workspaces WHERE company_id = ? AND status = 'active'",
+                            (company_id,),
+                        ).fetchall()
+                        workspace, workspace_ref_error = _connector_resolve_workspace_ref(
+                            actor,
+                            public_request_ref,
+                            selection.get("workspaceRef"),
+                            [
+                                {
+                                    "workspaceId": item["workspace_id"],
+                                    "companyId": item["company_id"],
+                                    "primaryProjectId": None,
+                                    "label": item["label"],
+                                    "status": item["status"],
+                                }
+                                for item in workspace_rows
+                            ],
+                        )
+                        if not workspace:
+                            return _connector_pairing_error(workspace_ref_error)
+                        workspace_id = workspace.get("workspaceId")
+                        project = connection.execute("SELECT * FROM matm_projects WHERE workspace_id = ? AND status = 'active' ORDER BY created_at, project_id LIMIT 1", (workspace_id,)).fetchone()
+                        project_id = project["project_id"] if project else None
+                        workspace_label = workspace.get("label")
+                        project_label = project["label"] if project else "Connector Pairing"
+                        provisional = 0
+                    else:
+                        workspace_label = " ".join(str(selection.get("workspaceLabel") or "").strip().split())
+                        project_label = " ".join(str(selection.get("projectLabel") or "").strip().split())
+                        if not workspace_label or len(workspace_label) > 255 or not project_label or len(project_label) > 255:
+                            return _connector_pairing_error("workspace_selection_invalid")
+                        workspace_id = _id("workspace")
+                        project_id = _id("project")
+                        provisional = 1
+                    code_id = _id("paircode")
+                    code = derive_authorization_code(
+                        pepper, code_id, request_digest, request.get("scopeDigest")
+                    )
+                    code_hash = authorization_code_verifier(
+                        code, pepper, request.get("scopeDigest")
+                    )
+                    now = utc_now()
+                    code_expires = _connector_timestamp(AUTHORIZATION_CODE_TTL_SECONDS)
+                    changed = connection.execute(
+                        """
+                        UPDATE matm_connector_pairing_requests SET status = 'approved', company_id = ?,
+                          workspace_id = ?, project_id = ?, workspace_mode = ?, provisional_workspace = ?,
+                          workspace_label = ?, project_label = ?, approved_agent_id = ?, approved_scopes_json = ?,
+                          approved_by_human_account_id = ?, approved_by_authority_id = ?, approved_at = ?,
+                          approval_idempotency_key_hash = ?, approval_request_digest = ?, approval_idempotency_digest = ?,
+                          authorization_code_id = ?, authorization_code_verifier = ?, authorization_code_expires_at = ?
+                        WHERE request_id = ? AND status = 'pending_human_approval'
+                        """,
+                        (company_id, workspace_id, project_id, mode, provisional, redact_text(workspace_label),
+                         redact_text(project_label), approved_agent_id,
+                         json.dumps(list(approved_scopes), separators=(",", ":")),
+                         actor.get("humanAccountId"),
+                         actor.get("selectedAuthorityId"), now, key_hash, request_digest, combined_hash,
+                         code_id, code_hash, code_expires, request.get("requestId")),
+                    )
+                    if changed.rowcount != 1:
+                        return _connector_pairing_error("pairing_request_unavailable")
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.approve",
+                        "human-account",
+                        actor.get("humanAccountId"),
+                        "request",
+                        request.get("requestId"),
+                        workspace_id=workspace_id,
+                        details={"publicRequestRef": public_request_ref, "scopeDigest": request.get("scopeDigest")},
+                    )
+                    row = connection.execute("SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?", (request.get("requestId"),)).fetchone()
+        record = self._connector_request_from_row(row)
+        return {
+            "ok": True,
+            "status": "approved",
+            "approval": _public_connector_pairing_request(record),
+            "wakeUpUrl": build_wake_up_url(record.get("redirectUri")),
+            "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+            "approvedScopes": list(record.get("approvedScopes") or ()),
+            "scopeDigest": record.get("scopeDigest"),
+            "idempotentReplay": False,
+            "valuesRedacted": True,
+        }
+
+    def claim_connector_authorization_code(
+        self,
+        pairing_request_proof,
+        state,
+        client_id,
+        redirect_uri,
+        idempotency_key,
+        request_digest,
+    ):
+        try:
+            request_id = parse_pairing_request_proof(pairing_request_proof)
+            pepper = _credential_pepper()
+        except (PairingPolicyError, RuntimeError):
+            return _connector_pairing_error("authorization_claim_invalid")
+        key_hash, combined_hash = _connector_idempotency_material(
+            idempotency_key, request_digest
+        )
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    row = _connector_select_for_update(
+                        connection,
+                        "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                        (request_id,),
+                    )
+                    record = self._connector_request_from_row(row)
+                    if record and not _connector_scope_chain_valid(request=record):
+                        return _connector_pairing_error("authorization_claim_invalid")
+                    proof_valid = bool(
+                        record
+                        and verify_pairing_request_proof(
+                            pairing_request_proof,
+                            record.get("pairingRequestProofVerifier"),
+                            pepper,
+                            record.get("scopeDigest"),
+                        )
+                    )
+                    if proof_valid and record.get("claimIdempotencyKeyHash"):
+                        issued_replay, _issued_key_hash, _issued_combined_hash = _connector_action_replay(
+                            record, "claim", idempotency_key, request_digest
+                        )
+                        if issued_replay != "exact":
+                            return _connector_pairing_error("idempotency_conflict")
+                    state_valid = bool(
+                        record
+                        and verify_pairing_state(
+                            state,
+                            record.get("stateVerifier"),
+                            pepper,
+                            record.get("scopeDigest"),
+                        )
+                    )
+                    client_valid = bool(
+                        record
+                        and secrets.compare_digest(
+                            str(record.get("clientId") or ""), str(client_id or "")
+                        )
+                    )
+                    redirect_valid = bool(
+                        record
+                        and secrets.compare_digest(
+                            str(record.get("redirectUri") or ""), str(redirect_uri or "")
+                        )
+                    )
+                    if not (proof_valid and state_valid and client_valid and redirect_valid):
+                        return _connector_pairing_error("authorization_claim_invalid")
+                    status = record.get("status")
+                    if status == "pending_human_approval":
+                        if _timestamp_expired(record.get("expiresAt")):
+                            connection.execute(
+                                "UPDATE matm_connector_pairing_requests SET status = 'expired' "
+                                "WHERE request_id = ? AND status = 'pending_human_approval'",
+                                (request_id,),
+                            )
+                            return _connector_pairing_error("pairing_request_expired")
+                        return {
+                            "ok": True,
+                            "status": "pending_human_approval",
+                            "pending": True,
+                            "retryAfterSeconds": 2,
+                            "idempotencyBound": False,
+                            "requestedScopes": list(record.get("requestedScopes") or ()),
+                            "scopeDigest": record.get("scopeDigest"),
+                            "valuesRedacted": True,
+                        }
+                    if status in ("expired", "authorization_code_expired"):
+                        return _connector_pairing_error("authorization_code_expired")
+                    if status == "canceled":
+                        return _connector_pairing_error("pairing_request_canceled")
+                    if status in ("exchanged", "active") or record.get("authorizationCodeConsumedAt"):
+                        return _connector_pairing_error("authorization_code_redeemed")
+                    if status not in ("approved", "authorization_code_issued"):
+                        return _connector_pairing_error("pairing_request_unavailable")
+                    if _timestamp_expired(record.get("authorizationCodeExpiresAt")):
+                        connection.execute(
+                            "UPDATE matm_connector_pairing_requests SET status = 'authorization_code_expired' "
+                            "WHERE request_id = ? AND status IN ('approved','authorization_code_issued')",
+                            (request_id,),
+                        )
+                        return _connector_pairing_error("authorization_code_expired")
+                    replay, _stored_key_hash, _stored_combined_hash = _connector_action_replay(
+                        record, "claim", idempotency_key, request_digest
+                    )
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay in ("conflict", "used"):
+                        return _connector_pairing_error("idempotency_conflict")
+                    if replay == "first" and status != "approved":
+                        return _connector_pairing_error("idempotency_conflict")
+                    code = derive_authorization_code(
+                        pepper,
+                        record.get("authorizationCodeId"),
+                        record.get("approvalRequestDigest"),
+                        record.get("scopeDigest"),
+                    )
+                    if not verify_authorization_code_binding(
+                        code,
+                        record.get("authorizationCodeVerifier"),
+                        pepper,
+                        record.get("scopeDigest"),
+                    ):
+                        return _connector_pairing_error("authorization_claim_invalid")
+                    if replay == "first":
+                        claimed_at = utc_now()
+                        changed = connection.execute(
+                            """
+                            UPDATE matm_connector_pairing_requests
+                               SET status = 'authorization_code_issued',
+                                   authorization_code_claimed_at = ?,
+                                   claim_idempotency_key_hash = ?, claim_request_digest = ?,
+                                   claim_idempotency_digest = ?
+                             WHERE request_id = ? AND status = 'approved'
+                            """,
+                            (
+                                claimed_at,
+                                key_hash,
+                                request_digest,
+                                combined_hash,
+                                request_id,
+                            ),
+                        )
+                        if changed.rowcount != 1:
+                            return _connector_pairing_error("idempotency_conflict")
+                        self._record_connector_audit_sql(
+                            connection,
+                            "connector_pairing.authorization_code_claim",
+                            "client",
+                            record.get("clientId"),
+                            "request",
+                            record.get("requestId"),
+                            details={
+                                "publicRequestRef": record.get("publicRequestRef"),
+                                "scopeDigest": record.get("scopeDigest"),
+                            },
+                        )
+            return {
+                "ok": True,
+                "status": "authorization_code_issued",
+                "authorizationCode": code,
+                "authorizationCodeExpiresInSeconds": AUTHORIZATION_CODE_TTL_SECONDS,
+                "approvedScopes": list(record.get("approvedScopes") or ()),
+                "scopeDigest": record.get("scopeDigest"),
+                "credentialReturnedOnce": True,
+                "idempotentReplay": replay == "exact",
+                "valuesRedacted": True,
+            }
+
+    def exchange_connector_authorization_code(self, code, code_verifier, client_id, redirect_uri, idempotency_key, request_digest):
+        self.expire_connector_pairings()
+        code_id = _parse_connector_authorization_code(code)
+        if not code_id:
+            return _connector_pairing_error("authorization_code_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    request_row = _connector_select_for_update(
+                        connection,
+                        "SELECT * FROM matm_connector_pairing_requests WHERE authorization_code_id = ?",
+                        (code_id,),
+                    )
+                    request = self._connector_request_from_row(request_row)
+                    if request and not _connector_scope_chain_valid(request=request):
+                        return _connector_pairing_error("authorization_code_invalid")
+                    if not request or not verify_authorization_code_binding(
+                        code,
+                        request.get("authorizationCodeVerifier"),
+                        pepper,
+                        request.get("scopeDigest"),
+                    ):
+                        return _connector_pairing_error("authorization_code_invalid")
+                    if request.get("clientId") != client_id or request.get("redirectUri") != redirect_uri:
+                        return _connector_pairing_error("authorization_code_invalid")
+                    pairing_row = connection.execute("SELECT * FROM matm_connector_pairings WHERE request_id = ?", (request.get("requestId"),)).fetchone()
+                    pairing = self._connector_pairing_from_row(pairing_row)
+                    if pairing:
+                        persisted_credential = self._connector_credential_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                                (pairing.get("currentCredentialId"), pairing.get("pairingId")),
+                            ).fetchone()
+                        )
+                        if not _connector_scope_chain_valid(
+                            request=request,
+                            pairing=pairing,
+                            credentials=(persisted_credential,),
+                        ):
+                            return _connector_pairing_error("authorization_code_invalid")
+                    if request.get("authorizationCodeConsumedAt"):
+                        same_key = secrets.compare_digest(str(request.get("exchangeIdempotencyKeyHash") or ""), key_hash)
+                        exact = same_key and secrets.compare_digest(str(request.get("exchangeRequestDigest") or ""), request_digest) and secrets.compare_digest(str(request.get("exchangeIdempotencyDigest") or ""), combined_hash)
+                        if same_key and not exact:
+                            return _connector_pairing_error("idempotency_conflict")
+                        if exact and pairing and pairing.get("status") == "pending_activation" and not _timestamp_expired(pairing.get("activationExpiresAt")):
+                            credential = derive_pending_connector_secret(
+                                pepper,
+                                pairing.get("currentCredentialId"),
+                                request_digest,
+                                pairing.get("scopeDigest"),
+                            )
+                            return {
+                                "ok": True,
+                                "pairing": _public_connector_pairing(pairing),
+                                "approvedScopes": list(pairing.get("approvedScopes") or ()),
+                                "scopeDigest": pairing.get("scopeDigest"),
+                                "connectorCredentialSecret": credential.reveal(),
+                                "credentialReturnedOnce": True,
+                                "idempotentReplay": True,
+                                "rawCredentialPersisted": False,
+                                "valuesRedacted": True,
+                            }
+                        if exact:
+                            return _connector_pairing_error("authorization_code_redeemed")
+                        return _connector_pairing_error("authorization_code_already_exchanged")
+                    if request.get("status") == "authorization_code_expired":
+                        return _connector_pairing_error("authorization_code_expired")
+                    if request.get("status") != "authorization_code_issued":
+                        return _connector_pairing_error("authorization_code_invalid")
+                    try:
+                        validate_pkce_s256(code_verifier, request.get("codeChallenge"))
+                    except PairingPolicyError:
+                        return _connector_pairing_error("pkce_verification_failed")
+                    if _timestamp_expired(request.get("authorizationCodeExpiresAt")):
+                        connection.execute("UPDATE matm_connector_pairing_requests SET status = 'authorization_code_expired' WHERE request_id = ?", (request.get("requestId"),))
+                        return _connector_pairing_error("authorization_code_expired")
+                    credential_id = generate_connector_credential_id()
+                    credential = derive_pending_connector_secret(
+                        pepper, credential_id, request_digest, request.get("scopeDigest")
+                    )
+                    pairing_id = _id("pairing")
+                    now = utc_now()
+                    activation_expires = _connector_timestamp(PENDING_ACTIVATION_TTL_SECONDS)
+                    connection.execute(
+                        """
+                        INSERT INTO matm_connector_pairings (
+                          pairing_id, request_id, company_id, workspace_id, project_id, agent_id,
+                          workspace_mode, provisional_workspace, workspace_label, project_label,
+                          status, approved_scopes_json, scope_digest, current_credential_id,
+                          created_at, activation_expires_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (pairing_id, request.get("requestId"), request.get("companyId"), request.get("workspaceId"),
+                         request.get("projectId"), request.get("approvedAgentId"), request.get("workspaceMode"),
+                         1 if request.get("provisionalWorkspace") else 0, request.get("workspaceLabel"),
+                         request.get("projectLabel"), "pending_activation",
+                         json.dumps(list(request.get("approvedScopes") or ()), separators=(",", ":")),
+                         request.get("scopeDigest"), credential_id, now, activation_expires),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_connector_credentials (credential_id, pairing_id, credential_verifier, approved_scopes_json, scope_digest, status, created_at, raw_credential_persisted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (credential_id, pairing_id, credential.persistable_state().get("credentialVerifier"),
+                         json.dumps(list(request.get("approvedScopes") or ()), separators=(",", ":")),
+                         request.get("scopeDigest"), "pending_activation", now, 0),
+                    )
+                    changed = connection.execute(
+                        "UPDATE matm_connector_pairing_requests SET status = 'exchanged', authorization_code_consumed_at = ?, exchange_idempotency_key_hash = ?, exchange_request_digest = ?, exchange_idempotency_digest = ? WHERE request_id = ? AND status = 'authorization_code_issued'",
+                        (now, key_hash, request_digest, combined_hash, request.get("requestId")),
+                    )
+                    if changed.rowcount != 1:
+                        return _connector_pairing_error("authorization_code_already_exchanged")
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.exchange",
+                        "credential",
+                        credential_id,
+                        "pairing",
+                        pairing_id,
+                        workspace_id=request.get("workspaceId"),
+                    )
+        pairing = {"pairingId": pairing_id, "requestId": request.get("requestId"), "companyId": request.get("companyId"), "workspaceId": request.get("workspaceId"), "projectId": request.get("projectId"), "agentId": request.get("approvedAgentId"), "workspaceMode": request.get("workspaceMode"), "provisionalWorkspace": request.get("provisionalWorkspace"), "workspaceLabel": request.get("workspaceLabel"), "projectLabel": request.get("projectLabel"), "status": "pending_activation", "approvedScopes": list(request.get("approvedScopes") or ()), "scopeDigest": request.get("scopeDigest"), "currentCredentialId": credential_id, "createdAt": now, "activationExpiresAt": activation_expires}
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "connectorCredentialSecret": credential.reveal(), "credentialReturnedOnce": True, "idempotentReplay": False, "rawCredentialPersisted": False, "valuesRedacted": True}
+
+    def authenticate_connector_token(
+        self,
+        token,
+        pairing_id=None,
+        allow_pending=False,
+        allow_lifecycle_terminal=False,
+    ):
+        self.expire_connector_pairings()
+        credential_id, _secret = _parse_connector_credential(token)
+        if not credential_id:
+            return None
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    credential = self._connector_credential_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_credentials WHERE credential_id = ?",
+                            (credential_id,),
+                        )
+                    )
+                    pairing = self._connector_pairing_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                            ((credential or {}).get("pairingId"),),
+                        )
+                    )
+                    if not credential or not pairing or (pairing_id and pairing.get("pairingId") != pairing_id):
+                        return None
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            (pairing.get("requestId"),),
+                        ).fetchone()
+                    )
+                    credentials = tuple(
+                        self._connector_credential_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                            (pairing.get("pairingId"),),
+                        ).fetchall()
+                    )
+                    rotations = tuple(
+                        self._connector_rotation_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_rotations WHERE pairing_id = ?",
+                            (pairing.get("pairingId"),),
+                        ).fetchall()
+                    )
+                    if not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=credentials,
+                        rotations=rotations,
+                    ):
+                        return None
+                    company = connection.execute("SELECT status FROM matm_companies WHERE company_id = ?", (pairing.get("companyId"),)).fetchone()
+                    if not company or company["status"] != "active":
+                        return None
+                    if (
+                        not verify_connector_secret(
+                            token,
+                            credential.get("credentialVerifier"),
+                            pepper,
+                            pairing.get("scopeDigest"),
+                        )
+                    ):
+                        return None
+                    credential_status = credential.get("status")
+                    pairing_status = pairing.get("status")
+                    active = credential_status == "active" and pairing_status == "active"
+                    lifecycle_visible = allow_pending and ((credential_status == "pending_activation" and pairing_status in ("pending_activation", "active")) or (credential_status == "canceled" and pairing_status == "canceled"))
+                    lifecycle_terminal_visible = allow_lifecycle_terminal and (
+                        credential_status == "disconnected"
+                        and pairing_status == "disconnected"
+                    )
+                    if not active and not lifecycle_visible and not lifecycle_terminal_visible:
+                        return None
+                    connection.execute("UPDATE matm_connector_credentials SET last_used_at = ? WHERE credential_id = ?", (utc_now(), credential_id))
+        return {"authType": "connector_agent", "credentialType": "connector_agent", "companyId": pairing.get("companyId"), "workspaceId": pairing.get("workspaceId"), "projectId": pairing.get("projectId"), "agentId": pairing.get("agentId"), "agentName": CANONICAL_AGENT_DISPLAY_NAME, "agentIdentityId": pairing.get("agentIdentityId"), "connectorCredentialId": credential_id, "pairingId": pairing.get("pairingId"), "credentialStatus": credential_status, "pairingStatus": pairing_status, "scopeType": "agent", "scopeId": pairing.get("agentId"), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "resourceContext": {"workspaceId": pairing.get("workspaceId"), "projectId": pairing.get("projectId")}, "active": active, "canInvite": False, "canRevoke": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}
+
+    def connector_lifecycle_terminal_error(self, token, pairing_id, rotation_id=None):
+        """Return a typed terminal error only after exact lifecycle proof."""
+        credential_id, _secret = _parse_connector_credential(token)
+        if not credential_id:
+            return None
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return None
+        with _LOCK:
+            with self._open_connection() as connection:
+                credential = self._connector_credential_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                        (credential_id, pairing_id),
+                    ).fetchone()
+                )
+                pairing = self._connector_pairing_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                        (pairing_id,),
+                    ).fetchone()
+                )
+                request = self._connector_request_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                        ((pairing or {}).get("requestId"),),
+                    ).fetchone()
+                )
+                if (
+                    not credential
+                    or not pairing
+                    or not _connector_scope_chain_valid(
+                        request=request, pairing=pairing, credentials=(credential,)
+                    )
+                    or not verify_connector_secret(
+                        token,
+                        credential.get("credentialVerifier"),
+                        pepper,
+                        pairing.get("scopeDigest"),
+                    )
+                ):
+                    return None
+                if rotation_id:
+                    rotation = self._connector_rotation_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_rotations WHERE rotation_id = ? AND pairing_id = ?",
+                            (rotation_id, pairing_id),
+                        ).fetchone()
+                    )
+                    if (
+                        not rotation
+                        or rotation.get("successorCredentialId") != credential_id
+                    ):
+                        return None
+                    if not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=(credential,),
+                        rotations=(rotation,),
+                    ):
+                        return None
+                    if rotation.get("status") == "expired" and credential.get("status") == "expired":
+                        return "pending_grant_expired"
+                    return None
+                if pairing.get("status") == "expired" and credential.get("status") == "expired":
+                    return "pending_grant_expired"
+        return None
+
+    def activate_connector_pairing(self, pairing_id, connector_token, idempotency_key, request_digest):
+        credential_id, _secret = _parse_connector_credential(connector_token)
+        if not credential_id:
+            return _connector_pairing_error("pending_credential_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                            (pairing_id,),
+                        )
+                    )
+                    credential = self._connector_credential_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                            (credential_id, pairing_id),
+                        )
+                    )
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            ((pairing or {}).get("requestId"),),
+                        ).fetchone()
+                    )
+                    if not pairing or not credential:
+                        return _connector_pairing_error("pending_credential_invalid")
+                    if not _connector_scope_chain_valid(
+                        request=request, pairing=pairing, credentials=(credential,)
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    if not verify_connector_secret(
+                        connector_token,
+                        credential.get("credentialVerifier"),
+                        pepper,
+                        pairing.get("scopeDigest"),
+                    ):
+                        return _connector_pairing_error("pending_credential_invalid")
+                    if "agent:self:register" not in tuple(pairing.get("approvedScopes") or ()):
+                        return _connector_pairing_error("connector_scope_denied")
+                    replay, key_hash, combined_hash = _connector_action_replay(pairing, "activation", idempotency_key, request_digest)
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and pairing.get("status") == "active" and credential.get("status") == "active":
+                        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "valuesRedacted": True}
+                    if replay in ("exact", "used") and pairing.get("status") != "pending_activation":
+                        return _connector_pairing_error("pairing_not_pending_activation")
+                    if pairing.get("status") != "pending_activation" or credential.get("status") != "pending_activation":
+                        return _connector_pairing_error("pairing_not_pending_activation")
+                    if _timestamp_expired(pairing.get("activationExpiresAt")):
+                        now = utc_now()
+                        connection.execute("UPDATE matm_connector_pairings SET status = 'expired', ended_at = ? WHERE pairing_id = ? AND status = 'pending_activation'", (now, pairing_id))
+                        connection.execute("UPDATE matm_connector_credentials SET status = 'expired', revoked_at = ? WHERE credential_id = ? AND status = 'pending_activation'", (now, credential_id))
+                        return _connector_pairing_error("pending_grant_expired")
+                    company = connection.execute("SELECT status FROM matm_companies WHERE company_id = ?", (pairing.get("companyId"),)).fetchone()
+                    if not company or company["status"] != "active":
+                        return _connector_pairing_error("company_unavailable")
+                    if pairing.get("provisionalWorkspace"):
+                        if connection.execute("SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ?", (pairing.get("workspaceId"),)).fetchone():
+                            return _connector_pairing_error("provisional_workspace_collision")
+                        now = utc_now()
+                        connection.execute("INSERT INTO matm_workspaces (workspace_id, company_id, label, plan, storage_limit_bytes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (pairing.get("workspaceId"), pairing.get("companyId"), pairing.get("workspaceLabel") or "Connector Workspace", "free_agent", PUBLIC_STORAGE_BYTES, "active", now, None))
+                        connection.execute("INSERT INTO matm_projects (project_id, workspace_id, label, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", (pairing.get("projectId"), pairing.get("workspaceId"), pairing.get("projectLabel") or "Connector Pairing", "active", now, None))
+                        self._ensure_default_meeting_rooms_sql(connection, pairing.get("workspaceId"))
+                    workspace = connection.execute("SELECT * FROM matm_workspaces WHERE workspace_id = ? AND company_id = ? AND status = 'active'", (pairing.get("workspaceId"), pairing.get("companyId"))).fetchone()
+                    if not workspace:
+                        return _connector_pairing_error("workspace_not_found")
+                    if connection.execute("SELECT agent_identity_id FROM matm_agent_identities WHERE company_id = ? AND agent_id = ? AND status = 'active'", (pairing.get("companyId"), pairing.get("agentId"))).fetchone():
+                        return _connector_pairing_error("agent_name_unavailable")
+                    identity_id = _id("agentidentity")
+                    now = utc_now()
+                    connection.execute("INSERT INTO matm_agent_identities (agent_identity_id, company_id, agent_id, agent_name, agent_name_normalized, display_name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (identity_id, pairing.get("companyId"), pairing.get("agentId"), CANONICAL_AGENT_DISPLAY_NAME, pairing.get("agentId"), CANONICAL_AGENT_DISPLAY_NAME, "active", now, None))
+                    existing_agent = connection.execute("SELECT agent_record_id FROM matm_agents WHERE workspace_id = ? AND agent_id = ?", (pairing.get("workspaceId"), pairing.get("agentId"))).fetchone()
+                    if existing_agent:
+                        return _connector_pairing_error("agent_name_unavailable")
+                    connection.execute("INSERT INTO matm_agents (agent_record_id, workspace_id, agent_id, display_name, status, registered_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (self._agent_record_id(pairing.get("workspaceId"), pairing.get("agentId")), pairing.get("workspaceId"), pairing.get("agentId"), CANONICAL_AGENT_DISPLAY_NAME, "active", now, now))
+                    connection.execute(
+                        """
+                        UPDATE matm_connector_pairings SET status = 'active', agent_identity_id = ?,
+                          activated_at = ?, activation_expires_at = NULL,
+                          activation_idempotency_key_hash = ?, activation_request_digest = ?,
+                          activation_idempotency_digest = ?
+                        WHERE pairing_id = ? AND status = 'pending_activation'
+                        """,
+                        (identity_id, now, key_hash, request_digest, combined_hash, pairing_id),
+                    )
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'active', activated_at = ? WHERE credential_id = ? AND status = 'pending_activation'", (now, credential_id))
+                    connection.execute("UPDATE matm_connector_pairing_requests SET status = 'active' WHERE request_id = ?", (pairing.get("requestId"),))
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.activate",
+                        "agent-identity",
+                        identity_id,
+                        "pairing",
+                        pairing_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+                    pairing.update({"status": "active", "agentIdentityId": identity_id, "activatedAt": now, "activationExpiresAt": None})
+                    _connector_record_action(pairing, "activation", key_hash, request_digest, combined_hash)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": False, "valuesRedacted": True}
+
+    def connector_pairing_status(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(connector_token, pairing_id=pairing_id, allow_pending=True)
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        if principal.get("pairingStatus") == "canceled":
+            return _connector_pairing_error("pairing_canceled")
+        if not principal.get("active"):
+            return _connector_pairing_error("pending_credential_not_active")
+        with _LOCK:
+            with self._open_connection() as connection:
+                pairing = self._connector_pairing_from_row(connection.execute("SELECT * FROM matm_connector_pairings WHERE pairing_id = ?", (pairing_id,)).fetchone())
+                workspace_row = connection.execute(
+                    "SELECT workspace_id, company_id, status FROM matm_workspaces WHERE workspace_id = ?",
+                    ((pairing or {}).get("workspaceId"),),
+                ).fetchone()
+                agent_row = connection.execute(
+                    "SELECT workspace_id, agent_id, status FROM matm_agents WHERE workspace_id = ? AND agent_id = ?",
+                    ((pairing or {}).get("workspaceId"), (pairing or {}).get("agentId")),
+                ).fetchone()
+                identity_row = connection.execute(
+                    "SELECT agent_identity_id, company_id, agent_id, status FROM matm_agent_identities WHERE agent_identity_id = ?",
+                    ((pairing or {}).get("agentIdentityId"),),
+                ).fetchone()
+                credential = self._connector_credential_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                        (principal.get("connectorCredentialId"), pairing_id),
+                    ).fetchone()
+                )
+        workspace_data = self._row_dict(workspace_row)
+        workspace = {
+            "workspaceId": workspace_data.get("workspace_id"),
+            "companyId": workspace_data.get("company_id"),
+            "status": workspace_data.get("status"),
+        } if workspace_data else None
+        agent_data = self._row_dict(agent_row)
+        agent = {
+            "workspaceId": agent_data.get("workspace_id"),
+            "agentId": agent_data.get("agent_id"),
+            "status": agent_data.get("status"),
+        } if agent_data else None
+        identity_data = self._row_dict(identity_row)
+        identity = {
+            "agentIdentityId": identity_data.get("agent_identity_id"),
+            "companyId": identity_data.get("company_id"),
+            "agentId": identity_data.get("agent_id"),
+            "status": identity_data.get("status"),
+        } if identity_data else None
+        verification = _connector_verification_facts(
+            pairing, principal, workspace, agent, identity, credential
+        )
+        if not verification.get("verified"):
+            return _connector_pairing_error(
+                "pairing_verification_failed", verification=verification
+            )
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "principal": principal, "verification": verification, "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "valuesRedacted": True}
+
+    def connector_workspace_readback(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        if "connector:self:readback" not in tuple(principal.get("approvedScopes") or ()):
+            return _connector_pairing_error("connector_scope_denied")
+        with _LOCK:
+            with self._open_connection() as connection:
+                pairing = self._connector_pairing_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                        (pairing_id,),
+                    ).fetchone()
+                )
+                workspace = connection.execute(
+                    "SELECT workspace_id, company_id, status FROM matm_workspaces WHERE workspace_id = ?",
+                    ((pairing or {}).get("workspaceId"),),
+                ).fetchone()
+        if (
+            not pairing
+            or pairing.get("status") != "active"
+            or not workspace
+            or workspace["status"] != "active"
+            or workspace["company_id"] != pairing.get("companyId")
+            or principal.get("workspaceId") != workspace["workspace_id"]
+        ):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "workspace": {"workspaceId": workspace["workspace_id"], "status": "active"},
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def confirm_connector_agent_registration(self, pairing_id, connector_token):
+        principal = self.authenticate_connector_token(
+            connector_token, pairing_id=pairing_id
+        )
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        if "connector:self:readback" not in tuple(principal.get("approvedScopes") or ()):
+            return _connector_pairing_error("connector_scope_denied")
+        with _LOCK:
+            with self._open_connection() as connection:
+                pairing = self._connector_pairing_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                        (pairing_id,),
+                    ).fetchone()
+                )
+                identity = connection.execute(
+                    "SELECT agent_identity_id, agent_id, status FROM matm_agent_identities WHERE agent_identity_id = ?",
+                    ((pairing or {}).get("agentIdentityId"),),
+                ).fetchone()
+                agent = connection.execute(
+                    "SELECT workspace_id, agent_id, status FROM matm_agents WHERE workspace_id = ? AND agent_id = ?",
+                    ((pairing or {}).get("workspaceId"), (pairing or {}).get("agentId")),
+                ).fetchone()
+        if (
+            not pairing
+            or pairing.get("status") != "active"
+            or pairing.get("agentId") != CANONICAL_AGENT_ID
+            or not identity
+            or identity["status"] != "active"
+            or identity["agent_identity_id"] != pairing.get("agentIdentityId")
+            or identity["agent_id"] != pairing.get("agentId")
+            or not agent
+            or agent["status"] != "active"
+            or agent["workspace_id"] != pairing.get("workspaceId")
+            or agent["agent_id"] != pairing.get("agentId")
+        ):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "agent": {"agentId": agent["agent_id"], "status": "active"},
+            "identity": {
+                "agentIdentityId": identity["agent_identity_id"],
+                "agentId": identity["agent_id"],
+                "status": "active",
+            },
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def list_connector_credentials(self, pairing_id, connector_token):
+        connector = self.authenticate_connector_token(connector_token)
+        master = None if connector else self.authenticate_company_master(connector_token)
+        if connector and connector.get("pairingId") != pairing_id:
+            return _connector_pairing_error("pairing_not_found")
+        if not connector and not master:
+            return _connector_pairing_error("invalid_token")
+        if connector:
+            status = self.connector_pairing_status(pairing_id, connector_token)
+            if not status.get("ok"):
+                return status
+        with _LOCK:
+            with self._open_connection() as connection:
+                pairing = self._connector_pairing_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                        (pairing_id,),
+                    ).fetchone()
+                )
+                if not pairing or (master and pairing.get("companyId") != master.get("companyId")):
+                    return _connector_pairing_error("pairing_not_found")
+                request = self._connector_request_from_row(
+                    connection.execute(
+                        "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                        (pairing.get("requestId"),),
+                    ).fetchone()
+                )
+                credential_rows = connection.execute(
+                    "SELECT * FROM matm_connector_credentials WHERE pairing_id = ? "
+                    "ORDER BY created_at DESC, credential_id DESC",
+                    (pairing_id,),
+                ).fetchall()
+                persisted_credentials = tuple(
+                    self._connector_credential_from_row(row) for row in credential_rows
+                )
+                rotations = tuple(
+                    self._connector_rotation_from_row(row)
+                    for row in connection.execute(
+                        "SELECT * FROM matm_connector_rotations WHERE pairing_id = ?",
+                        (pairing_id,),
+                    ).fetchall()
+                )
+                if not _connector_scope_chain_valid(
+                    request=request,
+                    pairing=pairing,
+                    credentials=persisted_credentials,
+                    rotations=rotations,
+                ):
+                    return _connector_pairing_error("connector_scope_denied")
+                current_id = pairing.get("currentCredentialId")
+                total_count = len(credential_rows)
+                rows = credential_rows[:_CONNECTOR_CREDENTIAL_INVENTORY_LIMIT]
+        items = [
+            _public_connector_credential(self._connector_credential_from_row(row), current_id)
+            for row in rows
+        ]
+        current = next((item for item in items if item.get("isCurrent")), None)
+        if not current or (connector and current.get("status") != "active"):
+            return _connector_pairing_error("pairing_verification_failed")
+        return {
+            "ok": True,
+            "pairingId": pairing_id,
+            "currentCredentialId": current_id,
+            "items": items,
+            "count": len(items),
+            "totalCount": int(total_count),
+            "hasMore": int(total_count) > len(items),
+            "limit": _CONNECTOR_CREDENTIAL_INVENTORY_LIMIT,
+            "approvedScopes": list(pairing.get("approvedScopes") or ()),
+            "scopeDigest": pairing.get("scopeDigest"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def prepare_connector_rotation(self, pairing_id, connector_token, reason, idempotency_key, request_digest):
+        self.expire_connector_pairings()
+        principal = self.authenticate_connector_token(connector_token, pairing_id=pairing_id)
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        key_hash, combined_hash = _connector_idempotency_material(idempotency_key, request_digest)
+        if not key_hash:
+            return _connector_pairing_error("idempotency_key_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                            (pairing_id,),
+                        )
+                    )
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            ((pairing or {}).get("requestId"),),
+                        ).fetchone()
+                    )
+                    current_credential = self._connector_credential_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                            ((pairing or {}).get("currentCredentialId"), pairing_id),
+                        ).fetchone()
+                    )
+                    if pairing and not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=(current_credential,),
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    existing_row = _connector_select_for_update(
+                        connection,
+                        "SELECT * FROM matm_connector_rotations WHERE pairing_id = ? AND prepare_idempotency_key_hash = ?",
+                        (pairing_id, key_hash),
+                    )
+                    if existing_row:
+                        existing = self._connector_rotation_from_row(existing_row)
+                        exact = secrets.compare_digest(str(existing.get("prepareRequestDigest") or ""), request_digest) and secrets.compare_digest(str(existing.get("prepareIdempotencyDigest") or ""), combined_hash)
+                        if not exact:
+                            return _connector_pairing_error("idempotency_conflict")
+                        if existing.get("status") != "pending_activation" or _timestamp_expired(existing.get("activationExpiresAt")):
+                            return _connector_pairing_error("rotation_unavailable")
+                        existing_successor = self._connector_credential_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                                (existing.get("successorCredentialId"), pairing_id),
+                            ).fetchone()
+                        )
+                        if not _connector_scope_chain_valid(
+                            request=request,
+                            pairing=pairing,
+                            credentials=(current_credential, existing_successor),
+                            rotations=(existing,),
+                        ):
+                            return _connector_pairing_error("connector_scope_denied")
+                        successor = derive_pending_connector_secret(pepper, existing.get("successorCredentialId"), request_digest, existing.get("scopeDigest"))
+                        return {"ok": True, "rotation": _public_connector_rotation(existing), "approvedScopes": list(existing.get("approvedScopes") or ()), "scopeDigest": existing.get("scopeDigest"), "connectorCredentialSecret": successor.reveal(), "idempotentReplay": True, "rawCredentialPersisted": False, "valuesRedacted": True}
+                    if not pairing or pairing.get("status") != "active":
+                        return _connector_pairing_error("grant_not_active")
+                    if connection.execute("SELECT rotation_id FROM matm_connector_rotations WHERE pairing_id = ? AND status = 'pending_activation'", (pairing_id,)).fetchone():
+                        return _connector_pairing_error("rotation_pending")
+                    rotation_id = _id("rotation")
+                    successor_id = generate_connector_credential_id()
+                    successor = derive_pending_connector_secret(pepper, successor_id, request_digest, pairing.get("scopeDigest"))
+                    now = utc_now()
+                    activation_expires = _connector_timestamp(PENDING_ACTIVATION_TTL_SECONDS)
+                    connection.execute("INSERT INTO matm_connector_credentials (credential_id, pairing_id, credential_verifier, approved_scopes_json, scope_digest, status, created_at, raw_credential_persisted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (successor_id, pairing_id, successor.persistable_state().get("credentialVerifier"), json.dumps(list(pairing.get("approvedScopes") or ()), separators=(",", ":")), pairing.get("scopeDigest"), "pending_activation", now, 0))
+                    connection.execute(
+                        """
+                        INSERT INTO matm_connector_rotations (
+                          rotation_id, pairing_id, predecessor_credential_id, successor_credential_id,
+                          status, approved_scopes_json, scope_digest, reason,
+                          prepare_idempotency_key_hash, prepare_request_digest,
+                          prepare_idempotency_digest, created_at, activation_expires_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (rotation_id, pairing_id, pairing.get("currentCredentialId"), successor_id,
+                         "pending_activation",
+                         json.dumps(list(pairing.get("approvedScopes") or ()), separators=(",", ":")),
+                         pairing.get("scopeDigest"), redact_text(str(reason or "scheduled_rotation")[:255]),
+                         key_hash, request_digest, combined_hash, now, activation_expires),
+                    )
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.rotation_prepare",
+                        "agent-identity",
+                        pairing.get("agentIdentityId"),
+                        "rotation",
+                        rotation_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+        rotation = {"rotationId": rotation_id, "pairingId": pairing_id, "predecessorCredentialId": pairing.get("currentCredentialId"), "successorCredentialId": successor_id, "status": "pending_activation", "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "reason": redact_text(str(reason or "scheduled_rotation")[:255]), "createdAt": now, "activationExpiresAt": activation_expires}
+        return {"ok": True, "rotation": _public_connector_rotation(rotation), "approvedScopes": list(rotation.get("approvedScopes") or ()), "scopeDigest": rotation.get("scopeDigest"), "connectorCredentialSecret": successor.reveal(), "idempotentReplay": False, "rawCredentialPersisted": False, "valuesRedacted": True}
+
+    def activate_connector_rotation(self, pairing_id, rotation_id, successor_token, idempotency_key, request_digest):
+        credential_id, _secret = _parse_connector_credential(successor_token)
+        if not credential_id:
+            return _connector_pairing_error("pending_credential_invalid")
+        try:
+            pepper = _credential_pepper()
+        except RuntimeError:
+            return _connector_pairing_error("credential_system_not_configured")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                            (pairing_id,),
+                        )
+                    )
+                    rotation = self._connector_rotation_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_rotations WHERE rotation_id = ? AND pairing_id = ?",
+                            (rotation_id, pairing_id),
+                        )
+                    )
+                    successor = self._connector_credential_from_row(
+                        _connector_select_for_update(
+                            connection,
+                            "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                            (credential_id, pairing_id),
+                        )
+                    )
+                    if not pairing or not rotation or not successor or credential_id != rotation.get("successorCredentialId"):
+                        return _connector_pairing_error("rotation_not_found")
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            (pairing.get("requestId"),),
+                        ).fetchone()
+                    )
+                    predecessor = self._connector_credential_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?",
+                            (rotation.get("predecessorCredentialId"), pairing_id),
+                        ).fetchone()
+                    )
+                    if not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=(predecessor, successor),
+                        rotations=(rotation,),
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    if not verify_connector_secret(
+                        successor_token,
+                        successor.get("credentialVerifier"),
+                        pepper,
+                        pairing.get("scopeDigest"),
+                    ):
+                        return _connector_pairing_error("pending_credential_invalid")
+                    replay, key_hash, combined_hash = _connector_action_replay(rotation, "activation", idempotency_key, request_digest)
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and rotation.get("status") == "active" and successor.get("status") == "active":
+                        return {"ok": True, "rotation": _public_connector_rotation(rotation), "approvedScopes": list(rotation.get("approvedScopes") or ()), "scopeDigest": rotation.get("scopeDigest"), "idempotentReplay": True, "valuesRedacted": True}
+                    if rotation.get("status") != "pending_activation" or successor.get("status") != "pending_activation":
+                        return _connector_pairing_error("rotation_unavailable")
+                    if _timestamp_expired(rotation.get("activationExpiresAt")):
+                        now = utc_now()
+                        connection.execute("UPDATE matm_connector_rotations SET status = 'expired' WHERE rotation_id = ?", (rotation_id,))
+                        connection.execute("UPDATE matm_connector_credentials SET status = 'expired', revoked_at = ? WHERE credential_id = ?", (now, credential_id))
+                        return _connector_pairing_error("pending_grant_expired")
+                    if not predecessor or predecessor.get("status") != "active" or pairing.get("status") != "active":
+                        return _connector_pairing_error("grant_not_active")
+                    now = utc_now()
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'superseded', revoked_at = ? WHERE credential_id = ? AND status = 'active'", (now, predecessor.get("credentialId")))
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'active', activated_at = ? WHERE credential_id = ? AND status = 'pending_activation'", (now, credential_id))
+                    connection.execute("UPDATE matm_connector_pairings SET current_credential_id = ? WHERE pairing_id = ? AND status = 'active'", (credential_id, pairing_id))
+                    connection.execute("UPDATE matm_connector_rotations SET status = 'active', activated_at = ?, activation_expires_at = NULL, activation_idempotency_key_hash = ?, activation_request_digest = ?, activation_idempotency_digest = ? WHERE rotation_id = ? AND status = 'pending_activation'", (now, key_hash, request_digest, combined_hash, rotation_id))
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.rotation_activate",
+                        "agent-identity",
+                        pairing.get("agentIdentityId"),
+                        "rotation",
+                        rotation_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+                    rotation.update({"status": "active", "activatedAt": now, "activationExpiresAt": None})
+                    _connector_record_action(rotation, "activation", key_hash, request_digest, combined_hash)
+        return {"ok": True, "rotation": _public_connector_rotation(rotation), "approvedScopes": list(rotation.get("approvedScopes") or ()), "scopeDigest": rotation.get("scopeDigest"), "idempotentReplay": False, "valuesRedacted": True}
+
+    def disconnect_connector_pairing(self, pairing_id, connector_token, reason, idempotency_key, request_digest):
+        principal = self.authenticate_connector_token(connector_token, pairing_id=pairing_id, allow_pending=True)
+        credential_id, _secret = _parse_connector_credential(connector_token)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(connection.execute("SELECT * FROM matm_connector_pairings WHERE pairing_id = ?", (pairing_id,)).fetchone())
+                    credential = self._connector_credential_from_row(connection.execute("SELECT * FROM matm_connector_credentials WHERE credential_id = ? AND pairing_id = ?", (credential_id, pairing_id)).fetchone()) if credential_id else None
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            ((pairing or {}).get("requestId"),),
+                        ).fetchone()
+                    )
+                    credentials = tuple(
+                        self._connector_credential_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                            (pairing_id,),
+                        ).fetchall()
+                    )
+                    rotations = tuple(
+                        self._connector_rotation_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_rotations WHERE pairing_id = ?",
+                            (pairing_id,),
+                        ).fetchall()
+                    )
+                    if pairing and not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=credentials,
+                        rotations=rotations,
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    replay, key_hash, combined_hash = _connector_action_replay(pairing or {}, "disconnect", idempotency_key, request_digest)
+                    try:
+                        valid_proof = bool(
+                            pairing
+                            and credential
+                            and verify_connector_secret(
+                                connector_token,
+                                credential.get("credentialVerifier"),
+                                _credential_pepper(),
+                                pairing.get("scopeDigest"),
+                            )
+                        )
+                    except RuntimeError:
+                        valid_proof = False
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
+                    if valid_proof and replay == "exact" and pairing.get("status") == "disconnected":
+                        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+                    if not principal or not principal.get("active") or pairing.get("status") != "active":
+                        return _connector_pairing_error("invalid_token")
+                    now = utc_now()
+                    connection.execute("UPDATE matm_connector_pairings SET status = 'disconnected', ended_at = ?, ended_reason = ?, disconnect_idempotency_key_hash = ?, disconnect_request_digest = ?, disconnect_idempotency_digest = ? WHERE pairing_id = ? AND status = 'active'", (now, redact_text(str(reason or "connector_disconnected")[:255]), key_hash, request_digest, combined_hash, pairing_id))
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'disconnected', revoked_at = ? WHERE pairing_id = ? AND status NOT IN ('superseded','expired')", (now, pairing_id))
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.disconnect",
+                        "credential",
+                        pairing.get("currentCredentialId"),
+                        "pairing",
+                        pairing_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+                    pairing.update({"status": "disconnected", "endedAt": now, "endedReason": redact_text(str(reason or "connector_disconnected")[:255])})
+                    _connector_record_action(pairing, "disconnect", key_hash, request_digest, combined_hash)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": False, "safeNoOpOnRetry": True, "valuesRedacted": True}
+
+    def cancel_connector_pairing(self, pairing_id, connector_token, reason, idempotency_key, request_digest):
+        principal = self.authenticate_connector_token(connector_token, pairing_id=pairing_id, allow_pending=True)
+        if not principal:
+            return _connector_pairing_error("invalid_token")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(connection.execute("SELECT * FROM matm_connector_pairings WHERE pairing_id = ?", (pairing_id,)).fetchone())
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            ((pairing or {}).get("requestId"),),
+                        ).fetchone()
+                    )
+                    credentials = tuple(
+                        self._connector_credential_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                            (pairing_id,),
+                        ).fetchall()
+                    )
+                    if pairing and not _connector_scope_chain_valid(
+                        request=request, pairing=pairing, credentials=credentials
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    replay, key_hash, combined_hash = _connector_action_replay(pairing or {}, "cancellation", idempotency_key, request_digest)
+                    if replay == "invalid": return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict": return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and pairing.get("status") == "canceled":
+                        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+                    if pairing.get("status") != "pending_activation" or principal.get("credentialStatus") != "pending_activation":
+                        return _connector_pairing_error("pairing_not_pending_activation")
+                    now = utc_now()
+                    connection.execute("UPDATE matm_connector_pairings SET status = 'canceled', ended_at = ?, ended_reason = ?, cancellation_idempotency_key_hash = ?, cancellation_request_digest = ?, cancellation_idempotency_digest = ? WHERE pairing_id = ? AND status = 'pending_activation'", (now, redact_text(str(reason or "connector_canceled")[:255]), key_hash, request_digest, combined_hash, pairing_id))
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'canceled', revoked_at = ? WHERE pairing_id = ? AND status = 'pending_activation'", (now, pairing_id))
+                    connection.execute("UPDATE matm_connector_pairing_requests SET status = 'canceled' WHERE request_id = ?", (pairing.get("requestId"),))
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.cancel",
+                        "credential",
+                        pairing.get("currentCredentialId"),
+                        "pairing",
+                        pairing_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+                    pairing.update({"status": "canceled", "endedAt": now, "endedReason": redact_text(str(reason or "connector_canceled")[:255])})
+                    _connector_record_action(pairing, "cancellation", key_hash, request_digest, combined_hash)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": False, "safeNoOpOnRetry": True, "valuesRedacted": True}
+
+    def revoke_connector_pairing(self, master_token, pairing_id, reason, idempotency_key, request_digest):
+        master = self.authenticate_company_master(master_token)
+        if not master:
+            return _connector_pairing_error("company_master_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    pairing = self._connector_pairing_from_row(connection.execute("SELECT * FROM matm_connector_pairings WHERE pairing_id = ?", (pairing_id,)).fetchone())
+                    if not pairing or pairing.get("companyId") != master.get("companyId"):
+                        return _connector_pairing_error("pairing_not_found")
+                    request = self._connector_request_from_row(
+                        connection.execute(
+                            "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                            (pairing.get("requestId"),),
+                        ).fetchone()
+                    )
+                    credentials = tuple(
+                        self._connector_credential_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                            (pairing_id,),
+                        ).fetchall()
+                    )
+                    rotations = tuple(
+                        self._connector_rotation_from_row(row)
+                        for row in connection.execute(
+                            "SELECT * FROM matm_connector_rotations WHERE pairing_id = ?",
+                            (pairing_id,),
+                        ).fetchall()
+                    )
+                    if not _connector_scope_chain_valid(
+                        request=request,
+                        pairing=pairing,
+                        credentials=credentials,
+                        rotations=rotations,
+                    ):
+                        return _connector_pairing_error("connector_scope_denied")
+                    replay, key_hash, combined_hash = _connector_action_replay(pairing, "revocation", idempotency_key, request_digest)
+                    if replay == "invalid": return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict": return _connector_pairing_error("idempotency_conflict")
+                    if replay == "exact" and pairing.get("status") == "revoked":
+                        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "actorMasterKeyId": pairing.get("revokedByMasterKeyId"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
+                    if pairing.get("status") in ("disconnected", "canceled", "expired"):
+                        return _connector_pairing_error("pairing_unavailable")
+                    now = utc_now()
+                    connection.execute("UPDATE matm_connector_pairings SET status = 'revoked', ended_at = ?, ended_reason = ?, revoked_by_master_key_id = ?, revocation_idempotency_key_hash = ?, revocation_request_digest = ?, revocation_idempotency_digest = ? WHERE pairing_id = ?", (now, redact_text(str(reason or "company_master_revoked")[:255]), master.get("masterKeyId"), key_hash, request_digest, combined_hash, pairing_id))
+                    connection.execute("UPDATE matm_connector_credentials SET status = 'revoked', revoked_at = ? WHERE pairing_id = ? AND status NOT IN ('revoked','superseded','expired')", (now, pairing_id))
+                    self._record_connector_audit_sql(
+                        connection,
+                        "connector_pairing.revoke",
+                        "master-key",
+                        master.get("masterKeyId"),
+                        "pairing",
+                        pairing_id,
+                        workspace_id=pairing.get("workspaceId"),
+                    )
+                    pairing.update({"status": "revoked", "endedAt": now, "endedReason": redact_text(str(reason or "company_master_revoked")[:255]), "revokedByMasterKeyId": master.get("masterKeyId")})
+                    _connector_record_action(pairing, "revocation", key_hash, request_digest, combined_hash)
+        return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "actorMasterKeyId": master.get("masterKeyId"), "idempotentReplay": False, "safeNoOpOnRetry": True, "valuesRedacted": True}
+
+    def expire_connector_pairings(self):
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    request_rows = []
+                    for row in connection.execute(
+                        "SELECT * FROM matm_connector_pairing_requests "
+                        "WHERE status = 'pending_human_approval' AND expires_at <= ?",
+                        (now,),
+                    ).fetchall():
+                        request = self._connector_request_from_row(row)
+                        if not _connector_scope_chain_valid(request=request):
+                            continue
+                        changed = connection.execute(
+                            "UPDATE matm_connector_pairing_requests SET status = 'expired' "
+                            "WHERE request_id = ? AND status = 'pending_human_approval'",
+                            (request.get("requestId"),),
+                        )
+                        if changed.rowcount == 1:
+                            request_rows.append(row)
+                    code_rows = []
+                    for row in connection.execute(
+                        "SELECT * FROM matm_connector_pairing_requests "
+                        "WHERE status IN ('approved','authorization_code_issued') "
+                        "AND authorization_code_expires_at <= ?",
+                        (now,),
+                    ).fetchall():
+                        request = self._connector_request_from_row(row)
+                        if not _connector_scope_chain_valid(request=request):
+                            continue
+                        changed = connection.execute(
+                            "UPDATE matm_connector_pairing_requests "
+                            "SET status = 'authorization_code_expired' "
+                            "WHERE request_id = ? AND status IN ('approved','authorization_code_issued')",
+                            (request.get("requestId"),),
+                        )
+                        if changed.rowcount == 1:
+                            code_rows.append(row)
+                    pairing_rows = []
+                    for row in connection.execute(
+                        "SELECT * FROM matm_connector_pairings "
+                        "WHERE status = 'pending_activation' AND activation_expires_at <= ?",
+                        (now,),
+                    ).fetchall():
+                        pairing = self._connector_pairing_from_row(row)
+                        request = self._connector_request_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                                (pairing.get("requestId"),),
+                            ).fetchone()
+                        )
+                        credentials = tuple(
+                            self._connector_credential_from_row(item)
+                            for item in connection.execute(
+                                "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                                (pairing.get("pairingId"),),
+                            ).fetchall()
+                        )
+                        if not _connector_scope_chain_valid(
+                            request=request, pairing=pairing, credentials=credentials
+                        ):
+                            continue
+                        changed = connection.execute(
+                            "UPDATE matm_connector_pairings SET status = 'expired', ended_at = ? "
+                            "WHERE pairing_id = ? AND status = 'pending_activation'",
+                            (now, pairing.get("pairingId")),
+                        )
+                        if changed.rowcount != 1:
+                            continue
+                        connection.execute(
+                            "UPDATE matm_connector_credentials SET status = 'expired', revoked_at = ? "
+                            "WHERE pairing_id = ? AND status = 'pending_activation'",
+                            (now, pairing.get("pairingId")),
+                        )
+                        pairing_rows.append(row)
+                    rotation_rows = []
+                    for row in connection.execute(
+                        "SELECT * FROM matm_connector_rotations "
+                        "WHERE status = 'pending_activation' AND activation_expires_at <= ?",
+                        (now,),
+                    ).fetchall():
+                        rotation = self._connector_rotation_from_row(row)
+                        pairing = self._connector_pairing_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                                (rotation.get("pairingId"),),
+                            ).fetchone()
+                        )
+                        request = self._connector_request_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                                ((pairing or {}).get("requestId"),),
+                            ).fetchone()
+                        )
+                        credentials = tuple(
+                            self._connector_credential_from_row(item)
+                            for item in connection.execute(
+                                "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                                (rotation.get("pairingId"),),
+                            ).fetchall()
+                        )
+                        if not _connector_scope_chain_valid(
+                            request=request,
+                            pairing=pairing,
+                            credentials=credentials,
+                            rotations=(rotation,),
+                        ):
+                            continue
+                        changed = connection.execute(
+                            "UPDATE matm_connector_rotations SET status = 'expired' "
+                            "WHERE rotation_id = ? AND status = 'pending_activation'",
+                            (rotation.get("rotationId"),),
+                        )
+                        if changed.rowcount != 1:
+                            continue
+                        connection.execute(
+                            "UPDATE matm_connector_credentials SET status = 'expired', revoked_at = ? "
+                            "WHERE credential_id = ? AND status = 'pending_activation'",
+                            (now, rotation.get("successorCredentialId")),
+                        )
+                        rotation_rows.append(row)
+        return {"ok": True, "expiredRequestCount": len(request_rows), "expiredAuthorizationCodeCount": len(code_rows), "expiredPairingCount": len(pairing_rows), "expiredRotationCount": len(rotation_rows), "valuesRedacted": True}
+
+    def purge_abandoned_connector_pairings(self, older_than_seconds=86400):
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=max(3600, int(older_than_seconds or 86400)))).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    _connector_begin_immediate(connection)
+                    rows = connection.execute("SELECT pairing_id, request_id FROM matm_connector_pairings WHERE status IN ('canceled','expired') AND COALESCE(ended_at, created_at) <= ?", (cutoff,)).fetchall()
+                    purged_count = 0
+                    for row in rows:
+                        pairing = self._connector_pairing_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_pairings WHERE pairing_id = ?",
+                                (row["pairing_id"],),
+                            ).fetchone()
+                        )
+                        request = self._connector_request_from_row(
+                            connection.execute(
+                                "SELECT * FROM matm_connector_pairing_requests WHERE request_id = ?",
+                                (row["request_id"],),
+                            ).fetchone()
+                        )
+                        credentials = tuple(
+                            self._connector_credential_from_row(item)
+                            for item in connection.execute(
+                                "SELECT * FROM matm_connector_credentials WHERE pairing_id = ?",
+                                (row["pairing_id"],),
+                            ).fetchall()
+                        )
+                        rotations = tuple(
+                            self._connector_rotation_from_row(item)
+                            for item in connection.execute(
+                                "SELECT * FROM matm_connector_rotations WHERE pairing_id = ?",
+                                (row["pairing_id"],),
+                            ).fetchall()
+                        )
+                        if not _connector_scope_chain_valid(
+                            request=request,
+                            pairing=pairing,
+                            credentials=credentials,
+                            rotations=rotations,
+                        ):
+                            continue
+                        connection.execute("DELETE FROM matm_connector_rotations WHERE pairing_id = ?", (row["pairing_id"],))
+                        connection.execute("DELETE FROM matm_connector_credentials WHERE pairing_id = ?", (row["pairing_id"],))
+                        connection.execute("DELETE FROM matm_connector_pairings WHERE pairing_id = ?", (row["pairing_id"],))
+                        connection.execute("DELETE FROM matm_connector_pairing_requests WHERE request_id = ?", (row["request_id"],))
+                        purged_count += 1
+        return {"ok": True, "purgedCount": purged_count, "valuesRedacted": True}
 
 
 class _DbCursor(object):
@@ -9575,6 +21245,10 @@ class _DbCursor(object):
 
     def fetchall(self):
         return [self._normalize_row(row) for row in self.cursor.fetchall()]
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
 
 
 class _DbConnection(object):
@@ -9919,4 +21593,8 @@ class MySQLStore(SQLiteStore):
         connection.executescript(schema)
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
+        self._ensure_company_lifecycle_schema_columns(connection)
+        self._ensure_human_account_schema_columns(connection)
+        self._ensure_human_operational_schema_columns(connection)
+        self._ensure_agent_replacement_schema_columns(connection)
         connection.commit()

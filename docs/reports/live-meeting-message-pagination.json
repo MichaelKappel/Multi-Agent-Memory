@@ -1,0 +1,310 @@
+{
+  "agentId": "MemoryEndpoints-Backend-Agent",
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": [
+    {
+      "detail": {
+        "status": 200
+      },
+      "name": "version_status_200",
+      "ok": true
+    },
+    {
+      "detail": {
+        "sourceSha": "c96e836bf302feca42f01017e18abfb27739917f"
+      },
+      "name": "source_sha_matches_expected",
+      "ok": true
+    },
+    {
+      "detail": {
+        "storeBackend": "mysql",
+        "storeBackendVerified": true
+      },
+      "name": "mysql_backend_verified",
+      "ok": true
+    },
+    {
+      "detail": {
+        "created": true,
+        "roomId": "room-715249cff34eb424847b",
+        "status": 201
+      },
+      "name": "room_created_or_reused",
+      "ok": true
+    },
+    {
+      "detail": {
+        "persisted": true,
+        "visibleToAgent": true
+      },
+      "name": "room_confirmation_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "messageId": "meetmsg-01783736326973164945-ae9dd02d",
+        "status": 201
+      },
+      "name": "post_0_persisted_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "messageId": "meetmsg-01783736327646108485-62369a19",
+        "status": 201
+      },
+      "name": "post_1_persisted_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "messageId": "meetmsg-01783736328346219818-2f571283",
+        "status": 201
+      },
+      "name": "post_2_persisted_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "messageId": "meetmsg-01783736329085692810-8b39f11c",
+        "status": 201
+      },
+      "name": "post_3_persisted_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "messageId": "meetmsg-01783736329784134829-9c45ed1f",
+        "status": 201
+      },
+      "name": "post_4_persisted_visible",
+      "ok": true
+    },
+    {
+      "detail": {
+        "count": 2,
+        "status": 200,
+        "totalMessageCount": 5,
+        "visibleMessageCount": 2
+      },
+      "name": "page1_status_and_counts",
+      "ok": true
+    },
+    {
+      "detail": {
+        "ids": [
+          "meetmsg-01783736329085692810-8b39f11c",
+          "meetmsg-01783736329784134829-9c45ed1f"
+        ]
+      },
+      "name": "page1_latest_two_oldest_to_newest",
+      "ok": true
+    },
+    {
+      "detail": {
+        "hasMore": true,
+        "nextCursor": "meetmsg-01783736329085692810-8b39f11c"
+      },
+      "name": "page1_has_more_and_cursor",
+      "ok": true
+    },
+    {
+      "detail": {
+        "pagination": {
+          "cursor": "",
+          "cursorAccepted": null,
+          "cursorDirection": "older",
+          "hasMore": true,
+          "nextCursor": "meetmsg-01783736329085692810-8b39f11c",
+          "rawCredentialExposed": false,
+          "rawPayloadExposed": false,
+          "totalMessageCount": 5,
+          "valuesRedacted": true,
+          "visibleMessageCount": 2
+        },
+        "transcriptOrdering": {
+          "cursorDirection": "older",
+          "cursorField": "items[0].meetingMessageId",
+          "displayOrder": "oldest_to_newest_within_visible_window",
+          "rawCredentialExposed": false,
+          "rawPayloadExposed": false,
+          "schemaVersion": "memoryendpoints.meeting_transcript_ordering.v1",
+          "valuesRedacted": true,
+          "window": "latest_messages"
+        }
+      },
+      "name": "page1_ordering_metadata",
+      "ok": true
+    },
+    {
+      "detail": {
+        "count": 2,
+        "status": 200,
+        "totalMessageCount": 5,
+        "visibleMessageCount": 2
+      },
+      "name": "page2_status_and_counts",
+      "ok": true
+    },
+    {
+      "detail": {
+        "ids": [
+          "meetmsg-01783736327646108485-62369a19",
+          "meetmsg-01783736328346219818-2f571283"
+        ]
+      },
+      "name": "page2_older_window",
+      "ok": true
+    },
+    {
+      "detail": {
+        "cursor": "meetmsg-01783736329085692810-8b39f11c",
+        "cursorAccepted": true
+      },
+      "name": "page2_cursor_accepted",
+      "ok": true
+    },
+    {
+      "detail": {
+        "count": 1,
+        "status": 200,
+        "totalMessageCount": 5,
+        "visibleMessageCount": 1
+      },
+      "name": "page3_status_and_counts",
+      "ok": true
+    },
+    {
+      "detail": {
+        "hasMore": false,
+        "ids": [
+          "meetmsg-01783736326973164945-ae9dd02d"
+        ],
+        "nextCursor": null
+      },
+      "name": "page3_oldest_window_no_more",
+      "ok": true
+    },
+    {
+      "detail": {
+        "operatorSummary": {
+          "alwaysAvailable": true,
+          "count": 2,
+          "filters": {
+            "agentId": "MemoryEndpoints-Backend-Agent",
+            "limit": "2",
+            "roomId": "room-715249cff34eb424847b"
+          },
+          "pagination": {
+            "cursor": "",
+            "cursorAccepted": null,
+            "cursorDirection": "older",
+            "hasMore": true,
+            "nextCursor": "meetmsg-01783736329085692810-8b39f11c",
+            "rawCredentialExposed": false,
+            "rawPayloadExposed": false,
+            "totalMessageCount": 5,
+            "valuesRedacted": true,
+            "visibleMessageCount": 2
+          },
+          "rawCredentialExposed": false,
+          "rawPayloadExposed": false,
+          "readStatePresent": false,
+          "roomId": "room-715249cff34eb424847b",
+          "schemaVersion": "memoryendpoints.meeting_messages_operator_summary.v1",
+          "scope": "task",
+          "scopeId": "live-meeting-pagination-a280f8427c03",
+          "senderAgentCounts": {
+            "MemoryEndpoints-Backend-Agent": 2
+          },
+          "totalMessageCount": 5,
+          "transcriptOrdering": {
+            "cursorDirection": "older",
+            "cursorField": "items[0].meetingMessageId",
+            "displayOrder": "oldest_to_newest_within_visible_window",
+            "rawCredentialExposed": false,
+            "rawPayloadExposed": false,
+            "schemaVersion": "memoryendpoints.meeting_transcript_ordering.v1",
+            "valuesRedacted": true,
+            "window": "latest_messages"
+          },
+          "unreadCount": 5,
+          "valuesRedacted": true,
+          "visibleMessageCount": 2
+        }
+      },
+      "name": "operator_summary_counts",
+      "ok": true
+    }
+  ],
+  "confirmationFieldsVerified": true,
+  "generatedAtEpochSeconds": 1783736330,
+  "ok": true,
+  "pageSummaries": [
+    {
+      "cursorAccepted": null,
+      "hasMore": true,
+      "ids": [
+        "meetmsg-01783736329085692810-8b39f11c",
+        "meetmsg-01783736329784134829-9c45ed1f"
+      ],
+      "name": "page1",
+      "nextCursor": "meetmsg-01783736329085692810-8b39f11c",
+      "totalMessageCount": 5,
+      "visibleMessageCount": 2
+    },
+    {
+      "cursorAccepted": true,
+      "hasMore": true,
+      "ids": [
+        "meetmsg-01783736327646108485-62369a19",
+        "meetmsg-01783736328346219818-2f571283"
+      ],
+      "name": "page2",
+      "nextCursor": "meetmsg-01783736327646108485-62369a19",
+      "totalMessageCount": 5,
+      "visibleMessageCount": 2
+    },
+    {
+      "cursorAccepted": true,
+      "hasMore": false,
+      "ids": [
+        "meetmsg-01783736326973164945-ae9dd02d"
+      ],
+      "name": "page3",
+      "nextCursor": null,
+      "totalMessageCount": 5,
+      "visibleMessageCount": 1
+    }
+  ],
+  "postedMessageIds": [
+    "meetmsg-01783736326973164945-ae9dd02d",
+    "meetmsg-01783736327646108485-62369a19",
+    "meetmsg-01783736328346219818-2f571283",
+    "meetmsg-01783736329085692810-8b39f11c",
+    "meetmsg-01783736329784134829-9c45ed1f"
+  ],
+  "projectId": "project-7474be75df6643b89953",
+  "rawCredentialExposed": false,
+  "roomId": "room-715249cff34eb424847b",
+  "roomScope": "task",
+  "roomScopeId": "live-meeting-pagination-a280f8427c03",
+  "runId": "live-meeting-pagination-a280f8427c03",
+  "schemaVersion": "memoryendpoints.live_meeting_message_pagination.v1",
+  "sourceSha": "c96e836bf302feca42f01017e18abfb27739917f",
+  "storeBackend": "mysql",
+  "storeBackendVerified": true,
+  "transcriptOrdering": {
+    "cursorDirection": "older",
+    "cursorField": "items[0].meetingMessageId",
+    "displayOrder": "oldest_to_newest_within_visible_window",
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "schemaVersion": "memoryendpoints.meeting_transcript_ordering.v1",
+    "valuesRedacted": true,
+    "window": "latest_messages"
+  },
+  "valuesRedacted": true,
+  "workspaceIdHashOnly": "sha256-redacted-by-report"
+}

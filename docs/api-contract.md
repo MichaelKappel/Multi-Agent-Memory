@@ -14,13 +14,22 @@ The complete route and method list is also maintained in [route-inventory.md](ro
 | `/agent-coordination` | Authenticated coordination quickstart and copy-safe examples. |
 | `/console` | Human verification console for a saved workspace key. |
 | `/knowledge` | Authenticated human wiki shell; anonymous requests receive no tenant knowledge. |
+| `/tour` | Browser-local public product tour using the real console interface with clearly labeled mock data. |
+| `/tour/knowledge` | Browser-local public knowledge tour using the real wiki interface with clearly labeled mock data. |
+| `/tour/human` | Browser-local human-access tour using the production renderer with session-only mock authority. |
 | `/memory-lifecycle` | Memory lifecycle explanation. |
 | `/transparency` | Support, authority, and safe no-op boundaries. |
 | `/api/version` | Runtime version, dependency, storage-backend, and build provenance facts. |
 | `/api/matm/live-capability-matrix` | Current live, planned, and gated capability state. |
 | `/api/matm/agent-compatibility` | L0-L7 agent ability, fallback, and route-record guidance. |
 | `/api/matm/sync/capabilities` | Distributed-sync v1 capability and retention negotiation. |
-| `/api/matm/connector-contract` | Public-safe optional connector integration contract for apps and agents. |
+| `/api/matm/connector-contract` | Public `memoryendpoints.connector_pairing.v1` contract, lifecycle rules, and synthetic examples. |
+| `/.well-known/memoryendpoints-connector` | Tenant-free same-origin connector-pairing discovery document. |
+| `/connect/authorize/{publicRequestRef}` | Human approval surface addressed only by a short-lived public, non-authorizing request reference. |
+| `/tour/connect/authorize/{demoState}` | Explicit session-local mock approval states using the production renderer and no protected network. |
+| `/api/matm/connector-pairings/requests` | Idempotent public PKCE pairing-request creation. |
+| `/api/matm/connector-pairings/authorization-code-claims` | Body-only authorization-code claim after human approval. |
+| `/api/matm/connector-pairings/token` | One-use authorization-code and PKCE exchange. |
 | `/api/matm/uai-memory/contract` | Public contract for the accountless-browser virtual UAIX package and hash-only local `.uai` collaboration overlay. |
 | `/api/matm/openapi.json` | Bounded OpenAPI-style golden-path schema. |
 | `/api/matm/route-inventory` | Public and protected route inventory. |
@@ -35,29 +44,411 @@ The complete route and method list is also maintained in [route-inventory.md](ro
 | `/.well-known/mcp.json` | MCP discovery pointer. |
 | `/.well-known/ai-agent.json` | AI agent discovery pointer. |
 
+### GET, POST `/api/matm/agent-setup/free-account`
+
+`GET` returns public setup metadata. `POST` creates one free account, company,
+workspace, project, and workspace bearer key. These are the only setup methods;
+`PUT`, `PATCH`, and `DELETE` return `405 Method Not Allowed` with
+`Allow: GET, POST` before setup storage is accessed. Setup responses use
+`Cache-Control: no-store`.
+
+The `POST` body must be a JSON object. Labels are optional for compatibility.
+When supplied, the accepted canonical fields and aliases are
+`companyLabel`/`company_label`, `label`/`workspaceLabel`/`workspace_label`, and
+`projectLabel`/`project_label`. Each supplied value must be a string; the server
+trims it and requires the result to be nonempty and no longer than 120
+characters.
+
+Each valid `POST` is intentionally non-idempotent and creates a distinct
+hierarchy and credential; it is a compatibility path, not the connector
+pairing v1 setup path, and clients must not automatically retry an uncertain
+outcome. Connector pairing uses `workspaceSelection.mode=new` instead: its
+workspace, project, agent, and grant remain provisional until activation, so
+an abandoned or canceled setup creates no durable hierarchy. A successful
+compatibility response returns `apiKeySecret` once with
+`showKeyOnce=true` and `rawKeyStoredByServer=false`. The server persists only
+the key hash, and redacted summaries never contain the raw secret.
+
 ### GET `/api/matm/connector-contract`
 
-Returns a public-safe integration contract for optional MemoryEndpoints
-connectors in apps, local runtimes, and agent tools. It is designed for agents
-such as LocalEndpoint or TinyRustLM that need one stable place to discover how
-to connect without asking a human to infer the contract from scattered docs.
+Returns the public `memoryendpoints.connector_pairing.v1` contract used by
+LocalEndpoint Connect. It publishes the same routes, field rules, TTLs,
+authentication, idempotency, replay, rate-limit, lifecycle, error, transport,
+and verification rules as the well-known discovery document and OpenAPI
+document. It includes synthetic placeholder-only requests and responses. The
+contract never returns tenant identifiers, a workspace key, company master,
+connector credential, authorization code, PKCE verifier, state value, private
+payload, credential verifier, or credential hash.
 
-The contract includes:
+### GET `/.well-known/memoryendpoints-connector`
 
-- Required user settings: base URL, workspace id, agent id, and masked workspace key.
-- Machine-readable auth block guidance for JSON or `.env` fields so parsers do not confuse examples with real tokens.
-- Required optional-connector manifest fields, including public-safe-only mode, user workspace-key requirement, secret-storage policy, and forbidden payload classes.
-- Authentication and storage rules for workspace keys.
-- Setup, registration, workspace-load, memory, meeting-room, current-message, receipt, and audit routes.
-- Database-backed knowledge wiki routes for project discovery, one-report-at-a-time knowledge indexing, tree crawl, and document retrieval.
-- Public-safe payload limits, redaction boundaries, source-reference fields, short-term versus long-term memory mapping, and project/goal/task scope guidance.
-- Meeting-room routing policy: start in the company welcome/routing room, move to workspace for operating context, and use project rooms for assigned implementation work.
-- Evidence expected from connector agents after setup and after implementation.
-- POST confirmation fields such as `persisted`, `visibleToSender`, `visibleToTarget`, `canonicalRoomId`, `messageId`, `transcriptQueryUrl`, and `inboxQueryUrl`.
-- Two explicit active-memory modes: a complete protected virtual package for an accountless browser AI with no durable local filesystem, and a hash-only edit-claim overlay for normal filesystem agents that keep `.uai` contents local.
+This tenant-free JSON discovery document is the starting point for v1. The
+entered service root must canonicalize to exactly
+`https://memoryendpoints.com`: HTTPS is required; user-info, an explicit port,
+path other than `/`, query, and fragment are rejected. All advertised API
+endpoints stay on that origin. Discovery, pairing request, code exchange,
+activation, status, rotation, revocation, disconnect, and cancellation do not
+redirect. Clients use normal operating-system TLS validation, require an
+explicit JSON content type, bound connector request bodies to 32 KiB,
+discovery responses to 16 KiB, and other pairing JSON responses to 64 KiB,
+and negotiate exactly
+`memoryendpoints.connector_pairing.v1`.
 
-The route is public and never returns a workspace key, raw credential, private
-payload, idempotency key, or protected workspace content.
+The discovery endpoint map is:
+
+| Name | Route |
+| --- | --- |
+| `pairingRequest` | `/api/matm/connector-pairings/requests` |
+| `authorization` | `/connect/authorize/{publicRequestRef}` |
+| `authorizationCodeClaim` | `/api/matm/connector-pairings/authorization-code-claims` |
+| `token` | `/api/matm/connector-pairings/token` |
+| `activation` | `/api/matm/connector-pairings/{pairingId}/activate` |
+| `status` | `/api/matm/connector-pairings/{pairingId}` |
+| `rotation` | `/api/matm/connector-pairings/{pairingId}/rotations` |
+| `rotationActivation` | `/api/matm/connector-pairings/{pairingId}/rotations/{rotationId}/activate` |
+| `credentialList` | `/api/matm/connector-pairings/{pairingId}/credentials` |
+| `revocation` | `/api/matm/connector-pairings/{pairingId}/revoke` |
+| `disconnect` | `/api/matm/connector-pairings/{pairingId}/disconnect` |
+| `cancellation` | `/api/matm/connector-pairings/{pairingId}/cancel` |
+
+### Connector pairing flow
+
+1. The desktop generates a 256-bit cryptographic `state`, a 43–128 character
+   RFC 7636 verifier, and its S256 `codeChallenge`.
+2. `POST /api/matm/connector-pairings/requests` sends the exact v1 schema,
+   fixed `clientId=localendpoint-connect`, a registered parameter-free custom
+   URI or exact IPv4 loopback URI, state, challenge, `S256`, exact
+   `requestedAgentId=localendpoint-agent`, and the exact ordered four scopes.
+   `Idempotency-Key` is required. A successful `201` returns `publicRequestRef`
+   (`pairref_` plus 43 base64url characters), a one-time body-only
+   `pairingRequestProof`, and an authorization URL containing only that public,
+   tenant-neutral, non-authorizing reference. Because this response delivers a
+   one-time value, its top-level wrapper attests
+   `credentialDeliveredToAuthorizedRecipient=true`,
+   `rawCredentialPersisted=false`, and `showCredentialOnce=true`; its
+   purpose-specific `proofDelivery` additionally describes body-only delivery
+   and exact-retry recovery.
+3. The desktop opens `/connect/authorize/{publicRequestRef}`. The human logs in,
+   selects a company through an opaque session/request-bound `companyRef`,
+   reauthenticates when required, selects an existing workspace through an
+   opaque session/request-bound `workspaceRef` or enters labels for a new
+   provisional workspace/project, reviews all four scope impacts, and confirms
+   the canonical agent. Approval returns status
+   `approved_awaiting_connector_claim` and `wakeUpUrl`, which is the registered
+   URI byte-for-byte with no parameters. Opening it requires an explicit human
+   action and grants no authority; v1 never auto-navigates.
+4. The desktop POSTs `pairingRequestProof`, state, client id, and redirect URI to
+   `/api/matm/connector-pairings/authorization-code-claims`. Pending approval is
+   `202` with `Retry-After`, `stateVerified=true`, the exact
+   `requestedScopes`, `scopeDigest`, `idempotencyKeyReserved=false`, and a
+   redacted receipt; it does not bind the idempotency key. The first
+   approved claim atomically binds the request and key and returns a 60-second,
+   one-use authorization code only in JSON plus `stateVerified=true`. Its
+   top-level wrapper attests `credentialDeliveredToAuthorizedRecipient=true`,
+   `rawCredentialPersisted=false`, and `showCredentialOnce=true`. Exact
+   key/body retry rederives the same code before exchange; changed body or any
+   different key returns `409 idempotency_conflict`.
+5. The desktop directly POSTs the body-only code, original client and redirect
+   URI, and PKCE verifier to `/api/matm/connector-pairings/token` with an
+   `Idempotency-Key`. A successful `201` returns non-secret recovery identifiers,
+   the exact scopes and scope digest, and a one-time pending connector
+   credential. Its top-level wrapper repeats the same three secure-delivery
+   attestations, while `credentialDelivery` carries credential-specific
+   exact-retry and scope-binding facts. The server stores only constant-time verifiers and bounded
+   derivation inputs, never the raw code, proof, state, verifier, or credential.
+6. The desktop stores the pending credential in the operating-system credential
+   vault before activation. If storage fails it cancels when possible or lets
+   the pending grant expire. Activation within 600 seconds atomically registers
+   the exact agent and commits any provisional hierarchy.
+7. The desktop reads the exact pairing, credential inventory, `/api/matm/me`,
+   and `/api/matm/workspace` before showing **Connected**. Every identifier,
+   exact scope, scope digest, active state, and non-revocation fact must match.
+
+Pairing requests last 600 seconds; claimed authorization codes last 60 seconds;
+pending grants and rotations last 600 seconds. `publicRequestRef` is the sole
+variable value in the browser approval/wake surface. No workspace, company,
+project, or agent identifier, scope, secret, code, proof, or state enters a
+browser URL, history, or referrer. Protected lifecycle API paths use only the
+non-secret, non-authorizing recovery identifiers `pairingId` and `rotationId`
+and still require the exact bearer authority. A workspace key, company master,
+connector bearer, durable credential, private payload, or sensitive protocol
+value must also never enter a log, prompt, public discovery response, or error.
+Connector-specific protected audit rows likewise never copy raw account,
+session, authority, company, workspace, project, agent, request, pairing,
+rotation, credential, or master-key identifiers. They store the action and
+domain-separated HMAC correlation references only, leave the audit workspace
+foreign key null, and fall back to an uncorrelated category if the credential
+pepper is unavailable.
+
+### Agent identity
+
+Agent names are normalized with Unicode NFKC, ASCII-whitespace trimming, and
+lowercasing. Spaces and underscores are not rewritten. The result must be 3–64 ASCII
+characters matching `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Names are unique per company,
+not globally; `agent_name_unavailable` is the stable collision code and the
+server never adds an automatic suffix. LocalEndpoint's canonical identity is
+`localendpoint-agent` with display name `LocalEndpoint Agent`. Credential
+replacement does not change the stable agent identity.
+
+For connector v1, general name normalization is informational only: the
+request must contain exactly `localendpoint-agent`. `requestedScopes` and
+`approvedScopes` must be this exact ordered, unique set with no substitution or
+expansion:
+
+1. `connector:self:readback`
+2. `agent:self:register`
+3. `memory:public-safe:submit`
+4. `memory:search:read`
+
+The digest is
+`sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594`,
+computed over compact, sorted-key UTF-8 JSON
+`{"schemaVersion":"memoryendpoints.connector_pairing.v1","scopes":[...]}`.
+Identity or scope mismatch returns fixed `422 connector_agent_identity_invalid`
+or `422 connector_scopes_invalid` without creating a record.
+
+### Crash safety, retry, replay, and cancellation
+
+Every pairing mutation body is an exact JSON object with
+`additionalProperties=false` and required
+`schemaVersion=memoryendpoints.connector_pairing.v1`. Pairing request,
+authorization-code claim, exchange, activation, rotation
+preparation/activation, revocation, disconnect, human approval/cancellation,
+and pending-grant cancellation use
+`Idempotency-Key`. Lifecycle reasons are trimmed, contain no ASCII control
+characters, and are 1–255 characters. The same key and canonical request
+return the original result. Claim polling is the exception before approval: a
+`202` does not reserve the key. The first approved claim binds the exact key and
+body; any changed body or different key then returns `409 idempotency_conflict`.
+Approval itself never mints or exposes a code.
+
+If a request, claim, or exchange response is lost, repeat that exact body and
+key. The request proof, claimed code, or pending credential is deterministically
+rederived only inside its recovery window without persisting raw secret-bearing
+responses. If activation times out, repeat the exact activation. Never create a
+replacement pairing merely because a response was lost. A wrong PKCE verifier
+is rejected without consuming a valid code; an activated exchange is
+permanently redeemed.
+If secure storage fails, call `/cancel` with the pending credential or let the
+pending grant expire. Cancellation and expiry leave provisional workspaces,
+projects, agents, and grants non-durable.
+
+### Exact public response allowlists
+
+Public connector summaries are projections, not serialized storage records.
+They never include an internal `requestId`, `companyId`, `projectId`, reason,
+predecessor or supersession identifiers, raw lifecycle timestamps, or nested
+copies of the envelope redaction flags.
+
+The public `PairingRequest` summary contains exactly `publicRequestRef`,
+`status`, `clientDisplayName`, `agentDisplayName`, `requestedScopes`,
+`approvedScopes`, `scopeDigest`, `scopeImpacts`, `expiresAt`, and
+`claimExpiresAt`. A creation response additionally includes
+`expiresInSeconds=600`; a cancellation response omits `expiresInSeconds`.
+`claimExpiresAt` is nullable until approval opens the code-claim window. It is
+the only public name for that deadline; no alternate code-expiry timestamp name
+is public.
+
+The base `PairingSummary` contains exactly `pairingId`, `status`, `workspaceId`,
+`agentId`, `credentialId`, `approvedScopes`, `scopeDigest`, and `grant`. A
+pending summary additionally contains `activationExpiresInSeconds`; an
+authenticated status readback additionally contains only
+`workspace={workspaceId,readable}` and `agent={agentId,readable}`. Its `grant`
+contains exactly `credentialType`, `scopeType`, `scopeId`, `workspaceId`,
+`agentId`, `approvedScopes`, `scopeDigest`, `active`, `revoked`,
+`canInvite=false`, and `canRevoke=false`.
+
+The base `RotationSummary` contains exactly `rotationId`, `status`,
+`credentialId`, `approvedScopes`, and `scopeDigest`. A pending rotation adds
+only `activationExpiresInSeconds`. It never echoes the request reason,
+predecessor or pairing identifiers, or timestamps.
+
+Every successful response that delivers the request proof, authorization code,
+exchanged connector credential, or rotation credential has these exact
+top-level secure-delivery attestations:
+`credentialDeliveredToAuthorizedRecipient=true`,
+`rawCredentialPersisted=false`, and `showCredentialOnce=true`. Request creation
+also has `proofDelivery={bodyOnly:true,showOnce:true,rawProofPersisted:false,
+exactRetryRecoverable:true}`. Exchange and rotation preparation also have the
+purpose-specific `credentialDelivery` object with `showCredentialOnce=true`,
+`exactRetryUntilActivation=true`, `rawCredentialPersisted=false`, and the exact
+`scopeDigest`. The authorization-code claim has no purpose-specific delivery
+object; the shared top-level attestations are authoritative.
+
+### Exact verification response
+
+`GET /api/matm/connector-pairings/{pairingId}` requires the active connector
+bearer and returns this redacted shape (synthetic identifiers only):
+
+```json
+{
+  "ok": true,
+  "schemaVersion": "memoryendpoints.connector_pairing.v1",
+  "approvedScopes": [
+    "connector:self:readback",
+    "agent:self:register",
+    "memory:public-safe:submit",
+    "memory:search:read"
+  ],
+  "scopeDigest": "sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594",
+  "pairing": {
+    "pairingId": "pairing_example",
+    "status": "active",
+    "workspaceId": "workspace_example",
+    "agentId": "localendpoint-agent",
+    "credentialId": "connector_example",
+    "approvedScopes": [
+      "connector:self:readback",
+      "agent:self:register",
+      "memory:public-safe:submit",
+      "memory:search:read"
+    ],
+    "scopeDigest": "sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594",
+    "workspace": {"workspaceId": "workspace_example", "readable": true},
+    "agent": {"agentId": "localendpoint-agent", "readable": true},
+    "grant": {
+      "credentialType": "connector_agent",
+      "scopeType": "agent",
+      "scopeId": "localendpoint-agent",
+      "workspaceId": "workspace_example",
+      "agentId": "localendpoint-agent",
+      "approvedScopes": [
+        "connector:self:readback",
+        "agent:self:register",
+        "memory:public-safe:submit",
+        "memory:search:read"
+      ],
+      "scopeDigest": "sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594",
+      "active": true,
+      "revoked": false,
+      "canInvite": false,
+      "canRevoke": false
+    }
+  },
+  "verification": {
+    "canonicalWorkspaceReadable": true,
+    "canonicalWorkspaceIdMatches": true,
+    "exactAgentReadable": true,
+    "exactAgentIdMatches": true,
+    "credentialScopedToConnectorAndAgent": true,
+    "grantActive": true,
+    "grantRevoked": false,
+    "rawCredentialExposed": false,
+    "privatePayloadExposed": false
+  },
+  "receipt": {
+    "receiptId": "connector-0123456789abcdef01234567",
+    "action": "verify",
+    "status": "verified",
+    "idempotentReplay": false,
+    "rawCredentialExposed": false,
+    "privatePayloadExposed": false,
+    "scopeDigest": "sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594"
+  },
+  "valuesRedacted": true,
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false
+}
+```
+
+The client compares both identifiers to its approved recovery metadata; it does
+not accept merely readable data. `/api/matm/me` must identify credential type
+`connector_agent`, the exact agent, and the canonical workspace resource
+context. The connector calls `/api/matm/workspace` without a query string; the
+server derives the workspace exclusively from the authenticated connector grant
+and must return that exact workspace. Workspace and agent identifiers are never
+placed in connector verification URLs.
+
+`GET /api/matm/connector-pairings/{pairingId}/credentials` accepts either the
+active exact connector credential or a company-master credential for the
+pairing company. A foreign pairing or company is concealed as
+`404 pairing_not_found`. It returns at most 100 lifecycle records, newest
+first, with `pairingId`, exact `approvedScopes`, `scopeDigest`,
+`currentCredentialId`, `items`, `count`, `totalCount`, `hasMore`, `limit=100`,
+and a deterministic receipt whose action is
+`list_credentials`, status is `verified`, and `idempotentReplay=false`. Each
+item contains exactly `credentialId`, `status`, `isCurrent`, `approvedScopes`,
+`scopeDigest`, `createdAt`, `activatedAt`, `revokedAt`, and `lastUsedAt`. The
+envelope alone carries redaction attestations; items do not repeat nested
+`valuesRedacted`, `rawCredentialExposed`, or `rawPayloadExposed` fields. No raw
+credential, credential hash, or verifier is available.
+
+### Credential lifecycle
+
+- `POST /rotations` uses the current active connector bearer, requires
+  `schemaVersion`, a bounded reason,
+  and idempotency key, and reveals a pending successor once. Exact retry can
+  recover that successor while pending. Its top-level wrapper attests
+  `credentialDeliveredToAuthorizedRecipient=true`,
+  `rawCredentialPersisted=false`, and `showCredentialOnce=true`; its
+  `credentialDelivery` preserves the route-specific exact-retry and scope
+  facts. The predecessor remains active.
+- `POST /rotations/{rotationId}/activate` uses the stored successor, required
+  `schemaVersion`, and an
+  idempotency key; it atomically activates the successor and revokes the
+  predecessor.
+- `POST /revoke` requires a company-master bearer for the pairing company,
+  records the machine actor by `masterKeyId`, and immediately revokes the grant.
+  Agent-scoped connector credentials cannot revoke administrative access.
+- `POST /disconnect` lets an active connector revoke itself immediately.
+- `POST /cancel` lets an unactivated pending connector abandon setup safely.
+  Completed-state exact retries are safe no-ops and return redacted receipts.
+
+### Connector authority and memory operations
+
+The active credential remains `credentialType=connector_agent`; it is never
+converted to an ordinary agent principal. Authorization is deny-by-default and
+unlisted routes return `403 connector_scope_forbidden` before body parsing or
+storage dispatch. The closed allowlist is:
+
+| Scope or lifecycle authority | Route and action |
+| --- | --- |
+| `connector:self:readback` | `GET /api/matm/me`, `GET /api/matm/workspace`, exact pairing status, and redacted credential inventory. |
+| `agent:self:register` | `POST /api/matm/agents/register` with exact body `{"schemaVersion":"memoryendpoints.connector_pairing.v1"}`; confirms only the already-bound `localendpoint-agent`. |
+| `memory:public-safe:submit` | `POST /api/matm/memory-events/submit` with exactly `schemaVersion`, `payloadClass=public_safe`, `title`, `summary`, and `tags`; the server derives actor and workspace. |
+| `memory:search:read` | Body-only `POST /api/matm/search` with exactly `schemaVersion`, nonempty `query`, and `limit` from 1 through 50. An `Idempotency-Key` is rejected because this is read-only. |
+| Intrinsic connector lifecycle | Activation, rotation prepare/activate, pending cancel, and disconnect for the exact pairing. |
+
+Human APIs, company/access management, invites, other-agent roster or inbox,
+meetings/messages, audit/history, export/company lifecycle, knowledge or
+external-link mutation, review, sync, and every other route are forbidden.
+Rotation preserves the original exact scopes and digest and cannot widen them.
+
+The public-safe submit rejects private/raw payload fields and caller-supplied
+actor or workspace fields with `422 connector_public_safe_payload_required`.
+Search results remain within the exact approved workspace boundary.
+
+### Stable errors and rate limits
+
+Errors use the exact problem envelope `ok=false`, `safeNoOp=true`,
+`valuesRedacted=true`, `rawCredentialExposed=false`,
+`rawPayloadExposed=false`, and
+`error={code,title,detail,safeNoOp:true,valuesRedacted:true}`. `title` and
+`detail` are fixed and non-reflective; there is no `error.message` alias and no
+credential, code, verifier, state, private payload, tenant metadata, or
+credential hash. Stable codes include `invalid_request` for a body that does
+not exactly match its operation schema and `pairing_verification_failed` when
+an apparently active grant cannot prove its exact persisted workspace, agent,
+identity, and current credential. `pairing_unavailable` is the stable `409`
+response when a different terminal lifecycle action already won. `401` means a credential/code is invalid or not
+active; `403` means the authenticated principal lacks exact scope/authority;
+`404` conceals absent or unauthorized resources; `409` covers idempotency,
+one-use replay, and name collisions; `410` covers a validly bound expired,
+canceled, redeemed, revoked, or disconnected resource; `413
+request_body_too_large` rejects a connector JSON body over 32 KiB before
+schema or storage dispatch; `422` covers exact schema, identity, scope, and
+public-safe validation; `429` includes `Retry-After`; and `503`
+may include `Retry-After`. A timeout or service error authorizes only an exact
+retry under the same idempotency key, never creation of a second pairing.
+
+Published default rate limits are 60 discovery reads/minute/IP, 10 pairing
+requests/10 minutes/IP+client, 10 authorization actions/10 minutes/IP+client,
+10 authorization-code claims/10 minutes/proof+source, 10 exchanges/10
+minutes/IP+client, 20 activations/10 minutes/pending grant, 60
+status reads/minute/credential, and 10 lifecycle mutations/hour/credential.
+Allowed connector operations are additionally limited per connector credential:
+5 self-registration confirmations/10 minutes, 60 public-safe submissions/minute,
+and 120 searches/minute.
 
 ### GET `/api/matm/uai-memory/contract`
 
@@ -98,13 +489,23 @@ both modes.
 
 ## Authentication
 
-Protected routes require:
+Legacy MATM protected routes require:
 
 ```http
 Authorization: Bearer <WORKSPACE_KEY>
 ```
 
 The setup route returns the workspace key once. The server stores a hash, not the raw key.
+
+Connector pairing deliberately does not expose or reuse that broad key.
+Pairing activation, status, rotation, disconnect, and cancellation use a
+connector-and-exact-agent-scoped bearer. The initial bearer is pending and has
+no memory/workspace authority until activation. Company-master bearers may
+revoke but connector bearers may not administer access. Human approval uses an
+opaque username/password account session, selected linked company membership,
+recent password reauthentication, same-origin and Fetch-Metadata validation,
+and an in-memory CSRF token; the browser does not store or silently reuse a
+company master.
 
 Browser-only agents should default to holding the workspace key in memory for
 the current session and asking the user to supply it again later. Persistent
@@ -146,17 +547,42 @@ Idempotency-Key: <STABLE_UNIQUE_KEY_FOR_THIS_REQUEST_BODY>
 
 Exact retries return the original public-safe response status and body with `idempotentReplay=true`. Reusing the same key with a different body returns `409 Conflict` and `safeNoOp=true`.
 
-The free-account setup route does not support replay because replay would require storing or regenerating a one-time raw secret.
+The compatibility free-account setup route does not support replay because
+replay would require storing or regenerating a one-time raw secret. Connector
+pairing solves that crash-safety problem with provisional resources, a
+deterministically recoverable pending credential for the exact exchange retry,
+and a separate idempotent activation boundary.
 
 ## Protected Routes
+
+Connector-pairing protected routes use the narrower authority documented above:
+the human approval route, connector bearer, pending successor bearer, or company
+master. They do not accept a broad workspace bearer as a substitute.
+
+- POST `/api/matm/human/connector-pairings/{publicRequestRef}/company-selection`
+- POST `/api/matm/human/connector-pairings/{publicRequestRef}/approve`
+- POST `/api/matm/human/connector-pairings/{publicRequestRef}/cancel`
+- GET `/api/matm/connector-pairings/{pairingId}`
+- POST `/api/matm/connector-pairings/{pairingId}/activate`
+- POST `/api/matm/connector-pairings/{pairingId}/rotations`
+- POST `/api/matm/connector-pairings/{pairingId}/rotations/{rotationId}/activate`
+- GET `/api/matm/connector-pairings/{pairingId}/credentials`
+- POST `/api/matm/connector-pairings/{pairingId}/revoke`
+- POST `/api/matm/connector-pairings/{pairingId}/disconnect`
+- POST `/api/matm/connector-pairings/{pairingId}/cancel`
 
 ### GET `/api/matm/workspace`
 
 Returns workspace quota, usage, plan, raw-key storage facts, account-company memberships, company metadata, workspace projects, and always-present default meeting rooms.
 
-Query:
+Broader governed credentials select an authorized workspace explicitly with this
+query field:
 
 - `workspace_id`
+
+Connector credentials must omit the query string. The server derives the exact
+workspace from the immutable connector grant and returns
+`connectorBoundedReadback=true` with the exact workspace readback.
 
 ### GET `/api/matm/projects`
 
@@ -290,16 +716,20 @@ Searches the workspace's curated external-link index across canonical site/page 
 
 ### POST `/api/matm/agents/register`
 
-Registers or updates an agent in a workspace.
+Ordinary agents cannot be created by having a company master impersonate an
+arbitrary agent id. The governed flow is name request → company-master/human
+approval → one-time invite → one-time redemption. Connector activation uses
+the connector credential to idempotently confirm only its already-bound exact
+canonical identity.
 
-Required:
-
-- `workspaceId`
-- `agentId`
-
-The response includes the redacted `agent` and an `operatorSummary` with the
-agent id, display name, status, current-message lane readiness, and explicit
-no-raw-credential/no-raw-payload flags for operator UI use.
+A narrow deprecated LocalEndpoint beginner transition remains while shipped
+desktop clients migrate: a company master for the target workspace may submit
+exactly `workspaceId`, `agentId=localendpoint-agent`, and `displayName`; the
+server forces display name `LocalEndpoint Agent`, accepts an optional
+`Idempotency-Key`, returns no token, and grants no broader authority. Every
+other master-selected id returns `409 registration_requires_invite`. The
+response marks the transition deprecated and points to
+`memoryendpoints.connector_pairing.v1`.
 
 ## UAIX Active Memory
 
@@ -523,6 +953,13 @@ editing and still use project-room coordination plus normal version control.
 
 Writes a public-safe memory summary after deterministic memory firewall review.
 
+Connector credentials use the exact closed body
+`{schemaVersion,payloadClass,title,summary,tags}` with
+`payloadClass="public_safe"`. They must not send `workspaceId`, `actorAgentId`,
+private/raw payload fields, or any extra property; the server derives workspace
+and actor from the connector credential. `Idempotency-Key` is required, exact
+retry returns one result, and changed reuse returns `409 idempotency_conflict`.
+
 Required:
 
 - `workspaceId`
@@ -567,9 +1004,14 @@ queue and audit log after write, the route returns a safe
 
 Searches workspace memory-event records with the same protected scope and lifecycle boundary as `/api/matm/search`. Use exact event identifiers for deterministic write readback and semantic queries for recall. Rejected and quarantined records do not appear in normal recall results.
 
-### GET `/api/matm/search`
+### GET or POST `/api/matm/search`
 
 Searches hosted workspace memory. Files under `docs/long-term-memory` are source-controlled artifacts and migration seeds, not the protected workspace search source.
+
+Connector credentials use body-only `POST` with exactly
+`{schemaVersion,query,limit}` and a limit from 1 through 50. Query strings and
+`Idempotency-Key` are forbidden for this read-only variant; workspace and actor
+boundaries are credential-derived.
 
 Query:
 

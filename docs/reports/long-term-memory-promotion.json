@@ -1,7 +1,7 @@
 {
   "alreadyPromotedCount": 8,
   "baseUrl": "https://memoryendpoints.com",
-  "mode": "dry_run",
+  "mode": "live_apply",
   "ok": true,
   "promotedCount": 8,
   "rawCredentialValuesStored": false,

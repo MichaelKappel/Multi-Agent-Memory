@@ -1,0 +1,61 @@
+{
+  "agentIdHash": "sha256:0ae13a187edd97a9b753fb93e0887dd29e8b064950c2205f08247a41e3c24b01",
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": {
+    "claimAcquired": {
+      "claimIdHash": "sha256:46e3a178ede3eb6b1c3deb8a6803f94e8d1424ac1beddc8d370b01da5704b17a",
+      "httpStatus": 201,
+      "ok": true,
+      "visibleToSender": true
+    },
+    "claimReleased": {
+      "headRevision": 0,
+      "httpStatus": 200,
+      "ok": true,
+      "visibleToSender": true
+    },
+    "fileHeadRead": {
+      "existingHeadCount": 1,
+      "httpStatus": 200,
+      "ok": true
+    },
+    "projectResolved": {
+      "httpStatus": 200,
+      "ok": true,
+      "projectIdHash": "sha256:4c6157aceb99b6b1fbb45b72eb37e0e13adc01e688bac702f0a234ca0b63f087"
+    },
+    "publicContract": {
+      "automaticMerge": false,
+      "conformanceClaimed": false,
+      "durableHomePathIsClean": true,
+      "hostedImportClaimed": false,
+      "httpStatus": 200,
+      "localUaiContentsStored": false,
+      "ok": true,
+      "profile": "uaix.accountless-browser-memory.v1",
+      "progressRoleRequired": true,
+      "senderVisibilityConfirmed": true,
+      "startupPacketFirst": true,
+      "virtualPackageIsAnonymous": false
+    },
+    "registeredAgent": {
+      "httpStatus": 201,
+      "ok": true
+    },
+    "virtualPackage": {
+      "created": false,
+      "httpStatus": 200,
+      "ok": true,
+      "packageIdHash": "sha256:ee85ecc66db0eec96f0ae35d218753bca5694e30a62abd0cb16984d0fc41c0a9",
+      "readyForStartup": false,
+      "status": "setup_required"
+    }
+  },
+  "ok": true,
+  "publicOnly": false,
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "schemaVersion": "memoryendpoints.uai_memory_live_verifier.v1",
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

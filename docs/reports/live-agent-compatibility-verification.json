@@ -1,0 +1,57 @@
+{
+  "checks": [
+    {
+      "containsMemoryEndpoints": true,
+      "route": "/api/version",
+      "sourceSha": "6f4e8f3c0ccf8630194a9bc41412d47bac615025",
+      "status": 200,
+      "storeBackend": "mysql",
+      "storeBackendVerified": true
+    },
+    {
+      "containsMemoryEndpoints": true,
+      "hasDogfoodFeedback": true,
+      "levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3",
+        "L4",
+        "L5",
+        "L6",
+        "L7"
+      ],
+      "route": "/api/matm/agent-compatibility",
+      "routeRecordFields": 19,
+      "schemaVersion": "memoryendpoints.agent_compatibility.v1",
+      "status": 200
+    },
+    {
+      "agentCompatibilityRoutePresent": true,
+      "containsMemoryEndpoints": true,
+      "llmsLevel": "L0",
+      "route": "/api/matm/route-inventory",
+      "status": 200,
+      "syncMutationLevel": "L7"
+    },
+    {
+      "agentCompatibility": "https://memoryendpoints.com/api/matm/agent-compatibility",
+      "containsMemoryEndpoints": true,
+      "route": "/ai-manifest.json",
+      "status": 200
+    },
+    {
+      "agentCompatibilityResource": true,
+      "containsMemoryEndpoints": true,
+      "route": "/mcp/resources",
+      "status": 200
+    },
+    {
+      "containsMemoryEndpoints": true,
+      "mentionsAgentCompatibility": true,
+      "route": "/llms.txt",
+      "status": 200
+    }
+  ],
+  "ok": true
+}

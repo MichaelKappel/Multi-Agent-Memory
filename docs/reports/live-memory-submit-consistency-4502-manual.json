@@ -1,0 +1,56 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "failedCount": 0,
+  "ok": true,
+  "passedCount": 1,
+  "probeCount": 1,
+  "probes": [
+    {
+      "durableReadback": {
+        "auditMatchCount": 1,
+        "exactSearchCount": 1,
+        "reviewQueueMatchCount": 1
+      },
+      "eventId": "mem-d66cdcafc0f8463fbdf4",
+      "mismatches": [],
+      "ok": true,
+      "probeIndex": 1,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "readStatuses": {
+        "auditLog": 200,
+        "reviewQueue": 200,
+        "search": 200
+      },
+      "readbackAttemptCount": 2,
+      "readbackAttemptsUsed": 1,
+      "responseClaims": {
+        "persisted": true,
+        "visibleInAuditLog": true,
+        "visibleInReviewQueue": true,
+        "visibleInSearch": true
+      },
+      "reviewId": "review-f74f424235224556bbf4",
+      "reviewStatusCounts": {
+        "pending": 1,
+        "promoted": 0,
+        "quarantined": 0,
+        "rejected": 0
+      },
+      "runTag": "20260710224420-3152a2fd",
+      "searchFilters": {
+        "eventId": "mem-d66cdcafc0f8463fbdf4"
+      },
+      "submitStatus": 201,
+      "valuesRedacted": true
+    }
+  ],
+  "rawCredentialExposed": false,
+  "rawCredentialValuesStored": false,
+  "rawPayloadExposed": false,
+  "rawWorkspaceIdStored": false,
+  "schemaVersion": "memoryendpoints.live_memory_submit_consistency.v1",
+  "sourceSha": "4502a218e7b576d278b30f526707fc86197b2588",
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

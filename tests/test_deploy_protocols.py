@@ -2,6 +2,7 @@ import json
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import build_deploy_attempt_report, ftp_deploy_memoryendpoints, ftp_deploy_static_site, package_memoryendpoints
 
@@ -12,6 +13,145 @@ ROOT = Path(__file__).resolve().parents[1]
 class DeployProtocolTests(unittest.TestCase):
     def test_package_excludes_visual_studio_runtime_state(self):
         self.assertFalse(package_memoryendpoints.should_include_rel(Path(".vs") / "solution" / "index.vsidx"))
+
+    def test_package_dirty_paths_include_ignored_extra_and_missing_tracked_files(self):
+        files = [
+            (Path("unused-app"), Path("memoryendpoints/app.py")),
+            (Path("unused-env"), Path(".env")),
+        ]
+        with patch.object(
+            package_memoryendpoints,
+            "git_tracked_paths",
+            return_value={"memoryendpoints/app.py", "scripts/deleted_release_file.py"},
+        ), patch.object(
+            package_memoryendpoints,
+            "git_status_paths",
+            return_value=["memoryendpoints/app.py"],
+        ):
+            dirty = package_memoryendpoints.packaged_dirty_paths(files)
+
+        self.assertEqual(
+            [".env", "memoryendpoints/app.py", "scripts/deleted_release_file.py"],
+            dirty,
+        )
+
+    def test_package_main_fails_closed_without_writing_dirty_source(self):
+        build_info = {
+            "sourceSha": "a" * 40,
+            "sourceShaShort": "a" * 12,
+            "contentHash": "b" * 64,
+            "sourceWorktreeDirty": True,
+            "sourceDirtyPathCount": 1,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "package-report.json"
+            package_path = Path(tmp) / "production.zip"
+            with patch.object(
+                package_memoryendpoints,
+                "inspect_current_source",
+                return_value={
+                    "files": [],
+                    "sourceSha": build_info["sourceSha"],
+                    "contentHash": build_info["contentHash"],
+                    "dirtyPaths": ["memoryendpoints/app.py"],
+                },
+            ), patch.object(
+                package_memoryendpoints,
+                "write_build_info",
+                return_value=build_info,
+            ), patch.object(
+                package_memoryendpoints,
+                "iter_files",
+                return_value=iter(()),
+            ), patch.object(package_memoryendpoints, "PACKAGE", package_path):
+                exit_code = package_memoryendpoints.main(["--json-out", str(report_path)])
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("dirty_packaged_source", report["status"])
+        self.assertTrue(report["safeNoOp"])
+        self.assertFalse(report["written"])
+        self.assertFalse(package_path.exists())
+
+    def test_package_main_fails_closed_when_git_revision_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "package-report.json"
+            package_path = Path(tmp) / "production.zip"
+            with patch.object(
+                package_memoryendpoints,
+                "inspect_current_source",
+                side_effect=package_memoryendpoints.SourceRevisionError("redacted"),
+            ), patch.object(package_memoryendpoints, "PACKAGE", package_path):
+                exit_code = package_memoryendpoints.main(["--json-out", str(report_path)])
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertFalse(package_path.exists())
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("source_revision_unavailable", report["status"])
+        self.assertTrue(report["safeNoOp"])
+        self.assertNotIn("redacted", str(report))
+
+    def test_dirty_build_info_is_reported_without_rewriting_generated_marker(self):
+        source = {
+            "sourceSha": "a" * 40,
+            "contentHash": "b" * 64,
+            "dirtyPaths": ["memoryendpoints/app.py"],
+        }
+        with patch.object(
+            package_memoryendpoints,
+            "inspect_current_source",
+            return_value=source,
+        ), patch.object(
+            package_memoryendpoints,
+            "write_build_info",
+            return_value={"sourceWorktreeDirty": True},
+        ) as write_build_info:
+            package_memoryendpoints.write_current_build_info()
+
+        self.assertFalse(write_build_info.call_args.kwargs["write"])
+
+    def test_clean_package_check_accepts_stable_content_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "app.py"
+            source_path.write_text("print('clean')\n", encoding="utf-8")
+            files = [(source_path, Path("app.py"))]
+            content_hash = package_memoryendpoints.source_content_hash(files)
+            source = {
+                "files": files,
+                "sourceSha": "a" * 40,
+                "contentHash": content_hash,
+                "dirtyPaths": [],
+            }
+            build_info = {
+                "sourceSha": source["sourceSha"],
+                "sourceShaShort": "a" * 12,
+                "contentHash": content_hash,
+                "sourceWorktreeDirty": False,
+                "sourceDirtyPathCount": 0,
+            }
+            report_path = Path(tmp) / "package-report.json"
+            with patch.object(
+                package_memoryendpoints,
+                "inspect_current_source",
+                return_value=source,
+            ), patch.object(
+                package_memoryendpoints,
+                "write_build_info",
+                return_value=build_info,
+            ), patch.object(
+                package_memoryendpoints,
+                "iter_files",
+                return_value=iter(files),
+            ):
+                exit_code = package_memoryendpoints.main(
+                    ["--check-only", "--json-out", str(report_path)]
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("ready", report["status"])
+        self.assertTrue(report["sourceRevisionVerified"])
+        self.assertEqual(content_hash, report["snapshotContentHash"])
 
     def test_transport_security_labels_are_explicit(self):
         self.assertEqual("explicit_ftps", ftp_deploy_memoryendpoints.transport_security("ftps"))
@@ -133,20 +273,40 @@ Password: multi-secret
         with tempfile.TemporaryDirectory() as tmp:
             handoff = Path(tmp) / "handoff.txt"
             report_path = Path(tmp) / "report.json"
+            package_path = Path(tmp) / "production.zip"
             handoff.write_text("Stale handoff\nFTP Server: stale.invalid\n", encoding="utf-8")
+            package_path.write_bytes(b"test package")
+            clean_build = {
+                "sourceSha": "a" * 40,
+                "sourceShaShort": "a" * 12,
+                "contentHash": "b" * 64,
+                "sourceWorktreeDirty": False,
+                "sourceDirtyPathCount": 0,
+            }
             try:
                 ftp_deploy_memoryendpoints.load_filezilla_site = fake_loader
-                exit_code = ftp_deploy_memoryendpoints.main(
-                    [
-                        "--dry-run",
-                        "--handoff",
-                        str(handoff),
-                        "--filezilla-site-match",
-                        "memoryendpoints",
-                        "--json-out",
-                        str(report_path),
-                    ]
-                )
+                with patch.object(
+                    ftp_deploy_memoryendpoints,
+                    "write_current_build_info",
+                    return_value=clean_build,
+                ), patch.object(
+                    ftp_deploy_memoryendpoints,
+                    "capture_exact_revision_snapshot",
+                    return_value=({"files": [], "contentHash": clean_build["contentHash"]}, None),
+                ):
+                    exit_code = ftp_deploy_memoryendpoints.main(
+                        [
+                            "--dry-run",
+                            "--handoff",
+                            str(handoff),
+                            "--package",
+                            str(package_path),
+                            "--filezilla-site-match",
+                            "memoryendpoints",
+                            "--json-out",
+                            str(report_path),
+                        ]
+                    )
             finally:
                 ftp_deploy_memoryendpoints.load_filezilla_site = original_loader
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -159,6 +319,68 @@ Password: multi-secret
         self.assertNotIn("endpoint-secret", text)
         self.assertNotIn("endpoint-user", text)
         self.assertNotIn("example.invalid", text)
+
+    def test_endpoint_deploy_fails_closed_before_connecting_when_source_is_dirty(self):
+        dirty_build = {
+            "sourceSha": "a" * 40,
+            "sourceShaShort": "a" * 12,
+            "contentHash": "b" * 64,
+            "sourceWorktreeDirty": True,
+            "sourceDirtyPathCount": 1,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            handoff = Path(tmp) / "handoff.txt"
+            report_path = Path(tmp) / "report.json"
+            handoff.write_text(
+                "MemoryEndpoints\nFTP Server: example.invalid\nFTP Username: user\nPassword: secret\nRemote Dir: public_html\n",
+                encoding="utf-8",
+            )
+            with patch.object(
+                ftp_deploy_memoryendpoints,
+                "write_current_build_info",
+                return_value=dirty_build,
+            ), patch.object(
+                ftp_deploy_memoryendpoints,
+                "iter_files",
+                return_value=iter(()),
+            ), patch.object(ftp_deploy_memoryendpoints, "connect_ftp") as connect:
+                exit_code = ftp_deploy_memoryendpoints.main(
+                    ["--handoff", str(handoff), "--json-out", str(report_path)]
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("dirty_packaged_source", report["status"])
+        self.assertFalse(report["sourceRevisionVerified"])
+        self.assertTrue(report["safeNoOp"])
+        connect.assert_not_called()
+
+    def test_endpoint_snapshot_rejects_content_hash_mismatch(self):
+        build_info = {
+            "sourceSha": "a" * 40,
+            "contentHash": "b" * 64,
+            "sourceWorktreeDirty": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "app.py"
+            source_path.write_text("print('changed')\n", encoding="utf-8")
+            with patch.object(
+                ftp_deploy_memoryendpoints,
+                "iter_files",
+                return_value=iter([(source_path, Path("app.py"))]),
+            ), patch.object(
+                ftp_deploy_memoryendpoints,
+                "inspect_current_source",
+                return_value={
+                    "sourceSha": build_info["sourceSha"],
+                    "contentHash": build_info["contentHash"],
+                    "dirtyPaths": [],
+                },
+            ):
+                snapshot, error = ftp_deploy_memoryendpoints.capture_exact_revision_snapshot(build_info)
+
+        self.assertIsNone(snapshot)
+        self.assertEqual("source_changed_during_deploy_preflight", error)
 
     def test_deploy_attempt_freshness_matches_package(self):
         freshness = build_deploy_attempt_report.build_freshness(

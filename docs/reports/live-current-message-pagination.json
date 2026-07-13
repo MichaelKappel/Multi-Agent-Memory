@@ -1,0 +1,46 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": {
+    "page1AttentionOrdering": true,
+    "page1RequiredFirst": true,
+    "page1TotalVisibleAndMore": true,
+    "page2AckSecond": true,
+    "page2CursorAccepted": true,
+    "page2TotalNoMore": true,
+    "sourceShaIsHead": true
+  },
+  "ok": true,
+  "page1": {
+    "attentionOrdering": {
+      "cursorField": "notification.notificationId",
+      "priority": [
+        "required_response",
+        "viewed_acknowledgement"
+      ],
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "schemaVersion": "memoryendpoints.current_message_attention_ordering.v1",
+      "valuesRedacted": true,
+      "withinPriority": "newest_notification_first"
+    },
+    "firstDisposition": "required_response",
+    "hasMore": true,
+    "nextCursorPresent": true,
+    "totalUnreadCount": 2,
+    "visibleUnreadCount": 1
+  },
+  "page2": {
+    "cursorAccepted": true,
+    "firstDisposition": "viewed_acknowledgement",
+    "hasMore": false,
+    "totalUnreadCount": 2,
+    "visibleUnreadCount": 1
+  },
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "schemaVersion": "memoryendpoints.live_current_message_pagination.v1",
+  "sourceSha": "7b7c3fe57616057c90fe971d2b65e870229174c5",
+  "storeBackend": "mysql",
+  "valuesRedacted": true,
+  "workspaceId": "workspace-ec46f332baaa4b28b29c"
+}

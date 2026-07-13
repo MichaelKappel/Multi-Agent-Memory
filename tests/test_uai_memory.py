@@ -107,21 +107,49 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
         return payload
 
     def register_agent(self, setup, agent_id, display_name=None):
-        status, payload = call_app(
-            "/api/matm/agents/register",
+        display_name = display_name or agent_id
+        status, requested = call_app(
+            "/api/matm/access/agent-name-requests",
             "POST",
             {
-                "workspaceId": setup["workspaceId"],
-                "agentId": agent_id,
-                "displayName": display_name or agent_id,
+                "requestedName": agent_id,
+                "displayName": display_name,
+                "requestedGrant": {
+                    "scopeType": "workspace",
+                    "scopeId": setup["workspaceId"],
+                },
+                "assignmentContext": {"testFixture": "uai-memory"},
+                "justification": "Test fixture needs a governed workspace-scoped agent.",
             },
-            setup["apiKeySecret"],
-            idempotency_key="register-%s" % agent_id,
+            setup["companyMasterTokenSecret"],
         )
         self.assertEqual("201 Created", status)
-        return payload
+        status, approved = call_app(
+            "/api/matm/access/agent-name-requests/%s/decision" % requested["request"]["requestId"],
+            "POST",
+            {"decision": "approve", "decisionReason": "Approved by test fixture."},
+            setup["companyMasterTokenSecret"],
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual("approved", approved["request"]["status"])
+        status, issued = call_app(
+            "/api/matm/access/invites",
+            "POST",
+            {"approvedRequestId": requested["request"]["requestId"], "expiresInSeconds": 900},
+            setup["companyMasterTokenSecret"],
+        )
+        self.assertEqual("201 Created", status)
+        invite_secret = issued["inviteUrl"].split("#invite=", 1)[1]
+        status, redeemed = call_app(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            {"inviteSecret": invite_secret},
+        )
+        self.assertEqual("201 Created", status)
+        self.assertEqual(agent_id, redeemed["principal"]["agentId"])
+        return redeemed
 
-    def create_package(self, setup, agent_id):
+    def create_package(self, setup, agent_id, agent_token):
         status, payload = call_app(
             "/api/matm/uai-memory/packages",
             "POST",
@@ -131,7 +159,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "clientClass": "accountless_browser_ai",
                 "localFilesystemAvailable": False,
             },
-            setup["apiKeySecret"],
+            agent_token,
             idempotency_key="package-%s" % agent_id,
         )
         self.assertEqual("201 Created", status)
@@ -166,7 +194,8 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = str(backend_root / "store.sqlite3")
                 owner = self.setup_workspace("Owner " + backend)
                 outsider = self.setup_workspace("Outsider " + backend)
-                self.register_agent(owner, "browser-agent", "Browser Memory Agent")
+                browser_agent = self.register_agent(owner, "browser-agent", "Browser Memory Agent")
+                browser_token = browser_agent["agentTokenSecret"]
 
                 status, rejected = call_app(
                     "/api/matm/uai-memory/packages",
@@ -177,20 +206,20 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "clientClass": "accountless_browser_ai",
                         "localFilesystemAvailable": True,
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="local-client-rejected-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
                 self.assertEqual("uai_exception_not_applicable", rejected["error"]["code"])
 
-                package_payload = self.create_package(owner, "browser-agent")
+                package_payload = self.create_package(owner, "browser-agent", browser_token)
                 package_id = package_payload["canonicalPackageId"]
                 self.assertEqual("setup_required", package_payload["package"]["status"])
                 self.assertEqual("Browser Memory Agent", package_payload["package"]["agentName"])
 
                 status, cross_tenant = call_app(
                     "/api/matm/uai-memory/packages",
-                    token=outsider["apiKeySecret"],
+                    token=outsider["companyMasterTokenSecret"],
                     query="workspace_id=%s&package_id=%s" % (outsider["workspaceId"], package_id),
                 )
                 self.assertEqual("200 OK", status)
@@ -207,7 +236,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "logicalPath": ".uai/identity.uai",
                         "content": invalid_date,
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="date-rejected-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
@@ -225,7 +254,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "logicalPath": ".uai/identity.uai",
                         "content": secret_content,
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="secret-rejected-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
@@ -241,7 +270,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "logicalPath": ".uai/identity.uai",
                         "content": uai_content(".uai/identity.uai", agent_id="another-agent"),
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="identity-binding-rejected-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
@@ -264,7 +293,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                             "Path: https://memoryendpoints.com/api/matm/search",
                         ),
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="pointer-path-rejected-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
@@ -284,7 +313,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                             "title": logical_path.rsplit("/", 1)[-1],
                             "content": uai_content(logical_path),
                         },
-                        owner["apiKeySecret"],
+                        browser_token,
                         idempotency_key="record-%s-%s" % (backend, index),
                     )
                     self.assertEqual("201 Created", status, logical_path)
@@ -295,7 +324,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
 
                 status, startup_payload = call_app(
                     "/api/matm/uai-memory/startup",
-                    token=owner["apiKeySecret"],
+                    token=browser_token,
                     query="workspace_id=%s&agent_id=browser-agent&package_id=%s" % (owner["workspaceId"], package_id),
                 )
                 self.assertEqual("200 OK", status)
@@ -315,7 +344,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "title": "identity.uai",
                         "content": uai_content(".uai/identity.uai", "Refined identity guidance."),
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="missing-revision-%s" % backend,
                 )
                 self.assertEqual("422 Unprocessable Entity", status)
@@ -333,7 +362,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "content": uai_content(".uai/identity.uai", "Refined identity guidance."),
                         "expectedRevision": first_record["revision"],
                     },
-                    owner["apiKeySecret"],
+                    browser_token,
                     idempotency_key="update-revision-%s" % backend,
                 )
                 self.assertEqual("200 OK", status)
@@ -341,7 +370,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
 
                 status, history = call_app(
                     "/api/matm/uai-memory/records",
-                    token=owner["apiKeySecret"],
+                    token=browser_token,
                     query=(
                         "workspace_id=%s&agent_id=browser-agent&package_id=%s&record_id=%s&include_history=true"
                         % (owner["workspaceId"], package_id, first_record["recordId"])
@@ -350,7 +379,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 self.assertEqual("200 OK", status)
                 self.assertEqual([1, 2], [item["revision"] for item in history["revisions"]])
 
-                status, _ = call_app(
+                status, rename_rejected = call_app(
                     "/api/matm/agents/register",
                     "POST",
                     {
@@ -358,31 +387,31 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                         "agentId": "browser-agent",
                         "displayName": "Renamed Browser Memory Agent",
                     },
-                    owner["apiKeySecret"],
+                    owner["companyMasterTokenSecret"],
                     idempotency_key="rename-browser-agent-%s" % backend,
                 )
-                self.assertEqual("201 Created", status)
+                self.assertEqual("409 Conflict", status)
+                self.assertEqual("registration_requires_invite", rename_rejected["error"]["code"])
                 status, renamed_startup = call_app(
                     "/api/matm/uai-memory/startup",
-                    token=owner["apiKeySecret"],
+                    token=browser_token,
                     query="workspace_id=%s&agent_id=browser-agent&package_id=%s" % (owner["workspaceId"], package_id),
                 )
                 self.assertEqual("200 OK", status)
-                self.assertFalse(renamed_startup["startup"]["readyForStartup"])
-                self.assertEqual(
-                    [".uai/identity.uai"],
-                    renamed_startup["startup"]["invalidRequiredPaths"],
-                )
+                self.assertTrue(renamed_startup["startup"]["readyForStartup"])
+                self.assertEqual([], renamed_startup["startup"]["invalidRequiredPaths"])
 
                 store_path = Path(os.environ["MEMORYENDPOINTS_STORE_PATH"] if backend == "file" else os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
-                self.assertNotIn(owner["apiKeySecret"].encode("utf-8"), store_path.read_bytes())
+                self.assertNotIn(owner["companyMasterTokenSecret"].encode("utf-8"), store_path.read_bytes())
 
     def test_hash_only_edit_claims_prevent_overlap_and_stale_completion(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
         setup = self.setup_workspace("Collaboration")
-        self.register_agent(setup, "agent-a", "Agent A")
-        self.register_agent(setup, "agent-b", "Agent B")
-        token = setup["apiKeySecret"]
+        agent_a = self.register_agent(setup, "agent-a", "Agent A")
+        agent_b = self.register_agent(setup, "agent-b", "Agent B")
+        token_a = agent_a["agentTokenSecret"]
+        token_b = agent_b["agentTokenSecret"]
+        token = setup["companyMasterTokenSecret"]
         base_hash = "a" * 64
         next_hash = "b" * 64
 
@@ -398,7 +427,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "intentSummary": "Update local routing context before the next handoff.",
                 "leaseSeconds": 600,
             },
-            token,
+            token_a,
             idempotency_key="claim-a",
         )
         self.assertEqual("201 Created", status)
@@ -419,7 +448,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "baseContentHash": base_hash,
                 "intentSummary": "Edit the same local context file for another change.",
             },
-            token,
+            token_b,
             idempotency_key="claim-b-conflict",
         )
         self.assertEqual("409 Conflict", status)
@@ -439,7 +468,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "baseContentHash": base_hash,
                 "intentSummary": "Try a locally forbidden aggregate file.",
             },
-            token,
+            token_b,
             idempotency_key="claim-forbidden",
         )
         self.assertEqual("422 Unprocessable Entity", status)
@@ -455,7 +484,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "newContentHash": next_hash,
                 "completionSummary": "Completed the local context edit and verified the resulting hash.",
             },
-            token,
+            token_a,
             idempotency_key="claim-a-complete",
         )
         self.assertEqual("200 OK", status)
@@ -476,7 +505,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "baseContentHash": base_hash,
                 "intentSummary": "Attempt an edit from a stale local copy.",
             },
-            token,
+            token_b,
             idempotency_key="claim-b-stale",
         )
         self.assertEqual("409 Conflict", status)
@@ -495,8 +524,8 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
     def test_sqlite_schema_has_virtual_package_and_collaboration_tables(self):
         os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = "sqlite"
         setup = self.setup_workspace("Schema")
-        self.register_agent(setup, "schema-agent")
-        self.create_package(setup, "schema-agent")
+        schema_agent = self.register_agent(setup, "schema-agent")
+        self.create_package(setup, "schema-agent", schema_agent["agentTokenSecret"])
 
         with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

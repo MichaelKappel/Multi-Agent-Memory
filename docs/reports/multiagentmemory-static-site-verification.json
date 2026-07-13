@@ -2,7 +2,7 @@
   "baseUrl": null,
   "failureCount": 0,
   "failures": [],
-  "fileCount": 9,
+  "fileCount": 10,
   "items": [
     {
       "exists": true,
@@ -15,6 +15,14 @@
     {
       "exists": true,
       "file": "docs/how-it-works.html",
+      "leakHitCount": 0,
+      "leakRules": [],
+      "missingStrings": [],
+      "secretHitCount": 0
+    },
+    {
+      "exists": true,
+      "file": "docs/api-reference.html",
       "leakHitCount": 0,
       "leakRules": [],
       "missingStrings": [],
@@ -81,7 +89,7 @@
   "ok": true,
   "schemaVersion": "static_site.verifier.v1",
   "site": "MultiAgentMemory.com",
-  "siteRoot": "E:\\MemoryEndpoints.com\\sites\\multiagentmemory.com",
+  "siteRoot": "sites\\multiagentmemory.com",
   "staticHtmlCompanion": true,
   "valuesRedacted": true
 }

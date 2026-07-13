@@ -1,411 +1,689 @@
+"""Verify the deployed connector-pairing v1 contract without leaking secrets.
+
+Public verification is read-only. Optional authenticated verification reads an
+active connector's exact pairing, credential lifecycle, principal, and
+workspace. It never rotates, revokes, disconnects, or otherwise mutates a
+grant. Reports contain hashes of expected identifiers and never raw tokens or
+tenant identifiers.
+"""
+
 import argparse
 import hashlib
 import json
 from pathlib import Path
-from urllib.error import HTTPError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SECRET = ROOT / ".local-secrets" / "human-verifier-account.json"
-DEFAULT_REPORT = ROOT / "docs" / "reports" / "live-connector-contract-verification.json"
-REVIEW_QUEUE_FILTERS = ["status", "source_prefix", "tag", "memory_type", "actor_agent_id"]
-MEMORY_SEARCH_FILTERS = [
-    "q",
-    "scope",
-    "scope_id",
-    "source_prefix",
-    "tag",
-    "actor_agent_id",
-    "memory_type",
-    "review_status",
-    "promotion_state",
-    "event_id",
+SCHEMA = "memoryendpoints.connector_pairing.v1"
+ISSUER = "https://memoryendpoints.com"
+REQUESTED_SCOPES = [
+    "connector:self:readback",
+    "agent:self:register",
+    "memory:public-safe:submit",
+    "memory:search:read",
 ]
-CORS_HEADERS = ["Authorization", "Content-Type", "Idempotency-Key", "X-MemoryEndpoints-Key"]
-DISCONNECTED_POLL_FIELDS = ["workspace_id", "agent_id", "message_id", "notification_id", "limit", "cursor", "after_notification_id"]
-DISCONNECTED_PAGINATION_FIELDS = ["visibleUnreadCount", "totalUnreadCount", "hasMore", "nextCursor", "cursor", "cursorAccepted"]
-SOURCE_PREFIX = "docs/long-term-memory/"
-MIGRATION_TAG = "long-term-memory-migration"
+SCOPE_DIGEST = "sha256-v1:" + hashlib.sha256(
+    json.dumps(
+        {"schemaVersion": SCHEMA, "scopes": REQUESTED_SCOPES},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+).hexdigest()
+DEFAULT_SECRET = ROOT / ".local-secrets" / "localendpoint-connector.json"
+DEFAULT_REPORT = ROOT / "var" / "reports" / "live-connector-pairing-verification.json"
+DISCOVERY_PATH = "/.well-known/memoryendpoints-connector"
+CONTRACT_PATH = "/api/matm/connector-contract"
+OPENAPI_PATH = "/api/matm/openapi.json"
+MAX_DISCOVERY_BYTES = 16 * 1024
+MAX_CONNECTOR_JSON_BYTES = 64 * 1024
+MAX_CONTRACT_BYTES = 128 * 1024
+MAX_OPENAPI_BYTES = 1024 * 1024
+PUBLIC_RESPONSE_BYTE_LIMITS = {
+    DISCOVERY_PATH: MAX_DISCOVERY_BYTES,
+    CONTRACT_PATH: MAX_CONTRACT_BYTES,
+    OPENAPI_PATH: MAX_OPENAPI_BYTES,
+}
+EXPECTED_ENDPOINTS = {
+    "pairingRequest": "/api/matm/connector-pairings/requests",
+    "authorization": "/connect/authorize/{publicRequestRef}",
+    "authorizationCodeClaim": "/api/matm/connector-pairings/authorization-code-claims",
+    "token": "/api/matm/connector-pairings/token",
+    "activation": "/api/matm/connector-pairings/{pairingId}/activate",
+    "status": "/api/matm/connector-pairings/{pairingId}",
+    "rotation": "/api/matm/connector-pairings/{pairingId}/rotations",
+    "rotationActivation": "/api/matm/connector-pairings/{pairingId}/rotations/{rotationId}/activate",
+    "credentialList": "/api/matm/connector-pairings/{pairingId}/credentials",
+    "revocation": "/api/matm/connector-pairings/{pairingId}/revoke",
+    "disconnect": "/api/matm/connector-pairings/{pairingId}/disconnect",
+    "cancellation": "/api/matm/connector-pairings/{pairingId}/cancel",
+}
+HUMAN_APPROVAL_PATH = "/api/matm/human/connector-pairings/{publicRequestRef}/approve"
+HUMAN_CANCEL_PATH = "/api/matm/human/connector-pairings/{publicRequestRef}/cancel"
+HUMAN_COMPANY_SELECTION_PATH = "/api/matm/human/connector-pairings/{publicRequestRef}/company-selection"
+MUTATION_PATH_SCHEMAS = {
+    EXPECTED_ENDPOINTS["pairingRequest"]: "ConnectorPairingRequestInput",
+    EXPECTED_ENDPOINTS["authorizationCodeClaim"]: "ConnectorAuthorizationCodeClaimInput",
+    EXPECTED_ENDPOINTS["token"]: "ConnectorTokenExchangeInput",
+    HUMAN_APPROVAL_PATH: "ConnectorApprovalInput",
+    HUMAN_CANCEL_PATH: "ConnectorLifecycleReasonInput",
+    HUMAN_COMPANY_SELECTION_PATH: "ConnectorCompanySelectionInput",
+    EXPECTED_ENDPOINTS["activation"]: "ConnectorActivationInput",
+    EXPECTED_ENDPOINTS["rotation"]: "ConnectorLifecycleReasonInput",
+    EXPECTED_ENDPOINTS["rotationActivation"]: "ConnectorActivationInput",
+    EXPECTED_ENDPOINTS["revocation"]: "ConnectorLifecycleReasonInput",
+    EXPECTED_ENDPOINTS["disconnect"]: "ConnectorLifecycleReasonInput",
+    EXPECTED_ENDPOINTS["cancellation"]: "ConnectorLifecycleReasonInput",
+}
+RECEIPT_FIELDS = {
+    "receiptId",
+    "action",
+    "status",
+    "idempotentReplay",
+    "rawCredentialExposed",
+    "privatePayloadExposed",
+    "scopeDigest",
+}
+ERROR_TOP_LEVEL_FIELDS = {
+    "ok",
+    "safeNoOp",
+    "valuesRedacted",
+    "rawCredentialExposed",
+    "rawPayloadExposed",
+    "error",
+}
+ERROR_FIELDS = {"code", "title", "detail", "safeNoOp", "valuesRedacted"}
+CREDENTIAL_ITEM_FIELDS = {
+    "credentialId",
+    "status",
+    "isCurrent",
+    "createdAt",
+    "activatedAt",
+    "revokedAt",
+    "lastUsedAt",
+    "approvedScopes",
+    "scopeDigest",
+}
+RECEIPT_RESPONSE_SCHEMAS = (
+    "ConnectorPairingRequestResult",
+    "ConnectorApprovalResult",
+    "ConnectorAuthorizationCodeClaimResult",
+    "ConnectorTokenExchangeResult",
+    "ConnectorPairingMutationResult",
+    "ConnectorPairingRequestMutationResult",
+    "ConnectorRotationPrepareResult",
+    "ConnectorRotationActivationResult",
+    "ConnectorPairingVerification",
+    "ConnectorCredentialListResult",
+)
+FORBIDDEN_CREDENTIAL_KEYS = {
+    "connectorCredentialSecret",
+    "secret",
+    "secretHash",
+    "secretVerifier",
+    "credentialHash",
+    "credentialVerifier",
+    "tokenHash",
+}
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
 
 
 def sha256_text(value):
-    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+    return "sha256:" + hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def write_json(path, payload):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+def _header(headers, name):
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if str(key).lower() == wanted:
+            return str(value)
+    return ""
 
 
-def request_json(base_url, path, method="GET", token=None, query=None, headers=None):
-    url = base_url.rstrip("/") + path
-    if query:
-        url += "?" + query
-    request_headers = {"Accept": "application/json"}
-    request_headers.update(headers or {})
-    if token:
-        request_headers["Authorization"] = "Bearer " + token
-    request = Request(url, headers=request_headers, method=method)
-    try:
-        with urlopen(request, timeout=30) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            payload = json.loads(raw) if raw else {}
-            return response.status, payload, dict(response.headers)
-    except HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        try:
-            payload = json.loads(raw)
-        except ValueError:
-            payload = {"ok": False, "error": {"code": "non_json_http_error", "status": exc.code}, "valuesRedacted": True}
-        return exc.code, payload, dict(exc.headers)
-
-
-def request_preflight(base_url, path):
-    request = Request(
-        base_url.rstrip("/") + path,
-        headers={
-            "Origin": "https://connector.example",
-            "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": ", ".join(CORS_HEADERS),
-        },
-        method="OPTIONS",
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            response.read()
-            return response.status, dict(response.headers)
-    except HTTPError as exc:
-        exc.read()
-        return exc.code, dict(exc.headers)
-
-
-def missing_values(actual, required):
-    actual_set = {str(item).lower() for item in (actual or [])}
-    return [item for item in required if item.lower() not in actual_set]
-
-
-def disconnected_delivery_check(contract):
-    contract = contract or {}
-    routes = contract.get("routes") or {}
-    polling = contract.get("polling") or {}
-    attention = contract.get("attentionOrdering") or {}
-    acknowledgement = contract.get("acknowledgement") or {}
-    transports = contract.get("transports") or {}
-    semantics = contract.get("deliverySemantics") or {}
-    required_and_optional = list(polling.get("requiredQueryFields") or []) + list(polling.get("optionalQueryFields") or [])
-    missing_poll_fields = missing_values(required_and_optional, DISCONNECTED_POLL_FIELDS)
-    missing_pagination_fields = missing_values(polling.get("paginationResponseFields"), DISCONNECTED_PAGINATION_FIELDS)
-    client_loop = " ".join(str(item) for item in (contract.get("recommendedClientLoop") or [])).lower()
-    multi_device_rule = str(contract.get("multiDeviceRule") or "").lower()
+def _redacted_http_observation(result):
     return {
-        "disconnectedPollingBaselineAdvertised": contract.get("status") == "live_polling_baseline" and polling.get("status") == "live",
-        "disconnectedDatabaseTruthVerified": contract.get("deliverySourceOfTruth") == "durable_recipient_notification_in_server_database",
-        "disconnectedRoutesVerified": routes == {
-            "send": "/api/matm/agent-messages",
-            "read": "/api/matm/current-message",
-            "acknowledge": "/api/matm/notifications/ack",
-        },
-        "disconnectedPollFieldsVerified": not missing_poll_fields,
-        "missingDisconnectedPollFields": missing_poll_fields,
-        "disconnectedPaginationVerified": not missing_pagination_fields and (polling.get("limitRange") or {}).get("maximum") == 200,
-        "missingDisconnectedPaginationFields": missing_pagination_fields,
-        "disconnectedAttentionOrderingVerified": attention.get("priority") == ["required_response", "viewed_acknowledgement"] and attention.get("causalOrderingClaimed") is False,
-        "disconnectedAcknowledgementVerified": acknowledgement.get("scope") == "recipient_notification" and acknowledgement.get("requiredResponseCompletionIsSeparate") is True,
-        "disconnectedClientLoopVerified": all(term in client_loop for term in ("startup", "reconnect", "bounded backoff", "hasmore", "nextcursor")),
-        "disconnectedUnavailableTransportsExplicit": str(transports.get("serverSentEvents") or "").startswith("not_implemented") and transports.get("inboundCallbacks") == "not_implemented",
-        "disconnectedDeliveryClaimsSafe": semantics.get("unreadUntilRecipientAcknowledgement") is True and semantics.get("exactlyOnceClaimed") is False and semantics.get("liveHintIsDeliveryProof") is False,
-        "disconnectedMultiDeviceRuleVerified": "share notification state" in multi_device_rule and "no device lease" in multi_device_rule,
+        "status": result.get("status"),
+        "contentType": result.get("contentType"),
+        "byteCount": result.get("byteCount"),
+        "redirectObserved": result.get("redirectObserved"),
+        "jsonParsed": result.get("jsonParsed"),
+        "transportError": result.get("transportError"),
     }
 
 
-def connector_contract_check(payload):
-    data = (payload or {}).get("data") or {}
-    memory_flow = data.get("memoryFlow") or {}
-    coordination_flow = data.get("coordinationFlow") or {}
-    response_contract = data.get("responseContract") or {}
-    browser_cors = data.get("browserCors") or {}
-    missing_filters = missing_values(memory_flow.get("reviewQueueFilters"), REVIEW_QUEUE_FILTERS)
-    missing_search_filters = missing_values(memory_flow.get("searchQueryFilters"), MEMORY_SEARCH_FILTERS)
-    missing_headers = missing_values(browser_cors.get("allowedHeaders"), CORS_HEADERS)
-    post_confirmation_fields = response_contract.get("postConfirmationFields") or []
-    result = {
-        "schemaVersion": data.get("schemaVersion"),
-        "reviewQueueFiltersVerified": not missing_filters,
-        "missingReviewQueueFilters": missing_filters,
-        "searchQueryFiltersVerified": not missing_search_filters,
-        "missingSearchQueryFilters": missing_search_filters,
-        "reviewQueueOperatorSummaryVerified": "longTermMemoryReviews" in (memory_flow.get("reviewQueueOperatorSummary") or ""),
-        "broadcastFanoutAdvertised": coordination_flow.get("broadcastFanout") == "per_active_agent_notification",
-        "ackIsolationAdvertised": coordination_flow.get("ackIsolation") == "per_recipient_notification",
-        "visibleAgentsConfirmationAdvertised": "visibleToAgents" in post_confirmation_fields,
-        "recipientCountConfirmationAdvertised": "expectedRecipientCount" in post_confirmation_fields and "visibleRecipientCount" in post_confirmation_fields,
-        "browserCorsStatus": browser_cors.get("status"),
-        "browserCorsPreflightWithoutWorkspaceKey": browser_cors.get("preflightRequiresWorkspaceKey") is False,
-        "missingBrowserCorsHeaders": missing_headers,
-        "browserCorsHeadersVerified": not missing_headers,
-        "valuesRedacted": True,
-    }
-    result.update(disconnected_delivery_check(data.get("disconnectedDelivery")))
-    return result
+def request_json(base_url, path, token=None, maximum_bytes=MAX_CONNECTOR_JSON_BYTES):
+    url = base_url.rstrip("/") + path
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    request = Request(url, headers=headers, method="GET")
+    opener = build_opener(NoRedirectHandler())
+    status = 0
+    response_headers = {}
+    raw = b""
+    transport_error = ""
+    try:
+        with opener.open(request, timeout=30) as response:
+            status = response.status
+            response_headers = dict(response.headers)
+            raw = response.read(maximum_bytes + 1)
+    except HTTPError as exc:
+        status = exc.code
+        response_headers = dict(exc.headers)
+        raw = exc.read(maximum_bytes + 1)
+    except URLError as exc:
+        transport_error = type(exc.reason).__name__ if getattr(exc, "reason", None) else type(exc).__name__
 
-
-def capability_matrix_check(payload):
-    data = (payload or {}).get("data") or {}
-    review_queue = data.get("reviewPromotionQueue") or {}
-    current_message = data.get("currentMessageLane") or {}
-    browser_cors = ((data.get("connectorContract") or {}).get("browserCors") or {})
-    missing_filters = missing_values(review_queue.get("queryFilters"), REVIEW_QUEUE_FILTERS)
-    result = {
-        "reviewQueueFiltersVerified": not missing_filters,
-        "missingReviewQueueFilters": missing_filters,
-        "longTermReviewHealthAdvertised": "docs/long-term-memory" in (review_queue.get("longTermMemoryReviewHealth") or ""),
-        "operatorSummaryFieldsIncludeLongTerm": "longTermMemoryReviews" in (review_queue.get("operatorSummaryFields") or []),
-        "broadcastFanoutAdvertised": current_message.get("broadcastFanout") == "per_active_agent_notification",
-        "ackIsolationAdvertised": current_message.get("ackIsolation") == "per_recipient_notification",
-        "visibleAgentsConfirmationAdvertised": "visibleToAgents" in (current_message.get("postConfirmationFields") or []),
-        "browserCorsAdvertised": browser_cors.get("status") == "live" and browser_cors.get("preflightWithoutWorkspaceKey") is True,
-        "valuesRedacted": True,
-    }
-    result.update(disconnected_delivery_check(data.get("disconnectedDelivery")))
-    return result
-
-
-def cors_preflight_check(status, headers):
-    allow_methods = headers.get("Access-Control-Allow-Methods") or headers.get("access-control-allow-methods") or ""
-    allow_headers = headers.get("Access-Control-Allow-Headers") or headers.get("access-control-allow-headers") or ""
-    allow_origin = headers.get("Access-Control-Allow-Origin") or headers.get("access-control-allow-origin") or ""
-    missing_methods = missing_values([item.strip() for item in allow_methods.split(",")], ["GET", "POST", "OPTIONS"])
-    missing_headers = missing_values([item.strip() for item in allow_headers.split(",")], CORS_HEADERS)
+    oversized = len(raw) > maximum_bytes
+    payload = None
+    json_parsed = False
+    if raw and not oversized:
+        try:
+            payload = json.loads(raw.decode("utf-8", errors="strict"))
+            json_parsed = isinstance(payload, dict)
+        except (UnicodeDecodeError, ValueError):
+            payload = None
+    content_type = _header(response_headers, "Content-Type").split(";", 1)[0].strip().lower()
     return {
         "status": status,
-        "ok": status == 204,
-        "allowOriginPresent": bool(allow_origin),
-        "missingMethods": missing_methods,
-        "missingHeaders": missing_headers,
-        "verified": status == 204 and bool(allow_origin) and not missing_methods and not missing_headers,
-        "valuesRedacted": True,
+        "headers": response_headers,
+        "contentType": content_type,
+        "byteCount": len(raw),
+        "oversized": oversized,
+        "payload": payload or {},
+        "jsonParsed": json_parsed,
+        "redirectObserved": 300 <= status < 400 or bool(_header(response_headers, "Location")),
+        "transportError": transport_error,
     }
 
 
-def protected_review_filter_check(payload):
-    payload = payload or {}
-    summary = ((payload.get("operatorSummary") or {}).get("longTermMemoryReviews") or {})
-    filters = payload.get("filters") or {}
-    return {
-        "ok": bool(payload.get("ok")),
-        "count": payload.get("count"),
-        "filters": {key: filters.get(key) for key in ("status", "sourcePrefix", "tag") if filters.get(key)},
-        "longTermReviewSummaryPresent": bool(summary),
-        "sourcePathCount": summary.get("sourcePathCount"),
-        "visibleRecordCount": summary.get("visibleRecordCount"),
-        "actionableCount": summary.get("actionableCount"),
-        "allPromoted": summary.get("allPromoted"),
-        "valuesRedacted": bool(payload.get("valuesRedacted")),
-        "rawCredentialExposed": bool(payload.get("rawCredentialExposed")),
-        "rawPayloadExposed": bool(payload.get("rawPayloadExposed")),
-        "verified": bool(
-            payload.get("ok")
-            and summary
-            and summary.get("sourcePathCount")
-            and summary.get("visibleRecordCount")
-            and payload.get("valuesRedacted")
-            and not payload.get("rawCredentialExposed")
-            and not payload.get("rawPayloadExposed")
-        ),
+def _schema_from_operation(openapi, path, method="post"):
+    operation = ((openapi.get("paths") or {}).get(path) or {}).get(method) or {}
+    schema = ((((operation.get("requestBody") or {}).get("content") or {}).get("application/json") or {}).get("schema") or {})
+    reference = schema.get("$ref") or ""
+    if not reference.startswith("#/components/schemas/"):
+        return "", {}
+    name = reference.rsplit("/", 1)[-1]
+    return name, ((openapi.get("components") or {}).get("schemas") or {}).get(name) or {}
+
+
+def _merge_openapi_schema(left, right):
+    """Merge the structural parts of resolved OpenAPI allOf members."""
+    merged = dict(left or {})
+    for key, value in (right or {}).items():
+        if key == "properties":
+            properties = dict(merged.get("properties") or {})
+            properties.update(value or {})
+            merged["properties"] = properties
+        elif key == "required":
+            required = list(merged.get("required") or [])
+            for item in value or []:
+                if item not in required:
+                    required.append(item)
+            merged["required"] = required
+        elif key not in ("$ref", "allOf"):
+            merged[key] = value
+    return merged
+
+
+def _resolve_openapi_schema(openapi, schema, seen=None):
+    """Resolve local component refs and allOf without weakening strict schemas."""
+    if not isinstance(schema, dict):
+        return {}
+    seen = frozenset(seen or ())
+    resolved = {}
+    reference = schema.get("$ref") or ""
+    if reference.startswith("#/components/schemas/"):
+        name = reference.rsplit("/", 1)[-1]
+        if name not in seen:
+            target = ((openapi.get("components") or {}).get("schemas") or {}).get(name) or {}
+            resolved = _resolve_openapi_schema(openapi, target, seen | {name})
+    for member in schema.get("allOf") or ():
+        resolved = _merge_openapi_schema(
+            resolved, _resolve_openapi_schema(openapi, member, seen)
+        )
+    return _merge_openapi_schema(resolved, schema)
+
+
+def receipt_check(receipt, action=None, status=None):
+    receipt = receipt or {}
+    return bool(
+        RECEIPT_FIELDS.issubset(receipt)
+        and isinstance(receipt.get("receiptId"), str)
+        and receipt.get("receiptId").startswith("connector-")
+        and isinstance(receipt.get("action"), str)
+        and isinstance(receipt.get("status"), str)
+        and isinstance(receipt.get("idempotentReplay"), bool)
+        and receipt.get("rawCredentialExposed") is False
+        and receipt.get("privatePayloadExposed") is False
+        and receipt.get("scopeDigest") == SCOPE_DIGEST
+        and (action is None or receipt.get("action") == action)
+        and (status is None or receipt.get("status") == status)
+    )
+
+
+def public_contract_check(discovery_result, contract_result, openapi_result):
+    discovery = discovery_result.get("payload") or {}
+    contract_envelope = contract_result.get("payload") or {}
+    contract = contract_envelope.get("data") or {}
+    openapi = openapi_result.get("payload") or {}
+    observations = {
+        "discovery": _redacted_http_observation(discovery_result),
+        "contract": _redacted_http_observation(contract_result),
+        "openApi": _redacted_http_observation(openapi_result),
     }
+    transport_verified = all(
+        item.get("status") == 200
+        and item.get("contentType") == "application/json"
+        and item.get("jsonParsed")
+        and not item.get("redirectObserved")
+        and not item.get("transportError")
+        for item in observations.values()
+    )
+    response_bounds_verified = bool(
+        discovery_result.get("byteCount", PUBLIC_RESPONSE_BYTE_LIMITS[DISCOVERY_PATH] + 1)
+        <= PUBLIC_RESPONSE_BYTE_LIMITS[DISCOVERY_PATH]
+        and contract_result.get("byteCount", PUBLIC_RESPONSE_BYTE_LIMITS[CONTRACT_PATH] + 1)
+        <= PUBLIC_RESPONSE_BYTE_LIMITS[CONTRACT_PATH]
+        and openapi_result.get("byteCount", PUBLIC_RESPONSE_BYTE_LIMITS[OPENAPI_PATH] + 1)
+        <= PUBLIC_RESPONSE_BYTE_LIMITS[OPENAPI_PATH]
+        and not discovery_result.get("oversized")
+        and not contract_result.get("oversized")
+        and not openapi_result.get("oversized")
+    )
+    discovery_verified = bool(
+        discovery.get("schemaVersion") == SCHEMA
+        and discovery.get("supportedSchemaVersions") == [SCHEMA]
+        and discovery.get("issuer") == ISSUER
+        and (discovery.get("serviceRoot") or {}).get("exact") == ISSUER
+        and discovery.get("endpoints") == EXPECTED_ENDPOINTS
+        and discovery.get("requestedScopes") == REQUESTED_SCOPES
+        and discovery.get("scopeDigest") == SCOPE_DIGEST
+        and all(str(route).startswith("/") and "?" not in str(route) and "#" not in str(route) for route in EXPECTED_ENDPOINTS.values())
+        and ((discovery.get("transport") or {}).get("noRedirectsForApiEndpoints") is True)
+        and ((discovery.get("transport") or {}).get("sameOriginEndpoints") is True)
+    )
+    contract_verified = bool(
+        contract_envelope.get("ok") is True
+        and contract.get("schemaVersion") == SCHEMA
+        and contract.get("issuer") == ISSUER
+        and contract.get("endpoints") == EXPECTED_ENDPOINTS
+        and contract.get("requestedScopes") == REQUESTED_SCOPES
+        and contract.get("scopeDigest") == SCOPE_DIGEST
+        and ((contract.get("credentialListReadback") or {}).get("limit") == 100)
+        and ((contract.get("credentialListReadback") or {}).get("receipt") or {}).get("action") == "list_credentials"
+        and "message" not in ((contract.get("errorContract") or {}).get("envelope") or {}).get("error", {})
+    )
 
+    paths = openapi.get("paths") or {}
+    schemas = ((openapi.get("components") or {}).get("schemas") or {})
+    mutation_schemas_verified = True
+    mutation_details = {}
+    for path, expected_schema_name in MUTATION_PATH_SCHEMAS.items():
+        actual_name, schema = _schema_from_operation(openapi, path)
+        required = set(schema.get("required") or [])
+        verified = bool(
+            actual_name == expected_schema_name
+            and schema.get("type") == "object"
+            and schema.get("additionalProperties") is False
+            and "schemaVersion" in required
+            and ((schema.get("properties") or {}).get("schemaVersion") or {}).get("const") == SCHEMA
+        )
+        mutation_details[path] = verified
+        mutation_schemas_verified = mutation_schemas_verified and verified
 
-def protected_exact_memory_readback_check(seed_payload, exact_payload, event_id):
-    seed_items = (seed_payload or {}).get("items") or []
-    exact_items = (exact_payload or {}).get("items") or []
-    exact_filters = (exact_payload or {}).get("filters") or {}
-    return {
-        "seedCount": len(seed_items),
-        "eventIdHash": "sha256:" + sha256_text(event_id) if event_id else None,
-        "exactCount": len(exact_items),
-        "exactContainsEvent": bool(event_id and any(item.get("eventId") == event_id for item in exact_items)),
-        "eventIdFilterEchoed": exact_filters.get("eventId") == event_id,
-        "valuesRedacted": bool((seed_payload or {}).get("valuesRedacted") and (exact_payload or {}).get("valuesRedacted")),
-        "rawCredentialExposed": bool((seed_payload or {}).get("rawCredentialExposed") or (exact_payload or {}).get("rawCredentialExposed")),
-        "rawPayloadExposed": bool((seed_payload or {}).get("rawPayloadExposed") or (exact_payload or {}).get("rawPayloadExposed")),
-        "verified": bool(
-            event_id
-            and seed_items
-            and len(exact_items) == 1
-            and any(item.get("eventId") == event_id for item in exact_items)
-            and exact_filters.get("eventId") == event_id
-            and (seed_payload or {}).get("valuesRedacted")
-            and (exact_payload or {}).get("valuesRedacted")
-            and not (seed_payload or {}).get("rawCredentialExposed")
-            and not (seed_payload or {}).get("rawPayloadExposed")
-            and not (exact_payload or {}).get("rawCredentialExposed")
-            and not (exact_payload or {}).get("rawPayloadExposed")
-        ),
+    connector_error = schemas.get("ConnectorError") or {}
+    error_properties = set((connector_error.get("properties") or {}).keys())
+    nested_error = ((connector_error.get("properties") or {}).get("error") or {})
+    nested_properties = set((nested_error.get("properties") or {}).keys())
+    error_schema_verified = bool(
+        connector_error.get("additionalProperties") is False
+        and set(connector_error.get("required") or []) == ERROR_TOP_LEVEL_FIELDS
+        and error_properties == ERROR_TOP_LEVEL_FIELDS
+        and nested_error.get("additionalProperties") is False
+        and set(nested_error.get("required") or []) == ERROR_FIELDS
+        and nested_properties == ERROR_FIELDS
+        and "invalid_request" in ((((nested_error.get("properties") or {}).get("code") or {}).get("enum")) or [])
+        and "pairing_verification_failed" in ((((nested_error.get("properties") or {}).get("code") or {}).get("enum")) or [])
+    )
+
+    approval = schemas.get("ConnectorApprovalResult") or {}
+    pairing = schemas.get("ConnectorPairingSummary") or {}
+    rotation_prepare = schemas.get("ConnectorRotationPrepareResult") or {}
+    rotation_activate = schemas.get("ConnectorRotationActivationResult") or {}
+    credential_list = schemas.get("ConnectorCredentialListResult") or {}
+    rotation_prepare_summary = _resolve_openapi_schema(
+        openapi, (rotation_prepare.get("properties") or {}).get("rotation") or {}
+    )
+    rotation_activate_summary = _resolve_openapi_schema(
+        openapi, (rotation_activate.get("properties") or {}).get("rotation") or {}
+    )
+    public_fields_verified = bool(
+        "wakeUpUrl" in (approval.get("properties") or {})
+        and "callbackUrl" not in (approval.get("properties") or {})
+        and "agentId" not in (((approval.get("properties") or {}).get("approval") or {}).get("properties") or {})
+        and "workspaceId" not in (((approval.get("properties") or {}).get("approval") or {}).get("properties") or {})
+        and "approvedScopes" in (((approval.get("properties") or {}).get("approval") or {}).get("properties") or {})
+        and "scopeDigest" in (((approval.get("properties") or {}).get("approval") or {}).get("properties") or {})
+        and "credentialId" in (pairing.get("properties") or {})
+        and "credentialId" in (rotation_prepare_summary.get("properties") or {})
+        and "credentialId" in (rotation_activate_summary.get("properties") or {})
+    )
+    credential_item_schema = (((credential_list.get("properties") or {}).get("items") or {}).get("items") or {})
+    credential_list_schema_verified = bool(
+        set(credential_list.get("required") or {})
+        >= {"pairingId", "currentCredentialId", "items", "count", "totalCount", "hasMore", "limit", "receipt"}
+        and ((credential_list.get("properties") or {}).get("limit") or {}).get("const") == 100
+        and credential_item_schema.get("additionalProperties") is False
+        and set(credential_item_schema.get("required") or []) == CREDENTIAL_ITEM_FIELDS
+        and set((credential_item_schema.get("properties") or {}).keys()) == CREDENTIAL_ITEM_FIELDS
+    )
+    connector_receipt = schemas.get("ConnectorReceipt") or {}
+    receipt_schema_verified = bool(
+        RECEIPT_FIELDS.issubset(set(connector_receipt.get("required") or []))
+        and "list_credentials" in ((((connector_receipt.get("properties") or {}).get("action") or {}).get("enum")) or [])
+        and all(
+            "receipt" in set((schemas.get(name) or {}).get("required") or [])
+            and ((schemas.get(name) or {}).get("properties") or {}).get("receipt") is not None
+            for name in RECEIPT_RESPONSE_SCHEMAS
+        )
+    )
+    required_paths = set(EXPECTED_ENDPOINTS.values()) | {HUMAN_APPROVAL_PATH, HUMAN_CANCEL_PATH, HUMAN_COMPANY_SELECTION_PATH, "/.well-known/memoryendpoints-connector"}
+    openapi_verified = bool(
+        openapi.get("openapi") == "3.1.0"
+        and required_paths.issubset(paths)
+        and mutation_schemas_verified
+        and error_schema_verified
+        and public_fields_verified
+        and credential_list_schema_verified
+        and receipt_schema_verified
+    )
+    result = {
+        "transportVerified": transport_verified,
+        "responseBoundsVerified": response_bounds_verified,
+        "discoveryVerified": discovery_verified,
+        "connectorContractVerified": contract_verified,
+        "openApiVerified": openapi_verified,
+        "mutationSchemasVerified": mutation_schemas_verified,
+        "mutationSchemaChecks": mutation_details,
+        "errorSchemaVerified": error_schema_verified,
+        "publicCanonicalFieldsVerified": public_fields_verified,
+        "credentialListSchemaVerified": credential_list_schema_verified,
+        "receiptSchemasVerified": receipt_schema_verified,
+        "observations": observations,
     }
+    result["ok"] = all(
+        result[key]
+        for key in (
+            "transportVerified",
+            "responseBoundsVerified",
+            "discoveryVerified",
+            "connectorContractVerified",
+            "openApiVerified",
+            "mutationSchemasVerified",
+            "errorSchemaVerified",
+            "publicCanonicalFieldsVerified",
+            "credentialListSchemaVerified",
+            "receiptSchemasVerified",
+        )
+    )
+    return result
 
 
-def build_report(base_url, source_sha, contract_check, capability_check, preflight_check, protected_check, exact_memory_check=None, workspace_id="", token=""):
-    exact_memory_check = exact_memory_check or {}
+def authenticated_lifecycle_check(pairing_result, credentials_result, me_result, workspace_result, expected):
+    pairing_payload = pairing_result.get("payload") or {}
+    credential_payload = credentials_result.get("payload") or {}
+    me_payload = me_result.get("payload") or {}
+    workspace_payload = workspace_result.get("payload") or {}
+    pairing = pairing_payload.get("pairing") or {}
+    verification = pairing_payload.get("verification") or {}
+    principal = me_payload.get("principal") or {}
+    workspace = workspace_payload.get("workspace") or workspace_payload
+    items = credential_payload.get("items") or []
+    expected_pairing_id = expected.get("pairingId") or ""
+    expected_workspace_id = expected.get("workspaceId") or ""
+    expected_agent_id = expected.get("agentId") or ""
+    expected_credential_id = expected.get("credentialId") or ""
+
+    transport_verified = all(
+        result.get("status") == 200
+        and result.get("contentType") == "application/json"
+        and result.get("jsonParsed")
+        and not result.get("redirectObserved")
+        and not result.get("oversized")
+        for result in (pairing_result, credentials_result, me_result, workspace_result)
+    )
+    exact_pairing_verified = bool(
+        pairing_payload.get("ok") is True
+        and pairing_payload.get("schemaVersion") == SCHEMA
+        and pairing.get("pairingId") == expected_pairing_id
+        and pairing.get("credentialId") == expected_credential_id
+        and ((pairing.get("workspace") or {}).get("workspaceId") == expected_workspace_id)
+        and ((pairing.get("agent") or {}).get("agentId") == expected_agent_id)
+        and pairing_payload.get("approvedScopes") == REQUESTED_SCOPES
+        and pairing_payload.get("scopeDigest") == SCOPE_DIGEST
+        and pairing.get("approvedScopes") == REQUESTED_SCOPES
+        and pairing.get("scopeDigest") == SCOPE_DIGEST
+        and ((pairing.get("grant") or {}).get("credentialType") == "connector_agent")
+        and ((pairing.get("grant") or {}).get("approvedScopes") == REQUESTED_SCOPES)
+        and ((pairing.get("grant") or {}).get("scopeDigest") == SCOPE_DIGEST)
+        and all(
+            verification.get(field) is True
+            for field in (
+                "canonicalWorkspaceReadable",
+                "canonicalWorkspaceIdMatches",
+                "exactAgentReadable",
+                "exactAgentIdMatches",
+                "credentialScopedToConnectorAndAgent",
+                "grantActive",
+            )
+        )
+        and verification.get("grantRevoked") is False
+        and receipt_check(pairing_payload.get("receipt"), "verify", "verified")
+    )
+    item_shapes_verified = bool(
+        isinstance(items, list)
+        and len(items) <= 100
+        and all(set(item) == CREDENTIAL_ITEM_FIELDS for item in items)
+        and not any(FORBIDDEN_CREDENTIAL_KEYS.intersection(item) for item in items)
+    )
+    credential_inventory_verified = bool(
+        credential_payload.get("ok") is True
+        and credential_payload.get("schemaVersion") == SCHEMA
+        and credential_payload.get("pairingId") == expected_pairing_id
+        and credential_payload.get("currentCredentialId") == expected_credential_id
+        and credential_payload.get("approvedScopes") == REQUESTED_SCOPES
+        and credential_payload.get("scopeDigest") == SCOPE_DIGEST
+        and credential_payload.get("count") == len(items)
+        and isinstance(credential_payload.get("totalCount"), int)
+        and credential_payload.get("totalCount") >= len(items)
+        and credential_payload.get("limit") == 100
+        and isinstance(credential_payload.get("hasMore"), bool)
+        and item_shapes_verified
+        and all(item.get("approvedScopes") == REQUESTED_SCOPES and item.get("scopeDigest") == SCOPE_DIGEST for item in items)
+        and any(item.get("credentialId") == expected_credential_id and item.get("isCurrent") is True and item.get("status") == "active" for item in items)
+        and receipt_check(credential_payload.get("receipt"), "list_credentials", "verified")
+        and credential_payload.get("valuesRedacted") is True
+        and credential_payload.get("rawCredentialExposed") is False
+        and credential_payload.get("rawPayloadExposed") is False
+    )
+    principal_verified = bool(
+        me_payload.get("ok") is True
+        and principal.get("credentialType") == "connector_agent"
+        and principal.get("credentialId") == expected_credential_id
+        and principal.get("agentId") == expected_agent_id
+        and principal.get("approvedScopes") == REQUESTED_SCOPES
+        and principal.get("scopeDigest") == SCOPE_DIGEST
+        and ((principal.get("resourceContext") or {}).get("workspaceId") == expected_workspace_id)
+        and ((principal.get("grant") or {}).get("scopeType") == "agent")
+        and ((principal.get("grant") or {}).get("scopeId") == expected_agent_id)
+        and ((principal.get("grant") or {}).get("approvedScopes") == REQUESTED_SCOPES)
+        and ((principal.get("grant") or {}).get("scopeDigest") == SCOPE_DIGEST)
+    )
+    workspace_verified = bool(
+        workspace_payload.get("ok") is True
+        and (workspace.get("workspaceId") or workspace_payload.get("workspaceId")) == expected_workspace_id
+        and workspace_payload.get("approvedScopes") == REQUESTED_SCOPES
+        and workspace_payload.get("scopeDigest") == SCOPE_DIGEST
+    )
+    redaction_verified = all(
+        payload.get("rawCredentialExposed") is False
+        and payload.get("rawPayloadExposed") is False
+        for payload in (pairing_payload, credential_payload, me_payload, workspace_payload)
+    )
+    result = {
+        "attempted": True,
+        "transportVerified": transport_verified,
+        "exactPairingVerified": exact_pairing_verified,
+        "credentialInventoryVerified": credential_inventory_verified,
+        "credentialItemShapesVerified": item_shapes_verified,
+        "principalVerified": principal_verified,
+        "workspaceVerified": workspace_verified,
+        "redactionVerified": redaction_verified,
+        "pairingIdHash": sha256_text(expected_pairing_id),
+        "workspaceIdHash": sha256_text(expected_workspace_id),
+        "agentIdHash": sha256_text(expected_agent_id),
+        "credentialIdHash": sha256_text(expected_credential_id),
+        "credentialCount": len(items),
+        "observedCredentialStatuses": sorted({str(item.get("status") or "") for item in items}),
+        "observations": {
+            "pairing": _redacted_http_observation(pairing_result),
+            "credentials": _redacted_http_observation(credentials_result),
+            "me": _redacted_http_observation(me_result),
+            "workspace": _redacted_http_observation(workspace_result),
+        },
+    }
+    result["ok"] = all(
+        result[key]
+        for key in (
+            "transportVerified",
+            "exactPairingVerified",
+            "credentialInventoryVerified",
+            "credentialItemShapesVerified",
+            "principalVerified",
+            "workspaceVerified",
+            "redactionVerified",
+        )
+    )
+    return result
+
+
+def _validate_service_root(value):
+    parsed = urlsplit(str(value or ""))
+    if (
+        str(value or "").rstrip("/") != ISSUER
+        or parsed.scheme != "https"
+        or parsed.hostname != "memoryendpoints.com"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("live connector verification requires the exact https://memoryendpoints.com service root")
+    return ISSUER
+
+
+def _safe_report_path(value):
+    path = Path(value).resolve()
+    try:
+        relative = path.relative_to(ROOT.resolve())
+    except ValueError:
+        return path
+    if not relative.parts or relative.parts[0].lower() != "var":
+        raise ValueError("connector verification reports inside the repository must be written under ignored var/")
+    return path
+
+
+def write_report(path, report):
+    path = _safe_report_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def build_report(base_url, public_check, authenticated_check=None, require_authenticated=False, secrets=None):
+    authenticated_check = authenticated_check or {"attempted": False, "ok": False}
     report = {
-        "schemaVersion": "memoryendpoints.live_connector_contract_verification.v3",
-        "baseUrl": base_url.rstrip("/"),
-        "sourceSha": source_sha,
-        "connectorContract": contract_check,
-        "capabilityMatrix": capability_check,
-        "browserCorsPreflight": preflight_check,
-        "protectedReviewQueueFilter": protected_check,
-        "protectedExactMemoryReadback": exact_memory_check,
-        "workspaceIdHash": "sha256:" + sha256_text(workspace_id) if workspace_id else None,
+        "schemaVersion": "memoryendpoints.live_connector_pairing_verification.v1",
+        "issuer": base_url,
+        "public": public_check,
+        "authenticatedLifecycle": authenticated_check,
+        "authenticatedLifecycleRequired": bool(require_authenticated),
         "valuesRedacted": True,
         "rawCredentialValuesStored": False,
-        "rawWorkspaceIdStored": False,
+        "rawTenantIdentifiersStored": False,
+        "trackedDocumentationWritten": False,
     }
-    report_text = json.dumps(report, sort_keys=True)
-    report["rawCredentialValuesStored"] = bool(token and token in report_text)
-    report["rawWorkspaceIdStored"] = bool(workspace_id and workspace_id in report_text)
+    serialized = json.dumps(report, sort_keys=True)
+    secrets = secrets or {}
+    raw_token = secrets.get("connectorCredentialSecret") or ""
+    raw_identifiers = [
+        secrets.get("pairingId") or "",
+        secrets.get("workspaceId") or "",
+        secrets.get("agentId") or "",
+        secrets.get("credentialId") or "",
+    ]
+    report["rawCredentialValuesStored"] = bool(raw_token and raw_token in serialized)
+    report["rawTenantIdentifiersStored"] = any(value and value in serialized for value in raw_identifiers)
     report["ok"] = bool(
-        contract_check.get("reviewQueueFiltersVerified")
-        and contract_check.get("searchQueryFiltersVerified")
-        and contract_check.get("reviewQueueOperatorSummaryVerified")
-        and contract_check.get("broadcastFanoutAdvertised")
-        and contract_check.get("ackIsolationAdvertised")
-        and contract_check.get("visibleAgentsConfirmationAdvertised")
-        and contract_check.get("recipientCountConfirmationAdvertised")
-        and contract_check.get("browserCorsHeadersVerified")
-        and contract_check.get("disconnectedPollingBaselineAdvertised")
-        and contract_check.get("disconnectedDatabaseTruthVerified")
-        and contract_check.get("disconnectedRoutesVerified")
-        and contract_check.get("disconnectedPollFieldsVerified")
-        and contract_check.get("disconnectedPaginationVerified")
-        and contract_check.get("disconnectedAttentionOrderingVerified")
-        and contract_check.get("disconnectedAcknowledgementVerified")
-        and contract_check.get("disconnectedClientLoopVerified")
-        and contract_check.get("disconnectedUnavailableTransportsExplicit")
-        and contract_check.get("disconnectedDeliveryClaimsSafe")
-        and contract_check.get("disconnectedMultiDeviceRuleVerified")
-        and capability_check.get("reviewQueueFiltersVerified")
-        and capability_check.get("longTermReviewHealthAdvertised")
-        and capability_check.get("operatorSummaryFieldsIncludeLongTerm")
-        and capability_check.get("broadcastFanoutAdvertised")
-        and capability_check.get("ackIsolationAdvertised")
-        and capability_check.get("visibleAgentsConfirmationAdvertised")
-        and capability_check.get("disconnectedPollingBaselineAdvertised")
-        and capability_check.get("disconnectedDatabaseTruthVerified")
-        and capability_check.get("disconnectedRoutesVerified")
-        and capability_check.get("disconnectedPollFieldsVerified")
-        and capability_check.get("disconnectedPaginationVerified")
-        and capability_check.get("disconnectedAttentionOrderingVerified")
-        and capability_check.get("disconnectedAcknowledgementVerified")
-        and capability_check.get("disconnectedClientLoopVerified")
-        and capability_check.get("disconnectedUnavailableTransportsExplicit")
-        and capability_check.get("disconnectedDeliveryClaimsSafe")
-        and capability_check.get("disconnectedMultiDeviceRuleVerified")
-        and preflight_check.get("verified")
-        and (protected_check.get("verified") if protected_check else True)
-        and (exact_memory_check.get("verified") if exact_memory_check else True)
+        public_check.get("ok")
+        and (authenticated_check.get("ok") if require_authenticated or authenticated_check.get("attempted") else True)
         and not report["rawCredentialValuesStored"]
-        and not report["rawWorkspaceIdStored"]
+        and not report["rawTenantIdentifiersStored"]
     )
     return report
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="https://memoryendpoints.com")
+    parser.add_argument("--base-url", default=ISSUER)
     parser.add_argument("--secret", default=str(DEFAULT_SECRET))
     parser.add_argument("--json-out", default=str(DEFAULT_REPORT))
-    parser.add_argument("--skip-protected", action="store_true")
+    parser.add_argument("--skip-authenticated", action="store_true")
+    parser.add_argument("--require-authenticated", action="store_true")
     args = parser.parse_args(argv)
 
-    base_url = args.base_url.rstrip("/")
-    status, version, _headers = request_json(base_url, "/api/version")
-    source_sha = ((version.get("build") or {}).get("sourceSha") if status == 200 else None)
-    status, contract, _headers = request_json(base_url, "/api/matm/connector-contract")
-    if status != 200 or not contract.get("ok"):
-        raise RuntimeError("connector contract fetch failed")
-    status, capability, _headers = request_json(base_url, "/api/matm/live-capability-matrix")
-    if status != 200 or not capability.get("ok"):
-        raise RuntimeError("capability matrix fetch failed")
-    preflight_status, preflight_headers = request_preflight(base_url, "/api/matm/review-queue")
+    base_url = _validate_service_root(args.base_url)
+    discovery = request_json(base_url, DISCOVERY_PATH, maximum_bytes=PUBLIC_RESPONSE_BYTE_LIMITS[DISCOVERY_PATH])
+    contract = request_json(base_url, CONTRACT_PATH, maximum_bytes=PUBLIC_RESPONSE_BYTE_LIMITS[CONTRACT_PATH])
+    openapi = request_json(base_url, OPENAPI_PATH, maximum_bytes=PUBLIC_RESPONSE_BYTE_LIMITS[OPENAPI_PATH])
+    public_check = public_contract_check(discovery, contract, openapi)
 
-    protected_check = {}
-    exact_memory_check = {}
-    workspace_id = ""
-    token = ""
-    if not args.skip_protected:
-        secret = read_json(args.secret)
-        workspace_id = secret.get("workspaceId") or ""
-        token = secret.get("apiKeySecret") or ""
-        if not workspace_id or not token:
-            raise RuntimeError("protected verification requires workspaceId and apiKeySecret")
-        status, protected_payload, _headers = request_json(
-            base_url,
-            "/api/matm/review-queue",
-            token=token,
-            query=urlencode(
-                {
-                    "workspace_id": workspace_id,
-                    "status": "promoted",
-                    "source_prefix": SOURCE_PREFIX,
-                    "tag": MIGRATION_TAG,
-                }
-            ),
-        )
-        if status != 200:
-            raise RuntimeError("protected review queue fetch failed")
-        protected_check = protected_review_filter_check(protected_payload)
-        status, seed_payload, _headers = request_json(
-            base_url,
-            "/api/matm/search",
-            token=token,
-            query=urlencode(
-                {
-                    "workspace_id": workspace_id,
-                    "q": MIGRATION_TAG,
-                    "tag": MIGRATION_TAG,
-                }
-            ),
-        )
-        if status != 200:
-            raise RuntimeError("protected memory search seed fetch failed")
-        seed_items = seed_payload.get("items") or []
-        event_id = (seed_items[0] or {}).get("eventId") if seed_items else ""
-        status, exact_payload, _headers = request_json(
-            base_url,
-            "/api/matm/search",
-            token=token,
-            query=urlencode(
-                {
-                    "workspace_id": workspace_id,
-                    "q": "",
-                    "event_id": event_id,
-                }
-            ),
-        )
-        if status != 200:
-            raise RuntimeError("protected exact memory readback fetch failed")
-        exact_memory_check = protected_exact_memory_readback_check(seed_payload, exact_payload, event_id)
+    secret_path = Path(args.secret)
+    secrets = {}
+    authenticated_check = {"attempted": False, "ok": False}
+    if not args.skip_authenticated and secret_path.exists():
+        secrets = read_json(secret_path)
+        required = ("connectorCredentialSecret", "pairingId", "workspaceId", "agentId", "credentialId")
+        missing = [field for field in required if not secrets.get(field)]
+        if missing:
+            raise RuntimeError("connector secret file is missing required non-output fields: %s" % ", ".join(missing))
+        token = secrets["connectorCredentialSecret"]
+        pairing_id = secrets["pairingId"]
+        pairing = request_json(base_url, EXPECTED_ENDPOINTS["status"].replace("{pairingId}", pairing_id), token=token)
+        credentials = request_json(base_url, EXPECTED_ENDPOINTS["credentialList"].replace("{pairingId}", pairing_id), token=token)
+        me = request_json(base_url, "/api/matm/me", token=token)
+        workspace = request_json(base_url, "/api/matm/workspace", token=token)
+        authenticated_check = authenticated_lifecycle_check(pairing, credentials, me, workspace, secrets)
+    elif args.require_authenticated:
+        raise RuntimeError("authenticated connector verification requires the local secret file")
 
-    report = build_report(
-        base_url,
-        source_sha,
-        connector_contract_check(contract),
-        capability_matrix_check(capability),
-        cors_preflight_check(preflight_status, preflight_headers),
-        protected_check,
-        exact_memory_check,
-        workspace_id=workspace_id,
-        token=token,
-    )
-    write_json(args.json_out, report)
-    print(json.dumps({"ok": report["ok"], "sourceSha": source_sha, "report": str(Path(args.json_out)), "valuesRedacted": True}, indent=2, sort_keys=True))
+    report = build_report(base_url, public_check, authenticated_check, args.require_authenticated, secrets)
+    output = write_report(args.json_out, report)
+    print(json.dumps({"ok": report["ok"], "schemaVersion": report["schemaVersion"], "reportPath": str(output), "publicVerified": public_check.get("ok"), "authenticatedVerified": authenticated_check.get("ok")}, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 
 

@@ -1,0 +1,253 @@
+{
+  "acknowledgementIsolation": {
+    "ackAgentId": "MemoryEndpoints-Backend-Agent",
+    "ackNotificationId": "note-00d0feac7ae54aa8903f",
+    "expectedRemainingAgents": [
+      "human-verifier-agent",
+      "swarm-observer-agent"
+    ],
+    "ok": true,
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "submitAccepted": true,
+    "valuesRedacted": true,
+    "visibleAfterAckAgents": [
+      "human-verifier-agent",
+      "swarm-observer-agent"
+    ]
+  },
+  "agentIds": [
+    "human-verifier-agent",
+    "MemoryEndpoints-Backend-Agent",
+    "swarm-observer-agent"
+  ],
+  "baseUrl": "https://memoryendpoints.com",
+  "broadcast": {
+    "checkedAgents": [
+      "human-verifier-agent",
+      "MemoryEndpoints-Backend-Agent",
+      "swarm-observer-agent"
+    ],
+    "deliveryCountsByAgent": {
+      "MemoryEndpoints-Backend-Agent": {
+        "broadcast": 1,
+        "targeted": 0
+      },
+      "human-verifier-agent": {
+        "broadcast": 1,
+        "targeted": 0
+      },
+      "swarm-observer-agent": {
+        "broadcast": 1,
+        "targeted": 0
+      }
+    },
+    "distinctNotificationIdCount": 3,
+    "duplicateNotificationIds": [],
+    "expectedNotificationIdCount": 3,
+    "expectedRecipientCount": 3,
+    "missingAgents": [],
+    "missingNotificationIdAgents": [],
+    "notificationIdsByAgent": {
+      "MemoryEndpoints-Backend-Agent": [
+        "note-00d0feac7ae54aa8903f"
+      ],
+      "human-verifier-agent": [
+        "note-696c5fdca2144ef1b84c"
+      ],
+      "swarm-observer-agent": [
+        "note-c001907dc84142b2a5a0"
+      ]
+    },
+    "ok": true,
+    "primaryNotificationIdsByAgent": {
+      "MemoryEndpoints-Backend-Agent": "note-00d0feac7ae54aa8903f",
+      "human-verifier-agent": "note-696c5fdca2144ef1b84c",
+      "swarm-observer-agent": "note-c001907dc84142b2a5a0"
+    },
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "submitAccepted": true,
+    "submitExpectedRecipientCount": 13,
+    "submitNotificationIdsByAgent": {
+      "MemoryEndpoints-Backend-Agent": "note-00d0feac7ae54aa8903f",
+      "MemoryEndpoints-Backend-Fanout-65": "note-ad23716f1ac34e4e838d",
+      "MemoryEndpoints-Beckend-Agent": "note-f3659d503b1441b7a0c1",
+      "MemoryEndpoints-Frontend-Agent": "note-2481a503a5ca4ef291d1",
+      "MemoryEndpoints-Frontend-Fanout-65": "note-e168dbd3923a4edd961f",
+      "codex-agent": "note-12e14b348bda4e97bed2",
+      "codex-coordinator": "note-bd587e1e9a6f4572a43d",
+      "external-agent": "note-5941f784157e4c45b328",
+      "external-blackbox-agent": "note-108b6a8b730b49db8d04",
+      "human-verifier-agent": "note-696c5fdca2144ef1b84c",
+      "localendpoint-agent": "note-620c1a4976da48f2a3bb",
+      "swarm-observer-agent": "note-c001907dc84142b2a5a0",
+      "tinyrustlm-agent": "note-ae60cba0c0d74606b5cb"
+    },
+    "submitStatus": 202,
+    "submitVisibleRecipientCount": 13,
+    "uniqueRecipientNotificationIds": true,
+    "valuesRedacted": true,
+    "visibleAgents": [
+      "human-verifier-agent",
+      "MemoryEndpoints-Backend-Agent",
+      "swarm-observer-agent"
+    ],
+    "visibleAnyTypeAgents": [
+      "human-verifier-agent",
+      "MemoryEndpoints-Backend-Agent",
+      "swarm-observer-agent"
+    ],
+    "visibleRecipientCount": 3,
+    "wrongTypeAgents": []
+  },
+  "messageTypesVerified": {
+    "broadcast": true,
+    "targetedToBackend": true,
+    "targetedToHuman": true
+  },
+  "ok": true,
+  "rawCredentialValuesStored": false,
+  "rawWorkspaceIdStored": false,
+  "redaction": {
+    "apiKeySecretFieldEchoed": false,
+    "rawCredentialEchoed": false,
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "valuesRedacted": true
+  },
+  "registration": {
+    "items": [
+      {
+        "agentId": "human-verifier-agent",
+        "ok": true,
+        "rawCredentialExposed": false,
+        "rawPayloadExposed": false,
+        "status": 201,
+        "valuesRedacted": true
+      },
+      {
+        "agentId": "MemoryEndpoints-Backend-Agent",
+        "ok": true,
+        "rawCredentialExposed": false,
+        "rawPayloadExposed": false,
+        "status": 201,
+        "valuesRedacted": true
+      },
+      {
+        "agentId": "swarm-observer-agent",
+        "ok": true,
+        "rawCredentialExposed": false,
+        "rawPayloadExposed": false,
+        "status": 201,
+        "valuesRedacted": true
+      }
+    ],
+    "ok": true,
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "valuesRedacted": true
+  },
+  "schemaVersion": "memoryendpoints.current_message_fanout_verification.v1",
+  "sourceSha": "65e6d9b4a8078ff040f07505730a9a420185a487",
+  "targeted": {
+    "targetedToBackend": {
+      "checkedAgents": [
+        "human-verifier-agent",
+        "MemoryEndpoints-Backend-Agent",
+        "swarm-observer-agent"
+      ],
+      "deliveryCountsByAgent": {
+        "MemoryEndpoints-Backend-Agent": {
+          "broadcast": 0,
+          "targeted": 1
+        },
+        "human-verifier-agent": {
+          "broadcast": 0,
+          "targeted": 0
+        },
+        "swarm-observer-agent": {
+          "broadcast": 0,
+          "targeted": 0
+        }
+      },
+      "notificationIdsByAgent": {
+        "MemoryEndpoints-Backend-Agent": [
+          "note-0e3bf6bdbff04a2b83db"
+        ]
+      },
+      "ok": true,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "submitAccepted": true,
+      "submitConfirmedTarget": true,
+      "submitExpectedRecipientCount": 1,
+      "submitNotificationIdsByAgent": {
+        "MemoryEndpoints-Backend-Agent": "note-0e3bf6bdbff04a2b83db"
+      },
+      "submitStatus": 202,
+      "submitVisibleRecipientCount": 1,
+      "targetAgentId": "MemoryEndpoints-Backend-Agent",
+      "unexpectedAgents": [],
+      "valuesRedacted": true,
+      "visibleAgents": [
+        "MemoryEndpoints-Backend-Agent"
+      ],
+      "visibleTargetedAgents": [
+        "MemoryEndpoints-Backend-Agent"
+      ],
+      "visibleToTarget": true,
+      "wrongTypeAgents": []
+    },
+    "targetedToHuman": {
+      "checkedAgents": [
+        "human-verifier-agent",
+        "MemoryEndpoints-Backend-Agent",
+        "swarm-observer-agent"
+      ],
+      "deliveryCountsByAgent": {
+        "MemoryEndpoints-Backend-Agent": {
+          "broadcast": 0,
+          "targeted": 0
+        },
+        "human-verifier-agent": {
+          "broadcast": 0,
+          "targeted": 1
+        },
+        "swarm-observer-agent": {
+          "broadcast": 0,
+          "targeted": 0
+        }
+      },
+      "notificationIdsByAgent": {
+        "human-verifier-agent": [
+          "note-2dcb254da1564249af39"
+        ]
+      },
+      "ok": true,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "submitAccepted": true,
+      "submitConfirmedTarget": true,
+      "submitExpectedRecipientCount": 1,
+      "submitNotificationIdsByAgent": {
+        "human-verifier-agent": "note-2dcb254da1564249af39"
+      },
+      "submitStatus": 202,
+      "submitVisibleRecipientCount": 1,
+      "targetAgentId": "human-verifier-agent",
+      "unexpectedAgents": [],
+      "valuesRedacted": true,
+      "visibleAgents": [
+        "human-verifier-agent"
+      ],
+      "visibleTargetedAgents": [
+        "human-verifier-agent"
+      ],
+      "visibleToTarget": true,
+      "wrongTypeAgents": []
+    }
+  },
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

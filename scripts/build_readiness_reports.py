@@ -697,6 +697,7 @@ def build_enterprise_gap_matrix():
 def build_current_implementation_audit():
     dogfood = load_json("dogfood-memory-run.json") or {}
     local_dogfood = load_json("dogfood-memory-run-local.json") or {}
+    local_routes = load_json("local-route-verification.json") or {}
     fanout = load_json("current-message-fanout-verification.json") or {}
     connector_contract = load_json("live-connector-contract-verification.json") or {}
     memory_submit_consistency = load_json("live-memory-submit-consistency.json") or {}
@@ -733,7 +734,8 @@ def build_current_implementation_audit():
         "## Evidence Gathered",
         "",
         "- Unit/integration suite passes through `python -m unittest discover -s tests`.",
-        "- WSGI route verifier passes for 21 required public routes, current source SHA, and zero public leak hits.",
+        "- WSGI route verifier passes for %s required public routes, current source SHA, and zero public leak hits."
+        % local_routes.get("routeCount"),
         "- Static MultiAgentMemory.com source verifier passes locally with zero public leak hits.",
         "- `.uai` required-field and date-free audit passes for the active typed memory suite.",
         "- Secret scan passes with zero hits.",

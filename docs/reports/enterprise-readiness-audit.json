@@ -1,29 +1,5 @@
 {
-  "blockers": [
-    {
-      "blocker": "Live latest-code no-write verifier failed; inspect checkResults for live_latest_code_verifier.",
-      "evidence": [
-        "docs/reports/deploy-attempt-20260709.json",
-        "docs/reports/deploy-connection-check-latest.json",
-        "docs/reports/deploy-connection-check-ftp-latest.json",
-        "docs/reports/live-latest-code-verification.json",
-        "scripts/enterprise_readiness_audit.py --run-checks"
-      ],
-      "requirement": "latest_code_live_deployed",
-      "status": "blocked"
-    },
-    {
-      "blocker": "Live /api/version does not verify a working MySQL/MariaDB backend. It must report storeBackend mysql or mariadb and storeBackendVerified true.",
-      "evidence": [
-        "scripts/verify_mysql_backend.py",
-        "docs/reports/live-mysql-backend-verification.json",
-        "docs/database-schema-canonical.sql",
-        "docs/storage-backends.md"
-      ],
-      "requirement": "live_mysql_database_backend",
-      "status": "blocked"
-    }
-  ],
+  "blockers": [],
   "checkResults": [
     {
       "command": "python -m unittest discover -s tests",
@@ -75,32 +51,26 @@
     },
     {
       "command": "python scripts/verify_memoryendpoints.py --base-url https://memoryendpoints.com --expect-git-head",
-      "exitCode": 1,
+      "exitCode": 0,
       "name": "live_latest_code_verifier",
-      "ok": false,
-      "outputCaptured": true,
-      "stderrTail": "",
-      "stdoutTail": " \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/llms.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/llms-full.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/ai.txt\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/ai-manifest.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/.well-known/mcp.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    },\n    {\n      \"leakHitCount\": 0,\n      \"leakRules\": [],\n      \"missing\": [],\n      \"route\": \"/.well-known/ai-agent.json\",\n      \"secretHitCount\": 0,\n      \"status\": 200\n    }\n  ],\n  \"mode\": \"http\",\n  \"observedSourceSha\": \"0282c8619408dfa0b620de49bb3108ccd34f1eab\",\n  \"ok\": false,\n  \"reportScope\": \"point_in_time_snapshot\",\n  \"routeCount\": 22,\n  \"schemaVersion\": \"memoryendpoints.verifier.v1\",\n  \"sourceShaMatchesExpected\": true\n}\n",
+      "ok": true,
+      "outputCaptured": false,
       "valuesRedacted": true
     },
     {
       "command": "python scripts/verify_mysql_backend.py --base-url https://memoryendpoints.com --json-out C:\\Users\\mkapp\\AppData\\Local\\Temp\\memoryendpoints-readiness-mysql.json",
-      "exitCode": 1,
+      "exitCode": 0,
       "name": "live_mysql_backend_verifier",
-      "ok": false,
-      "outputCaptured": true,
-      "stderrTail": "",
-      "stdoutTail": "{\n  \"baseUrl\": \"https://memoryendpoints.com\",\n  \"configuredStoreBackend\": \"\",\n  \"httpStatus\": 200,\n  \"mysqlBackendVerified\": false,\n  \"ok\": false,\n  \"schemaVersion\": \"memoryendpoints.mysql_backend_verifier.v1\",\n  \"sourceSha\": \"0282c8619408dfa0b620de49bb3108ccd34f1eab\",\n  \"storeBackend\": \"file\",\n  \"storeBackendVerified\": false,\n  \"valuesRedacted\": true\n}\n",
+      "ok": true,
+      "outputCaptured": false,
       "valuesRedacted": true
     },
     {
       "command": "python scripts/dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com --no-progress-update --json-out C:\\Users\\mkapp\\AppData\\Local\\Temp\\memoryendpoints-readiness-dogfood.json",
-      "exitCode": null,
+      "exitCode": 0,
       "name": "live_dogfood_verifier",
-      "ok": false,
+      "ok": true,
       "outputCaptured": false,
-      "skipReason": "live_mysql_backend_verifier_failed",
-      "skipped": true,
       "valuesRedacted": true
     },
     {
@@ -128,11 +98,11 @@
       "valuesRedacted": true
     }
   ],
-  "checksOk": false,
+  "checksOk": true,
   "checksRun": true,
-  "completionClaimAllowed": false,
+  "completionClaimAllowed": true,
   "generatedFromCurrentWorktree": true,
-  "ok": false,
+  "ok": true,
   "requirements": [
     {
       "blocker": null,
@@ -172,7 +142,8 @@
     {
       "blocker": null,
       "evidence": [
-        "docs/reports/dogfood-memory-run.json"
+        "docs/reports/dogfood-memory-run.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "local_dogfooding",
       "status": "pass_local"
@@ -243,13 +214,14 @@
     {
       "blocker": null,
       "evidence": [
-        "docs/reports/dogfood-memory-run.json"
+        "docs/reports/dogfood-memory-run.json",
+        "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "live_core_dogfooding_current_surface",
       "status": "pass_live_current_public_surface"
     },
     {
-      "blocker": "Live latest-code no-write verifier failed; inspect checkResults for live_latest_code_verifier.",
+      "blocker": null,
       "evidence": [
         "docs/reports/deploy-attempt-20260709.json",
         "docs/reports/deploy-connection-check-latest.json",
@@ -258,7 +230,7 @@
         "scripts/enterprise_readiness_audit.py --run-checks"
       ],
       "requirement": "latest_code_live_deployed",
-      "status": "blocked"
+      "status": "pass_live"
     },
     {
       "blocker": null,
@@ -279,7 +251,7 @@
       "status": "not_required"
     },
     {
-      "blocker": "Live /api/version does not verify a working MySQL/MariaDB backend. It must report storeBackend mysql or mariadb and storeBackendVerified true.",
+      "blocker": null,
       "evidence": [
         "scripts/verify_mysql_backend.py",
         "docs/reports/live-mysql-backend-verification.json",
@@ -287,30 +259,31 @@
         "docs/storage-backends.md"
       ],
       "requirement": "live_mysql_database_backend",
-      "status": "blocked"
+      "status": "pass_live"
     }
   ],
   "schemaVersion": "memoryendpoints.enterprise_readiness_audit.v1",
   "summary": {
-    "currentGitHead": "0282c8619408dfa0b620de49bb3108ccd34f1eab",
+    "currentGitHead": "cc1c512776c9856c737ea1fd023a289b6afe835f",
     "dateFreeHotMemory": true,
     "deployDryRunMatchesPackage": true,
     "githubCiGateDecision": "not_required",
     "githubCiReportCurrent": false,
     "githubCiRequired": false,
-    "latestCodeLiveDeployed": false,
+    "latestCodeLiveDeployed": true,
     "latestCodeSourceShaMatchesExpected": true,
     "liveCoreDogfoodVerified": true,
-    "liveDogfoodCommandEvidenceCurrent": false,
+    "liveDogfoodCommandEvidenceCurrent": true,
     "liveDogfoodVerified": true,
-    "liveLatestCodeCommandEvidenceCurrent": false,
+    "liveLatestCodeCommandEvidenceCurrent": true,
     "liveLatestCodeReportCurrent": false,
-    "liveMysqlBackendCommandEvidenceCurrent": false,
-    "liveMysqlBackendVerified": false,
+    "liveMysqlBackendCommandEvidenceCurrent": true,
+    "liveMysqlBackendVerified": true,
     "livePublicRoutesVerified": true,
-    "localHardeningVerified": false,
+    "localDogfoodVerified": true,
+    "localHardeningVerified": true,
     "localRouteEvidenceCurrent": true,
-    "localRouteReportCurrent": true,
+    "localRouteReportCurrent": false,
     "multiAgentMemoryLiveDeployed": true,
     "multiAgentMemoryLiveSiteCommandEvidenceCurrent": true,
     "multiAgentMemoryLiveSiteVerified": true,

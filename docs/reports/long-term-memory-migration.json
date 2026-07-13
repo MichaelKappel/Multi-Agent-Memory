@@ -2,6 +2,8 @@
   "actorAgentId": "codex-agent",
   "baseUrl": "https://memoryendpoints.com",
   "itemCount": 8,
+  "matchedSourcePathCount": 8,
+  "missingSourcePaths": [],
   "mode": "live_apply",
   "ok": true,
   "projectId": "project-7474be75df6643b89953",
@@ -9,7 +11,17 @@
   "rawWorkspaceIdStored": false,
   "schemaVersion": "memoryendpoints.long_term_memory_migration.v1",
   "searchReadback": {
-    "count": 8,
+    "allExpectedSourcesFound": true,
+    "allValuesRedacted": true,
+    "count": 11,
+    "currentAllPromoted": true,
+    "currentPromotionStateCounts": {
+      "promoted": 8
+    },
+    "currentReviewStatusCounts": {
+      "promoted": 8
+    },
+    "expectedSourcePathCount": 8,
     "filesystemDocsIncluded": false,
     "hostedItemTitles": [
       "API Contract Summary",
@@ -21,11 +33,27 @@
       "Strategy Memory Index",
       "System Targets"
     ],
+    "hostedSourcePaths": [
+      "docs/long-term-memory/api-contract-summary.md",
+      "docs/long-term-memory/architecture-notes.md",
+      "docs/long-term-memory/enterprise-engineering-best-practices.md",
+      "docs/long-term-memory/matm-architecture-strategy.md",
+      "docs/long-term-memory/project-charter.md",
+      "docs/long-term-memory/release-verification-summary.md",
+      "docs/long-term-memory/strategy-index.md",
+      "docs/long-term-memory/system-targets.md"
+    ],
+    "matchedSourcePathCount": 8,
     "memorySource": "hosted_workspace_store",
+    "missingSourcePaths": [],
+    "rawPrivatePayloadStoredCount": 0,
     "status": 200,
+    "unexpectedHostedSourcePaths": [],
     "valuesRedacted": true
   },
+  "searchReadbackCount": 11,
   "sourceDirectory": "docs/long-term-memory",
+  "sourcePathReadbackVerified": true,
   "submitted": [
     {
       "eventId": "mem-676181fa30eb4f5bacc6",

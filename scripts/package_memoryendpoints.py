@@ -51,6 +51,11 @@ EXCLUDE_NAME_SUFFIXES = (
     ".out.log",
     ".err.log",
 )
+GENERATED_SOURCE_PATHS = {"memoryendpoints/build_info.generated.json"}
+
+
+class SourceRevisionError(RuntimeError):
+    """Raised when Git cannot prove which revision the package represents."""
 
 
 def utc_now():
@@ -58,38 +63,55 @@ def utc_now():
 
 
 def git_head_sha():
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=str(ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-    )
-    if completed.returncode == 0:
-        return completed.stdout.strip()
-    return "unknown"
+    completed = run_git(["rev-parse", "--verify", "HEAD"])
+    source_sha = completed.stdout.strip()
+    if not source_sha:
+        raise SourceRevisionError("Git HEAD is unavailable")
+    return source_sha
 
 
-def git_status_lines():
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=str(ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-    )
+def run_git(arguments):
+    try:
+        completed = subprocess.run(
+            ["git"] + list(arguments),
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+        )
+    except OSError as exc:
+        raise SourceRevisionError("Git inspection could not run") from exc
     if completed.returncode != 0:
-        return []
-    return [line for line in completed.stdout.splitlines() if line.strip()]
+        raise SourceRevisionError("Git inspection failed")
+    return completed
 
 
-def status_path(line):
-    text = line[3:] if len(line) > 3 else ""
-    if " -> " in text:
-        text = text.split(" -> ", 1)[1]
-    return text.strip().strip('"').replace("\\", "/")
+def git_status_paths():
+    completed = run_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+    records = completed.stdout.split("\0")
+    paths = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4:
+            raise SourceRevisionError("Git status output was malformed")
+        status = record[:2]
+        paths.append(record[3:].replace("\\", "/"))
+        if "R" in status or "C" in status:
+            if index >= len(records) or not records[index]:
+                raise SourceRevisionError("Git rename status output was malformed")
+            paths.append(records[index].replace("\\", "/"))
+            index += 1
+    return paths
+
+
+def git_tracked_paths():
+    completed = run_git(["ls-files", "-z"])
+    return {path.replace("\\", "/") for path in completed.stdout.split("\0") if path}
 
 
 def should_include_rel(rel):
@@ -126,15 +148,52 @@ def source_content_hash(files):
 
 def packaged_dirty_paths(files):
     included = {str(rel).replace(os.sep, "/") for _path, rel in files}
-    generated = {"memoryendpoints/build_info.generated.json"}
-    dirty = []
-    for line in git_status_lines():
-        rel_text = status_path(line)
-        if not rel_text or rel_text in generated:
+    tracked = git_tracked_paths()
+    dirty = set()
+    for rel_text in git_status_paths():
+        if not rel_text or rel_text in GENERATED_SOURCE_PATHS:
             continue
         if rel_text in included or should_include_rel(Path(rel_text)):
-            dirty.append(rel_text)
-    return sorted(set(dirty))
+            dirty.add(rel_text)
+
+    # `git status` intentionally hides ignored files. Any included file that is
+    # neither tracked nor a known generated artifact would otherwise evade the
+    # exact-revision gate (for example, an ignored .env file).
+    dirty.update(included - tracked - GENERATED_SOURCE_PATHS)
+    expected_included = {path for path in tracked if should_include_rel(Path(path))}
+    dirty.update(expected_included - included)
+    return sorted(dirty)
+
+
+def inspect_current_source(files=None):
+    files = list(iter_files()) if files is None else list(files)
+    source_sha = git_head_sha()
+    dirty_paths = packaged_dirty_paths(files)
+    content_hash = source_content_hash(files)
+    if git_head_sha() != source_sha:
+        raise SourceRevisionError("Git HEAD changed during source inspection")
+    return {
+        "files": files,
+        "sourceSha": source_sha,
+        "contentHash": content_hash,
+        "dirtyPaths": dirty_paths,
+    }
+
+
+def capture_files(files):
+    return [(str(rel).replace(os.sep, "/"), path.read_bytes()) for path, rel in files]
+
+
+def captured_source_content_hash(snapshot):
+    digest = hashlib.sha256()
+    for rel_text, body in sorted(snapshot, key=lambda item: item[0]):
+        if rel_text in GENERATED_SOURCE_PATHS:
+            continue
+        digest.update(rel_text.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(body).hexdigest().encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def file_sha256(path):
@@ -145,8 +204,8 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def write_build_info(content_hash, dirty_paths):
-    source_sha = git_head_sha()
+def write_build_info(content_hash, dirty_paths, source_sha=None, write=True):
+    source_sha = source_sha or git_head_sha()
     payload = {
         "schemaVersion": "memoryendpoints.build_info.v1",
         "sourceSha": source_sha,
@@ -159,14 +218,19 @@ def write_build_info(content_hash, dirty_paths):
         "sourceDirtyPathCount": len(dirty_paths),
         "valuesRedacted": True,
     }
-    BUILD_INFO.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if write:
+        BUILD_INFO.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return payload
 
 
 def write_current_build_info():
-    files = list(iter_files())
-    dirty_paths = packaged_dirty_paths(files)
-    return write_build_info(source_content_hash(files), dirty_paths)
+    source = inspect_current_source()
+    return write_build_info(
+        source["contentHash"],
+        source["dirtyPaths"],
+        source["sourceSha"],
+        write=not source["dirtyPaths"],
+    )
 
 
 def iter_files():
@@ -185,9 +249,31 @@ def main(argv=None):
     parser.add_argument("--json-out")
     args = parser.parse_args(argv)
 
-    files = list(iter_files())
-    dirty_paths = packaged_dirty_paths(files)
-    build_info = write_build_info(source_content_hash(files), dirty_paths)
+    try:
+        source = inspect_current_source()
+    except SourceRevisionError:
+        report = {
+            "schemaVersion": "memoryendpoints.package_plan.v1",
+            "reportScope": "point_in_time_snapshot",
+            "status": "source_revision_unavailable",
+            "checkOnly": args.check_only,
+            "sourceRevisionVerified": False,
+            "safeNoOp": True,
+            "written": False,
+            "valuesRedacted": True,
+        }
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1
+
+    dirty_paths = source["dirtyPaths"]
+    build_info = write_build_info(
+        source["contentHash"],
+        dirty_paths,
+        source["sourceSha"],
+        write=not dirty_paths,
+    )
     files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.package_plan.v1",
@@ -227,13 +313,53 @@ def main(argv=None):
             "buildInfoFile": "memoryendpoints/build_info.generated.json",
             "valuesRedacted": True,
         },
+        "sourceRevisionVerified": not dirty_paths,
+        "safeNoOp": bool(args.check_only),
     }
+    if dirty_paths:
+        report["status"] = "dirty_packaged_source"
+        report["safeNoOp"] = True
+        report["written"] = False
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1
+
+    try:
+        snapshot = capture_files(files)
+        snapshot_content_hash = captured_source_content_hash(snapshot)
+        final_source = inspect_current_source()
+    except (OSError, SourceRevisionError):
+        report["status"] = "source_changed_during_packaging"
+        report["sourceRevisionVerified"] = False
+        report["safeNoOp"] = True
+        report["written"] = False
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1
+    report["snapshotContentHash"] = snapshot_content_hash
+    if (
+        snapshot_content_hash != build_info["contentHash"]
+        or final_source["sourceSha"] != build_info["sourceSha"]
+        or final_source["dirtyPaths"]
+        or final_source["contentHash"] != build_info["contentHash"]
+    ):
+        report["status"] = "source_changed_during_packaging"
+        report["sourceRevisionVerified"] = False
+        report["safeNoOp"] = True
+        report["written"] = False
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1
     if not args.check_only:
         DIST.mkdir(exist_ok=True)
         with zipfile.ZipFile(str(PACKAGE), "w", zipfile.ZIP_DEFLATED) as archive:
-            for path, rel in files:
-                archive.write(str(path), str(rel).replace(os.sep, "/"))
+            for rel_text, body in snapshot:
+                archive.writestr(rel_text, body)
         report["written"] = True
+        report["safeNoOp"] = False
         report["bytes"] = PACKAGE.stat().st_size
         report["packageSha256"] = file_sha256(PACKAGE)
     if args.json_out:

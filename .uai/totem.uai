@@ -23,6 +23,13 @@ Totem rule:
 - Multiple filesystem agents working in one project must keep their `.uai` contents local and use the MemoryEndpoints hash-only collaboration overlay before editing the same path. The overlay stores project, path, content hash, edit intent, bounded lease, and completion hash, not the local file body.
 - This project is still in first-build quality mode: no legacy compromise, no compatibility debt, no shortcut architecture, and no jimmy-rigged one-off implementation is acceptable. A clean rewrite of a subsystem is better than preserving sloppy code or hiding a product concept behind ad hoc patches.
 
+Demo UI invariant:
+- Every interactive user-interface capability must be fully exercisable and verifiable through the explicit Demo routes, including authenticated human and agent workflows and their success, empty, validation, error, permission, expiry, cancellation, and recovery states.
+- Demo is a data, transport, and session-authority overload of the production authenticated UI, never a parallel UI. It must reuse the same templates, renderers, controls, validation, state transitions, accessibility behavior, and client methods; fake demo pages, duplicate renderers, and disconnected lookalike workflows are forbidden.
+- Demo data and operations must be clearly labeled as mock at every relevant object and surface, remain browser-session-local and resettable, make zero protected network requests, persist nothing, and contain no real tenant data, operational metadata, credentials, or secret-shaped values. Explicit Demo routes do not weaken the fail-closed signed-out boundary of protected routes.
+- Mock objects must be useful, site-related examples about MemoryEndpoints architecture, access, memory, knowledge, coordination, lifecycle, and security. The mock experience must double as in-context documentation for people, agents, and UI crawlers while demonstrating every supported function through the actual interface.
+- A new or changed UI capability is incomplete until its Demo overload supports the same method contract and automated plus real-browser tests prove full interactive parity without weakening live authentication, authorization, CSRF, recent-password-reauthentication, selected-membership, attribution, privacy, accessibility, or responsive behavior.
+
 Required agent behavior:
 - Load `.uai/startup-packet.uai` as the bootstrap index when entering cold.
 - Read every file in the startup-packet read order when local filesystem access is available.

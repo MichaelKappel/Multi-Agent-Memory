@@ -1,0 +1,76 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "browserCorsPreflight": {
+    "allowOriginPresent": true,
+    "missingHeaders": [],
+    "missingMethods": [],
+    "ok": true,
+    "status": 204,
+    "valuesRedacted": true,
+    "verified": true
+  },
+  "capabilityMatrix": {
+    "ackIsolationAdvertised": true,
+    "broadcastFanoutAdvertised": true,
+    "browserCorsAdvertised": true,
+    "longTermReviewHealthAdvertised": true,
+    "missingReviewQueueFilters": [],
+    "operatorSummaryFieldsIncludeLongTerm": true,
+    "reviewQueueFiltersVerified": true,
+    "valuesRedacted": true,
+    "visibleAgentsConfirmationAdvertised": true
+  },
+  "connectorContract": {
+    "ackIsolationAdvertised": true,
+    "broadcastFanoutAdvertised": true,
+    "browserCorsHeadersVerified": true,
+    "browserCorsPreflightWithoutWorkspaceKey": true,
+    "browserCorsStatus": "live",
+    "missingBrowserCorsHeaders": [],
+    "missingReviewQueueFilters": [],
+    "missingSearchQueryFilters": [],
+    "recipientCountConfirmationAdvertised": true,
+    "reviewQueueFiltersVerified": true,
+    "reviewQueueOperatorSummaryVerified": true,
+    "schemaVersion": "memoryendpoints.connector_contract.v1",
+    "searchQueryFiltersVerified": true,
+    "valuesRedacted": true,
+    "visibleAgentsConfirmationAdvertised": true
+  },
+  "ok": true,
+  "protectedExactMemoryReadback": {
+    "eventIdFilterEchoed": true,
+    "eventIdHash": "sha256:8d4978261e7f3e8566934e8cec6979c33b6a607a9b9215eee8dcddb3d12d930c",
+    "exactContainsEvent": true,
+    "exactCount": 1,
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "seedCount": 19,
+    "valuesRedacted": true,
+    "verified": true
+  },
+  "protectedReviewQueueFilter": {
+    "actionableCount": 0,
+    "allPromoted": true,
+    "count": 8,
+    "filters": {
+      "sourcePrefix": "docs/long-term-memory/",
+      "status": "promoted",
+      "tag": "long-term-memory-migration"
+    },
+    "longTermReviewSummaryPresent": true,
+    "ok": true,
+    "rawCredentialExposed": false,
+    "rawPayloadExposed": false,
+    "sourcePathCount": 8,
+    "valuesRedacted": true,
+    "verified": true,
+    "visibleRecordCount": 8
+  },
+  "rawCredentialValuesStored": false,
+  "rawWorkspaceIdStored": false,
+  "schemaVersion": "memoryendpoints.live_connector_contract_verification.v2",
+  "sourceSha": "187baa3f75f8ad67b6f64035f71b28374e0d3ed0",
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

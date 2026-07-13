@@ -1,0 +1,15 @@
+{
+  "agentId": "MemoryEndpoints-Beckend-Agent",
+  "backendInboxUnreadForBroadcast": 1,
+  "broadcastMessageId": "msg-970245d7388b4fd5b097",
+  "ok": true,
+  "postedRooms": {
+    "black-box-goal": 2,
+    "company": 18,
+    "project": 20
+  },
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "routingDecisionId": "route-01783700874980399896-5348e40b",
+  "valuesRedacted": true
+}

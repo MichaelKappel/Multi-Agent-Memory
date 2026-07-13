@@ -11,7 +11,10 @@ ROUTE_INVENTORY = ROOT / "docs" / "route-inventory.md"
 API_CONTRACT = ROOT / "docs" / "api-contract.md"
 SYSTEM_ARCHITECTURE = ROOT / "docs" / "system-architecture.md"
 COMPANION_API = ROOT / "sites" / "multiagentmemory.com" / "docs" / "api-reference.html"
+CONNECTOR_CONTRACT = ROOT / "docs" / "connector-pairing-v1.md"
+CONNECTOR_THREAT_MODEL = ROOT / "docs" / "connector-pairing-threat-model.md"
 COMPANION_MANIFEST = ROOT / "sites" / "multiagentmemory.com" / "ai-manifest.json"
+READINESS_REPORT_BUILDER = ROOT / "scripts" / "build_readiness_reports.py"
 
 
 class DocumentationFreshnessTests(unittest.TestCase):
@@ -39,6 +42,127 @@ class DocumentationFreshnessTests(unittest.TestCase):
             )
             self.assertRegex(text, row, msg="companion API reference drift for %s" % item["route"])
 
+    def test_connector_publications_share_the_body_only_claim_contract(self):
+        publications = (API_CONTRACT, ROUTE_INVENTORY, COMPANION_API, CONNECTOR_CONTRACT)
+        required = (
+            "/connect/authorize/{publicRequestRef}",
+            "/api/matm/connector-pairings/authorization-code-claims",
+            "pairref_",
+            "wakeUpUrl",
+            "PairingSummary",
+            "RotationSummary",
+            "claimExpiresAt",
+            "activationExpiresInSeconds",
+            "credentialDeliveredToAuthorizedRecipient=true",
+            "rawCredentialPersisted=false",
+            "showCredentialOnce=true",
+            "idempotencyKeyReserved=false",
+            "canInvite=false",
+            "lastUsedAt",
+            "connector:self:readback",
+            "memory:public-safe:submit",
+            "sha256-v1:1358698c6ddba1a74a688d3718a739f78e4ef50d0773b22c96e025b38aa86594",
+            "16 KiB",
+            "32 KiB",
+            "64 KiB",
+        )
+        for path in publications:
+            text = path.read_text(encoding="utf-8")
+            for value in required:
+                self.assertIn(value, text, msg="connector publication drift in %s" % path)
+            self.assertNotIn("{opaqueRequestHandle}", text, msg=path)
+            self.assertNotIn("/tour/connect/authorize/{state}", text, msg=path)
+            self.assertNotIn("callback contains only", text.lower(), msg=path)
+            self.assertNotIn("authorizationCodeExpiresAt", text, msg=path)
+
+    def test_connector_verification_example_uses_exact_public_summary_allowlists(self):
+        text = API_CONTRACT.read_text(encoding="utf-8")
+        section = text.split("### Exact verification response", 1)[1].split(
+            "### Credential lifecycle", 1
+        )[0]
+        match = re.search(r"```json\s*(\{.*?\})\s*```", section, re.DOTALL)
+        self.assertIsNotNone(match, msg="connector verification JSON example missing")
+        payload = json.loads(match.group(1))
+        pairing = payload["pairing"]
+        self.assertEqual(
+            {
+                "pairingId",
+                "status",
+                "workspaceId",
+                "agentId",
+                "credentialId",
+                "approvedScopes",
+                "scopeDigest",
+                "grant",
+                "workspace",
+                "agent",
+            },
+            set(pairing),
+        )
+        self.assertEqual({"workspaceId", "readable"}, set(pairing["workspace"]))
+        self.assertEqual({"agentId", "readable"}, set(pairing["agent"]))
+        self.assertEqual(
+            {
+                "credentialType",
+                "scopeType",
+                "scopeId",
+                "workspaceId",
+                "agentId",
+                "approvedScopes",
+                "scopeDigest",
+                "active",
+                "revoked",
+                "canInvite",
+                "canRevoke",
+            },
+            set(pairing["grant"]),
+        )
+        self.assertFalse(pairing["grant"]["canInvite"])
+        self.assertFalse(pairing["grant"]["canRevoke"])
+
+        forbidden_public_keys = {
+            "authorizationCodeExpiresAt",
+            "requestId",
+            "companyId",
+            "projectId",
+            "predecessorCredentialId",
+            "predecessorTokenId",
+        }
+
+        def assert_public_keys(value):
+            if isinstance(value, dict):
+                self.assertFalse(forbidden_public_keys.intersection(value))
+                for child in value.values():
+                    assert_public_keys(child)
+            elif isinstance(value, list):
+                for child in value:
+                    assert_public_keys(child)
+
+        assert_public_keys(payload)
+
+    def test_connector_threat_model_covers_release_blocking_boundaries(self):
+        text = CONNECTOR_THREAT_MODEL.read_text(encoding="utf-8")
+        for value in (
+            "URL/history/referrer leakage",
+            "Claim theft or replay",
+            "Secure-store failure",
+            "Scope escalation/confused deputy",
+            "Browser script exfiltration",
+            "CSRF",
+            "Authorization-server mix-up",
+            "Custom-protocol hijacking or loopback listener race",
+            "Open redirect",
+            "SSRF",
+            "Response overexposure",
+            "Oversized/parser abuse",
+            "403 connector_scope_forbidden",
+            "16 KiB",
+            "32 KiB",
+            "64 KiB",
+            "authorized exact-SHA deployment",
+        ):
+            self.assertIn(value, text)
+
     def test_current_operating_docs_do_not_emit_tracked_report_snapshots(self):
         for rel in ("README.md", "docs/deployment.md", "docs/verification.md"):
             text = (ROOT / rel).read_text(encoding="utf-8")
@@ -49,6 +173,7 @@ class DocumentationFreshnessTests(unittest.TestCase):
             ROOT / "docs" / "deployment.md",
             ROOT / "docs" / "verification.md",
             ROOT / "docs" / "long-term-memory" / "release-verification-summary.md",
+            READINESS_REPORT_BUILDER,
         )
         forbidden = ("21 checked routes", "21 required public routes", "uploaded 81 files")
         for path in paths:

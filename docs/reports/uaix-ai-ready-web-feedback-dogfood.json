@@ -1,0 +1,38 @@
+{
+  "agentId": "MemoryEndpoints-Backend-Agent",
+  "baseUrl": "https://memoryendpoints.com",
+  "schemaVersion": "memoryendpoints.uaix_feedback_dogfood.v1",
+  "steps": [
+    {
+      "agentId": "MemoryEndpoints-Backend-Agent",
+      "ok": true,
+      "status": 201,
+      "step": "register_agent"
+    },
+    {
+      "ok": true,
+      "roomId": "room-0148ae1a609c2c282969",
+      "roomScope": "project",
+      "status": 200,
+      "step": "load_meeting_rooms"
+    },
+    {
+      "messageId": "meetmsg-01783782460735347455-ffe99f28",
+      "ok": true,
+      "persisted": true,
+      "status": 201,
+      "step": "post_project_room_feedback",
+      "transcriptQueryUrl": "/api/matm/meeting-messages?room_id=room-0148ae1a609c2c282969&agent_id=MemoryEndpoints-Backend-Agent",
+      "visibleToSender": true
+    },
+    {
+      "memoryEventId": "mem-d13ea5c8b45245599a49",
+      "ok": true,
+      "persisted": true,
+      "source": "memoryendpoints://matm/meeting-messages/meetmsg-01783782460735347455-ffe99f28",
+      "status": 201,
+      "step": "promote_feedback_to_memory"
+    }
+  ],
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

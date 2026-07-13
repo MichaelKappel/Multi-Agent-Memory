@@ -1,0 +1,85 @@
+{
+  "agentId": "human-verifier-agent",
+  "browserClickBlockedByAutomationTimeout": true,
+  "browserClickVerified": false,
+  "checks": [
+    {
+      "detail": {
+        "sourceSha": "fd114141e46459cbb3d08e8c295f22b277095433",
+        "status": 200
+      },
+      "name": "version_source_sha_matches_head",
+      "ok": true
+    },
+    {
+      "detail": {
+        "storeBackend": "mysql",
+        "storeBackendVerified": true
+      },
+      "name": "version_mysql_verified",
+      "ok": true
+    },
+    {
+      "detail": {
+        "status": 200
+      },
+      "name": "production_js_has_inbox_cursor_param",
+      "ok": true
+    },
+    {
+      "detail": {},
+      "name": "production_js_has_load_older_messages_label",
+      "ok": true
+    },
+    {
+      "detail": {},
+      "name": "production_js_has_meeting_load_older_label",
+      "ok": true
+    },
+    {
+      "detail": {
+        "hasMore": true,
+        "status": 200,
+        "totalUnreadCount": 118,
+        "visibleUnreadCount": 25
+      },
+      "name": "current_message_page1_has_cursor",
+      "ok": true
+    },
+    {
+      "detail": {
+        "cursorAccepted": true,
+        "status": 200,
+        "totalUnreadCount": 118,
+        "visibleUnreadCount": 25
+      },
+      "name": "current_message_page2_cursor_accepted",
+      "ok": true
+    },
+    {
+      "detail": {
+        "page1First": [
+          "msg-e4ccb9c7ebde4b068f99"
+        ],
+        "page2First": [
+          "msg-b10f9352d63b4dc8b2d7"
+        ]
+      },
+      "name": "current_message_page2_is_older_window",
+      "ok": true
+    }
+  ],
+  "generatedAtEpochSeconds": 1783737134,
+  "ok": true,
+  "page1TotalUnreadCount": 118,
+  "page1VisibleUnreadCount": 25,
+  "page2CursorAccepted": true,
+  "page2VisibleUnreadCount": 25,
+  "productionJsVerified": true,
+  "rawCredentialExposed": false,
+  "schemaVersion": "memoryendpoints.live_current_message_load_older_ui.v1",
+  "sourceSha": "fd114141e46459cbb3d08e8c295f22b277095433",
+  "storeBackend": "mysql",
+  "storeBackendVerified": true,
+  "valuesRedacted": true
+}

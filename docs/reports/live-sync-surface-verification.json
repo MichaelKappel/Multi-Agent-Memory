@@ -1,0 +1,82 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "checks": [
+    {
+      "httpStatus": 200,
+      "name": "capabilities",
+      "ok": true,
+      "syncStatus": "live",
+      "valuesRedacted": true
+    },
+    {
+      "httpStatus": 201,
+      "name": "setup",
+      "ok": true,
+      "oneTimeKeyReturned": true,
+      "valuesRedacted": true,
+      "workspaceFingerprint": "13186c18422350c6"
+    },
+    {
+      "authorityEpoch": 1,
+      "httpStatus": 201,
+      "name": "register-device",
+      "ok": true,
+      "valuesRedacted": true
+    },
+    {
+      "httpStatus": 202,
+      "name": "submit-mutation",
+      "ok": true,
+      "receiptStatus": "applied",
+      "serverSequence": 1,
+      "valuesRedacted": true
+    },
+    {
+      "httpStatus": 200,
+      "name": "receipt-readback",
+      "ok": true,
+      "receiptStatus": "applied",
+      "valuesRedacted": true
+    },
+    {
+      "count": 1,
+      "httpStatus": 200,
+      "indexedThroughSequence": 1,
+      "name": "changes-readback",
+      "ok": true,
+      "valuesRedacted": true
+    },
+    {
+      "count": 1,
+      "httpStatus": 200,
+      "name": "heads-readback",
+      "ok": true,
+      "valuesRedacted": true
+    },
+    {
+      "conflictCode": "parent_revision_mismatch",
+      "httpStatus": 409,
+      "name": "conflict-receipt",
+      "ok": true,
+      "receiptStatus": "conflict",
+      "valuesRedacted": true
+    },
+    {
+      "hardForgetSupported": false,
+      "httpStatus": 200,
+      "name": "retention-policy",
+      "ok": true,
+      "valuesRedacted": true
+    }
+  ],
+  "failedCount": 0,
+  "ok": true,
+  "passedCount": 9,
+  "rawCredentialExposed": false,
+  "rawExposureFlagSeen": false,
+  "rawPayloadExposed": false,
+  "schemaVersion": "memoryendpoints.live_sync_surface_verification.v1",
+  "sourceSha": "2116ee4bbcbacf35c58e0b78e3b0f0ec93c5442e",
+  "valuesRedacted": true,
+  "workspaceFingerprint": "13186c18422350c6"
+}

@@ -1,9 +1,678 @@
 (function () {
-  var badges = [{ selector: ".brand span", text: "MemoryEndpoints.com" }];
-  for (var i = 0; i < badges.length; i += 1) {
-    var node = document.querySelector(badges[i].selector);
-    if (node && node.textContent !== badges[i].text) {
-      node.textContent = badges[i].text;
+  var capturedHumanInviteSecret = "";
+  var capturedHumanInviteState = "absent";
+
+  (function captureAndScrubHumanInvite() {
+    var location = window.location || {};
+    if (location.pathname !== "/agent-setup" || !location.hash) {
+      return;
+    }
+    var rawFragment = String(location.hash || "").replace(/^#/, "");
+    if (window.history && typeof window.history.replaceState === "function") {
+      window.history.replaceState(null, "", (location.pathname || "/agent-setup") + (location.search || ""));
+    }
+    var parts = rawFragment.split("&");
+    if (parts.length !== 1) {
+      capturedHumanInviteState = "invalid";
+      return;
+    }
+    var separator = parts[0].indexOf("=");
+    if (separator < 1 || parts[0].slice(0, separator) !== "invite") {
+      capturedHumanInviteState = "invalid";
+      return;
+    }
+    try {
+      var candidate = decodeURIComponent(parts[0].slice(separator + 1));
+      if (!candidate || candidate.length > 4096 || /[\u0000-\u0020\u007f]/.test(candidate)) {
+        capturedHumanInviteState = "invalid";
+        return;
+      }
+      capturedHumanInviteSecret = candidate;
+      capturedHumanInviteState = "ready";
+    } catch (_error) {
+      capturedHumanInviteState = "invalid";
+    }
+  }());
+
+  var siteNav = document.querySelector("[data-site-nav]");
+  var siteNavToggle = document.querySelector("[data-site-nav-toggle]");
+
+  function closeEcosystemMenu() {
+    if (!siteNav) {
+      return;
+    }
+    var ecosystemMenu = siteNav.querySelector(".ecosystem-menu[open]");
+    if (ecosystemMenu) {
+      ecosystemMenu.open = false;
+    }
+  }
+
+  function setSiteNavOpen(open) {
+    if (!siteNav || !siteNavToggle) {
+      return;
+    }
+    if (open) {
+      siteNav.setAttribute("data-open", "true");
+    } else {
+      siteNav.removeAttribute("data-open");
+      closeEcosystemMenu();
+    }
+    siteNavToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  if (siteNav && siteNavToggle) {
+    var currentPath = window.location.pathname || "/";
+    var siteNavLinks = siteNav.querySelectorAll('a[href^="/"]');
+    for (var navIndex = 0; navIndex < siteNavLinks.length; navIndex += 1) {
+      var siteNavLink = siteNavLinks[navIndex];
+      var linkPath = siteNavLink.getAttribute("href");
+      var isCurrent = currentPath === linkPath;
+      if (linkPath !== "/" && currentPath.indexOf(linkPath + "/") === 0) {
+        isCurrent = true;
+      }
+      if (isCurrent) {
+        siteNavLink.setAttribute("aria-current", "page");
+      } else {
+        siteNavLink.removeAttribute("aria-current");
+      }
+      siteNavLink.addEventListener("click", function () {
+        setSiteNavOpen(false);
+      });
+    }
+
+    siteNavToggle.addEventListener("click", function () {
+      setSiteNavOpen(siteNav.getAttribute("data-open") !== "true");
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      var navWasOpen = siteNav.getAttribute("data-open") === "true";
+      var ecosystemMenu = siteNav.querySelector(".ecosystem-menu[open]");
+      if (!navWasOpen && !ecosystemMenu) {
+        return;
+      }
+      var ecosystemSummary = ecosystemMenu ? ecosystemMenu.querySelector("summary") : null;
+      setSiteNavOpen(false);
+      if (navWasOpen) {
+        siteNavToggle.focus();
+      } else if (ecosystemSummary) {
+        ecosystemSummary.focus();
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      var ecosystemMenu = siteNav.querySelector(".ecosystem-menu[open]");
+      if (ecosystemMenu && !ecosystemMenu.contains(event.target)) {
+        ecosystemMenu.open = false;
+      }
+    });
+
+    document.body.classList.add("site-nav-ready");
+  }
+
+  var setupRoot = document.querySelector("[data-agent-setup]");
+  if (setupRoot) {
+    var setupForm = setupRoot.querySelector("[data-agent-setup-form]");
+    var setupSubmit = setupRoot.querySelector("[data-agent-setup-submit]");
+    var setupStatus = setupRoot.querySelector("[data-agent-setup-status]");
+    var setupResult = setupRoot.querySelector("[data-agent-setup-result]");
+    var setupResultHeading = setupRoot.querySelector("[data-agent-setup-result-heading]");
+    var setupKey = setupRoot.querySelector("[data-agent-setup-key]");
+    var setupKeyToggle = setupRoot.querySelector("[data-agent-setup-key-toggle]");
+    var setupCopyKey = setupRoot.querySelector("[data-agent-setup-copy-key]");
+    var setupKeySaved = setupRoot.querySelector("[data-agent-setup-key-saved]");
+    var setupRecovery = setupRoot.querySelector("[data-agent-setup-recovery]");
+    var setupRecoveryToggle = setupRoot.querySelector("[data-agent-setup-recovery-toggle]");
+    var setupCopyRecovery = setupRoot.querySelector("[data-agent-setup-copy-recovery]");
+    var setupRecoverySaved = setupRoot.querySelector("[data-agent-setup-recovery-saved]");
+    var setupContinue = setupRoot.querySelector("[data-agent-setup-continue]");
+    var setupHuman = setupRoot.querySelector("[data-agent-setup-human]");
+    var setupReset = setupRoot.querySelector("[data-agent-setup-reset]");
+    var setupState = "idle";
+
+    function setSetupStatus(message, isError) {
+      if (!setupStatus) {
+        return;
+      }
+      setupStatus.textContent = message;
+      setupStatus.classList.toggle("error", Boolean(isError));
+    }
+
+    function setSetupText(selector, value) {
+      var target = setupRoot.querySelector(selector);
+      if (target) {
+        target.textContent = value || "Not returned";
+      }
+    }
+
+    function resetSetupSecret() {
+      if (setupKey) {
+        setupKey.value = "";
+        setupKey.type = "password";
+      }
+      if (setupRecovery) {
+        setupRecovery.value = "";
+        setupRecovery.type = "password";
+      }
+      if (setupKeyToggle) {
+        setupKeyToggle.textContent = "Show credential";
+        setupKeyToggle.setAttribute("aria-pressed", "false");
+      }
+      if (setupRecoveryToggle) {
+        setupRecoveryToggle.textContent = "Show recovery secret";
+        setupRecoveryToggle.setAttribute("aria-pressed", "false");
+      }
+      if (setupResult) {
+        setupResult.setAttribute("data-secret-cleared", "true");
+      }
+    }
+
+    function setSetupFormLocked(locked, buttonText) {
+      if (!setupForm || !setupSubmit) {
+        return;
+      }
+      ["companyLabel", "label", "projectLabel"].forEach(function (name) {
+        if (setupForm.elements[name]) {
+          setupForm.elements[name].disabled = locked;
+        }
+      });
+      setupSubmit.disabled = locked;
+      setupSubmit.textContent = buttonText || (locked ? "Workspace setup locked" : "Create workspace");
+      setupForm.setAttribute("aria-busy", setupState === "pending" ? "true" : "false");
+    }
+
+    function prepareForAnotherSetup(message) {
+      setupState = "idle";
+      resetSetupSecret();
+      if (setupResult) {
+        setupResult.hidden = true;
+      }
+      if (setupKeySaved) {
+        setupKeySaved.checked = false;
+      }
+      if (setupRecoverySaved) {
+        setupRecoverySaved.checked = false;
+      }
+      if (setupContinue) {
+        setupContinue.disabled = true;
+      }
+      if (setupHuman) {
+        setupHuman.disabled = true;
+      }
+      if (setupForm) {
+        setupForm.reset();
+      }
+      setSetupFormLocked(false, "Create workspace");
+      setSetupStatus(message || "Enter labels to create another company workspace. No checkout is required.", false);
+      if (setupForm && setupForm.elements.companyLabel) {
+        setupForm.elements.companyLabel.focus();
+      }
+    }
+
+    function setupRequestError(message, safeRetry) {
+      var error = new Error(message);
+      error.safeRetry = Boolean(safeRetry);
+      return error;
+    }
+
+    window.addEventListener("pagehide", function () {
+      setupState = "cleared";
+      resetSetupSecret();
+    });
+
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted) {
+        prepareForAnotherSetup("The prior one-time credentials were cleared when this page left view. Create a new workspace only if you still need one.");
+      }
+    });
+
+    if (setupReset) {
+      setupReset.addEventListener("click", function () {
+        prepareForAnotherSetup("The one-time credentials were cleared. Enter new labels only if you intend to create another workspace.");
+      });
+    }
+
+    function updateSetupSavedState() {
+      var bothSaved = Boolean(setupKeySaved && setupKeySaved.checked && setupRecoverySaved && setupRecoverySaved.checked);
+      if (setupContinue) {
+        setupContinue.disabled = !bothSaved;
+      }
+      if (setupHuman) {
+        setupHuman.disabled = !bothSaved;
+      }
+      setupState = bothSaved ? "created_saved" : "created_unsaved";
+    }
+
+    if (setupKeySaved && setupRecoverySaved && setupContinue) {
+      setupKeySaved.addEventListener("change", updateSetupSavedState);
+      setupRecoverySaved.addEventListener("change", updateSetupSavedState);
+      setupContinue.addEventListener("click", function () {
+        if (!setupKeySaved.checked || !setupRecoverySaved.checked || !setupKey || !setupKey.value || !setupRecovery || !setupRecovery.value) {
+          setSetupStatus("Confirm that both one-time credentials are saved before continuing.", true);
+          return;
+        }
+        setupState = "cleared";
+        resetSetupSecret();
+        window.location.assign("/human");
+      });
+      if (setupHuman) {
+        setupHuman.addEventListener("click", function () {
+          if (!setupKeySaved.checked || !setupRecoverySaved.checked || !setupKey.value || !setupRecovery.value) {
+            setSetupStatus("Confirm that both one-time credentials are saved before opening human owner controls.", true);
+            return;
+          }
+          setupState = "cleared";
+          resetSetupSecret();
+          window.location.assign("/human");
+        });
+      }
+    }
+
+    if (setupKeyToggle && setupKey) {
+      setupKeyToggle.addEventListener("click", function () {
+        var reveal = setupKey.type === "password";
+        setupKey.type = reveal ? "text" : "password";
+        setupKeyToggle.textContent = reveal ? "Hide credential" : "Show credential";
+        setupKeyToggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+      });
+    }
+
+    if (setupRecoveryToggle && setupRecovery) {
+      setupRecoveryToggle.addEventListener("click", function () {
+        var reveal = setupRecovery.type === "password";
+        setupRecovery.type = reveal ? "text" : "password";
+        setupRecoveryToggle.textContent = reveal ? "Hide recovery secret" : "Show recovery secret";
+        setupRecoveryToggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+      });
+    }
+
+    if (setupCopyKey && setupKey) {
+      setupCopyKey.addEventListener("click", function () {
+        var value = setupKey.value;
+        if (!value) {
+          setSetupStatus("No one-time company master credential is available to copy.", true);
+          return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(function () {
+            setSetupStatus("Company master credential copied. Save it in your secure secret store; device clipboard history is outside MemoryEndpoints.", false);
+          }).catch(function () {
+            setupKey.focus();
+            setupKey.select();
+            setSetupStatus("Clipboard access was unavailable. The credential is selected for manual copying.", true);
+          });
+          return;
+        }
+        setupKey.focus();
+        setupKey.select();
+        setSetupStatus("Clipboard access is unavailable. The credential is selected for manual copying.", true);
+      });
+    }
+
+    if (setupCopyRecovery && setupRecovery) {
+      setupCopyRecovery.addEventListener("click", function () {
+        var value = setupRecovery.value;
+        if (!value) {
+          setSetupStatus("No one-time exceptional recovery secret is available to copy.", true);
+          return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(function () {
+            setSetupStatus("Exceptional recovery secret copied. Store it separately from login and agent credentials.", false);
+          }).catch(function () {
+            setupRecovery.focus();
+            setupRecovery.select();
+            setSetupStatus("Clipboard access was unavailable. The recovery secret is selected for manual copying.", true);
+          });
+          return;
+        }
+        setupRecovery.focus();
+        setupRecovery.select();
+        setSetupStatus("Clipboard access is unavailable. The recovery secret is selected for manual copying.", true);
+      });
+    }
+
+    if (setupForm && setupSubmit && setupResult && setupKey && setupRecovery) {
+      setupForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (["pending", "created_unsaved", "created_saved", "outcome_unknown"].indexOf(setupState) !== -1) {
+          setSetupStatus("This setup request cannot be submitted again in its current state.", true);
+          return;
+        }
+        setupState = "pending";
+        resetSetupSecret();
+        setupResult.hidden = true;
+        if (setupKeySaved) {
+          setupKeySaved.checked = false;
+        }
+        if (setupRecoverySaved) {
+          setupRecoverySaved.checked = false;
+        }
+        if (setupContinue) {
+          setupContinue.disabled = true;
+        }
+        if (setupHuman) {
+          setupHuman.disabled = true;
+        }
+        setSetupFormLocked(true, "Creating workspace...");
+        setSetupStatus("Creating your protected workspace boundary...", false);
+        var requestBody = {
+          companyLabel: setupForm.elements.companyLabel.value.trim(),
+          label: setupForm.elements.label.value.trim(),
+          projectLabel: setupForm.elements.projectLabel.value.trim(),
+        };
+        window.fetch("/api/matm/agent-setup/free-account", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+          cache: "no-store",
+          credentials: "same-origin",
+        }).then(function (response) {
+          return response.text().then(function (text) {
+            var payload = {};
+            var parseFailed = false;
+            try {
+              payload = text ? JSON.parse(text) : {};
+            } catch (_error) {
+              payload = {};
+              parseFailed = true;
+            }
+            if (!response.ok) {
+              var problem = payload.error || payload;
+              throw setupRequestError(
+                problem.detail || problem.title || "Workspace setup could not be completed.",
+                response.status >= 400 && response.status < 500
+              );
+            }
+            if (parseFailed) {
+              throw setupRequestError("Workspace setup returned an unreadable response, so its outcome is unknown.", false);
+            }
+            return payload;
+          });
+        }).then(function (payload) {
+          if (!payload.companyMasterTokenSecret || !payload.humanOwnerRecoverySecret) {
+            throw setupRequestError("Workspace setup did not return both one-time credentials, so its outcome is unknown.", false);
+          }
+          setSetupText("[data-agent-setup-account-id]", payload.accountId);
+          setSetupText("[data-agent-setup-company-id]", payload.companyId);
+          setSetupText("[data-agent-setup-workspace-id]", payload.workspaceId);
+          setSetupText("[data-agent-setup-project-id]", payload.projectId);
+          setupKey.value = payload.companyMasterTokenSecret;
+          setupRecovery.value = payload.humanOwnerRecoverySecret;
+          setupResult.removeAttribute("data-secret-cleared");
+          setupResult.hidden = false;
+          setupState = "created_unsaved";
+          setSetupFormLocked(true, "Workspace created");
+          var completeResponse = Boolean(
+            payload.accountId
+            && payload.companyId
+            && payload.workspaceId
+            && payload.projectId
+            && payload.credentialType === "company_master"
+            && payload.showCredentialOnce === true
+            && payload.rawCredentialPersisted === false
+            && payload.idempotencySupported === false
+          );
+          setSetupStatus(
+            completeResponse
+              ? "Workspace created. Save both one-time credentials before leaving or refreshing this page."
+              : "One-time credentials were returned, but some setup confirmation fields were missing. Save both values and contact support before creating anything else.",
+            !completeResponse
+          );
+          if (setupResultHeading) {
+            setupResultHeading.focus();
+          }
+        }).catch(function (error) {
+          resetSetupSecret();
+          setupResult.hidden = true;
+          if (error && error.safeRetry === true) {
+            setupState = "safe_error";
+            setSetupFormLocked(false, "Create workspace");
+            setSetupStatus((error.message || "Workspace setup could not be completed.") + " Correct the request and try again.", true);
+            return;
+          }
+          setupState = "outcome_unknown";
+          setSetupFormLocked(true, "Setup outcome unknown");
+          setSetupStatus((error && error.message ? error.message : "Workspace setup could not be confirmed.") + " Do not submit again from this page because setup is not idempotent.", true);
+        });
+      });
+    }
+  }
+
+  var redemptionRoot = document.querySelector("[data-human-invite-redemption]");
+  if (redemptionRoot) {
+    var redemptionHeading = redemptionRoot.querySelector("[data-human-invite-redemption-heading]");
+    var redemptionForm = redemptionRoot.querySelector("[data-human-invite-redemption-form]");
+    var redemptionSubmit = redemptionRoot.querySelector("[data-human-invite-redemption-submit]");
+    var redemptionStatus = redemptionRoot.querySelector("[data-human-invite-redemption-status]");
+    var redemptionResult = redemptionRoot.querySelector("[data-human-invite-redemption-result]");
+    var redemptionResultHeading = redemptionRoot.querySelector("[data-human-invite-redemption-result-heading]");
+    var redemptionToken = redemptionRoot.querySelector("[data-human-invite-token]");
+    var redemptionTokenToggle = redemptionRoot.querySelector("[data-human-invite-token-toggle]");
+    var redemptionTokenCopy = redemptionRoot.querySelector("[data-human-invite-token-copy]");
+    var redemptionTokenSaved = redemptionRoot.querySelector("[data-human-invite-token-saved]");
+    var redemptionTokenContinue = redemptionRoot.querySelector("[data-human-invite-token-continue]");
+    var redemptionTokenClear = redemptionRoot.querySelector("[data-human-invite-token-clear]");
+    var redemptionState = capturedHumanInviteState;
+
+    function setRedemptionStatus(message, isError) {
+      if (!redemptionStatus) {
+        return;
+      }
+      redemptionStatus.textContent = message;
+      redemptionStatus.classList.toggle("error", Boolean(isError));
+    }
+
+    function setRedemptionText(selector, value) {
+      var target = redemptionRoot.querySelector(selector);
+      if (target) {
+        target.textContent = value || "Not provided";
+      }
+    }
+
+    function clearRedemptionSecrets() {
+      capturedHumanInviteSecret = "";
+      if (redemptionToken) {
+        redemptionToken.value = "";
+        redemptionToken.type = "password";
+      }
+      if (redemptionTokenToggle) {
+        redemptionTokenToggle.textContent = "Show credential";
+        redemptionTokenToggle.setAttribute("aria-pressed", "false");
+      }
+      if (redemptionTokenSaved) {
+        redemptionTokenSaved.checked = false;
+      }
+      if (redemptionTokenContinue) {
+        redemptionTokenContinue.disabled = true;
+      }
+    }
+
+    function lockRedemption(state, label) {
+      redemptionState = state;
+      if (redemptionSubmit) {
+        redemptionSubmit.disabled = true;
+        redemptionSubmit.textContent = label || "Invitation unavailable";
+      }
+      if (redemptionForm) {
+        redemptionForm.setAttribute("aria-busy", state === "pending" ? "true" : "false");
+      }
+    }
+
+    function redemptionProblem(payload, fallback) {
+      var problem = (payload && payload.error) || payload || {};
+      var error = new Error(problem.detail || problem.title || fallback || "Invitation redemption failed.");
+      error.code = problem.code || "redemption_failed";
+      error.safeNoOp = Boolean(problem.safeNoOp || (payload && payload.safeNoOp));
+      return error;
+    }
+
+    if (redemptionState === "ready") {
+      redemptionForm.hidden = false;
+      setRedemptionStatus("Invitation fragment secured and removed from the address bar. Redeem it once when you are ready to save the bound credential.", false);
+    } else if (redemptionState === "invalid") {
+      lockRedemption("terminal", "Invalid invitation link");
+      setRedemptionStatus("This invitation URL is malformed. Ask the human approver to revoke it and issue a new invitation.", true);
+    }
+
+    window.addEventListener("pagehide", function () {
+      redemptionState = "cleared";
+      clearRedemptionSecrets();
+    });
+
+    window.addEventListener("pageshow", function (event) {
+      if (!event.persisted) {
+        return;
+      }
+      redemptionState = "cleared";
+      clearRedemptionSecrets();
+      if (redemptionForm) {
+        redemptionForm.hidden = true;
+      }
+      if (redemptionResult) {
+        redemptionResult.hidden = true;
+      }
+      setRedemptionStatus("One-time invitation state was cleared when this page left view. Ask the human approver to inspect the invitation status before taking another action.", true);
+      if (redemptionHeading) {
+        redemptionHeading.focus();
+      }
+    });
+
+    if (redemptionTokenToggle && redemptionToken) {
+      redemptionTokenToggle.addEventListener("click", function () {
+        var reveal = redemptionToken.type === "password";
+        redemptionToken.type = reveal ? "text" : "password";
+        redemptionTokenToggle.textContent = reveal ? "Hide credential" : "Show credential";
+        redemptionTokenToggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+      });
+    }
+
+    if (redemptionTokenCopy && redemptionToken) {
+      redemptionTokenCopy.addEventListener("click", function () {
+        var value = redemptionToken.value;
+        if (!value) {
+          setRedemptionStatus("No agent credential is available to copy.", true);
+          return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(function () {
+            setRedemptionStatus("Agent credential copied. Save it in a private secret store before leaving this page.", false);
+          }).catch(function () {
+            redemptionToken.focus();
+            redemptionToken.select();
+            setRedemptionStatus("Clipboard access was unavailable. The credential is selected for manual copying.", true);
+          });
+          return;
+        }
+        redemptionToken.focus();
+        redemptionToken.select();
+        setRedemptionStatus("Clipboard access is unavailable. The credential is selected for manual copying.", true);
+      });
+    }
+
+    if (redemptionTokenSaved && redemptionTokenContinue) {
+      redemptionTokenSaved.addEventListener("change", function () {
+        redemptionTokenContinue.disabled = !redemptionTokenSaved.checked || !redemptionToken.value;
+      });
+      redemptionTokenContinue.addEventListener("click", function () {
+        if (!redemptionTokenSaved.checked || !redemptionToken.value) {
+          setRedemptionStatus("Confirm that the one-time agent credential is saved before continuing.", true);
+          return;
+        }
+        redemptionState = "cleared";
+        clearRedemptionSecrets();
+        window.location.assign("/console");
+      });
+    }
+
+    if (redemptionTokenClear) {
+      redemptionTokenClear.addEventListener("click", function () {
+        redemptionState = "cleared";
+        clearRedemptionSecrets();
+        if (redemptionResult) {
+          redemptionResult.hidden = true;
+        }
+        setRedemptionStatus("The one-time agent credential was cleared from this page.", false);
+        if (redemptionHeading) {
+          redemptionHeading.focus();
+        }
+      });
+    }
+
+    if (redemptionForm && redemptionSubmit) {
+      redemptionForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (redemptionState !== "ready" || !capturedHumanInviteSecret) {
+          setRedemptionStatus("This invitation cannot be redeemed again from this page.", true);
+          return;
+        }
+        redemptionState = "pending";
+        redemptionSubmit.disabled = true;
+        redemptionSubmit.textContent = "Redeeming invitation…";
+        redemptionForm.setAttribute("aria-busy", "true");
+        setRedemptionStatus("Redeeming the single-use invitation…", false);
+        var invitationForRequest = capturedHumanInviteSecret;
+        window.fetch("/api/matm/access/invites/redeem", {
+          method: "POST",
+          headers: {"Accept": "application/json", "Content-Type": "application/json"},
+          body: JSON.stringify({inviteSecret: invitationForRequest}),
+          cache: "no-store",
+          credentials: "same-origin",
+          referrerPolicy: "no-referrer",
+        }).then(function (response) {
+          return response.text().then(function (text) {
+            var payload;
+            try {
+              payload = text ? JSON.parse(text) : {};
+            } catch (_error) {
+              throw redemptionProblem({}, "Invitation redemption returned an unreadable response, so its outcome is unknown.");
+            }
+            if (!response.ok || payload.ok === false) {
+              throw redemptionProblem(payload);
+            }
+            return payload;
+          });
+        }).then(function (payload) {
+          capturedHumanInviteSecret = "";
+          var principal = payload.principal || {};
+          var grant = principal.grant || {};
+          var context = principal.resourceContext || {};
+          if (!payload.agentTokenSecret || principal.credentialType !== "agent_token" || grant.immutable !== true) {
+            throw redemptionProblem({}, "Invitation redemption could not be verified, so its outcome is unknown.");
+          }
+          redemptionToken.value = payload.agentTokenSecret;
+          redemptionResult.hidden = false;
+          redemptionState = "redeemed_unsaved";
+          redemptionForm.hidden = true;
+          setRedemptionText("[data-human-invite-agent-name]", principal.displayName || principal.agentId);
+          setRedemptionText("[data-human-invite-agent-scope]", (grant.scopeType || "scope") + " · " + (grant.scopeId || "not provided"));
+          setRedemptionText("[data-human-invite-workspace-id]", context.workspaceId);
+          setRedemptionText("[data-human-invite-project-id]", context.projectId || ((payload.onboarding || {}).projectId));
+          setRedemptionStatus("Invitation redeemed. Save the one-time bound agent credential before leaving or refreshing this page.", false);
+          if (redemptionResultHeading) {
+            redemptionResultHeading.focus();
+          }
+        }).catch(function (error) {
+          capturedHumanInviteSecret = "";
+          clearRedemptionSecrets();
+          if (redemptionResult) {
+            redemptionResult.hidden = true;
+          }
+          var terminalCodes = ["invalid_invite", "invite_expired", "invite_redeemed", "invite_revoked"];
+          if (terminalCodes.indexOf(error.code) !== -1) {
+            lockRedemption("terminal", "Invitation unavailable");
+            setRedemptionStatus(error.message || "This invitation is no longer available.", true);
+            return;
+          }
+          lockRedemption("outcome_unknown", "Redemption outcome unknown");
+          setRedemptionStatus((error.message || "Invitation redemption could not be confirmed.") + " Do not retry from this page; ask the human approver to inspect inventory.", true);
+        });
+      });
     }
   }
 
@@ -14,11 +683,22 @@
 
   var state = {
     key: "",
+    demoMode: consoleRoot.getAttribute("data-console-demo-mode") === "true",
     workspaceId: "",
     companyId: "",
     projectId: "",
     workspace: null,
-    agentId: "human-verifier-agent",
+    agentId: "",
+    principal: null,
+    permissions: {},
+    accessContract: null,
+    scopeCatalog: null,
+    selectedOperationalWorkspaceId: "",
+    latestAccessRequests: [],
+    latestAccessInvites: [],
+    latestAgentTokens: [],
+    issuedInviteRequestIds: {},
+    inboxAgentId: "",
     firstNotificationId: "",
     visibleNotificationIds: [],
     visibleNotificationRecords: {},
@@ -29,7 +709,6 @@
     runtimeVersion: null,
     runtimeVersionError: "",
     workspaceOperatorSummary: null,
-    agentRegistrationSummary: null,
     selectedMeetingRoomId: "",
     selectedMeetingRoom: null,
     latestMeetingMessageId: "",
@@ -39,6 +718,8 @@
     meetingTranscriptVisibleCount: null,
     meetingTranscriptTotalCount: null,
     latestRoutingDecisionId: "",
+    latestRoutingDecisions: [],
+    latestMeetingRoomsPayload: null,
     inboxRequestSeq: 0,
     memoryCount: null,
     memoryScopeCounts: null,
@@ -79,17 +760,14 @@
     latestAuditItems: [],
     latestReviewItems: [],
   };
-  var agentLanes = [
-    { agentId: "human-verifier-agent", label: "Human" },
-    { agentId: "codex-agent", label: "Codex" },
-    { agentId: "MemoryEndpoints-Backend-Agent", label: "Backend" },
-    { agentId: "swarm-observer-agent", label: "Observer" },
-  ];
+  var agentLanes = [];
   var longTermMemoryTag = "long-term-memory-migration";
-  var longTermMemorySourcePrefix = "docs/long-term-memory/";
+  var longTermMemorySourcePrefix = "";
+  var meetingTranscriptPageSize = 12;
   var workflowLabels = {
     all: "All",
     workspace: "Workspace",
+    access: "Access",
     memory: "Memory",
     sync: "Sync",
     reviews: "Reviews",
@@ -99,6 +777,7 @@
   };
   var workflowViewByHash = {
     "#workspace-overview": "workspace",
+    "#human-access": "access",
     "#memory-workflow": "memory",
     "#sync-workflow": "sync",
     "#review-queue": "reviews",
@@ -110,6 +789,72 @@
 
   function pick(selector) {
     return consoleRoot.querySelector(selector);
+  }
+
+  function hasWorkspaceSession() {
+    return Boolean(state.workspaceId && (state.demoMode || state.key));
+  }
+
+  function ensureBoundAgentLane() {
+    var alreadyListed = agentLanes.some(function (lane) {
+      return lane.agentId === state.agentId;
+    });
+    if (!alreadyListed && state.agentId) {
+      agentLanes.unshift({agentId: state.agentId, label: "Bound agent"});
+    }
+  }
+
+  function hasPermission(name) {
+    return state.permissions && state.permissions[name] === true;
+  }
+
+  function applyIntrospectedPrincipal(payload) {
+    var principal = (payload && payload.principal) || {};
+    var allowedTypes = ["company_master", "agent_token"];
+    if (allowedTypes.indexOf(principal.credentialType) === -1 || !principal.grant || !principal.permissions || !principal.resourceContext) {
+      throw new Error("Credential introspection returned an unsupported principal contract.");
+    }
+    state.principal = principal;
+    state.permissions = principal.permissions;
+    state.accessContract = (payload && payload.access) || {};
+    state.companyId = principal.companyId || "";
+    state.agentId = principal.agentId || "";
+    state.workspaceId = (principal.resourceContext && principal.resourceContext.workspaceId) || "";
+    state.projectId = (principal.resourceContext && principal.resourceContext.projectId) || "";
+    state.selectedOperationalWorkspaceId = state.workspaceId;
+    ensureBoundAgentLane();
+    setInboxAgent(state.agentId);
+    renderPrincipalSummary();
+    configureAccessManagement();
+    return principal;
+  }
+
+  function renderPrincipalSummary() {
+    var root = pick("[data-console-principal]");
+    var principal = state.principal;
+    if (!root || !principal) {
+      return;
+    }
+    root.hidden = false;
+    var type = pick("[data-console-principal-type]");
+    var name = pick("[data-console-principal-name]");
+    var scope = pick("[data-console-principal-scope]");
+    var permission = pick("[data-console-principal-permission]");
+    var grant = principal.grant || {};
+    if (type) {
+      type.textContent = principal.credentialType === "company_master" ? "Company master" : "Bound agent";
+    }
+    if (name) {
+      name.textContent = principal.displayName || principal.agentId || "Human-managed company credential";
+    }
+    if (scope) {
+      scope.textContent = (grant.scopeType || "scope") + " · " + (grant.scopeId || "not provided");
+    }
+    if (permission) {
+      var manager = hasPermission("canApproveAgentAccess") && hasPermission("canIssueAgentInvites");
+      permission.textContent = manager ? "Access manager" : "Operational access only";
+      permission.className = "status-badge " + (manager ? "good" : "neutral");
+    }
   }
 
   function pretty(value) {
@@ -402,8 +1147,8 @@
   function isLongTermMemoryHealthPayload(payload) {
     var filters = (payload && payload.filters) || {};
     return filters.tag === longTermMemoryTag
-      || filters.sourcePrefix === longTermMemorySourcePrefix
-      || filters.source_prefix === longTermMemorySourcePrefix;
+      || (longTermMemorySourcePrefix && filters.sourcePrefix === longTermMemorySourcePrefix)
+      || (longTermMemorySourcePrefix && filters.source_prefix === longTermMemorySourcePrefix);
   }
 
   function operatorLevel(operatorSummary, level) {
@@ -542,19 +1287,7 @@
   }
 
   function refreshRuntimeVersion() {
-    return fetch("/api/version", {
-      method: "GET",
-      headers: {"Accept": "application/json"},
-      cache: "no-store",
-    }).then(function (response) {
-      return response.json().then(function (payload) {
-        if (!response.ok) {
-          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
-          throw new Error(detail);
-        }
-        return payload;
-      });
-    })
+    return publicApi("/api/version")
       .then(function (payload) {
         state.runtimeVersion = payload;
         state.runtimeVersionError = "";
@@ -840,7 +1573,7 @@
     var company = operatorLevel(operatorSummary, "company");
     var project = operatorLevel(operatorSummary, "project");
     var privacy = (operatorSummary && operatorSummary.privacy) || {};
-    var agentSummary = state.agentRegistrationSummary || {};
+    var principal = state.principal || {};
     var runtime = runtimeEvidence();
     var hierarchyReady = operatorSummary && operatorSummary.hierarchyReady !== undefined ? operatorSummary.hierarchyReady : Boolean(
       (account.id || accountRaw.accountId || workspace.accountId) &&
@@ -855,13 +1588,13 @@
     node.appendChild(sessionItem("Boundary", hierarchyReady ? "4 levels loaded" : "check boundary", "account -> company -> workspace -> project", [
       { text: hierarchyReady ? "pass" : "review", kind: hierarchyReady ? "good" : "warn" },
     ]));
-    node.appendChild(sessionItem("Key", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review key handling" : "not echoed", "browser session only", [
+    node.appendChild(sessionItem("Credential", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review credential handling" : "not echoed", "browser session only", [
       { text: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "review" : "private", kind: (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "warn" : "good" },
     ]));
-    node.appendChild(sessionItem("Agent", agentSummary.agentId || state.agentId, agentSummary.currentMessageLaneReady ? "current inbox lane ready" : "current inbox lane", [
-      { text: agentSummary.registered ? "registered" : "active", kind: "good" },
-      { text: agentSummary.rawCredentialExposed ? "credential exposure review" : "credentials hidden", kind: agentSummary.rawCredentialExposed ? "warn" : "good" },
-      { text: agentSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden", kind: agentSummary.rawPayloadExposed ? "warn" : "good" },
+    node.appendChild(sessionItem("Principal", principal.displayName || principal.agentId || "company master", principal.credentialType || "governed credential", [
+      { text: principal.grant && principal.grant.immutable ? "immutable grant" : "grant review", kind: principal.grant && principal.grant.immutable ? "good" : "warn" },
+      { text: principal.rawCredentialExposed ? "credential exposure review" : "credentials hidden", kind: principal.rawCredentialExposed ? "warn" : "good" },
+      { text: principal.rawPayloadExposed ? "payload exposure review" : "payload hidden", kind: principal.rawPayloadExposed ? "warn" : "good" },
     ]));
     var actions = el("nav", "session-actions");
     actions.setAttribute("aria-label", "Loaded workspace shortcuts");
@@ -1516,7 +2249,7 @@
       return;
     }
     clear(node);
-    var items = (payload && payload.items) || [];
+    var items = attentionFirstItems((payload && payload.items) || []);
     var operatorSummary = (payload && payload.operatorSummary) || {};
     var lane = inboxAgentFromPayload(payload, agentId || state.agentId);
     state.messageDeskMode = "focused";
@@ -1592,6 +2325,7 @@
       var laneRecipient = delivery.targetAgentId || message.targetAgentId || notification.targetAgentId;
       var messageType = delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
       var isTargeted = messageType === "targeted";
+      var requiresResponse = isRequiredResponseItem(item);
       var target = isTargeted ? laneRecipient : "";
       var recipientText = isTargeted ? (target || "selected agent") : "all agents";
       var row = resultRow(
@@ -1600,7 +2334,7 @@
         [
           { text: messageType, kind: isTargeted ? "neutral" : "good" },
           { text: notification.status || "unread", kind: notification.status === "read" ? "good" : "warn" },
-          { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
+          { text: requiresResponse ? "response required" : "ack only", kind: requiresResponse ? "warn" : "neutral" },
           { text: message.valuesRedacted ? "redacted" : "", kind: "good" },
         ],
         [
@@ -1613,6 +2347,9 @@
           message.createdAt || "",
         ]
       );
+      if (requiresResponse) {
+        row.className += " attention-row";
+      }
       appendCopyActions(row, [
         { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
         { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
@@ -1917,20 +2654,91 @@
     if (form && form.elements.roomId) {
       form.elements.roomId.value = roomId;
     }
-    var routingForm = pick("[data-console-routing-decision]");
-    if (routingForm) {
-      if (routingForm.elements.destinationRoomId && !routingForm.elements.destinationRoomId.value) {
-        routingForm.elements.destinationRoomId.value = roomId;
-      }
-      if (routingForm.elements.sourceRoomId && !routingForm.elements.sourceRoomId.value) {
-        routingForm.elements.sourceRoomId.value = roomId;
-      }
-    }
     renderSelectedMeetingRoom();
+  }
+
+  function setRoutingRoomField(fieldName, room) {
+    var routingForm = pick("[data-console-routing-decision]");
+    if (!routingForm || !routingForm.elements[fieldName] || !room || !room.roomId) {
+      return;
+    }
+    routingForm.elements[fieldName].value = room.roomId;
+    setStatus(
+      roomTitle(room) + (fieldName === "sourceRoomId" ? " selected as the routing source." : " selected as the routing destination."),
+      false
+    );
   }
 
   function roomTitle(room) {
     return room.name || room.label || (room.scope ? room.scope + " meeting" : "Meeting room");
+  }
+
+  function assignedMeetingRoomIds() {
+    var assigned = {};
+    (state.latestRoutingDecisions || []).forEach(function (decision) {
+      if (
+        decision.destinationRoomId
+        && (!decision.routedAgentId || decision.routedAgentId === state.agentId)
+        && (!decision.status || decision.status === "active")
+      ) {
+        assigned[decision.destinationRoomId] = decision.createdAt || "";
+      }
+    });
+    return assigned;
+  }
+
+  function meetingRoomGroups(rooms) {
+    var assignedIds = assignedMeetingRoomIds();
+    var assigned = [];
+    var unread = [];
+    var recent = [];
+    var byScope = {};
+    var scopeOrder = ["company", "workspace", "project", "goal", "task"];
+    (rooms || []).forEach(function (room) {
+      if (assignedIds[room.roomId] !== undefined) {
+        assigned.push(room);
+      } else if ((room.unreadCount || 0) > 0) {
+        unread.push(room);
+      } else if (room.lastMessageAt) {
+        recent.push(room);
+      } else {
+        var scope = room.scope || "other";
+        if (!byScope[scope]) {
+          byScope[scope] = [];
+        }
+        byScope[scope].push(room);
+      }
+    });
+    assigned.sort(function (left, right) {
+      return String(assignedIds[right.roomId] || "").localeCompare(String(assignedIds[left.roomId] || ""));
+    });
+    unread.sort(function (left, right) {
+      return (right.unreadCount || 0) - (left.unreadCount || 0);
+    });
+    recent.sort(function (left, right) {
+      return String(right.lastMessageAt || "").localeCompare(String(left.lastMessageAt || ""));
+    });
+    var groups = [];
+    if (assigned.length) {
+      groups.push({ label: "Assigned to you", kind: "assigned", items: assigned });
+    }
+    if (unread.length) {
+      groups.push({ label: "Unread rooms", kind: "unread", items: unread });
+    }
+    if (recent.length) {
+      groups.push({ label: "Recently active", kind: "recent", items: recent });
+    }
+    Object.keys(byScope).forEach(function (scope) {
+      if (scopeOrder.indexOf(scope) === -1) {
+        scopeOrder.push(scope);
+      }
+    });
+    scopeOrder.forEach(function (scope) {
+      if (byScope[scope] && byScope[scope].length) {
+        groups.push({ label: scope.charAt(0).toUpperCase() + scope.slice(1) + " rooms", kind: "scope", items: byScope[scope] });
+      }
+    });
+    return groups;
   }
 
   function renderMeetingRooms(payload) {
@@ -1940,6 +2748,7 @@
     }
     clear(node);
     var rooms = (payload && payload.items) || [];
+    state.latestMeetingRoomsPayload = payload || {items: []};
     var summary = (payload && payload.operatorSummary) || {};
     state.meetingRoomCount = summary.count !== undefined ? summary.count : rooms.length;
     renderOperatorMetrics();
@@ -1955,61 +2764,80 @@
     }
     appendBadge(summaryLine, (summary.alwaysAvailableCount || 0) + " always available", summary.alwaysAvailableCount ? "good" : "warn");
     appendBadge(summaryLine, (summary.unreadCount || 0) + " unread", summary.unreadCount ? "warn" : "good");
+    var assignedIds = assignedMeetingRoomIds();
+    var assignedCount = rooms.filter(function (room) { return assignedIds[room.roomId] !== undefined; }).length;
+    if (assignedCount) {
+      appendBadge(summaryLine, assignedCount + " assigned to you", "good");
+    }
     node.appendChild(summaryLine);
     if (!rooms.length) {
       node.appendChild(el("p", "empty-state", "No meeting rooms returned for this workspace."));
       return;
     }
-    var selectedRoom = rooms.filter(function (room) {
+    var groups = meetingRoomGroups(rooms);
+    var orderedRooms = [];
+    groups.forEach(function (group) {
+      orderedRooms = orderedRooms.concat(group.items);
+    });
+    var selectedRoom = orderedRooms.filter(function (room) {
       return room.roomId === state.selectedMeetingRoomId;
     })[0];
     if (!state.selectedMeetingRoomId) {
-      setMeetingRoom(rooms[0].roomId, rooms[0]);
+      setMeetingRoom(orderedRooms[0].roomId, orderedRooms[0]);
     } else if (selectedRoom) {
       setMeetingRoom(selectedRoom.roomId, selectedRoom);
     } else {
       renderSelectedMeetingRoom();
     }
-    rooms.forEach(function (room) {
-      var unread = room.unreadCount || 0;
-      var row = resultRow(
-        roomTitle(room),
-        room.purpose || "Scoped agent coordination room.",
-        [
-          { text: room.scope || "room", kind: "neutral" },
-          { text: unread + " unread", kind: unread ? "warn" : "good" },
-          { text: (room.messageCount || 0) + " messages", kind: room.messageCount ? "good" : "neutral" },
-          { text: room.alwaysAvailable ? "always available" : "review availability", kind: room.alwaysAvailable ? "good" : "warn" },
-        ],
-        [
-          "room " + shortId(room.roomId),
-          "scope " + (room.scopeId || "not set"),
-          room.lastMessageAt ? "latest " + room.lastMessageAt : "latest none",
-        ]
-      );
-      var actions = el("div", "row-actions");
-      var openButton = el("button", "button compact", "Open room");
-      var useButton = el("button", "button compact", "Use room");
-      var copyButton = el("button", "button compact", "Copy room id");
-      openButton.type = "button";
-      useButton.type = "button";
-      copyButton.type = "button";
-      openButton.addEventListener("click", function () {
-        setMeetingRoom(room.roomId, room);
-        refreshMeetingMessages(room.roomId).catch(function (error) { setStatus(error.message, true); });
+    groups.forEach(function (group) {
+      node.appendChild(el("div", "result-group-title meeting-room-group-title", group.label + " (" + group.items.length + ")"));
+      group.items.forEach(function (room) {
+        var unread = room.unreadCount || 0;
+        var row = resultRow(
+          roomTitle(room),
+          room.purpose || "Scoped agent coordination room.",
+          [
+            { text: room.scope || "room", kind: "neutral" },
+            { text: unread + " unread", kind: unread ? "warn" : "good" },
+            { text: (room.messageCount || 0) + " messages", kind: room.messageCount ? "good" : "neutral" },
+            { text: group.kind === "assigned" ? "assigned to you" : "", kind: "good" },
+          ],
+          [
+            "room " + shortId(room.roomId),
+            "scope " + (room.scopeId || "not set"),
+            room.lastMessageAt ? "latest " + room.lastMessageAt : "latest none",
+          ]
+        );
+        row.className += " meeting-room-row" + (group.kind === "assigned" ? " assigned-room-row" : "");
+        var actions = el("div", "row-actions");
+        var openButton = el("button", "button compact", "Open room");
+        var sourceButton = el("button", "button compact", "Use as source");
+        var destinationButton = el("button", "button compact", "Route here");
+        var copyButton = el("button", "button compact", "Copy room id");
+        openButton.type = "button";
+        sourceButton.type = "button";
+        destinationButton.type = "button";
+        copyButton.type = "button";
+        openButton.addEventListener("click", function () {
+          setMeetingRoom(room.roomId, room);
+          refreshMeetingMessages(room.roomId).catch(function (error) { setStatus(error.message, true); });
+        });
+        sourceButton.addEventListener("click", function () {
+          setRoutingRoomField("sourceRoomId", room);
+        });
+        destinationButton.addEventListener("click", function () {
+          setRoutingRoomField("destinationRoomId", room);
+        });
+        copyButton.addEventListener("click", function () {
+          copySafeText(room.roomId, "Meeting room id");
+        });
+        actions.appendChild(openButton);
+        actions.appendChild(sourceButton);
+        actions.appendChild(destinationButton);
+        actions.appendChild(copyButton);
+        row.appendChild(actions);
+        node.appendChild(row);
       });
-      useButton.addEventListener("click", function () {
-        setMeetingRoom(room.roomId, room);
-        setStatus(roomTitle(room) + " selected.", false);
-      });
-      copyButton.addEventListener("click", function () {
-        copySafeText(room.roomId, "Meeting room id");
-      });
-      actions.appendChild(openButton);
-      actions.appendChild(useButton);
-      actions.appendChild(copyButton);
-      row.appendChild(actions);
-      node.appendChild(row);
     });
   }
 
@@ -2107,7 +2935,13 @@
       return;
     }
     clear(node);
-    var items = (payload && payload.items) || [];
+    var items = ((payload && payload.items) || []).slice().sort(function (left, right) {
+      return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+    });
+    state.latestRoutingDecisions = items;
+    if (state.latestMeetingRoomsPayload) {
+      renderMeetingRooms(state.latestMeetingRoomsPayload);
+    }
     var summary = (payload && payload.operatorSummary) || {};
     var summaryLine = el("div", "filter-summary routing-decisions-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Routing readback"));
@@ -2144,6 +2978,19 @@
         { label: "Copy destination room", copyLabel: "Destination room id", value: decision.destinationRoomId },
         { label: "Copy routed agent", copyLabel: "Routed agent id", value: decision.routedAgentId },
       ]);
+      if (decision.destinationRoomId) {
+        var actions = el("div", "row-actions");
+        var openButton = el("button", "button compact", "Open assigned room");
+        openButton.type = "button";
+        openButton.addEventListener("click", function () {
+          var knownRooms = (state.latestMeetingRoomsPayload && state.latestMeetingRoomsPayload.items) || [];
+          var destinationRoom = knownRooms.filter(function (room) { return room.roomId === decision.destinationRoomId; })[0] || null;
+          setMeetingRoom(decision.destinationRoomId, destinationRoom);
+          refreshMeetingMessages(decision.destinationRoomId).catch(function (error) { setStatus(error.message, true); });
+        });
+        actions.appendChild(openButton);
+        row.appendChild(actions);
+      }
       node.appendChild(row);
     });
   }
@@ -2177,7 +3024,7 @@
     var summaryLine = el("div", "filter-summary meeting-messages-summary");
     summaryLine.appendChild(el("span", "filter-summary-label", "Transcript"));
     appendBadge(summaryLine, roomTitle(room), "neutral");
-    appendBadge(summaryLine, visibleMessageCount + " visible messages", items.length ? "good" : "neutral");
+    appendBadge(summaryLine, "showing " + visibleMessageCount + " of " + totalMessageCount, items.length ? "good" : "neutral");
     if (totalMessageCount !== visibleMessageCount) {
       appendBadge(summaryLine, totalMessageCount + " total messages", "neutral");
     }
@@ -2191,7 +3038,7 @@
       node.appendChild(el("p", "empty-state", "No meeting messages in this room yet."));
       return;
     }
-    var countText = visibleMessageCount + " visible meeting message(s).";
+    var countText = "Showing " + visibleMessageCount + " of " + totalMessageCount + " meeting message(s) in this transcript window.";
     if (totalMessageCount !== visibleMessageCount) {
       countText += " " + totalMessageCount + " total messages in this room.";
     }
@@ -3039,8 +3886,20 @@
     return headers;
   }
 
+  function apiProblem(payload, response, fallback) {
+    var problem = (payload && payload.error) || payload || {};
+    var error = new Error(problem.detail || problem.title || fallback || "Request failed.");
+    error.code = problem.code || "request_failed";
+    error.status = response && response.status;
+    error.safeNoOp = Boolean(problem.safeNoOp || (payload && payload.safeNoOp));
+    return error;
+  }
+
   function api(path, options) {
     options = options || {};
+    if (state.demoMode) {
+      return mockRequest(path, options);
+    }
     var fetchOptions = {
       method: options.method || "GET",
       headers: authHeaders(options.headers),
@@ -3051,17 +3910,43 @@
       fetchOptions.body = JSON.stringify(options.body);
     }
     return fetch(path, fetchOptions).then(function (response) {
-      return response.json().then(function (payload) {
+      return response.text().then(function (text) {
+        var payload;
+        try {
+          payload = text ? JSON.parse(text) : {};
+        } catch (_error) {
+          throw apiProblem({}, response, "The server returned an unreadable response.");
+        }
         if (!response.ok || payload.ok === false) {
-          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
-          throw new Error(detail);
+          throw apiProblem(payload, response);
         }
         return payload;
       });
     });
   }
 
+  var mockTransportApi = state.demoMode ? window.MemoryEndpointsMockTransport : null;
+  var demoBootstrap = mockTransportApi && typeof mockTransportApi.bootstrap === "function"
+    ? mockTransportApi.bootstrap()
+    : null;
+  var mockTransport = mockTransportApi && demoBootstrap
+    ? mockTransportApi.create({agentId: demoBootstrap.agentId})
+    : null;
+
+  function mockRequest(path, options) {
+    if (mockTransport) {
+      return mockTransport.request(path, options || {});
+    }
+    var transportError = new Error("Mock transport is unavailable; no network request was made.");
+    transportError.code = "mock_transport_unavailable";
+    transportError.safeNoOp = true;
+    return Promise.reject(transportError);
+  }
+
   function publicApi(path) {
+    if (state.demoMode) {
+      return mockRequest(path, {method: "GET"});
+    }
     return fetch(path, {
       method: "GET",
       headers: {"Accept": "application/json"},
@@ -3080,6 +3965,9 @@
   function apiAllowingStatuses(path, options, allowedStatuses) {
     options = options || {};
     allowedStatuses = allowedStatuses || [];
+    if (state.demoMode) {
+      return mockRequest(path, options);
+    }
     var fetchOptions = {
       method: options.method || "GET",
       headers: authHeaders(options.headers),
@@ -3090,10 +3978,15 @@
       fetchOptions.body = JSON.stringify(options.body);
     }
     return fetch(path, fetchOptions).then(function (response) {
-      return response.json().then(function (payload) {
+      return response.text().then(function (text) {
+        var payload;
+        try {
+          payload = text ? JSON.parse(text) : {};
+        } catch (_error) {
+          throw apiProblem({}, response, "The server returned an unreadable response.");
+        }
         if ((!response.ok || payload.ok === false) && allowedStatuses.indexOf(response.status) === -1) {
-          var detail = payload.error && payload.error.detail ? payload.error.detail : "Request failed.";
-          throw new Error(detail);
+          throw apiProblem(payload, response);
         }
         return payload;
       });
@@ -3111,38 +4004,491 @@
     return parts.join("&");
   }
 
-  function loadWorkspace() {
-    return api("/api/matm/workspace").then(function (payload) {
+  function accessStatus(message, isError) {
+    var node = pick("[data-console-human-access-status]");
+    if (node) {
+      node.textContent = message;
+      node.className = isError ? "console-status error" : "console-status";
+    }
+  }
+
+  function accessReceipt(title, detail, badges) {
+    var node = pick("[data-console-human-access-receipt]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    node.appendChild(resultRow(title, detail, badges || [], []));
+  }
+
+  function configureAccessManagement() {
+    var denied = pick("[data-console-human-access-denied]");
+    var management = pick("[data-console-human-access-management]");
+    var badge = pick("[data-console-human-access-capability]");
+    var principal = state.principal || {};
+    var canManage = principal.credentialType === "company_master"
+      && hasPermission("canApproveAgentAccess")
+      && hasPermission("canIssueAgentInvites")
+      && hasPermission("canListAgentTokens")
+      && hasPermission("canRevokeAgentTokens");
+    if (denied) {
+      denied.hidden = canManage;
+    }
+    if (management) {
+      management.hidden = !canManage;
+    }
+    if (badge) {
+      badge.textContent = canManage ? "Company master · access management enabled" : "Agent credential · management denied";
+      badge.className = "status-badge " + (canManage ? "good" : "neutral");
+    }
+    var policyNode = pick("[data-console-human-access-name-policy]");
+    var policy = (state.accessContract && state.accessContract.namePolicy) || {};
+    if (policyNode && canManage) {
+      policyNode.textContent = (policy.guidance || "Choose a short, meaningful canonical name.")
+        + " Use " + (policy.minLength || 3) + "–" + (policy.maxLength || 64)
+        + " lowercase letters or digits with single hyphens. Names are unique within this company.";
+    }
+    if (canManage) {
+      accessStatus("Access management verified. Loading the company scope catalog and redacted credential inventory…", false);
+    } else if (principal.credentialType === "agent_token") {
+      accessStatus("This bound agent can operate within its immutable grant but cannot approve, invite, list, or revoke credentials.", false);
+    }
+  }
+
+  function accessOptionKey(scopeType, scopeId) {
+    return String(scopeType || "") + "\u001f" + String(scopeId || "");
+  }
+
+  function appendSelectOption(select, value, label) {
+    var option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  }
+
+  function populateScopeCatalog(payload) {
+    state.scopeCatalog = payload || {};
+    state.accessScopeOptions = {};
+    var workspaceSelect = pick("[data-console-resource-workspace]");
+    var scopeSelect = pick("[data-console-access-scope-select]");
+    var projectSelect = pick("[data-console-access-project-select]");
+    [workspaceSelect, scopeSelect, projectSelect].forEach(function (select) {
+      if (!select) {
+        return;
+      }
+      while (select.options && select.options.length > 1) {
+        select.remove(1);
+      }
+    });
+    var company = payload.company || {};
+    if (scopeSelect && company.companyId) {
+      var companyKey = accessOptionKey("company", company.companyId);
+      state.accessScopeOptions[companyKey] = {scopeType: "company", scopeId: company.companyId};
+      appendSelectOption(scopeSelect, companyKey, "Company · " + (company.label || company.companyId));
+    }
+    (payload.workspaces || []).forEach(function (workspace) {
+      if (!workspace.workspaceId) {
+        return;
+      }
+      if (workspaceSelect) {
+        appendSelectOption(workspaceSelect, workspace.workspaceId, workspace.label || workspace.workspaceId);
+      }
+      if (scopeSelect) {
+        var key = accessOptionKey("workspace", workspace.workspaceId);
+        state.accessScopeOptions[key] = {scopeType: "workspace", scopeId: workspace.workspaceId, workspaceId: workspace.workspaceId};
+        appendSelectOption(scopeSelect, key, "Workspace · " + (workspace.label || workspace.workspaceId));
+      }
+    });
+    (payload.projects || []).forEach(function (project) {
+      if (!project.projectId) {
+        return;
+      }
+      if (projectSelect) {
+        appendSelectOption(projectSelect, project.projectId, project.label || project.projectId);
+      }
+      if (scopeSelect) {
+        var key = accessOptionKey("project", project.projectId);
+        state.accessScopeOptions[key] = {scopeType: "project", scopeId: project.projectId, workspaceId: project.workspaceId, projectId: project.projectId};
+        appendSelectOption(scopeSelect, key, "Project · " + (project.label || project.projectId));
+      }
+    });
+    (payload.scopeNodes || []).forEach(function (node) {
+      if (!node.scopeType || !node.scopeId || !scopeSelect) {
+        return;
+      }
+      var key = accessOptionKey(node.scopeType, node.scopeId);
+      state.accessScopeOptions[key] = {
+        scopeType: node.scopeType,
+        scopeId: node.scopeId,
+        workspaceId: node.workspaceId,
+        projectId: node.projectId,
+      };
+      appendSelectOption(scopeSelect, key, formatStatusText(node.scopeType) + " · " + (node.label || node.scopeId));
+    });
+    var workspacePicker = pick("[data-console-workspace-select]");
+    if (workspacePicker && state.principal && state.principal.credentialType === "company_master") {
+      workspacePicker.hidden = false;
+    }
+  }
+
+  function loadScopeCatalog() {
+    if (!state.principal || state.principal.credentialType !== "company_master") {
+      return Promise.resolve(null);
+    }
+    return api("/api/matm/access/scope-catalog").then(function (payload) {
+      populateScopeCatalog(payload);
+      return payload;
+    });
+  }
+
+  function clearIssuedInviteUrl() {
+    var result = pick("[data-console-human-invite-issuance-result]");
+    var input = pick("[data-console-human-invite-url]");
+    var toggle = pick("[data-console-human-invite-url-toggle]");
+    var saved = pick("[data-console-human-invite-url-saved]");
+    if (input) {
+      input.value = "";
+      input.type = "password";
+    }
+    if (toggle) {
+      toggle.textContent = "Show URL";
+      toggle.setAttribute("aria-pressed", "false");
+    }
+    if (saved) {
+      saved.checked = false;
+    }
+    if (result) {
+      result.hidden = true;
+      result.setAttribute("data-secret-cleared", "true");
+    }
+  }
+
+  function showIssuedInviteUrl(payload, requestId) {
+    var result = pick("[data-console-human-invite-issuance-result]");
+    var heading = pick("[data-console-human-invite-issuance-heading]");
+    var input = pick("[data-console-human-invite-url]");
+    var value = payload && payload.inviteUrl;
+    var parsed;
+    try {
+      parsed = new URL(value, window.location.origin);
+    } catch (_error) {
+      throw new Error("Invitation issuance returned an invalid one-time URL. Do not issue again; inspect inventory first.");
+    }
+    if (!value || parsed.origin !== window.location.origin || parsed.pathname !== "/agent-setup" || parsed.search || parsed.hash.indexOf("#invite=") !== 0) {
+      throw new Error("Invitation issuance returned an unverifiable one-time URL. Do not issue again; inspect inventory first.");
+    }
+    clearIssuedInviteUrl();
+    input.value = value;
+    result.hidden = false;
+    result.removeAttribute("data-secret-cleared");
+    state.issuedInviteRequestIds[requestId] = true;
+    accessStatus("Invitation issued. Transfer the one-time URL privately, confirm transfer, then clear it from this page.", false);
+    if (heading) {
+      heading.focus();
+    }
+  }
+
+  function inviteStatusKind(status) {
+    if (status === "active" || status === "issued" || status === "redeemed") {
+      return "good";
+    }
+    if (status === "revoked" || status === "expired" || status === "denied") {
+      return "warn";
+    }
+    return "neutral";
+  }
+
+  function decideAccessRequest(requestId, decision) {
+    if (!hasPermission("canApproveAgentAccess")) {
+      return Promise.reject(new Error("This credential cannot approve agent access."));
+    }
+    accessStatus((decision === "approve" ? "Approving" : "Denying") + " the selected name request…", false);
+    return api("/api/matm/access/agent-name-requests/" + encodeURIComponent(requestId) + "/decision", {
+      method: "POST",
+      body: {decision: decision, decisionReason: decision === "approve" ? "Human approval from the authenticated Access workflow." : "Human denial from the authenticated Access workflow."},
+    }).then(function () {
+      accessReceipt(decision === "approve" ? "Name request approved" : "Name request denied", "The decision was recorded without exposing credential material.", [
+        {text: decision === "approve" ? "approved" : "denied", kind: decision === "approve" ? "good" : "warn"},
+        {text: "values redacted", kind: "good"},
+      ]);
+      return refreshAccessInventory();
+    });
+  }
+
+  function issueAccessInvite(requestId, expiresInSeconds) {
+    if (!hasPermission("canIssueAgentInvites") || state.issuedInviteRequestIds[requestId]) {
+      return Promise.reject(new Error("This request cannot issue another invitation from this page."));
+    }
+    state.issuedInviteRequestIds[requestId] = true;
+    accessStatus("Issuing one expiring invitation…", false);
+    return api("/api/matm/access/invites", {
+      method: "POST",
+      body: {approvedRequestId: requestId, expiresInSeconds: Number(expiresInSeconds || 900)},
+    }).then(function (payload) {
+      showIssuedInviteUrl(payload, requestId);
+      return refreshAccessInventory();
+    }).catch(function (error) {
+      accessStatus((error.message || "Invitation issuance could not be confirmed.") + " Inspect inventory before taking another action.", true);
+      throw error;
+    });
+  }
+
+  function revokeAccessResource(kind, id) {
+    var isToken = kind === "credential";
+    var allowed = isToken ? hasPermission("canRevokeAgentTokens") : hasPermission("canIssueAgentInvites");
+    if (!allowed) {
+      return Promise.reject(new Error("This credential cannot revoke the selected resource."));
+    }
+    var path = isToken
+      ? "/api/matm/access/agent-tokens/" + encodeURIComponent(id) + "/revoke"
+      : "/api/matm/access/invites/" + encodeURIComponent(id) + "/revoke";
+    accessStatus("Revoking the selected " + (isToken ? "agent credential" : "invitation") + "…", false);
+    return api(path, {method: "POST"}).then(function () {
+      accessReceipt(isToken ? "Agent credential revoked" : "Invitation revoked", "Authority was removed immediately. Inventory remains metadata-only.", [
+        {text: "revoked", kind: "warn"},
+        {text: "credential hidden", kind: "good"},
+      ]);
+      return refreshAccessInventory();
+    });
+  }
+
+  function confirmableRevokeButton(label, action) {
+    var button = el("button", "button compact danger", label);
+    button.type = "button";
+    button.setAttribute("aria-label", label + ". Select twice to confirm.");
+    var armed = false;
+    button.addEventListener("click", function () {
+      if (!armed) {
+        armed = true;
+        button.textContent = "Confirm " + label.toLowerCase();
+        button.classList.add("is-confirming");
+        accessStatus("Confirmation required. Select the revoke control again to continue.", false);
+        return;
+      }
+      button.disabled = true;
+      action().catch(function (error) {
+        button.disabled = false;
+        armed = false;
+        button.textContent = label;
+        button.classList.remove("is-confirming");
+        accessStatus(error.message, true);
+      });
+    });
+    return button;
+  }
+
+  function renderAccessRequests(payload) {
+    var node = pick("[data-console-human-invite-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    state.latestAccessRequests = (payload && payload.items) || [];
+    if (!state.latestAccessRequests.length) {
+      node.appendChild(el("p", "empty-state", "No agent-name requests match this filter."));
+      return;
+    }
+    state.latestAccessRequests.forEach(function (item) {
+      var row = resultRow(
+        item.displayName || item.requestedName || item.agentName || "Agent name request",
+        "Canonical handle: " + (item.requestedName || item.agentName || "not provided"),
+        [
+          {text: item.status || "pending", kind: inviteStatusKind(item.status)},
+          {text: (item.scopeType || "scope") + " grant", kind: "neutral"},
+          {text: "immutable", kind: "good"},
+        ],
+        ["scope " + shortId(item.scopeId), item.createdAt || ""]
+      );
+      var actions = el("div", "row-actions");
+      if (item.status === "pending" && hasPermission("canApproveAgentAccess")) {
+        var approve = el("button", "button compact primary", "Approve");
+        var deny = el("button", "button compact", "Deny");
+        approve.type = "button";
+        deny.type = "button";
+        approve.addEventListener("click", function () {
+          approve.disabled = true;
+          deny.disabled = true;
+          decideAccessRequest(item.requestId, "approve").catch(function (error) { accessStatus(error.message, true); });
+        });
+        deny.addEventListener("click", function () {
+          approve.disabled = true;
+          deny.disabled = true;
+          decideAccessRequest(item.requestId, "deny").catch(function (error) { accessStatus(error.message, true); });
+        });
+        actions.appendChild(approve);
+        actions.appendChild(deny);
+      }
+      if (item.status === "approved" && hasPermission("canIssueAgentInvites") && !state.issuedInviteRequestIds[item.requestId]) {
+        var expiry = document.createElement("select");
+        expiry.setAttribute("aria-label", "Invitation expiry");
+        appendSelectOption(expiry, "900", "15 minutes");
+        appendSelectOption(expiry, "3600", "1 hour");
+        appendSelectOption(expiry, "86400", "24 hours");
+        var issue = el("button", "button compact primary", "Issue invitation");
+        issue.type = "button";
+        issue.addEventListener("click", function () {
+          issue.disabled = true;
+          issueAccessInvite(item.requestId, expiry.value).catch(function () {});
+        });
+        actions.appendChild(expiry);
+        actions.appendChild(issue);
+      }
+      if (actions.children.length) {
+        row.appendChild(actions);
+      }
+      node.appendChild(row);
+    });
+  }
+
+  function renderAccessInvites(payload) {
+    var node = pick("[data-console-agent-invite-list]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    state.latestAccessInvites = (payload && payload.items) || [];
+    if (!state.latestAccessInvites.length) {
+      node.appendChild(el("p", "empty-state", "No invitation metadata matches this filter."));
+      return;
+    }
+    state.latestAccessInvites.forEach(function (item) {
+      var row = resultRow(
+        item.agentName || item.agentId || "Agent invitation",
+        "One-time invitation. Secret is not retained in inventory.",
+        [
+          {text: item.status || "unknown", kind: inviteStatusKind(item.status)},
+          {text: item.singleUse ? "single use" : "review", kind: item.singleUse ? "good" : "warn"},
+          {text: (item.scopeType || "scope") + " grant", kind: "neutral"},
+        ],
+        ["expires " + (item.expiresAt || "not provided"), "scope " + shortId(item.scopeId)]
+      );
+      if ((item.status === "issued" || item.status === "active") && hasPermission("canIssueAgentInvites")) {
+        var actions = el("div", "row-actions");
+        actions.appendChild(confirmableRevokeButton("Revoke invitation", function () {
+          return revokeAccessResource("invitation", item.inviteId);
+        }));
+        row.appendChild(actions);
+      }
+      node.appendChild(row);
+    });
+  }
+
+  function renderAgentTokens(payload) {
+    var node = pick("[data-console-agent-token-list]");
+    var supersedes = pick("[data-console-access-supersedes-select]");
+    var transfer = pick("[data-console-access-transfer-select]");
+    if (!node) {
+      return;
+    }
+    clear(node);
+    state.latestAgentTokens = (payload && payload.items) || [];
+    [supersedes, transfer].forEach(function (select) {
+      if (!select) {
+        return;
+      }
+      while (select.options && select.options.length > 1) {
+        select.remove(1);
+      }
+    });
+    if (!state.latestAgentTokens.length) {
+      node.appendChild(el("p", "empty-state", "No agent credential metadata matches this filter."));
+      return;
+    }
+    state.latestAgentTokens.forEach(function (item) {
+      var credentialId = item.credentialId || item.agentTokenId;
+      var label = item.agentName || item.agentId || "Bound agent";
+      if (credentialId) {
+        if (supersedes) {
+          appendSelectOption(supersedes, credentialId, label + " · " + shortId(credentialId));
+        }
+        if (transfer) {
+          appendSelectOption(transfer, credentialId, label + " · " + shortId(credentialId));
+        }
+      }
+      var row = resultRow(
+        label,
+        "Revocable credential metadata. The private credential is never returned by inventory.",
+        [
+          {text: item.status || "unknown", kind: inviteStatusKind(item.status)},
+          {text: (item.scopeType || "scope") + " grant", kind: "neutral"},
+          {text: "secret hidden", kind: "good"},
+        ],
+        ["credential " + shortId(credentialId), "last used " + (item.lastUsedAt || "never")]
+      );
+      if (item.status !== "revoked" && credentialId && hasPermission("canRevokeAgentTokens")) {
+        var actions = el("div", "row-actions");
+        actions.appendChild(confirmableRevokeButton("Revoke credential", function () {
+          return revokeAccessResource("credential", credentialId);
+        }));
+        row.appendChild(actions);
+      }
+      node.appendChild(row);
+    });
+  }
+
+  function refreshAccessInventory() {
+    if (!state.principal || state.principal.credentialType !== "company_master") {
+      return Promise.resolve([]);
+    }
+    var filter = pick("[data-console-human-invite-filter]");
+    var qs = query({status: filter ? filter.value : ""});
+    var suffix = qs ? "?" + qs : "";
+    var tasks = [];
+    if (hasPermission("canApproveAgentAccess")) {
+      tasks.push(api("/api/matm/access/agent-name-requests" + suffix).then(renderAccessRequests));
+    }
+    if (hasPermission("canIssueAgentInvites")) {
+      tasks.push(api("/api/matm/access/invites" + suffix).then(renderAccessInvites));
+    }
+    if (hasPermission("canListAgentTokens")) {
+      tasks.push(api("/api/matm/access/agent-tokens" + suffix).then(renderAgentTokens));
+    }
+    return Promise.all(tasks).then(function (results) {
+      accessStatus("Access inventory refreshed. All list responses are metadata-only and redacted.", false);
+      return results;
+    });
+  }
+
+  function initializeAccessManagement() {
+    if (!state.principal || state.principal.credentialType !== "company_master") {
+      return Promise.resolve();
+    }
+    return loadScopeCatalog().then(refreshAccessInventory).catch(function (error) {
+      accessStatus(error.message, true);
+      throw error;
+    });
+  }
+
+  function introspectCredential() {
+    return api("/api/matm/me").then(function (payload) {
+      var principal = applyIntrospectedPrincipal(payload);
+      return initializeAccessManagement().then(function () { return principal; });
+    });
+  }
+
+  function loadWorkspace(workspaceId) {
+    var requestedWorkspaceId = workspaceId || state.workspaceId;
+    if (!requestedWorkspaceId) {
+      return Promise.reject(new Error("Choose an operational workspace before loading workspace data."));
+    }
+    return api("/api/matm/workspace?" + query({workspace_id: requestedWorkspaceId})).then(function (payload) {
       var workspace = payload.workspace || {};
-      state.workspaceId = workspace.workspaceId || state.workspaceId;
+      if (!workspace.workspaceId || workspace.workspaceId !== requestedWorkspaceId) {
+        throw new Error("The workspace response did not match the explicitly selected scope.");
+      }
+      state.workspaceId = workspace.workspaceId;
+      state.selectedOperationalWorkspaceId = workspace.workspaceId;
       state.companyId = workspace.companyId || state.companyId;
-      state.projectId = workspace.primaryProjectId || state.projectId;
+      state.projectId = state.principal && state.principal.credentialType === "agent_token"
+        ? ((state.principal.resourceContext || {}).projectId || workspace.primaryProjectId || "")
+        : (workspace.primaryProjectId || "");
       state.workspace = workspace;
       state.workspaceOperatorSummary = payload.operatorSummary || null;
       render("[data-console-workspace]", workspace);
       renderSessionSummary(workspace, state.workspaceOperatorSummary);
       renderWorkspaceSummary(workspace, state.workspaceOperatorSummary);
-      setStatus("Workspace loaded. Key remains session-local.", false);
+      setStatus("Workspace loaded. The governed credential remains session-local.", false);
       return workspace;
-    });
-  }
-
-  function registerAgent(agentId) {
-    if (!agentId) {
-      return Promise.resolve();
-    }
-    return api("/api/matm/agents/register", {
-      method: "POST",
-      headers: {"Idempotency-Key": "console-register-" + agentId},
-      body: {
-        workspaceId: state.workspaceId,
-        agentId: agentId,
-        displayName: agentId,
-      },
-    }).then(function (payload) {
-      state.agentRegistrationSummary = payload.operatorSummary || null;
-      renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
-      return payload;
     });
   }
 
@@ -3191,7 +4537,7 @@
   }
 
   function showHostedLongTermMemory() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       setStatus("Load workspace before searching hosted long-term memory.", true);
       return Promise.resolve(null);
     }
@@ -3222,7 +4568,7 @@
   }
 
   function refreshInbox(agentId, exactFilters) {
-    var requestedAgent = agentId || state.agentId;
+    var requestedAgent = agentId || state.inboxAgentId || state.agentId;
     var requestSeq = state.inboxRequestSeq += 1;
     var filters = exactFilters !== undefined ? exactFilters : inboxExactFilters();
     var params = {workspace_id: state.workspaceId, agent_id: requestedAgent};
@@ -3245,10 +4591,11 @@
       }
       var resolvedAgent = inboxAgentFromPayload(payload, requestedAgent);
       setInboxAgent(resolvedAgent);
-      var first = payload.items && payload.items.length ? payload.items[0] : null;
+      var orderedItems = attentionFirstItems((payload && payload.items) || []);
+      var first = orderedItems.length ? orderedItems[0] : null;
       state.firstNotificationId = first && first.notification ? first.notification.notificationId : "";
       state.visibleNotificationRecords = {};
-      state.visibleNotificationIds = ((payload && payload.items) || []).map(function (item) {
+      state.visibleNotificationIds = orderedItems.map(function (item) {
         var notification = item.notification || {};
         var message = item.message || {};
         var delivery = item.delivery || {};
@@ -3329,7 +4676,7 @@
       return Promise.resolve({items: []});
     }
     setMeetingRoom(selectedRoom);
-    var qs = query({workspace_id: state.workspaceId, room_id: selectedRoom, agent_id: state.agentId, limit: 50, cursor: cursor || ""});
+    var qs = query({workspace_id: state.workspaceId, room_id: selectedRoom, agent_id: state.agentId, limit: meetingTranscriptPageSize, cursor: cursor || ""});
     return api("/api/matm/meeting-messages?" + qs).then(function (payload) {
       render("[data-console-meeting-output]", payload);
       renderMeetingMessages(payload);
@@ -3342,13 +4689,12 @@
       renderRoutingDecisions({items: [], operatorSummary: {count: 0}});
       return Promise.resolve({items: []});
     }
-    var form = pick("[data-console-routing-decision]");
-    var params = {workspace_id: state.workspaceId, limit: 25};
-    if (form) {
-      params.routed_agent_id = form.elements.routedAgentId ? form.elements.routedAgentId.value.trim() : "";
-      params.destination_room_id = form.elements.destinationRoomId ? form.elements.destinationRoomId.value.trim() : "";
-      params.lane = form.elements.lane ? form.elements.lane.value.trim() : "";
-    }
+    var params = {
+      workspace_id: state.workspaceId,
+      routed_agent_id: state.agentId,
+      status: "active",
+      limit: 25,
+    };
     var qs = query(params);
     return api("/api/matm/routing-decisions?" + qs).then(function (payload) {
       render("[data-console-meeting-output]", payload);
@@ -3358,7 +4704,7 @@
   }
 
   function promoteMeetingMessage(message) {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before saving meeting messages as memory."));
     }
     var meetingMessageId = message && message.meetingMessageId;
@@ -3396,12 +4742,11 @@
     if (!agentId) {
       return;
     }
-    state.agentId = agentId;
+    state.inboxAgentId = agentId;
     var form = pick("[data-console-inbox]");
     if (form && form.elements.agentId) {
       form.elements.agentId.value = agentId;
     }
-    renderSessionSummary(state.workspace, state.workspaceOperatorSummary);
   }
 
   function inboxExactFilters() {
@@ -3429,7 +4774,7 @@
   }
 
   function openInboxLane(agentId, label) {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before refreshing inbox lanes."));
     }
     setInboxAgent(agentId);
@@ -3487,7 +4832,7 @@
   }
 
   function refreshSyncRetention() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return refreshSyncCapabilities();
     }
     var qs = query({workspace_id: state.workspaceId});
@@ -3499,7 +4844,7 @@
   }
 
   function syncDeviceOperation(operation) {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before changing sync device authority."));
     }
     var form = pick("[data-console-sync-device]");
@@ -3532,7 +4877,7 @@
   }
 
   function submitSyncMutation() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before submitting sync mutations."));
     }
     var form = pick("[data-console-sync-mutation]");
@@ -3585,7 +4930,7 @@
   }
 
   function readSyncReceipt() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before reading sync receipts."));
     }
     var params = syncReadbackParams();
@@ -3602,7 +4947,7 @@
   }
 
   function readSyncChanges() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before reading sync changes."));
     }
     var params = syncReadbackParams();
@@ -3620,7 +4965,7 @@
   }
 
   function readSyncHeads() {
-    if (!state.key || !state.workspaceId) {
+    if (!hasWorkspaceSession()) {
       return Promise.reject(new Error("Load workspace before reading sync heads."));
     }
     var params = syncReadbackParams();
@@ -3699,8 +5044,10 @@
   }
 
   function refreshInitialConsoleViews() {
-    var meetingRefresh = function () {
-      return refreshMeetingRooms().then(function () {
+    var coordinationRefresh = function () {
+      return refreshRoutingDecisions().then(function () {
+        return refreshMeetingRooms();
+      }).then(function () {
         return refreshMeetingMessages(state.selectedMeetingRoomId);
       });
     };
@@ -3708,8 +5055,7 @@
       bootstrapRefresh("memory", function () { return refreshMemory("verification"); }),
       bootstrapRefresh("long-term health", refreshLongTermMemoryHealth),
       bootstrapRefresh("reviews", function () { return refreshReviewQueue("pending"); }),
-      bootstrapRefresh("meetings", meetingRefresh),
-      bootstrapRefresh("routing", refreshRoutingDecisions),
+      bootstrapRefresh("coordination", coordinationRefresh),
       bootstrapRefresh("inbox", function () { return refreshInbox(state.agentId); }),
       bootstrapRefresh("lanes", refreshLaneOverview),
       bootstrapRefresh("receipts", refreshReceipts),
@@ -3719,7 +5065,18 @@
   }
 
   function runConsoleCommand(action, label) {
-    if (!state.key || !state.workspaceId) {
+    if (action === "access") {
+      if (!state.principal) {
+        setStatus("Verify a governed credential before opening agent access.", true);
+        return Promise.resolve(null);
+      }
+      setWorkflowView("access", true);
+      return refreshAccessInventory().catch(function (error) {
+        accessStatus(error.message, true);
+        return null;
+      });
+    }
+    if (!hasWorkspaceSession()) {
       setStatus("Load workspace before using operator commands.", true);
       renderCommandBar();
       return Promise.resolve(null);
@@ -3732,6 +5089,7 @@
       messages: "messages",
       receipts: "evidence",
       audit: "evidence",
+      access: "access",
     }[action] || "workspace";
     setWorkflowView(workflow, true);
     var task;
@@ -3787,6 +5145,7 @@
   }
 
   var authForm = pick("[data-console-auth]");
+  var workspaceSelectForm = pick("[data-console-workspace-select]");
   var debugToggle = pick("[data-console-debug-toggle]");
   setDebugJsonVisible(debugToggle ? debugToggle.checked : false);
   setWorkflowView(defaultWorkflowView, false);
@@ -3826,16 +5185,201 @@
   if (authForm) {
     authForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      state.key = authForm.elements.workspaceKey.value.trim();
-      state.agentId = authForm.elements.agentId.value.trim() || "human-verifier-agent";
+      state.demoMode = false;
+      consoleRoot.classList.remove("is-demo");
+      state.key = authForm.elements.credential.value.trim();
+      authForm.elements.credential.value = "";
       if (!state.key) {
-        setStatus("Workspace key is required.", true);
+        setStatus("A governed company master or bound agent credential is required.", true);
         return;
       }
-      loadWorkspace()
-        .then(function () { return registerAgent(state.agentId); })
-        .then(refreshInitialConsoleViews)
+      setStatus("Verifying the credential-derived identity and immutable grant…", false);
+      introspectCredential()
+        .then(function (principal) {
+          if (principal.credentialType === "company_master") {
+            setStatus("Company master verified. Choose an operational workspace explicitly, or open Agent Access.", false);
+            setWorkflowView("access", false);
+            return null;
+          }
+          if (!state.workspaceId) {
+            throw new Error("The bound agent credential did not return an authorized parent workspace.");
+          }
+          return loadWorkspace(state.workspaceId).then(refreshInitialConsoleViews);
+        })
         .catch(function (error) { setStatus(error.message, true); });
+    });
+  }
+
+  if (workspaceSelectForm) {
+    workspaceSelectForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!state.principal || state.principal.credentialType !== "company_master") {
+        setStatus("Only an authenticated company master may select an operational workspace.", true);
+        return;
+      }
+      var workspaceId = workspaceSelectForm.elements.workspaceId.value;
+      var allowed = Boolean(workspaceId) && ((state.scopeCatalog && state.scopeCatalog.workspaces) || []).some(function (workspace) {
+        return workspace.workspaceId === workspaceId;
+      });
+      if (!allowed) {
+        setStatus("Choose a workspace from the authenticated company scope catalog.", true);
+        return;
+      }
+      var submit = workspaceSelectForm.querySelector("button[type='submit']");
+      submit.disabled = true;
+      loadWorkspace(workspaceId).then(refreshInitialConsoleViews).then(function () {
+        setStatus("Explicitly selected workspace loaded for company-master operations.", false);
+      }).catch(function (error) {
+        setStatus(error.message, true);
+      }).then(function () {
+        submit.disabled = false;
+      });
+    });
+  }
+
+  window.addEventListener("pagehide", function () {
+    state.key = "";
+    state.principal = null;
+    state.permissions = {};
+    clearIssuedInviteUrl();
+    if (authForm && authForm.elements.credential) {
+      authForm.elements.credential.value = "";
+    }
+  });
+
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) {
+      return;
+    }
+    state.key = "";
+    state.principal = null;
+    state.permissions = {};
+    clearIssuedInviteUrl();
+    var principalNode = pick("[data-console-principal]");
+    if (principalNode) {
+      principalNode.hidden = true;
+    }
+    if (workspaceSelectForm) {
+      workspaceSelectForm.hidden = true;
+    }
+    setStatus("Credential state was cleared when this page left view. Verify the credential again.", true);
+  });
+
+  if (state.demoMode) {
+    if (!demoBootstrap || !mockTransport) {
+      setStatus("Mock transport is unavailable; no network request was made.", true);
+    } else {
+      state.key = "";
+      consoleRoot.classList.add("is-demo");
+      setStatus("Loading clearly labeled mock data through the authenticated interface methods.", false);
+      introspectCredential().then(function () { return loadWorkspace(state.workspaceId); }).then(refreshInitialConsoleViews).then(function () {
+        setStatus("Public tour active — mock data, real interface, no persistence.", false);
+      }).catch(function (error) { setStatus(error.message, true); });
+    }
+  }
+
+  var accessRequestForm = pick("[data-console-human-access-request]");
+  var accessRefresh = pick("[data-console-human-access-refresh]");
+  var accessFilter = pick("[data-console-human-invite-filter]");
+  var inviteUrlInput = pick("[data-console-human-invite-url]");
+  var inviteUrlToggle = pick("[data-console-human-invite-url-toggle]");
+  var inviteUrlCopy = pick("[data-console-human-invite-url-copy]");
+  var inviteUrlClear = pick("[data-console-human-invite-url-clear]");
+  if (accessRequestForm) {
+    accessRequestForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!state.principal || state.principal.credentialType !== "company_master" || !hasPermission("canApproveAgentAccess")) {
+        accessStatus("This credential cannot submit agent-name requests.", true);
+        return;
+      }
+      var selectedGrant = state.accessScopeOptions && state.accessScopeOptions[accessRequestForm.elements.scopeKey.value];
+      if (!selectedGrant) {
+        accessStatus("Choose an immutable grant from the authenticated company scope catalog.", true);
+        return;
+      }
+      var body = {
+        requestedName: accessRequestForm.elements.requestedName.value.trim(),
+        displayName: accessRequestForm.elements.displayName.value.trim(),
+        requestedGrant: {scopeType: selectedGrant.scopeType, scopeId: selectedGrant.scopeId},
+        justification: accessRequestForm.elements.justification.value.trim(),
+      };
+      var assignmentContext = {};
+      if (accessRequestForm.elements.assignmentProjectId.value) {
+        assignmentContext.projectId = accessRequestForm.elements.assignmentProjectId.value;
+      }
+      if (accessRequestForm.elements.assignmentTask.value.trim()) {
+        assignmentContext.task = accessRequestForm.elements.assignmentTask.value.trim();
+      }
+      if (Object.keys(assignmentContext).length) {
+        body.assignmentContext = assignmentContext;
+      }
+      if (accessRequestForm.elements.supersedesCredentialId.value) {
+        body.supersedesCredentialId = accessRequestForm.elements.supersedesCredentialId.value;
+      }
+      if (accessRequestForm.elements.memoryTransferFromCredentialId.value) {
+        body.memoryTransferFromCredentialId = accessRequestForm.elements.memoryTransferFromCredentialId.value;
+      }
+      var submit = accessRequestForm.querySelector("button[type='submit']");
+      submit.disabled = true;
+      accessStatus("Submitting the human-recognizable name and immutable grant for approval…", false);
+      api("/api/matm/access/agent-name-requests", {method: "POST", body: body}).then(function () {
+        accessRequestForm.reset();
+        accessReceipt("Agent-name request created", "The name and immutable scope are awaiting an explicit human decision.", [
+          {text: "pending approval", kind: "neutral"},
+          {text: "scope immutable", kind: "good"},
+        ]);
+        return refreshAccessInventory();
+      }).catch(function (error) {
+        accessStatus(error.message, true);
+      }).then(function () {
+        submit.disabled = false;
+      });
+    });
+  }
+  if (accessRefresh) {
+    accessRefresh.addEventListener("click", function () {
+      refreshAccessInventory().catch(function (error) { accessStatus(error.message, true); });
+    });
+  }
+  if (accessFilter) {
+    accessFilter.addEventListener("change", function () {
+      refreshAccessInventory().catch(function (error) { accessStatus(error.message, true); });
+    });
+  }
+  if (inviteUrlToggle && inviteUrlInput) {
+    inviteUrlToggle.addEventListener("click", function () {
+      var reveal = inviteUrlInput.type === "password";
+      inviteUrlInput.type = reveal ? "text" : "password";
+      inviteUrlToggle.textContent = reveal ? "Hide URL" : "Show URL";
+      inviteUrlToggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+    });
+  }
+  if (inviteUrlCopy && inviteUrlInput) {
+    inviteUrlCopy.addEventListener("click", function () {
+      var value = inviteUrlInput.value;
+      if (!value) {
+        accessStatus("No one-time invitation URL is available to copy.", true);
+        return;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(function () {
+          accessStatus("One-time invitation URL copied. Deliver it only through a private channel.", false);
+        }).catch(function () {
+          inviteUrlInput.focus();
+          inviteUrlInput.select();
+          accessStatus("Clipboard access was unavailable. The one-time URL is selected for manual copying.", true);
+        });
+        return;
+      }
+      inviteUrlInput.focus();
+      inviteUrlInput.select();
+      accessStatus("Clipboard access is unavailable. The one-time URL is selected for manual copying.", true);
+    });
+  }
+  if (inviteUrlClear) {
+    inviteUrlClear.addEventListener("click", function () {
+      clearIssuedInviteUrl();
+      accessStatus("The one-time invitation URL was cleared from this page. Inventory retains metadata only.", false);
     });
   }
 
@@ -4010,7 +5554,7 @@
   var refreshMeetingRoomsButton = pick("[data-console-refresh-meeting-rooms]");
   if (refreshMeetingRoomsButton) {
     refreshMeetingRoomsButton.addEventListener("click", function () {
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before refreshing meeting rooms.", true);
         return;
       }
@@ -4025,7 +5569,7 @@
   if (meetingRoomFilterForm) {
     meetingRoomFilterForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before filtering meeting rooms.", true);
         return;
       }
@@ -4054,7 +5598,7 @@
   if (createMeetingRoomForm) {
     createMeetingRoomForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before creating a meeting room.", true);
         return;
       }
@@ -4098,7 +5642,7 @@
   if (routingDecisionForm) {
     routingDecisionForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before creating a routing decision.", true);
         return;
       }
@@ -4149,7 +5693,7 @@
   var refreshRoutingButton = pick("[data-console-refresh-routing-decisions]");
   if (refreshRoutingButton) {
     refreshRoutingButton.addEventListener("click", function () {
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before refreshing routing decisions.", true);
         return;
       }
@@ -4364,7 +5908,7 @@
     inboxForm.addEventListener("submit", function (event) {
       event.preventDefault();
       setInboxAgent(inboxForm.elements.agentId.value.trim() || state.agentId);
-      refreshInbox(state.agentId).catch(function (error) { setStatus(error.message, true); });
+      refreshInbox(state.inboxAgentId).catch(function (error) { setStatus(error.message, true); });
     });
   }
 
@@ -4382,7 +5926,7 @@
   var refreshLanesButton = pick("[data-console-refresh-lanes]");
   if (refreshLanesButton) {
     refreshLanesButton.addEventListener("click", function () {
-      if (!state.key || !state.workspaceId) {
+      if (!hasWorkspaceSession()) {
         setStatus("Load workspace before refreshing all lanes.", true);
         return;
       }
@@ -4401,7 +5945,7 @@
       body: {
         workspaceId: state.workspaceId,
         notificationId: notificationId,
-        consumerAgentId: state.agentId,
+        consumerAgentId: ackContext.ackAgentId || state.inboxAgentId || state.agentId,
         status: "read",
       },
     }).then(function (payload) {
@@ -4428,7 +5972,7 @@
           renderAcknowledgementSummary(payload);
           return payload;
         })
-        .then(function () { return refreshInbox(state.agentId); })
+        .then(function () { return refreshInbox(state.inboxAgentId); })
         .then(refreshReceipts)
         .then(refreshLaneOverview)
         .then(function () { setStatus("Notification acknowledged and receipt refreshed.", false); })
@@ -4465,7 +6009,7 @@
             }).filter(Boolean),
           });
         })
-        .then(function () { return refreshInbox(state.agentId); })
+        .then(function () { return refreshInbox(state.inboxAgentId); })
         .then(refreshReceipts)
         .then(refreshLaneOverview)
         .then(function () { setStatus(notificationIds.length + " visible notification(s) acknowledged and receipts refreshed.", false); })

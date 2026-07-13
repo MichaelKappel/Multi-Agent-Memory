@@ -31,7 +31,7 @@ class MySQLStoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = DirectWorkspaceStatusStore(Path(tmp) / "matm.sqlite")
-            workspace_id, _key_id, _token, account_id, company_id, project_id = store.create_free_account(
+            workspace_id, _key_id, _token, account_id, company_id, project_id, _recovery_secret = store.create_free_account(
                 "SQL Workspace",
                 "SQL Company",
                 "SQL Project",
@@ -60,7 +60,7 @@ class MySQLStoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = DirectConfirmationStore(Path(tmp) / "matm.sqlite")
-            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id, _recovery_secret = store.create_free_account(
                 "SQL Confirmation Workspace",
                 "SQL Confirmation Company",
                 "SQL Confirmation Project",
@@ -96,7 +96,7 @@ class MySQLStoreTests(unittest.TestCase):
                 ("sqlite", SQLiteStore(Path(tmp) / "matm.sqlite")),
             ):
                 with self.subTest(backend=label):
-                    workspace_id, _key_id, _token, _account_id, _company_id, project_id = store.create_free_account(
+                    workspace_id, _key_id, _token, _account_id, _company_id, project_id, _recovery_secret = store.create_free_account(
                         "Search Workspace " + label,
                         "Search Company " + label,
                         "Search Project " + label,
@@ -233,7 +233,7 @@ class MySQLStoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = DirectAuditStore(Path(tmp) / "matm.sqlite")
-            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id, _recovery_secret = store.create_free_account(
                 "SQL Sync Audit Workspace",
                 "SQL Sync Audit Company",
                 "SQL Sync Audit Project",

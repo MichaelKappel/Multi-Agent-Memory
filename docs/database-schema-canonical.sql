@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS matm_companies (
   company_id VARCHAR(96) PRIMARY KEY,
   label VARCHAR(255) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'active',
+  history_retention_days INT NOT NULL DEFAULT 7,
+  soft_deleted_at TIMESTAMP NULL,
+  pre_delete_status VARCHAR(32) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -57,6 +60,23 @@ CREATE TABLE IF NOT EXISTS matm_projects (
   CONSTRAINT fk_matm_projects_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_scope_nodes (
+  scope_node_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  parent_scope_type VARCHAR(32) NULL,
+  parent_scope_id VARCHAR(128) NULL,
+  workspace_id VARCHAR(96) NULL,
+  project_id VARCHAR(96) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_matm_scope_nodes_identity (company_id, scope_type, scope_id),
+  KEY ix_matm_scope_nodes_parent (company_id, parent_scope_type, parent_scope_id),
+  CONSTRAINT fk_matm_scope_nodes_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_scope_nodes_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_scope_nodes_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_api_keys (
   key_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,
@@ -68,6 +88,478 @@ CREATE TABLE IF NOT EXISTS matm_api_keys (
   UNIQUE KEY ux_matm_api_keys_hash (token_hash),
   KEY ix_matm_api_keys_workspace (workspace_id),
   CONSTRAINT fk_matm_api_keys_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_company_master_keys (
+  master_key_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  token_hash VARCHAR(80) NOT NULL,
+  label VARCHAR(255) NOT NULL,
+  principal_name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_company_master_keys_hash (token_hash),
+  KEY ix_matm_company_master_keys_company (company_id, revoked_at),
+  CONSTRAINT fk_matm_company_master_keys_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_owner_credentials (
+  human_credential_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  token_hash VARCHAR(80) NOT NULL,
+  principal_name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_human_owner_credentials_hash (token_hash),
+  KEY ix_matm_human_owner_credentials_company (company_id, revoked_at),
+  CONSTRAINT fk_matm_human_owner_credentials_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_sessions (
+  human_session_id VARCHAR(96) PRIMARY KEY,
+  human_credential_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  session_hash VARCHAR(80) NOT NULL,
+  csrf_hash VARCHAR(80) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NULL,
+  reauthenticated_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_human_sessions_hash (session_hash),
+  KEY ix_matm_human_sessions_company (company_id, revoked_at, expires_at),
+  CONSTRAINT fk_matm_human_sessions_credential FOREIGN KEY (human_credential_id) REFERENCES matm_human_owner_credentials (human_credential_id),
+  CONSTRAINT fk_matm_human_sessions_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_accounts (
+  human_account_id VARCHAR(96) PRIMARY KEY,
+  username VARCHAR(64) NOT NULL,
+  username_normalized VARCHAR(64) NOT NULL,
+  display_name VARCHAR(80) NOT NULL,
+  password_verifier VARCHAR(512) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_human_accounts_username (username),
+  UNIQUE KEY ux_matm_human_accounts_username_normalized (username_normalized)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_company_master_proofs (
+  master_proof_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  master_key_id VARCHAR(96) NOT NULL,
+  proof_hash VARCHAR(80) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'issued',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  consumed_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_company_master_proofs_hash (proof_hash),
+  KEY ix_matm_company_master_proofs_company (company_id, status, expires_at),
+  CONSTRAINT fk_matm_company_master_proofs_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_company_master_proofs_master FOREIGN KEY (master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_company_authorities (
+  authority_id VARCHAR(96) PRIMARY KEY,
+  human_account_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  master_key_id VARCHAR(96) NOT NULL,
+  role VARCHAR(32) NOT NULL,
+  linked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  linked_by_account_id VARCHAR(96) NOT NULL,
+  UNIQUE KEY ux_matm_human_company_authorities_account_company (human_account_id, company_id),
+  KEY ix_matm_human_company_authorities_company (company_id, role),
+  CONSTRAINT fk_matm_human_company_authorities_account FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_human_company_authorities_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_human_company_authorities_master FOREIGN KEY (master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+  CONSTRAINT fk_matm_human_company_authorities_linked_by FOREIGN KEY (linked_by_account_id) REFERENCES matm_human_accounts (human_account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_account_sessions (
+  human_account_session_id VARCHAR(96) PRIMARY KEY,
+  human_account_id VARCHAR(96) NOT NULL,
+  selected_authority_id VARCHAR(96) NULL,
+  selected_company_id VARCHAR(96) NULL,
+  session_hash VARCHAR(80) NOT NULL,
+  csrf_hash VARCHAR(80) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NULL,
+  password_reauthenticated_at TIMESTAMP NULL,
+  rotated_from_session_id VARCHAR(96) NULL,
+  revoked_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_human_account_sessions_hash (session_hash),
+  KEY ix_matm_human_account_sessions_account (human_account_id, revoked_at, expires_at),
+  CONSTRAINT fk_matm_human_account_sessions_account FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_human_account_sessions_authority FOREIGN KEY (selected_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+  CONSTRAINT fk_matm_human_account_sessions_company FOREIGN KEY (selected_company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_human_operational_contexts (
+  human_account_session_id VARCHAR(96) PRIMARY KEY,
+  human_account_id VARCHAR(96) NOT NULL,
+  authority_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  workspace_id VARCHAR(96) NULL,
+  project_id VARCHAR(96) NULL,
+  context_version VARCHAR(96) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_human_operational_context_version (context_version),
+  KEY ix_matm_human_operational_context_company (company_id, human_account_id),
+  CONSTRAINT fk_matm_human_operational_context_session FOREIGN KEY (human_account_session_id) REFERENCES matm_human_account_sessions (human_account_session_id),
+  CONSTRAINT fk_matm_human_operational_context_account FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_human_operational_context_authority FOREIGN KEY (authority_id) REFERENCES matm_human_company_authorities (authority_id),
+  CONSTRAINT fk_matm_human_operational_context_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_human_operational_context_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_human_operational_context_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_company_closure_intents (
+  closure_intent_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  human_session_id VARCHAR(96) NOT NULL,
+  auth_mode VARCHAR(32) NOT NULL DEFAULT 'human_account',
+  intent_hash VARCHAR(80) NOT NULL,
+  purpose VARCHAR(32) NOT NULL,
+  typed_confirmation_phrase VARCHAR(255) NOT NULL,
+  acknowledge_export_opportunity TINYINT(1) NOT NULL DEFAULT 0,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  consumed_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_company_closure_intents_hash (intent_hash),
+  KEY ix_matm_company_closure_intents_company (company_id, purpose, status, expires_at),
+  CONSTRAINT fk_matm_company_closure_intents_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_company_export_receipts (
+  export_receipt_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  human_session_id VARCHAR(96) NOT NULL,
+  artifact_digest VARCHAR(96) NOT NULL,
+  artifact_format VARCHAR(32) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_matm_company_export_receipts_company (company_id, created_at),
+  CONSTRAINT fk_matm_company_export_receipts_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_company_export_receipts_session FOREIGN KEY (human_session_id) REFERENCES matm_human_account_sessions (human_account_session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_identities (
+  agent_identity_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  agent_name VARCHAR(255) NOT NULL,
+  agent_name_normalized VARCHAR(255) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_agent_identities_company_agent (company_id, agent_id),
+  UNIQUE KEY ux_matm_agent_identities_company_name (company_id, agent_name_normalized),
+  KEY ix_matm_agent_identities_company (company_id, status),
+  CONSTRAINT fk_matm_agent_identities_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_connector_rate_limits (
+  bucket VARCHAR(48) NOT NULL,
+  partition_hash CHAR(64) NOT NULL,
+  window_started_at_epoch BIGINT NOT NULL,
+  expires_at_epoch BIGINT NOT NULL,
+  request_count INT NOT NULL,
+  request_limit INT NOT NULL,
+  window_seconds INT NOT NULL,
+  updated_at_epoch BIGINT NOT NULL,
+  PRIMARY KEY (bucket, partition_hash),
+  KEY ix_matm_connector_rate_limits_expiry (expires_at_epoch)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_connector_pairing_requests (
+  request_id VARCHAR(96) PRIMARY KEY,
+  public_request_ref CHAR(51) NOT NULL,
+  pairing_request_proof_verifier VARCHAR(96) NOT NULL,
+  request_idempotency_key_hash VARCHAR(96) NOT NULL,
+  request_digest VARCHAR(96) NOT NULL,
+  request_idempotency_digest VARCHAR(96) NOT NULL,
+  client_id VARCHAR(96) NOT NULL,
+  redirect_uri VARCHAR(512) NOT NULL,
+  state_verifier VARCHAR(96) NOT NULL,
+  code_challenge VARCHAR(128) NOT NULL,
+  code_challenge_method VARCHAR(16) NOT NULL,
+  requested_agent_id VARCHAR(128) NOT NULL,
+  requested_scopes_json TEXT NOT NULL,
+  approved_scopes_json TEXT NULL,
+  scope_digest VARCHAR(96) NOT NULL,
+  approved_agent_id VARCHAR(128) NULL,
+  company_id VARCHAR(96) NULL,
+  workspace_id VARCHAR(96) NULL,
+  project_id VARCHAR(96) NULL,
+  workspace_mode VARCHAR(32) NULL,
+  provisional_workspace TINYINT(1) NOT NULL DEFAULT 0,
+  workspace_label VARCHAR(255) NULL,
+  project_label VARCHAR(255) NULL,
+  status VARCHAR(48) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  approved_at TIMESTAMP NULL,
+  approved_by_human_account_id VARCHAR(96) NULL,
+  approved_by_authority_id VARCHAR(96) NULL,
+  approval_idempotency_key_hash VARCHAR(96) NULL,
+  approval_request_digest VARCHAR(96) NULL,
+  approval_idempotency_digest VARCHAR(96) NULL,
+  authorization_code_id VARCHAR(96) NULL,
+  authorization_code_verifier VARCHAR(96) NULL,
+  authorization_code_expires_at TIMESTAMP NULL,
+  authorization_code_claimed_at TIMESTAMP NULL,
+  authorization_code_consumed_at TIMESTAMP NULL,
+  claim_idempotency_key_hash VARCHAR(96) NULL,
+  claim_request_digest VARCHAR(96) NULL,
+  claim_idempotency_digest VARCHAR(96) NULL,
+  exchange_idempotency_key_hash VARCHAR(96) NULL,
+  exchange_request_digest VARCHAR(96) NULL,
+  exchange_idempotency_digest VARCHAR(96) NULL,
+  human_cancellation_idempotency_key_hash VARCHAR(96) NULL,
+  human_cancellation_request_digest VARCHAR(96) NULL,
+  human_cancellation_idempotency_digest VARCHAR(96) NULL,
+  human_cancelled_at TIMESTAMP NULL,
+  human_cancelled_by_account_id VARCHAR(96) NULL,
+  human_cancellation_reason VARCHAR(255) NULL,
+  UNIQUE KEY ux_matm_connector_requests_public_ref (public_request_ref),
+  UNIQUE KEY ux_matm_connector_requests_proof (pairing_request_proof_verifier),
+  UNIQUE KEY ux_matm_connector_requests_idempotency (request_idempotency_key_hash),
+  UNIQUE KEY ux_matm_connector_requests_code_id (authorization_code_id),
+  UNIQUE KEY ux_matm_connector_requests_code_verifier (authorization_code_verifier),
+  KEY ix_matm_connector_requests_status (status, expires_at),
+  KEY ix_matm_connector_requests_company_agent (company_id, approved_agent_id, status),
+  CONSTRAINT fk_matm_connector_requests_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_connector_requests_human FOREIGN KEY (approved_by_human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_connector_requests_authority FOREIGN KEY (approved_by_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+  CONSTRAINT fk_matm_connector_requests_cancel_human FOREIGN KEY (human_cancelled_by_account_id) REFERENCES matm_human_accounts (human_account_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_connector_pairings (
+  pairing_id VARCHAR(96) PRIMARY KEY,
+  request_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  agent_identity_id VARCHAR(96) NULL,
+  workspace_mode VARCHAR(32) NOT NULL,
+  provisional_workspace TINYINT(1) NOT NULL DEFAULT 0,
+  workspace_label VARCHAR(255) NULL,
+  project_label VARCHAR(255) NULL,
+  status VARCHAR(48) NOT NULL,
+  approved_scopes_json TEXT NOT NULL,
+  scope_digest VARCHAR(96) NOT NULL,
+  current_credential_id VARCHAR(96) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  activation_expires_at TIMESTAMP NULL,
+  activated_at TIMESTAMP NULL,
+  ended_at TIMESTAMP NULL,
+  ended_reason VARCHAR(255) NULL,
+  revoked_by_master_key_id VARCHAR(96) NULL,
+  activation_idempotency_key_hash VARCHAR(96) NULL,
+  activation_request_digest VARCHAR(96) NULL,
+  activation_idempotency_digest VARCHAR(96) NULL,
+  revocation_idempotency_key_hash VARCHAR(96) NULL,
+  revocation_request_digest VARCHAR(96) NULL,
+  revocation_idempotency_digest VARCHAR(96) NULL,
+  disconnect_idempotency_key_hash VARCHAR(96) NULL,
+  disconnect_request_digest VARCHAR(96) NULL,
+  disconnect_idempotency_digest VARCHAR(96) NULL,
+  cancellation_idempotency_key_hash VARCHAR(96) NULL,
+  cancellation_request_digest VARCHAR(96) NULL,
+  cancellation_idempotency_digest VARCHAR(96) NULL,
+  UNIQUE KEY ux_matm_connector_pairings_request (request_id),
+  KEY ix_matm_connector_pairings_company_agent (company_id, agent_id, status),
+  KEY ix_matm_connector_pairings_pending (status, activation_expires_at),
+  CONSTRAINT fk_matm_connector_pairings_request FOREIGN KEY (request_id) REFERENCES matm_connector_pairing_requests (request_id),
+  CONSTRAINT fk_matm_connector_pairings_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_connector_pairings_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+  CONSTRAINT fk_matm_connector_pairings_master FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_connector_credentials (
+  credential_id VARCHAR(96) PRIMARY KEY,
+  pairing_id VARCHAR(96) NOT NULL,
+  credential_verifier VARCHAR(96) NOT NULL,
+  approved_scopes_json TEXT NOT NULL,
+  scope_digest VARCHAR(96) NOT NULL,
+  status VARCHAR(48) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  activated_at TIMESTAMP NULL,
+  last_used_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  raw_credential_persisted TINYINT(1) NOT NULL DEFAULT 0,
+  UNIQUE KEY ux_matm_connector_credentials_verifier (credential_verifier),
+  KEY ix_matm_connector_credentials_pairing (pairing_id, status),
+  CONSTRAINT fk_matm_connector_credentials_pairing FOREIGN KEY (pairing_id) REFERENCES matm_connector_pairings (pairing_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_connector_rotations (
+  rotation_id VARCHAR(96) PRIMARY KEY,
+  pairing_id VARCHAR(96) NOT NULL,
+  predecessor_credential_id VARCHAR(96) NOT NULL,
+  successor_credential_id VARCHAR(96) NOT NULL,
+  status VARCHAR(48) NOT NULL,
+  approved_scopes_json TEXT NOT NULL,
+  scope_digest VARCHAR(96) NOT NULL,
+  reason VARCHAR(255) NOT NULL,
+  prepare_idempotency_key_hash VARCHAR(96) NOT NULL,
+  prepare_request_digest VARCHAR(96) NOT NULL,
+  prepare_idempotency_digest VARCHAR(96) NOT NULL,
+  activation_idempotency_key_hash VARCHAR(96) NULL,
+  activation_request_digest VARCHAR(96) NULL,
+  activation_idempotency_digest VARCHAR(96) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  activation_expires_at TIMESTAMP NULL,
+  activated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_connector_rotations_successor (successor_credential_id),
+  KEY ix_matm_connector_rotations_pairing (pairing_id, status, activation_expires_at),
+  CONSTRAINT fk_matm_connector_rotations_pairing FOREIGN KEY (pairing_id) REFERENCES matm_connector_pairings (pairing_id),
+  CONSTRAINT fk_matm_connector_rotations_predecessor FOREIGN KEY (predecessor_credential_id) REFERENCES matm_connector_credentials (credential_id),
+  CONSTRAINT fk_matm_connector_rotations_successor FOREIGN KEY (successor_credential_id) REFERENCES matm_connector_credentials (credential_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_access_requests (
+  request_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  agent_name VARCHAR(255) NOT NULL,
+  agent_name_normalized VARCHAR(255) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  justification TEXT NOT NULL,
+  assignment_context_json TEXT NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  requested_by VARCHAR(255) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  supersedes_token_id VARCHAR(96) NULL,
+  memory_transfer_from_token_id VARCHAR(96) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  approved_at TIMESTAMP NULL,
+  approved_by_master_key_id VARCHAR(96) NULL,
+  denied_at TIMESTAMP NULL,
+  denied_by_master_key_id VARCHAR(96) NULL,
+  agent_identity_id VARCHAR(96) NULL,
+  invite_id VARCHAR(96) NULL,
+  decision_reason TEXT NULL,
+  KEY ix_matm_agent_access_requests_company_status (company_id, status, created_at),
+  CONSTRAINT fk_matm_agent_access_requests_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_agent_access_requests_approved_master FOREIGN KEY (approved_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+  CONSTRAINT fk_matm_agent_access_requests_denied_master FOREIGN KEY (denied_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+  CONSTRAINT fk_matm_agent_access_requests_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_invites (
+  invite_id VARCHAR(96) PRIMARY KEY,
+  request_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  agent_identity_id VARCHAR(96) NOT NULL,
+  token_hash VARCHAR(80) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'issued',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  redeemed_at TIMESTAMP NULL,
+  approved_by_master_key_id VARCHAR(96) NOT NULL,
+  revoked_at TIMESTAMP NULL,
+  revoked_by_master_key_id VARCHAR(96) NULL,
+  grant_id VARCHAR(96) NULL,
+  agent_token_id VARCHAR(96) NULL,
+  assignment_context_json TEXT NOT NULL,
+  UNIQUE KEY ux_matm_agent_invites_request (request_id),
+  UNIQUE KEY ux_matm_agent_invites_hash (token_hash),
+  KEY ix_matm_agent_invites_company_status (company_id, status, expires_at),
+  CONSTRAINT fk_matm_agent_invites_request FOREIGN KEY (request_id) REFERENCES matm_agent_access_requests (request_id),
+  CONSTRAINT fk_matm_agent_invites_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_agent_invites_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+  CONSTRAINT fk_matm_agent_invites_approved_master FOREIGN KEY (approved_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id),
+  CONSTRAINT fk_matm_agent_invites_revoked_master FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_access_grants (
+  grant_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  agent_identity_id VARCHAR(96) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL,
+  scope_id VARCHAR(128) NOT NULL,
+  workspace_id VARCHAR(96) NULL,
+  project_id VARCHAR(96) NULL,
+  supersedes_token_id VARCHAR(96) NULL,
+  memory_transfer_from_token_id VARCHAR(96) NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  pending_expires_at TIMESTAMP NULL,
+  predecessor_token_id VARCHAR(96) NULL,
+  activated_at TIMESTAMP NULL,
+  cancelled_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  revoked_by_master_key_id VARCHAR(96) NULL,
+  KEY ix_matm_agent_access_grants_identity (agent_identity_id, status),
+  KEY ix_matm_agent_access_grants_scope (company_id, scope_type, scope_id, status),
+  CONSTRAINT fk_matm_agent_access_grants_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_agent_access_grants_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+  CONSTRAINT fk_matm_agent_access_grants_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_agent_access_grants_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_agent_access_grants_revoked_master FOREIGN KEY (revoked_by_master_key_id) REFERENCES matm_company_master_keys (master_key_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_tokens (
+  agent_token_id VARCHAR(96) PRIMARY KEY,
+  grant_id VARCHAR(96) NOT NULL,
+  agent_identity_id VARCHAR(96) NOT NULL,
+  token_hash VARCHAR(80) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMP NULL,
+  revoked_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_agent_tokens_grant (grant_id),
+  UNIQUE KEY ux_matm_agent_tokens_hash (token_hash),
+  KEY ix_matm_agent_tokens_identity (agent_identity_id, revoked_at),
+  CONSTRAINT fk_matm_agent_tokens_grant FOREIGN KEY (grant_id) REFERENCES matm_agent_access_grants (grant_id),
+  CONSTRAINT fk_matm_agent_tokens_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_agent_token_replacements (
+  replacement_id VARCHAR(96) PRIMARY KEY,
+  company_id VARCHAR(96) NOT NULL,
+  human_account_id VARCHAR(96) NOT NULL,
+  authority_id VARCHAR(96) NOT NULL,
+  predecessor_credential_id VARCHAR(96) NOT NULL,
+  successor_credential_id VARCHAR(96) NOT NULL,
+  successor_grant_id VARCHAR(96) NOT NULL,
+  agent_identity_id VARCHAR(96) NOT NULL,
+  reason VARCHAR(255) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'prepared',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  prepare_idempotency_hash CHAR(64) NULL,
+  prepare_request_digest CHAR(64) NULL,
+  successor_delivered_at TIMESTAMP NULL,
+  confirm_idempotency_hash CHAR(64) NULL,
+  confirm_request_digest CHAR(64) NULL,
+  confirmed_at TIMESTAMP NULL,
+  cancel_idempotency_hash CHAR(64) NULL,
+  cancel_request_digest CHAR(64) NULL,
+  canceled_at TIMESTAMP NULL,
+  revoked_credential_id VARCHAR(96) NULL,
+  activated_credential_id VARCHAR(96) NULL,
+  UNIQUE KEY ux_matm_agent_token_replacements_successor (successor_credential_id),
+  UNIQUE KEY ux_matm_agent_token_replacements_grant (successor_grant_id),
+  UNIQUE KEY ux_matm_agent_token_replacements_prepare_idem (company_id, prepare_idempotency_hash),
+  KEY ix_matm_agent_token_replacements_company (company_id, status, expires_at),
+  KEY ix_matm_agent_token_replacements_predecessor (predecessor_credential_id, status),
+  CONSTRAINT fk_matm_agent_token_replacements_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_agent_token_replacements_human FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_agent_token_replacements_authority FOREIGN KEY (authority_id) REFERENCES matm_human_company_authorities (authority_id),
+  CONSTRAINT fk_matm_agent_token_replacements_predecessor FOREIGN KEY (predecessor_credential_id) REFERENCES matm_agent_tokens (agent_token_id),
+  CONSTRAINT fk_matm_agent_token_replacements_successor FOREIGN KEY (successor_credential_id) REFERENCES matm_agent_tokens (agent_token_id),
+  CONSTRAINT fk_matm_agent_token_replacements_grant FOREIGN KEY (successor_grant_id) REFERENCES matm_agent_access_grants (grant_id),
+  CONSTRAINT fk_matm_agent_token_replacements_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_agents (
@@ -211,6 +703,12 @@ CREATE TABLE IF NOT EXISTS matm_memory_records (
   memory_id VARCHAR(96) PRIMARY KEY,
   workspace_id VARCHAR(96) NOT NULL,
   actor_agent_id VARCHAR(128) NULL,
+  human_account_id VARCHAR(96) NULL,
+  human_account_session_id VARCHAR(96) NULL,
+  human_username VARCHAR(64) NULL,
+  human_authority_id VARCHAR(96) NULL,
+  human_company_id VARCHAR(96) NULL,
+  auth_mode VARCHAR(32) NOT NULL DEFAULT 'agent',
   scope_type VARCHAR(32) NOT NULL,
   scope_id VARCHAR(128) NULL,
   memory_type VARCHAR(32) NOT NULL,
@@ -232,7 +730,11 @@ CREATE TABLE IF NOT EXISTS matm_memory_records (
   KEY ix_matm_memory_workspace_scope (workspace_id, scope_type, scope_id),
   KEY ix_matm_memory_status (workspace_id, status, promotion_state),
   FULLTEXT KEY fx_matm_memory_text (title, public_safe_summary),
-  CONSTRAINT fk_matm_memory_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+  CONSTRAINT fk_matm_memory_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_memory_human_account FOREIGN KEY (human_account_id) REFERENCES matm_human_accounts (human_account_id),
+  CONSTRAINT fk_matm_memory_human_session FOREIGN KEY (human_account_session_id) REFERENCES matm_human_account_sessions (human_account_session_id),
+  CONSTRAINT fk_matm_memory_human_authority FOREIGN KEY (human_authority_id) REFERENCES matm_human_company_authorities (authority_id),
+  CONSTRAINT fk_matm_memory_human_company FOREIGN KEY (human_company_id) REFERENCES matm_companies (company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_memory_revisions (

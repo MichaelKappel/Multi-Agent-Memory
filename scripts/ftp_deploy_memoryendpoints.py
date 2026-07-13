@@ -13,7 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dist" / "MemoryEndpoints.com-Production.zip"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
-from package_memoryendpoints import iter_files, write_current_build_info
+from package_memoryendpoints import (
+    SourceRevisionError,
+    capture_files,
+    captured_source_content_hash,
+    inspect_current_source,
+    iter_files,
+    write_current_build_info,
+)
 from ftp_deploy_static_site import DEFAULT_FILEZILLA_SITEMANAGER, load_filezilla_site
 
 
@@ -136,6 +143,33 @@ def transport_security(protocol):
     return "plain_ftp" if protocol == "ftp" else "explicit_ftps"
 
 
+def capture_exact_revision_snapshot(build_info):
+    if build_info.get("sourceWorktreeDirty") is not False:
+        return None, "dirty_packaged_source"
+    if not build_info.get("sourceSha") or build_info.get("sourceSha") == "unknown":
+        return None, "source_revision_unavailable"
+
+    files = list(iter_files())
+    try:
+        snapshot = capture_files(files)
+        snapshot_content_hash = captured_source_content_hash(snapshot)
+        final_source = inspect_current_source()
+    except (OSError, SourceRevisionError):
+        return None, "source_changed_during_deploy_preflight"
+    if (
+        snapshot_content_hash != build_info.get("contentHash")
+        or final_source["sourceSha"] != build_info.get("sourceSha")
+        or final_source["dirtyPaths"]
+        or final_source["contentHash"] != build_info.get("contentHash")
+    ):
+        return None, "source_changed_during_deploy_preflight"
+    return {
+        "files": snapshot,
+        "contentHash": snapshot_content_hash,
+        "sourceSha": final_source["sourceSha"],
+    }, None
+
+
 def discover_remote_dir(host, user, password, port, fields, protocol):
     report = {
         "attempted": False,
@@ -243,7 +277,18 @@ def main(argv=None):
         if args.dry_run or args.allow_discovered_live_upload:
             remote_dir = discovered_dir
 
-    build_info = write_current_build_info()
+    source_revision_error = False
+    try:
+        build_info = write_current_build_info()
+    except (OSError, SourceRevisionError):
+        source_revision_error = True
+        build_info = {
+            "sourceSha": None,
+            "sourceShaShort": None,
+            "contentHash": None,
+            "sourceWorktreeDirty": None,
+            "sourceDirtyPathCount": None,
+        }
     planned_files = list(iter_files())
     report = {
         "schemaVersion": "memoryendpoints.ftp_deploy.v1",
@@ -265,6 +310,9 @@ def main(argv=None):
         "build": {
             "sourceSha": build_info["sourceSha"],
             "sourceShaShort": build_info["sourceShaShort"],
+            "contentHash": build_info["contentHash"],
+            "sourceWorktreeDirty": build_info["sourceWorktreeDirty"],
+            "sourceDirtyPathCount": build_info["sourceDirtyPathCount"],
             "buildInfoFile": "memoryendpoints/build_info.generated.json",
             "valuesRedacted": True,
         },
@@ -277,22 +325,15 @@ def main(argv=None):
         report["discovery"] = discovery_report
     report["status"] = "ready" if remote_dir else "missing_remote_dir"
     report["safeNoOp"] = bool(args.dry_run or args.connection_check or not remote_dir)
-    if discovered_dir and not args.allow_discovered_live_upload and not args.dry_run:
-        report["status"] = "discovered_remote_dir_requires_explicit_live_allow"
-        report["safeNoOp"] = True
-        emit_report(report, args)
-        return 1
-    if args.dry_run:
-        emit_report(report, args)
-        return 0 if report["packageExists"] and remote_dir else 1
-    if not remote_dir:
-        emit_report(report, args)
-        return 1
-    if not (host and user and password):
-        report["status"] = "missing_ftp_fields"
-        emit_report(report, args)
-        return 1
+    report["sourceRevisionVerified"] = False
     if args.connection_check:
+        if not remote_dir:
+            emit_report(report, args)
+            return 1
+        if not (host and user and password):
+            report["status"] = "missing_ftp_fields"
+            emit_report(report, args)
+            return 1
         phase = "login"
         try:
             with connect_ftp(host, user, password, port, args.protocol) as ftp:
@@ -313,6 +354,41 @@ def main(argv=None):
         report["safeNoOp"] = True
         emit_report(report, args)
         return 0
+    if source_revision_error:
+        report["status"] = "source_revision_unavailable"
+        report["safeNoOp"] = True
+        emit_report(report, args)
+        return 1
+    if build_info["sourceWorktreeDirty"] is not False:
+        report["status"] = "dirty_packaged_source"
+        report["safeNoOp"] = True
+        emit_report(report, args)
+        return 1
+
+    exact_snapshot, snapshot_error = capture_exact_revision_snapshot(build_info)
+    if snapshot_error:
+        report["status"] = snapshot_error
+        report["safeNoOp"] = True
+        emit_report(report, args)
+        return 1
+    report["plannedUploadCount"] = len(exact_snapshot["files"])
+    report["snapshotContentHash"] = exact_snapshot["contentHash"]
+    report["sourceRevisionVerified"] = True
+    if discovered_dir and not args.allow_discovered_live_upload and not args.dry_run:
+        report["status"] = "discovered_remote_dir_requires_explicit_live_allow"
+        report["safeNoOp"] = True
+        emit_report(report, args)
+        return 1
+    if args.dry_run:
+        emit_report(report, args)
+        return 0 if report["packageExists"] and remote_dir else 1
+    if not remote_dir:
+        emit_report(report, args)
+        return 1
+    if not (host and user and password):
+        report["status"] = "missing_ftp_fields"
+        emit_report(report, args)
+        return 1
     uploaded_count = 0
     phase = "connect"
     try:
@@ -321,7 +397,8 @@ def main(argv=None):
             phase = "cwd_remote_dir"
             ftp.cwd(remote_dir)
             made_dirs = set(["."])
-            for path, rel in planned_files:
+            for rel_text, body in exact_snapshot["files"]:
+                rel = Path(rel_text)
                 parts = list(rel.parts[:-1])
                 current = ""
                 for part in parts:
@@ -334,10 +411,9 @@ def main(argv=None):
                     except Exception:
                         pass
                     made_dirs.add(current)
-                remote_name = str(rel).replace("\\", "/")
+                remote_name = rel_text
                 phase = "upload:" + remote_name
-                with open(str(path), "rb") as handle:
-                    ftp.storbinary("STOR " + remote_name, handle)
+                ftp.storbinary("STOR " + remote_name, io.BytesIO(body))
                 uploaded_count += 1
             try:
                 phase = "mkdir:tmp"

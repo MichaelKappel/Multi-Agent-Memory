@@ -13,7 +13,7 @@ class FileStoreSyncTests(unittest.TestCase):
     def test_sync_mutation_records_head_changes_and_redacted_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
-            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id, _recovery_secret = store.create_free_account(
                 "Sync Workspace",
                 "Sync Company",
                 "Sync Project",
@@ -57,7 +57,7 @@ class FileStoreSyncTests(unittest.TestCase):
     def test_sync_conflict_preserves_existing_head_and_records_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
-            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id, _recovery_secret = store.create_free_account(
                 "Sync Conflict Workspace",
                 "Sync Conflict Company",
                 "Sync Conflict Project",
@@ -109,7 +109,7 @@ class FileStoreSyncTests(unittest.TestCase):
     def test_revoked_sync_device_rejects_mutation_without_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
-            workspace_id, _key_id, _token, _account_id, _company_id, _project_id = store.create_free_account(
+            workspace_id, _key_id, _token, _account_id, _company_id, _project_id, _recovery_secret = store.create_free_account(
                 "Sync Revoke Workspace",
                 "Sync Revoke Company",
                 "Sync Revoke Project",

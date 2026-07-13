@@ -1,0 +1,134 @@
+{
+  "baseUrl": "https://memoryendpoints.com",
+  "failedCount": 0,
+  "ok": true,
+  "passedCount": 3,
+  "probeCount": 3,
+  "probes": [
+    {
+      "durableReadback": {
+        "auditMatchCount": 1,
+        "exactSearchCount": 1,
+        "reviewQueueMatchCount": 1
+      },
+      "eventId": "mem-06b56dd0248f4deba170",
+      "mismatches": [],
+      "ok": true,
+      "probeIndex": 1,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "readStatuses": {
+        "auditLog": 200,
+        "reviewQueue": 200,
+        "search": 200
+      },
+      "readbackAttemptCount": 10,
+      "readbackAttemptsUsed": 1,
+      "responseClaims": {
+        "persisted": true,
+        "visibleInAuditLog": true,
+        "visibleInReviewQueue": true,
+        "visibleInSearch": true
+      },
+      "reviewId": "review-493dd01afa784c9f9dc4",
+      "reviewStatusCounts": {
+        "pending": 1,
+        "promoted": 0,
+        "quarantined": 0,
+        "rejected": 0
+      },
+      "runTag": "20260711012324-608d260e",
+      "searchFilters": {
+        "eventId": "mem-06b56dd0248f4deba170"
+      },
+      "submitStatus": 201,
+      "valuesRedacted": true
+    },
+    {
+      "durableReadback": {
+        "auditMatchCount": 1,
+        "exactSearchCount": 1,
+        "reviewQueueMatchCount": 1
+      },
+      "eventId": "mem-d7a9e6d351464b209f7d",
+      "mismatches": [],
+      "ok": true,
+      "probeIndex": 2,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "readStatuses": {
+        "auditLog": 200,
+        "reviewQueue": 200,
+        "search": 200
+      },
+      "readbackAttemptCount": 10,
+      "readbackAttemptsUsed": 1,
+      "responseClaims": {
+        "persisted": true,
+        "visibleInAuditLog": true,
+        "visibleInReviewQueue": true,
+        "visibleInSearch": true
+      },
+      "reviewId": "review-0e0d299fc30646ce9f17",
+      "reviewStatusCounts": {
+        "pending": 2,
+        "promoted": 0,
+        "quarantined": 0,
+        "rejected": 0
+      },
+      "runTag": "20260711012324-608d260e",
+      "searchFilters": {
+        "eventId": "mem-d7a9e6d351464b209f7d"
+      },
+      "submitStatus": 201,
+      "valuesRedacted": true
+    },
+    {
+      "durableReadback": {
+        "auditMatchCount": 1,
+        "exactSearchCount": 1,
+        "reviewQueueMatchCount": 1
+      },
+      "eventId": "mem-ae5fb47be9ed4018a7ee",
+      "mismatches": [],
+      "ok": true,
+      "probeIndex": 3,
+      "rawCredentialExposed": false,
+      "rawPayloadExposed": false,
+      "readStatuses": {
+        "auditLog": 200,
+        "reviewQueue": 200,
+        "search": 200
+      },
+      "readbackAttemptCount": 10,
+      "readbackAttemptsUsed": 1,
+      "responseClaims": {
+        "persisted": true,
+        "visibleInAuditLog": true,
+        "visibleInReviewQueue": true,
+        "visibleInSearch": true
+      },
+      "reviewId": "review-2567a92c29254e4b854c",
+      "reviewStatusCounts": {
+        "pending": 3,
+        "promoted": 0,
+        "quarantined": 0,
+        "rejected": 0
+      },
+      "runTag": "20260711012324-608d260e",
+      "searchFilters": {
+        "eventId": "mem-ae5fb47be9ed4018a7ee"
+      },
+      "submitStatus": 201,
+      "valuesRedacted": true
+    }
+  ],
+  "rawCredentialExposed": false,
+  "rawCredentialValuesStored": false,
+  "rawPayloadExposed": false,
+  "rawWorkspaceIdStored": false,
+  "schemaVersion": "memoryendpoints.live_memory_submit_consistency.v1",
+  "sourceSha": "950d9756405e953bdde87487f68e025e4d0b26e7",
+  "valuesRedacted": true,
+  "workspaceIdHash": "sha256:ac7e278ec10cdd0fb4b1930c020d08a66d6561b11b5be2e2a23b5b87f33358da"
+}

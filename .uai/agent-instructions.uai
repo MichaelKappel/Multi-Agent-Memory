@@ -23,7 +23,7 @@ Instructions:
 - Never use README files as active memory-package state.
 
 MemoryEndpoints.com coordination map:
-- Active identity for this Codex thread: use `MemoryEndpoints-Backend-Agent` for protected knowledge ingestion, storage, API, MySQL, deployment, route contracts, archive dogfooding, and verification evidence.
+- Active identity for this Codex thread: use `MemoryEndpoints-Frontend-Agent` for predeployment coordination, frontend/public evidence, SEO/readiness sweeps, companion-site checks, and human-facing verification evidence.
 - Backend coordinator identity: use `MemoryEndpoints-Backend-Agent` for backend, storage, API, deployment, and database work. Treat `MemoryEndpoints-Beckend-Agent` as a historical typo lane only when reading older records; do not create new MemoryEndpoints coordination messages under the typo.
 - Agent-owned `.uai` lanes: read `.uai/agents/memoryendpoints-frontend-agent.uai` and `.uai/agents/memoryendpoints-backend-agent.uai` after this file. Those files define role ownership and collision rules; MemoryEndpoints rooms carry working coordination.
 - Same-codebase coordination rule: before editing files that another active agent could touch, read the project-wide room and the active goal room, then post a public-safe meeting note naming agent identity, intended file scope, expected tests, and blockers. Current messages are reserved for work that requires direct attention; durable meeting rooms carry status and decisions.
