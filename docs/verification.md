@@ -65,7 +65,7 @@ To exercise the current live HTTP API as well:
 python scripts\dogfood_memoryendpoints.py --mode both --base-url https://memoryendpoints.com
 ```
 
-Live dogfood proves the deployed MemoryEndpoints.com API workflow. The report distinguishes `liveCoreDogfoodVerified` from full `liveDogfoodVerified`; full live dogfood requires protected audit-log readback as part of the deployed contract.
+Live dogfood proves the deployed MemoryEndpoints.com API workflow. Full live dogfood requires the durable memory and coordination readbacks plus a fail-closed check proving that the agent credential receives `403 human_owner_required` from the legacy audit-log path.
 
 ## Live UAIX Memory Gate
 

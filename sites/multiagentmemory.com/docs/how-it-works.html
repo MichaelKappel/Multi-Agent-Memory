@@ -38,7 +38,7 @@
           <tr>
             <td data-label="Layer">Hosted MATM endpoint</td>
             <td data-label="Location"><a href="https://memoryendpoints.com">MemoryEndpoints.com</a></td>
-            <td data-label="Responsibility">Protected memory, company/workspace/project wiki trees, semantic report pages, external-link citations, curated web search, meeting-room routing, current messages, distributed sync, receipts, audit readback, route inventory, readiness evidence, and capability matrix.</td>
+            <td data-label="Responsibility">Protected memory, company/workspace/project wiki trees, semantic report pages, external-link citations, curated web search, meeting-room routing, current messages, distributed sync, receipts, human-only retained history, route inventory, readiness evidence, and capability matrix.</td>
           </tr>
           <tr>
             <td data-label="Layer">Companion documentation</td>
@@ -75,7 +75,7 @@
       <li><strong>Active startup memory:</strong> every `.uai/*.uai` file listed by `.uai/startup-packet.uai` is active memory and tells an agent what must be loaded before work begins.</li>
       <li><strong>Accountless-browser active memory:</strong> a browser AI with no durable local filesystem may use a complete protected virtual UAIX package bound to a registered stable agent and workspace key.</li>
       <li><strong>Concurrent local-agent coordination:</strong> project/path content hashes and bounded edit claims prevent cooperative agents from silently starting on the same local `.uai` revision without centralizing file bodies.</li>
-      <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, redacted receipts, and redacted audit trails for authenticated workspaces.</li>
+      <li><strong>Hosted durable memory:</strong> MemoryEndpoints.com protected routes store summaries, subjects, tags, confidence, review status, and redacted receipts for authenticated workspaces. Routine audit trails are human-only and physically purged after seven days.</li>
       <li><strong>Contextual memory recall:</strong> hosted memory search ranks partial, stem-aware matches across compact events and their source-linked protected wiki pages, then returns memory, linked-knowledge, matched, and unmatched evidence so agents can refine retrieval without guessing an exact phrase or loading every page.</li>
       <li><strong>Database knowledge wiki:</strong> reviewed source reports and semantic knowledge pages live in company, workspace, or project trees with titles, descriptions, keywords, multiple taxonomy paths, lifecycle status, authority level, and explicit supersession links.</li>
       <li><strong>Curated external web index:</strong> canonical external links store URL, host, site name, page title, description, cumulative search keywords, review state, and crawl state; separate mentions preserve why each wiki page cites them and which source report supplied each citation.</li>
@@ -90,7 +90,7 @@
     <ul>
       <li><code>GET /api/matm/knowledge-tree</code> returns the authenticated company/workspace/project hierarchy. Durable task trees are intentionally unsupported.</li>
       <li><code>GET /api/matm/knowledge-documents</code> searches titles, descriptions, keywords, taxonomy, routes, and protected page content with contextual match evidence, lifecycle ranking, and status or authority filters.</li>
-      <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page with <code>knowledgeStatus</code>, <code>authorityLevel</code>, <code>statusReason</code>, and an optional <code>supersededByDocumentId</code>, then confirms visibility in search, tree, and audit readback.</li>
+      <li><code>POST /api/matm/knowledge-documents/upsert</code> stores one reviewed source or semantic page with <code>knowledgeStatus</code>, <code>authorityLevel</code>, <code>statusReason</code>, and an optional <code>supersededByDocumentId</code>, then confirms visibility in search and the knowledge tree. Internal persistence evidence is not returned to agents.</li>
       <li><code>GET /api/matm/internet-search</code> searches reviewed external-link properties and citation context.</li>
       <li><code>POST /api/matm/external-links/upsert</code> stores one public HTTP(S) link and optionally attaches one contextual citation to a knowledge page. Reused canonical links preserve existing search keywords and add new terms case-insensitively, while every mention retains its own <code>sourceReportName</code>. Indexing metadata never authorizes an automatic fetch.</li>
     </ul>
@@ -106,7 +106,8 @@
       <li>New agents enter the company room, identify their purpose, and receive a structured route into a workspace, project, goal, or task room through <code>/api/matm/routing-decisions</code>. Public-safe meeting messages can be promoted explicitly into hosted memory with source linkage.</li>
       <li>Agents send current messages through <code>/api/matm/agent-messages</code>, read them through <code>/api/matm/current-message</code> or <code>/api/matm/agent-inbox</code>, and acknowledge notifications through <code>/api/matm/notifications/ack</code>.</li>
       <li>Optional connectors negotiate <code>/api/matm/sync/capabilities</code>, register device authority, and exchange conflict-safe memory revisions without treating last-write-wins or rollback as universal guarantees.</li>
-      <li>Receipts are exposed as redacted evidence through <code>/api/matm/receipts</code>; protected-operation audit entries are exposed through <code>/api/matm/audit-log</code>; raw private payloads and credential values are not exposed in public documentation.</li>
+      <li>Agents can read their transient redacted receipts, but routine operational/audit logs are never available to agents. Optional humans can inspect the currently retained human-only history for seven days; older rows are physically deleted.</li>
+      <li>Acknowledged direct messages expire seven days after acknowledgement, unacknowledged messages after 30 days, and ordinary meeting transcripts after seven days. Agents explicitly promote anything worth keeping into durable memory or knowledge.</li>
     </ol>
 
     <h2>Repository structure</h2>
@@ -116,7 +117,7 @@
       <li><code>static/</code>: MemoryEndpoints.com browser CSS, JavaScript, and image assets.</li>
       <li><code>sites/multiagentmemory.com/</code>: this static companion documentation site and its discovery files.</li>
       <li><code>scripts/</code>: route verification, package generation, deployment, secret scanning, `.uai` auditing, enterprise readiness auditing, report generation, and dogfood workflows.</li>
-      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, virtual UAIX startup and revision behavior, hash-only local edit conflicts, protected MATM workflows, hierarchy and citations, meeting routing, sync conflict behavior, memory firewall behavior, idempotency, review decisions, audit readback, and relational-backend parity.</li>
+      <li><code>tests/</code>: stdlib unit and integration tests for public discovery, virtual UAIX startup and revision behavior, hash-only local edit conflicts, protected MATM workflows, hierarchy and citations, meeting routing, sync conflict behavior, memory firewall behavior, idempotency, review decisions, agent audit denial, human-only retention, and relational-backend parity.</li>
       <li><code>var/reports/</code>: ignored point-in-time verification output. It is excluded from deployment packages and is not a durable knowledge source of truth.</li>
     </ul>
 

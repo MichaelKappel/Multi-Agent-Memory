@@ -120,8 +120,8 @@ class ReportFreshnessTests(unittest.TestCase):
         )
 
         self.assertIn("Live core MATM dogfood is verified", current)
-        self.assertIn("latest protected audit-log", current)
-        self.assertIn("protected audit-log readback", needed)
+        self.assertIn("latest full contract", current)
+        self.assertIn("fail-closed agent audit access", needed)
 
     def test_dogfood_gap_state_reports_full_live_contract(self):
         current, needed = build_readiness_reports.dogfood_gap_state(

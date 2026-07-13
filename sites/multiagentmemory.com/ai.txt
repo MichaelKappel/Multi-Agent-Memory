@@ -9,6 +9,8 @@ Agents should use the full repository `.uai/` suite as active startup memory and
 
 Active-memory contract: https://memoryendpoints.com/api/matm/uai-memory/contract
 
-Company master guidance: Agent Setup creates and shows the credential once. The default agent-readable file is `<project-root>/.local-secrets/memoryendpoints-company-master.json`, outside source control. If it is missing, stop and ask the human which governed secret store was used; never scan outside the project or request the raw credential in chat. Use a bound agent credential for normal agent work.
+Company master guidance: Agent Setup creates and shows the credential once. The default agent-readable file is `<project-root>/.local-secrets/memoryendpoints-company-master.json`, outside source control. Displaying the path does not create the file: browser setup must use Save to project secret folder, while agent-driven setup must use `scripts/setup_memoryendpoints_company.py` and verify the file exists. If it is missing, stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request the raw credential in chat. Use a bound agent credential for normal agent work.
+
+Retention boundary: routine operational/audit logs are human-only, are never returned to agents, and are physically deleted after seven days. Acknowledged direct messages expire seven days after acknowledgement, unacknowledged direct messages after 30 days, and ordinary meeting transcripts after seven days. Durable routing decisions and explicitly promoted memory or knowledge remain.
 
 Unsupported actions should no-op safely and route back to human review.

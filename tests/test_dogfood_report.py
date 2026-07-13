@@ -180,7 +180,7 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertEqual("/api/matm/meeting-messages", transport.calls[0]["path"])
         self.assertEqual(["room-1"], parse_qs(transport.calls[0]["query"])["room_id"])
 
-    def test_combined_report_preserves_audit_readback_evidence(self):
+    def test_combined_report_preserves_agent_audit_denial_evidence(self):
         report = dogfood_memoryendpoints.combine_reports(
             [
                 {
@@ -195,8 +195,7 @@ class DogfoodReportTests(unittest.TestCase):
                     "rawPrivatePayloadsStored": False,
                     "requiredStepFailureCount": 0,
                     "optionalStepFailureCount": 0,
-                    "auditLogCount": 3,
-                    "auditTrailReadbackVerified": True,
+                    "agentAuditAccessDenied": True,
                     "meetingMemoryPromotionVerified": True,
                     "meetingMemoryReadbackVerified": True,
                     "meetingMemorySourceReadbackVerified": True,
@@ -208,15 +207,14 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertTrue(report["localDogfoodVerified"])
         self.assertFalse(report["liveCoreDogfoodVerified"])
         self.assertTrue(report["latestDogfoodContractVerified"])
-        self.assertTrue(report["localAuditTrailReadbackVerified"])
-        self.assertEqual(3, report["auditLogCount"])
-        self.assertTrue(report["auditTrailReadbackVerified"])
+        self.assertTrue(report["localAgentAuditAccessDenied"])
+        self.assertTrue(report["agentAuditAccessDenied"])
         self.assertTrue(report["meetingMemoryPromotionVerified"])
         self.assertTrue(report["meetingMemoryReadbackVerified"])
         self.assertTrue(report["meetingMemorySourceReadbackVerified"])
         self.assertFalse(report["rawCredentialValuesStored"])
 
-    def test_combined_report_distinguishes_live_core_from_latest_contract(self):
+    def test_combined_report_records_missing_live_agent_audit_denial(self):
         report = dogfood_memoryendpoints.combine_reports(
             [
                 {
@@ -231,8 +229,7 @@ class DogfoodReportTests(unittest.TestCase):
                     "rawPrivatePayloadsStored": False,
                     "requiredStepFailureCount": 1,
                     "optionalStepFailureCount": 1,
-                    "auditLogCount": 0,
-                    "auditTrailReadbackVerified": False,
+                    "agentAuditAccessDenied": False,
                 }
             ]
         )
@@ -241,8 +238,8 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertFalse(report["liveDogfoodVerified"])
         self.assertTrue(report["liveCoreDogfoodVerified"])
         self.assertFalse(report["latestDogfoodContractVerified"])
-        self.assertFalse(report["liveAuditTrailReadbackVerified"])
-        self.assertEqual(0, report["auditLogCount"])
+        self.assertFalse(report["liveAgentAuditAccessDenied"])
+        self.assertFalse(report["agentAuditAccessDenied"])
 
     def test_restore_store_environment_removes_local_store_before_live(self):
         previous_path = os.environ.get("MEMORYENDPOINTS_STORE_PATH")

@@ -106,34 +106,34 @@ def raw_exposure(*payloads):
     }
 
 
-def evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload):
+def evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload, audit_status=403):
     event_id = event_id_from_submit(submit_payload)
     review_id = review_id_from_submit(submit_payload)
     search_items = items(search_payload)
     review_items = items(review_payload)
-    audit_items = items(audit_payload)
     exact_search_matches = [item for item in search_items if item.get("eventId") == event_id]
     review_matches = [item for item in review_items if item.get("memoryEventId") == event_id]
-    audit_matches = [item for item in audit_items if item.get("target") == event_id]
     exposure = raw_exposure(submit_payload, search_payload, review_payload, audit_payload)
     response_claims = {
         "persisted": bool((submit_payload or {}).get("persisted")),
         "visibleInSearch": bool((submit_payload or {}).get("visibleInSearch")),
         "visibleInReviewQueue": bool((submit_payload or {}).get("visibleInReviewQueue")),
-        "visibleInAuditLog": bool((submit_payload or {}).get("visibleInAuditLog")),
+        "auditMetadataAbsent": "visibleInAuditLog" not in (submit_payload or {}) and "auditLogUrl" not in (submit_payload or {}),
     }
     durable = {
         "exactSearchCount": len(exact_search_matches),
         "reviewQueueMatchCount": len(review_matches),
-        "auditMatchCount": len(audit_matches),
+        "agentAuditAccessDenied": audit_status == 403 and ((audit_payload or {}).get("error") or {}).get("code") == "human_owner_required",
     }
     mismatches = []
     if response_claims["visibleInSearch"] and durable["exactSearchCount"] != 1:
         mismatches.append("response_visible_search_without_exact_readback")
     if response_claims["visibleInReviewQueue"] and durable["reviewQueueMatchCount"] < 1:
         mismatches.append("response_visible_review_without_review_readback")
-    if response_claims["visibleInAuditLog"] and durable["auditMatchCount"] < 1:
-        mismatches.append("response_visible_audit_without_audit_readback")
+    if not response_claims["auditMetadataAbsent"]:
+        mismatches.append("agent_response_exposes_audit_metadata")
+    if not durable["agentAuditAccessDenied"]:
+        mismatches.append("agent_audit_access_not_denied")
     if submit_status not in (200, 201):
         mismatches.append("submit_http_status_not_created")
     if not event_id:
@@ -146,7 +146,7 @@ def evaluate_probe(submit_status, submit_payload, search_payload, review_payload
         and response_claims["persisted"]
         and durable["exactSearchCount"] == 1
         and durable["reviewQueueMatchCount"] >= 1
-        and durable["auditMatchCount"] >= 1
+        and durable["agentAuditAccessDenied"]
         and not mismatches
     )
     return {
@@ -190,7 +190,7 @@ def run_probe(
         "scopeId": scope_id or workspace_id,
         "memoryType": "evidence",
         "title": "Memory submit consistency probe %s.%s" % (run_tag, probe_index),
-        "summary": "Public-safe diagnostic memory: submit response must match search, review queue, and audit readback.",
+        "summary": "Public-safe diagnostic memory: submit response must match search and review readback while agent audit access remains denied.",
         "tags": ["dogfood-diagnostic", "submit-consistency", tag],
         "source": "memoryendpoints://diagnostic/memory-submit-consistency/%s/%s" % (run_tag, probe_index),
     }
@@ -230,7 +230,7 @@ def run_probe(
             "/api/matm/audit-log",
             {"action": "memory.submit", "limit": "200"},
         )
-        check = evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload)
+        check = evaluate_probe(submit_status, submit_payload, search_payload, review_payload, audit_payload, audit_status)
         check["readbackAttemptsUsed"] = attempt + 1
         if check["ok"]:
             break

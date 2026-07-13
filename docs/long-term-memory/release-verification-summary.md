@@ -10,7 +10,7 @@ MemoryEndpoints releases are accepted by exact-revision evidence, not by a dated
 - The live upload requests Passenger restart and reports the package file count as uploaded.
 - [`/api/version`](https://memoryendpoints.com/api/version) reports the expected full source SHA and a verified MySQL/MariaDB backend.
 - The live MemoryEndpoints route verifier passes its public contract set with no secret or local-path leak findings.
-- Authenticated live dogfood passes workspace setup, agent registration, memory submit/search/review, meeting coordination, current-message delivery and acknowledgement, receipts, and audit readback.
+- Authenticated live dogfood passes workspace setup, agent registration, memory submit/search/review, meeting coordination, current-message delivery and acknowledgement, receipts, and the agent audit-access denial contract.
 - The live [MultiAgentMemory.com](https://multiagentmemory.com) verifier passes every required HTML and discovery artifact.
 - Unit and integration tests, `.uai` audit, repository-boundary audit, documentation-freshness test, secret scan, package check, and diff check pass from the same checked revision.
 

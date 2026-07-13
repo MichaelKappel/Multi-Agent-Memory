@@ -91,7 +91,11 @@ class HumanAccessMarkupContractTests(unittest.TestCase):
             signed_out,
         )
         self.assertIn("ask your AI agent to check that exact project-relative file", signed_out)
-        self.assertIn("the agent must stop and ask which governed secret store was used", signed_out)
+        self.assertIn("displaying this path does not create the file", signed_out)
+        self.assertIn("setup did not persist it at the default location", signed_out)
+        self.assertIn("the agent must stop", signed_out)
+        self.assertIn("may check only an explicitly configured governed secret store", signed_out)
+        self.assertNotIn("must ask which governed secret store was used", signed_out)
         self.assertIn("never ask you to paste the credential into chat", signed_out)
         self.assertLess(
             signed_out.index("human-access-credential-guide"),

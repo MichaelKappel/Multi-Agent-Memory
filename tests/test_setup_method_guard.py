@@ -114,6 +114,12 @@ class SetupMethodGuardTests(unittest.TestCase):
         self.assertIn("companyMasterTokenSecret", guidance["requiredFields"])
         self.assertIn("Ask your AI agent", guidance["humanIfMissing"])
         self.assertIn("Stop safely", guidance["agentIfMissing"])
+        self.assertTrue(guidance["persistenceRequiredBeforeSetupComplete"])
+        self.assertEqual(
+            "scripts/setup_memoryendpoints_company.py",
+            guidance["agentSetupHelper"],
+        )
+        self.assertIn("does not create a local file", guidance["missingFileMeans"])
         self.assertFalse(guidance["rawCredentialIncluded"])
 
         store = Mock()

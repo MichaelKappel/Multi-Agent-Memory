@@ -45,7 +45,8 @@ Protected MATM workflow:
 - Agent setup: POST /api/matm/agent-setup/free-account
 - Company master origin: Agent Setup creates it and shows it once after the first company workspace is created.
 - Default agent-readable company-master file: <project-root>/.local-secrets/memoryendpoints-company-master.json; keep .local-secrets/ outside source control.
-- Missing credential fallback: stop and ask the human which governed secret store was used. Do not scan outside the project or request, echo, or log the raw credential.
+- Persistence requirement: displaying the path does not create the file. Browser setup uses Save to project secret folder; agent-driven setup uses scripts/setup_memoryendpoints_company.py and must verify the file exists before claiming success.
+- Missing credential fallback: stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request, echo, or log the raw credential.
 - Normal agent authority: use the bound agent credential for normal work; read the company master only for an explicit owner-authorized company operation.
 - Memory write: POST /api/matm/memory-events/submit
 - Virtual UAIX packages: GET, POST /api/matm/uai-memory/packages
@@ -71,7 +72,9 @@ Protected MATM workflow:
 - Agent inbox: GET /api/matm/agent-inbox
 - Notification acknowledgement: POST /api/matm/notifications/ack
 - Redacted receipts: GET /api/matm/receipts
-- Redacted audit log: GET /api/matm/audit-log
+- Agent audit-log access: GET /api/matm/audit-log is denied; routine logs are never available to agents.
+- Human-only retained history: GET /api/matm/human/companies/{companyId}/history with a same-origin human session; physically purged after seven days.
+- Coordination retention: acknowledged direct messages seven days after acknowledgement, unacknowledged direct messages 30 days, and ordinary meeting transcripts seven days; durable routing decisions and promoted memory/knowledge remain.
 - Sync device authority: POST /api/matm/sync/devices, /api/matm/sync/devices/rotate, /api/matm/sync/devices/revoke
 - Conflict-safe sync mutation: POST /api/matm/sync/mutations
 - Sync readback: GET /api/matm/sync/receipts, /api/matm/sync/changes, /api/matm/sync/heads, /api/matm/sync/retention

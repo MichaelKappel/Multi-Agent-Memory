@@ -17,9 +17,11 @@ MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
 
 - Public AI-ready discovery files and evidence routes.
 - Free agent workspace setup with a 200 MB quota.
+- Autonomous setup and normal operation without a required human account. Routine logs are human-only break-glass evidence, never agent-visible, and are physically purged after seven days.
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
-- Protected workspace status, agent registration, accountless-browser virtual UAIX active memory, hash-only local `.uai` edit coordination, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipt and audit routes.
+- Protected workspace status, agent registration, accountless-browser virtual UAIX active memory, hash-only local `.uai` edit coordination, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipts. Routine audit/history routes are human-only and physically expire after seven days.
+- Bounded coordination retention: acknowledged direct messages are deleted seven days after acknowledgement, unacknowledged messages expire after 30 days, and ordinary meeting transcripts are deleted after seven days. Durable routing decisions and explicitly promoted memory/knowledge remain.
 - No anonymous tenant wiki: `/knowledge` is an empty authentication shell, and all company/workspace/project pages, search results, and external-link records require a workspace-bound key. Accounts/users are membership identities, not data scopes.
 - A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
@@ -35,7 +37,7 @@ MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the archi
 | Active startup memory | `.uai/` | Current instructions, constraints, progress state, pointer ledgers, and all files in the startup read order |
 | Accountless-browser active-memory exception | Protected MemoryEndpoints virtual UAIX package | Complete registered-agent startup package only when the browser AI has no durable local filesystem |
 | Concurrent local-agent overlay | Protected MemoryEndpoints file heads and edit claims | Project/path hashes, bounded ownership leases, and public-safe summaries; no local `.uai` body is uploaded |
-| Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory, current messages, notifications, receipts, and redacted audit trails |
+| Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory plus transient current messages, notifications, and receipts; routine logs remain human-only for seven days |
 | Public documentation | [MultiAgentMemory.com](https://multiagentmemory.com) and `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
@@ -87,9 +89,11 @@ Current deployed provenance comes from `/api/version`; current bounded capabilit
 
 ## Company Master Credential
 
-MemoryEndpoints creates the company master credential during [Agent Setup](https://memoryendpoints.com/agent-setup) and shows it once after the first company workspace is created. It is not a human account password and it is not the credential an agent should use for normal work.
+MemoryEndpoints creates the company master credential during [Agent Setup](https://memoryendpoints.com/agent-setup) and shows it once after the first company workspace is created. It is not a human account password and it is not the credential an agent should use for normal work. Displaying a default path does not create a file: setup is incomplete until the credential has been persisted and verified at that path.
 
-For an AI-assisted local project, the default agent-readable file is `<project-root>/.local-secrets/memoryendpoints-company-master.json`. Store JSON fields for `baseUrl`, `companyId`, `workspaceId`, and `companyMasterTokenSecret`; keep `.local-secrets/` in `.gitignore`, restrict the file to the owner and explicitly authorized local agents, and prefer a managed secret store when available. Keep the exceptional human-owner recovery secret separately.
+For browser setup, choose **Save to project secret folder** after creation and select the project root; the page creates `<project-root>/.local-secrets/memoryendpoints-company-master.json`. If folder access is unavailable, it downloads the exact filename and requires the human to move it into `.local-secrets` and verify it exists. Keep `.local-secrets/` in `.gitignore`, restrict the file to the owner and explicitly authorized local agents, and keep the exceptional human-owner recovery secret separately.
+
+For agent-driven setup, use `python scripts/setup_memoryendpoints_company.py --company-label "Example Company" --workspace-label "Example Workspace" --project-label "Example Project" --project-root .`. The helper checks both destinations before the non-idempotent setup request, writes the company master to the standard project file, writes the owner-recovery secret to a separate user recovery file, and prints only redacted confirmation.
 
 If you cannot find the company master, ask your AI agent to check that exact project-relative file. The agent must read it directly instead of asking you to paste the credential into chat. If the file is missing, the agent stops and asks which governed secret store was used; it must not scan outside the project or request, echo, or log the raw value. Normal agents should use their own bound agent credential and access the company master only for an explicit owner-authorized company operation.
 

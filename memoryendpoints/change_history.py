@@ -260,11 +260,35 @@ def agent_mutation_projection(internal_result):
     }
 
 
-def history_records_for_human(records, *, session_kind):
-    """Return detached forensic records only for a human-owner session."""
+def history_records_for_human(
+    records,
+    *,
+    session_kind,
+    now=None,
+    retention_days=FREE_COMPANY_ROUTINE_HISTORY_RETENTION_DAYS,
+):
+    """Return only the seven-day human-accessible routine-history window.
+
+    This filters forensic agent-change records, not autonomous agent memory or
+    current canonical state. Company soft-delete evidence remains available
+    until the separate permanent-purge workflow completes.
+    """
 
     _require_human_owner_session(session_kind)
-    return copy.deepcopy(list(records))
+    if now is None:
+        raise ChangeHistoryPolicyError("now is required to enforce the human history access window.")
+    if not isinstance(retention_days, int) or isinstance(retention_days, bool) or retention_days < 1:
+        raise ChangeHistoryPolicyError("retention_days must be a positive integer.")
+    cutoff = _utc_datetime(now, "now") - _datetime.timedelta(days=retention_days)
+    visible = []
+    for record in copy.deepcopy(list(records)):
+        _history_id(record)
+        if record.get("historyClass") == COMPANY_SOFT_DELETE:
+            visible.append(record)
+            continue
+        if _utc_datetime(record.get("recordedAt"), "recordedAt") >= cutoff:
+            visible.append(record)
+    return visible
 
 
 def review_history_record(

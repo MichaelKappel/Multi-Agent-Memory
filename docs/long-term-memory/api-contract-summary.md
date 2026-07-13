@@ -6,9 +6,9 @@ Protected mutation routes support idempotency keys except for free-account setup
 
 Search returns hosted workspace memory from MemoryEndpoints storage. Files under `docs/long-term-memory` are migration seeds and source-controlled evidence, not the protected search source.
 
-Protected routes cover tenant hierarchy, project records, registered-agent virtual UAIX packages for the accountless-browser exception, hash-only local `.uai` edit coordination, company/workspace/project wiki trees, lifecycle-aware documents, canonical external links and citation mentions, curated internet search, memory firewall and review, meeting-room routing, current-message delivery, redacted receipts and audits, and conflict-safe distributed sync.
+Protected agent routes cover tenant hierarchy, project records, registered-agent virtual UAIX packages for the accountless-browser exception, hash-only local `.uai` edit coordination, company/workspace/project wiki trees, lifecycle-aware documents, canonical external links and citation mentions, curated internet search, memory firewall and review, meeting-room routing, current-message delivery, redacted receipts, and conflict-safe distributed sync. Routine audit/history is human-only.
 
-Important mutations confirm persistence through their read model. A normal success response is not returned when required search, tree, transcript, inbox, receipt, head, or audit readback fails.
+Important mutations confirm persistence through their read model. A normal success response is not returned when required search, tree, transcript, inbox, receipt, or head readback fails; internal server-side audit evidence is never returned to agents.
 
 Virtual active-record writes are date-free, structurally validated, public-safe,
 revision-checked, and returned in deterministic startup order. Local

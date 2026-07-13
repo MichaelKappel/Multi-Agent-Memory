@@ -95,7 +95,7 @@ class MySQLStoreTests(unittest.TestCase):
         self.assertTrue(confirmation["persisted"])
         self.assertTrue(confirmation["visibleInSearch"])
         self.assertTrue(confirmation["visibleInReviewQueue"])
-        self.assertTrue(confirmation["visibleInAuditLog"])
+        self.assertNotIn("visibleInAuditLog", confirmation)
         self.assertTrue(any(item["target"] == event["eventId"] for item in audit_items))
 
     def test_file_and_sql_memory_search_rank_partial_concepts(self):

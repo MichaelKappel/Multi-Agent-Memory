@@ -182,8 +182,8 @@ def dogfood_gap_state(dogfood):
         )
     if dogfood.get("liveCoreDogfoodVerified"):
         return (
-            "Live core MATM dogfood is verified for the currently deployed API; latest protected audit-log dogfood contract is still blocked because the latest route tranche is not deployed.",
-            "Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove protected audit-log readback.",
+            "Live core MATM dogfood is verified for the currently deployed API; the latest full contract still needs verification against the deployed revision.",
+            "Deploy the latest code, verify `/api/version` reports the pushed SHA, then rerun live dogfood and prove fail-closed agent audit access.",
         )
     if dogfood.get("localDogfoodVerified"):
         return (
@@ -637,7 +637,7 @@ def build_enterprise_gap_matrix():
         "| `.uai` startup memory | Improved locally | Active `.uai/*.uai` files are typed, date-free, public-safe, update-route aware, and audited by `scripts/audit_uai_memory.py`. |",
         "| `.uai` totem invariant | Implemented locally | `.uai/totem.uai` says local `.uai` stays active always and hosted MATM never replaces startup continuity. |",
         "| Protected MATM workflows | Implemented locally | `tests/test_app.py` covers free account, one-time key hash persistence, registration, memory submit/search, firewall redaction, review queue, current message, ack, receipts, audit log, idempotency, and safe no-op errors. |",
-        "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, meeting-message promotion to hosted memory, source-id memory readback, ack, receipts, and protected audit-log readback. |",
+        "| Dogfood runner | Implemented locally | `scripts/dogfood_memoryendpoints.py` generated `docs/reports/dogfood-memory-run.json` with local WSGI readback, meeting-message promotion to hosted memory, source-id memory readback, ack, receipts, and fail-closed agent audit access. |",
         "| Hosted coordination memory loop | %s | `%s` |" % ("Verified locally" if (dogfood.get("meetingMemorySourceReadbackVerified") or local_dogfood.get("meetingMemorySourceReadbackVerified")) else "Not fully verified", memory_loop_summary),
         "| Hosted long-term memory migration | %s | `%s` |" % ("Verified" if long_term_memory["verified"] else "Not fully verified", long_term_memory["state"]),
         "| Latest-code MemoryEndpoints.com deployment | %s | `docs/reports/deploy-live-attempt-latest.json` and `docs/reports/live-latest-code-verification.json`. |" % ("Verified" if latest_deployed else "Not verified"),
@@ -781,7 +781,7 @@ def build_current_implementation_audit():
         "- File storage and stdlib SQLite relational tables support the implemented MATM workflows.",
         "- MySQL/MariaDB runtime support exists, but production completion requires live backend verification.",
         "- Integration tests prove one-time workspace keys are persisted only as hashes in file and SQLite storage.",
-        "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, meeting-room coordination, meeting-message promotion to hosted memory, source-id memory readback, current-message creation/readback, notification acknowledgement, receipt readback, and protected audit-log readback locally.",
+        "- Dogfood runner exercises workspace setup, agent registration, memory submit/search, meeting-room coordination, meeting-message promotion to hosted memory, source-id memory readback, current-message creation/readback, notification acknowledgement, receipt readback, and fail-closed agent audit access locally.",
         "- %s" % memory_loop_summary,
         "- %s" % long_term_memory["state"],
         "",
@@ -1052,7 +1052,7 @@ def build_final_markdown(local_report):
         )
     if not live_dogfood:
         blocked_lines.append(
-            "- Live dogfooding: latest contract blocked until protected audit-log readback is deployed and verified."
+            "- Live dogfooding: latest contract blocked until fail-closed agent audit access is deployed and verified."
             if live_core_dogfood
             else "- Live dogfooding: blocked until authenticated live MATM access is verified without exposing credentials."
         )

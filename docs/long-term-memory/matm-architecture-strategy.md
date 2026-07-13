@@ -9,7 +9,7 @@ MemoryEndpoints.com should model MATM as a split-memory system:
 - Hot startup memory: the full typed local `.uai` suite stays active always.
 - Durable hosted memory: authenticated MemoryEndpoints.com MATM routes store mid-to-long-term workspace memory.
 - Companion public docs: MultiAgentMemory.com explains the model and discovery boundary.
-- Evidence layer: exact-SHA route verification, authenticated dogfood, protected audit-log readback, redacted receipts, MySQL verification, companion verification, and deployment reports bound claims.
+- Evidence layer: exact-SHA route verification, authenticated dogfood, fail-closed agent audit access, seven-day human-only history, redacted receipts, MySQL verification, companion verification, and deployment reports bind claims.
 
 The transactive-memory dimensions to preserve are specialization, credibility, and coordination:
 

@@ -144,6 +144,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/human/connector-pairings/{publicRequestRef}/company-selection", "access": "protected", "methods": ["POST"], "purpose": "Resolve a short-lived opaque company reference and rotate the authenticated human session for connector approval."},
     {"route": "/api/matm/human/connector-pairings/{publicRequestRef}/approve", "access": "protected", "methods": ["POST"], "purpose": "Approve the exact canonical agent, exact four scopes, and an existing or provisional workspace through an authenticated human session."},
     {"route": "/api/matm/human/connector-pairings/{publicRequestRef}/cancel", "access": "protected", "methods": ["POST"], "purpose": "Cancel a pending human approval request idempotently before any connector grant exists."},
+    {"route": "/api/matm/human/companies/{companyId}/history", "access": "human_only", "methods": ["GET"], "purpose": "Read currently retained human-only break-glass history; physically purged after seven days and never available to agents."},
     {"route": "/api/matm/connector-pairings/{pairingId}", "access": "protected", "methods": ["GET"], "purpose": "Verify exact workspace, agent, connector scope, and active grant state."},
     {"route": "/api/matm/connector-pairings/{pairingId}/activate", "access": "protected", "methods": ["POST"], "purpose": "Activate a securely stored pending connector grant idempotently."},
     {"route": "/api/matm/connector-pairings/{pairingId}/rotations", "access": "protected", "methods": ["POST"], "purpose": "Prepare and reveal a pending connector credential rotation once."},
@@ -166,16 +167,16 @@ ROUTE_TABLE = [
     {"route": "/api/matm/review-queue", "access": "protected", "methods": ["GET"], "purpose": "Memory review and promotion queue readback."},
     {"route": "/api/matm/review-queue/decide", "access": "protected", "methods": ["POST"], "purpose": "Idempotent memory promotion, rejection, or quarantine decision."},
     {"route": "/api/matm/meeting-rooms", "access": "protected", "methods": ["GET", "POST"], "purpose": "Always-present company, workspace, project room discovery plus goal/task room creation."},
-    {"route": "/api/matm/meeting-messages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Durable scoped meeting room transcript read and public-safe post creation."},
+    {"route": "/api/matm/meeting-messages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Seven-day scoped meeting transcript read and public-safe post creation; durable content requires explicit promotion."},
     {"route": "/api/matm/meeting-messages/promote", "access": "protected", "methods": ["POST"], "purpose": "Promote a public-safe meeting transcript message into hosted workspace memory with source linkage."},
     {"route": "/api/matm/meeting-rooms/read", "access": "protected", "methods": ["POST"], "purpose": "Meeting room read cursor update for an agent."},
     {"route": "/api/matm/routing-decisions", "access": "protected", "methods": ["GET", "POST"], "purpose": "Structured coordinator routing decisions with lane, destination room, goal, next action, and expected evidence."},
-    {"route": "/api/matm/agent-messages", "access": "protected", "methods": ["POST"], "purpose": "Current-message creation."},
+    {"route": "/api/matm/agent-messages", "access": "protected", "methods": ["POST"], "purpose": "Transient current-message creation with seven-day acknowledged and 30-day unacknowledged retention."},
     {"route": "/api/matm/current-message", "access": "protected", "methods": ["GET"], "purpose": "Current-message lane readback."},
     {"route": "/api/matm/agent-inbox", "access": "protected", "methods": ["GET"], "purpose": "Unread inbox readback."},
     {"route": "/api/matm/notifications/ack", "access": "protected", "methods": ["POST"], "purpose": "Notification acknowledgement and receipt creation."},
     {"route": "/api/matm/receipts", "access": "protected", "methods": ["GET"], "purpose": "Redacted receipt readback."},
-    {"route": "/api/matm/audit-log", "access": "protected", "methods": ["GET"], "purpose": "Redacted protected-operation audit log readback."},
+    {"route": "/api/matm/audit-log", "access": "protected", "methods": ["GET"], "purpose": "Denied legacy agent-plane audit path; routine logs are human-only and physically purged after seven days."},
     {"route": "/api/matm/sync/devices", "access": "protected", "methods": ["POST"], "purpose": "Register a public-safe distributed-sync device authority."},
     {"route": "/api/matm/sync/devices/rotate", "access": "protected", "methods": ["POST"], "purpose": "Rotate a sync device authority epoch."},
     {"route": "/api/matm/sync/devices/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke a sync device authority epoch."},
@@ -242,9 +243,9 @@ AGENT_ABILITY_LEVELS = [
     {
         "level": "L4",
         "label": "Authenticated owner agent",
-        "canUse": ["workspace boundary", "protected mutations", "database wiki tree", "audit and receipts"],
+        "canUse": ["workspace boundary", "protected mutations", "database wiki tree", "receipts"],
         "memoryAuthority": "owned workspace scope with redaction and audit",
-        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log", "/api/matm/receipts"],
+        "memoryEndpointsPath": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/receipts"],
         "fallback": "If auth, scope, idempotency, or provenance is missing, return auth_required or human_review_required.",
     },
     {
@@ -372,6 +373,50 @@ def _route_agent_guidance(item):
             "noOpBehavior": "Do not create setup records unless the user explicitly requested workspace setup.",
         }
 
+    if route == "/api/matm/audit-log":
+        return {
+            "lowestSafeAbilityLevel": "L0",
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": "agent_access_denied",
+            "fetchExecutionClass": "human_only_control_plane",
+            "contentType": "application/problem+json",
+            "requiredFields": [],
+            "resultUrlField": "",
+            "restoreReadbackUrlField": "",
+            "writeCredentialResponsePath": "",
+            "browserFormEquivalent": "/human",
+            "getSafety": "GET always returns 403 human_owner_required to agent and company-master credentials",
+            "postBlockedFallback": "/human",
+            "liveGetBlockedFallback": "/human",
+            "mcpUnavailableFallback": "/human",
+            "authUnavailableFallback": "safeNoOp human_owner_required",
+            "toolUnavailableFallback": "/human",
+            "humanReviewUrl": "/human",
+            "noOpBehavior": "Do not request, retrieve, summarize, or add routine logs to agent context.",
+        }
+
+    if route == "/api/matm/human/companies/{companyId}/history":
+        return {
+            "lowestSafeAbilityLevel": "L0",
+            "highestSupportedAbilityLevel": "L7",
+            "sideEffectStatus": "human_only_read",
+            "fetchExecutionClass": "human_only_control_plane",
+            "contentType": "application/json",
+            "requiredFields": ["selected human company session"],
+            "resultUrlField": "",
+            "restoreReadbackUrlField": "",
+            "writeCredentialResponsePath": "",
+            "browserFormEquivalent": "/human",
+            "getSafety": "Human-only same-origin read; agent and company-master bearers return 403",
+            "postBlockedFallback": "/human",
+            "liveGetBlockedFallback": "/human",
+            "mcpUnavailableFallback": "/human",
+            "authUnavailableFallback": "safeNoOp human_session_required",
+            "toolUnavailableFallback": "/human",
+            "humanReviewUrl": "/human",
+            "noOpBehavior": "Agents must not request or ingest this human-only history.",
+        }
+
     if access == "protected":
         level = "L6" if any(fragment in route for fragment in ("meeting-", "routing-decisions", "agent-messages", "current-message", "notifications")) else "L4"
         if "/sync/" in route:
@@ -454,7 +499,7 @@ def agent_compatibility_contract():
             "jsonDiscovery": {"lowestLevel": "L1", "routes": ["/ai-manifest.json", "/api/matm/agent-compatibility", "/api/matm/uai-memory/contract", "/api/matm/route-inventory", "/api/matm/readiness-result"]},
             "browserForms": {"lowestLevel": "L2", "routes": ["/agent-setup", "/agent-coordination", "/console", "/knowledge", "/tour", "/tour/knowledge", "/tour/human"]},
             "postJson": {"lowestLevel": "L3", "routes": ["/api/matm/agents/register", "/api/matm/uai-memory/packages", "/api/matm/uai-memory/records", "/api/matm/memory-events/submit", "/api/matm/knowledge-documents", "/api/matm/external-links", "/api/matm/meeting-messages"]},
-            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/audit-log"]},
+            "authenticatedOwner": {"lowestLevel": "L4", "routes": ["/api/matm/workspace", "/api/matm/projects", "/api/matm/uai-memory/file-heads", "/api/matm/uai-memory/edit-claims", "/api/matm/knowledge-tree", "/api/matm/review-queue", "/api/matm/receipts"]},
             "restoreReadback": {"lowestLevel": "L5", "routes": ["/api/matm/search", "/api/matm/current-message", "/api/matm/sync/receipts", "/api/matm/sync/changes"]},
             "multiAgent": {"lowestLevel": "L6", "routes": ["/api/matm/meeting-rooms", "/api/matm/routing-decisions", "/api/matm/agent-messages"]},
             "siteSpecificNegotiation": {"lowestLevel": "L7", "routes": ["/api/matm/live-capability-matrix", "/api/matm/connector-contract", "/api/matm/uai-memory/contract", "/api/matm/sync/capabilities"]},
@@ -672,7 +717,7 @@ def capability_matrix():
             "firstClassStorage": ["matm_crawl_sources", "matm_search_documents", "matm_external_links", "matm_external_link_mentions", "matm_projects"],
             "humanAndAgentParity": "The authenticated wiki shell and swarm agents read the same protected database tree and document rows.",
             "queryFilters": ["q", "scope", "scope_id", "category", "taxonomy_path", "taxonomy_prefix", "document_type", "source_prefix", "document_id", "route_or_path", "include_text", "limit"],
-            "postConfirmationFields": ["persisted", "visibleInSearch", "visibleInWikiTree", "visibleInAuditLog", "canonicalSearchDocumentId", "canonicalSourceId", "documentQueryUrl", "searchQueryUrl", "treeQueryUrl"],
+            "postConfirmationFields": ["persisted", "visibleInSearch", "visibleInWikiTree", "canonicalSearchDocumentId", "canonicalSourceId", "documentQueryUrl", "searchQueryUrl", "treeQueryUrl"],
             "requiredDocumentFields": ["title", "description", "keywords", "taxonomyPaths", "searchableText"],
             "multiHierarchyPlacement": True,
         },
@@ -760,7 +805,10 @@ def capability_matrix():
         "distributedSync": sync_capabilities(),
         "auditTrail": {
             "status": "live",
-            "readRoute": "/api/matm/audit-log",
+            "agentAccess": "denied",
+            "humanReadRoute": "/api/matm/human/companies/{companyId}/history",
+            "retentionDays": 7,
+            "physicallyDeletedAfterRetention": True,
             "protectedOperationsLogged": True,
             "valuesRedacted": True,
             "rawCredentialsExposed": False,
@@ -1418,6 +1466,16 @@ def openapi_spec():
             ]
         return operation
 
+    def agent_denied_operation(summary, description):
+        return {
+            "summary": summary,
+            "description": description,
+            "security": protected_security,
+            "responses": {
+                "403": safe_problem,
+            },
+        }
+
     connector_error_responses = {
         "400": {"description": "Malformed request; no mutation performed.", "content": connector_error_content},
         "401": {"description": "Invalid, inactive, expired, disconnected, or revoked credential/code.", "content": connector_error_content},
@@ -1538,6 +1596,26 @@ def openapi_spec():
                 201,
                 "ConnectorTokenExchangeResult",
             ),
+        },
+        "/api/matm/human/companies/{companyId}/history": {
+            "get": {
+                "summary": "Read human-only retained history",
+                "description": "Requires an authenticated same-origin human session with the company selected. Routine rows are physically deleted after seven days and are never returned to agents.",
+                "security": [{"humanSession": []}],
+                "parameters": [
+                    {"name": "companyId", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 5000}},
+                ],
+                "responses": {
+                    "200": {"description": "Currently retained redacted human-only history.", "content": json_type},
+                    "401": safe_problem,
+                    "403": safe_problem,
+                    "404": safe_problem,
+                },
+                "x-agentAccess": "denied",
+                "x-retentionDays": 7,
+                "x-physicallyDeletedAfterRetention": True,
+            },
         },
         "/api/matm/human/connector-pairings/{publicRequestRef}/approve": {
             "post": {
@@ -1814,7 +1892,7 @@ def openapi_spec():
         "/api/matm/current-message": {"get": protected_operation("Read current messages", "Read current-message inbox with agent_id, message_id, and notification_id filters.")},
         "/api/matm/notifications/ack": {"post": protected_operation("Acknowledge notification", "Mark a notification read and create a redacted receipt.", "post", True)},
         "/api/matm/receipts": {"get": protected_operation("Read receipts", "Read redacted acknowledgement receipts for an agent.")},
-        "/api/matm/audit-log": {"get": protected_operation("Read audit log", "Read redacted protected-operation audit events.")},
+        "/api/matm/audit-log": {"get": agent_denied_operation("Agent audit access denied", "Routine operational logs are never returned to agent or company-master credentials; use the human-only retained-history control plane.")},
         "/api/matm/sync/devices": {"post": protected_operation("Register sync device", "Register a public-safe device authority for distributed sync.", "post", True)},
         "/api/matm/sync/devices/rotate": {"post": protected_operation("Rotate sync device", "Increment device authority epoch for distributed sync.", "post", True)},
         "/api/matm/sync/devices/revoke": {"post": protected_operation("Revoke sync device", "Revoke a device authority so future mutations are rejected with durable receipts.", "post", True)},
@@ -2407,7 +2485,7 @@ def openapi_spec():
                 "GovernedMemorySubmitResult": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["ok", "event", "submission", "operatorSummary", "persisted", "visibleInSearch", "visibleInReviewQueue", "visibleInAuditLog", "canonicalMemoryEventId", "reviewId", "memoryQueryUrl", "reviewQueueUrl", "auditLogUrl", "confirmation", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
+                    "required": ["ok", "event", "submission", "operatorSummary", "persisted", "visibleInSearch", "visibleInReviewQueue", "canonicalMemoryEventId", "reviewId", "memoryQueryUrl", "reviewQueueUrl", "confirmation", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
                     "properties": {
                         "ok": {"const": True},
                         "event": {"type": "object"},
@@ -2416,12 +2494,10 @@ def openapi_spec():
                         "persisted": {"type": "boolean"},
                         "visibleInSearch": {"type": "boolean"},
                         "visibleInReviewQueue": {"type": "boolean"},
-                        "visibleInAuditLog": {"type": "boolean"},
                         "canonicalMemoryEventId": {"type": "string"},
                         "reviewId": {"type": ["string", "null"]},
                         "memoryQueryUrl": {"type": "string"},
                         "reviewQueueUrl": {"type": "string"},
-                        "auditLogUrl": {"type": "string"},
                         "confirmation": {"type": "object"},
                         "valuesRedacted": {"const": True},
                         "rawCredentialExposed": {"const": False},
@@ -2787,7 +2863,7 @@ def readiness_result():
             {
                 "id": "protected_operation_audit_trail",
                 "status": "pass_local",
-                "evidence": ["/api/matm/audit-log", "redacted protected-operation readback", "tests/test_app.py"],
+                "evidence": ["/api/matm/human/companies/{companyId}/history", "seven-day human-only redacted history with physical purge", "tests/test_retention_policy.py"],
             },
             {
                 "id": "agent_file_handoff",
@@ -2815,7 +2891,7 @@ def readiness_result():
                 "status": "pass_live",
                 "evidence": [
                     "docs/reports/dogfood-memory-run.json",
-                    "Live authenticated MATM dogfood verifies workspace setup, memory, current-message, receipt, and audit-log readback.",
+                    "Live authenticated MATM dogfood verifies workspace setup, memory, current-message, and receipt readback; routine audit logs remain outside agent access.",
                 ],
             },
             {

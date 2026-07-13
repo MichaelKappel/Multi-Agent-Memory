@@ -1436,6 +1436,148 @@ _CONNECTOR_RATE_BUCKETS = frozenset(
 _CONNECTOR_RATE_CLEANUP_BATCH = 128
 _CONNECTOR_RATE_MAX_LIMIT = 10000
 _CONNECTOR_RATE_MAX_WINDOW_SECONDS = 86400
+HUMAN_AUDIT_LOG_RETENTION_DAYS = 7
+ACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 7
+UNACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 30
+MEETING_TRANSCRIPT_RETENTION_DAYS = 7
+
+
+def _audit_log_cutoff(now=None):
+    value = now or utc_now()
+    if isinstance(value, datetime.datetime):
+        parsed = value
+    else:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("audit_log_time_invalid")
+    cutoff = parsed.astimezone(datetime.timezone.utc) - datetime.timedelta(
+        days=HUMAN_AUDIT_LOG_RETENTION_DAYS
+    )
+    return cutoff.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _retention_cutoff(days, now=None):
+    value = now or utc_now()
+    if isinstance(value, datetime.datetime):
+        parsed = value
+    else:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("retention_time_invalid")
+    cutoff = parsed.astimezone(datetime.timezone.utc) - datetime.timedelta(days=int(days))
+    return cutoff.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _prune_audit_log_data(data, now=None):
+    cutoff = _audit_log_cutoff(now)
+    existing = list((data or {}).get("auditLog") or [])
+    retained = [
+        item
+        for item in existing
+        if isinstance(item, dict)
+        and isinstance(item.get("createdAt"), str)
+        and item.get("createdAt") >= cutoff
+    ]
+    data["auditLog"] = retained
+    return len(existing) - len(retained)
+
+
+def _prune_coordination_data(data, now=None):
+    """Physically remove expired transient coordination content from a JSON store."""
+    acknowledged_cutoff = _retention_cutoff(ACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS, now)
+    unacknowledged_cutoff = _retention_cutoff(UNACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS, now)
+    meeting_cutoff = _retention_cutoff(MEETING_TRANSCRIPT_RETENTION_DAYS, now)
+
+    notifications_by_message = {}
+    for notification in list((data or {}).get("notifications") or []):
+        if isinstance(notification, dict):
+            notifications_by_message.setdefault(notification.get("messageId"), []).append(notification)
+
+    expired_message_ids = set()
+    retained_messages = []
+    for message in list((data or {}).get("messages") or []):
+        if not isinstance(message, dict):
+            continue
+        message_id = message.get("messageId")
+        created_at = message.get("createdAt") or ""
+        notifications = notifications_by_message.get(message_id) or []
+        acknowledged = bool(notifications) and all(
+            item.get("status") not in (None, "", "unread") for item in notifications
+        )
+        if acknowledged:
+            last_acknowledged_at = max(
+                [item.get("readAt") or created_at for item in notifications] or [created_at]
+            )
+            keep = bool(last_acknowledged_at and last_acknowledged_at >= acknowledged_cutoff)
+        else:
+            keep = bool(created_at and created_at >= unacknowledged_cutoff)
+        if keep:
+            retained_messages.append(message)
+        elif message_id:
+            expired_message_ids.add(message_id)
+    data["messages"] = retained_messages
+
+    expired_notification_ids = {
+        item.get("notificationId")
+        for item in list((data or {}).get("notifications") or [])
+        if isinstance(item, dict) and item.get("messageId") in expired_message_ids
+    }
+    data["notifications"] = [
+        item
+        for item in list((data or {}).get("notifications") or [])
+        if isinstance(item, dict) and item.get("messageId") not in expired_message_ids
+    ]
+    data["receipts"] = [
+        item
+        for item in list((data or {}).get("receipts") or [])
+        if isinstance(item, dict) and item.get("notificationId") not in expired_notification_ids
+    ]
+
+    durable_routing_message_ids = {
+        item.get("meetingMessageId")
+        for item in list((data or {}).get("routingDecisions") or [])
+        if isinstance(item, dict) and item.get("meetingMessageId")
+    }
+    expired_meeting_message_ids = set()
+    retained_meeting_messages = []
+    for message in list((data or {}).get("meetingMessages") or []):
+        if not isinstance(message, dict):
+            continue
+        message_id = message.get("meetingMessageId")
+        keep = message_id in durable_routing_message_ids or bool(
+            message.get("createdAt") and message.get("createdAt") >= meeting_cutoff
+        )
+        if keep:
+            retained_meeting_messages.append(message)
+        elif message_id:
+            expired_meeting_message_ids.add(message_id)
+    data["meetingMessages"] = retained_meeting_messages
+    for read_state in list((data or {}).get("meetingReads") or []):
+        if isinstance(read_state, dict) and read_state.get("lastMeetingMessageId") in expired_meeting_message_ids:
+            read_state["lastMeetingMessageId"] = ""
+
+    transient_references = {
+        ("message", item_id) for item_id in expired_message_ids
+    } | {
+        ("meeting_message", item_id) for item_id in expired_meeting_message_ids
+    }
+    data["outboxEvents"] = [
+        item
+        for item in list((data or {}).get("outboxEvents") or [])
+        if isinstance(item, dict)
+        and (item.get("aggregateType"), item.get("aggregateId")) not in transient_references
+    ]
+    data["storageLedger"] = [
+        item
+        for item in list((data or {}).get("storageLedger") or [])
+        if isinstance(item, dict)
+        and (item.get("objectType"), item.get("objectId")) not in transient_references
+    ]
+    return {
+        "directMessages": len(expired_message_ids),
+        "notifications": len(expired_notification_ids),
+        "meetingMessages": len(expired_meeting_message_ids),
+    }
 
 
 def _connector_rate_now_epoch(now=None):
@@ -2405,6 +2547,8 @@ def _normalize_store(data):
         return blank
     for key, value in blank.items():
         data.setdefault(key, value)
+    _prune_audit_log_data(data)
+    _prune_coordination_data(data)
     return data
 
 
@@ -2443,7 +2587,13 @@ class FileStore(object):
             if not self.path.exists():
                 return _blank_store()
             with self.path.open("r", encoding="utf-8") as handle:
-                return _normalize_store(json.load(handle))
+                data = json.load(handle)
+            before = json.dumps(data, sort_keys=True, separators=(",", ":"))
+            normalized = _normalize_store(data)
+            after = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+            if after != before:
+                self._save(normalized)
+            return normalized
 
     def _save(self, data):
         with _LOCK:
@@ -2533,6 +2683,7 @@ class FileStore(object):
         )
 
     def audit(self, data, action, actor, target, workspace_id=None, details=None):
+        _prune_audit_log_data(data)
         data["auditLog"].append(
             {
                 "auditId": _id("audit"),
@@ -2576,6 +2727,7 @@ class FileStore(object):
 
     def audit_log(self, workspace_id, limit=50, action=None):
         data = self._load()
+        self._save(data)
         try:
             limit_value = int(limit)
         except (TypeError, ValueError):
@@ -2604,6 +2756,27 @@ class FileStore(object):
                 }
             )
         items.sort(key=lambda item: item.get("createdAt") or "")
+        return items[-limit_value:]
+
+    def company_audit_log(self, company_id, limit=5000):
+        data = self._load()
+        self._save(data)
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 5000
+        limit_value = max(1, min(limit_value, 5000))
+        workspace_ids = {
+            item.get("workspaceId")
+            for item in data.get("workspaces", {}).values()
+            if item.get("companyId") == company_id
+        }
+        items = [
+            _safe_company_export_value(item)
+            for item in data.get("auditLog", [])
+            if item.get("workspaceId") in workspace_ids
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("auditId") or ""))
         return items[-limit_value:]
 
     def workspace_usage_bytes(self, data, workspace_id):
@@ -11092,6 +11265,7 @@ class SQLiteStore(FileStore):
         return created
 
     def _workspace_usage_bytes_sql(self, connection, workspace_id):
+        self._prune_expired_transient_sql(connection)
         workspace = connection.execute(
             "SELECT * FROM matm_workspaces WHERE workspace_id = ?",
             (workspace_id,),
@@ -11151,6 +11325,144 @@ class SQLiteStore(FileStore):
             usage += self._sum_workspace_rows(connection, table, workspace_id)
         return usage
 
+    def _prune_audit_log_sql(self, connection, now=None):
+        cursor = connection.execute(
+            "DELETE FROM matm_audit_log WHERE created_at < ?",
+            (_audit_log_cutoff(now),),
+        )
+        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+
+    def _delete_sql_ids(self, connection, table, column, identifiers, extra_clause="", extra_params=None):
+        values = [value for value in identifiers if value]
+        if not values:
+            return 0
+        placeholders = ",".join("?" for _ in values)
+        sql = "DELETE FROM %s WHERE %s IN (%s)" % (table, column, placeholders)
+        params = list(values)
+        if extra_clause:
+            sql += " AND " + extra_clause
+            params.extend(list(extra_params or []))
+        cursor = connection.execute(sql, tuple(params))
+        return max(0, int(getattr(cursor, "rowcount", 0) or 0))
+
+    def _prune_coordination_sql(self, connection, now=None):
+        acknowledged_cutoff = _retention_cutoff(ACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS, now)
+        unacknowledged_cutoff = _retention_cutoff(UNACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS, now)
+        meeting_cutoff = _retention_cutoff(MEETING_TRANSCRIPT_RETENTION_DAYS, now)
+        message_rows = list(
+            connection.execute(
+                """
+                SELECT m.message_id
+                FROM matm_messages m
+                WHERE (
+                  EXISTS (
+                    SELECT 1 FROM matm_notifications n
+                    WHERE n.message_id = m.message_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM matm_notifications n
+                    WHERE n.message_id = m.message_id AND (n.status IS NULL OR n.status = '' OR n.status = 'unread')
+                  )
+                  AND COALESCE((
+                    SELECT MAX(COALESCE(n.read_at, n.created_at))
+                    FROM matm_notifications n WHERE n.message_id = m.message_id
+                  ), m.created_at) < ?
+                ) OR (
+                  (
+                    NOT EXISTS (SELECT 1 FROM matm_notifications n WHERE n.message_id = m.message_id)
+                    OR EXISTS (
+                      SELECT 1 FROM matm_notifications n
+                      WHERE n.message_id = m.message_id AND (n.status IS NULL OR n.status = '' OR n.status = 'unread')
+                    )
+                  )
+                  AND m.created_at < ?
+                )
+                """,
+                (acknowledged_cutoff, unacknowledged_cutoff),
+            )
+        )
+        message_ids = [row["message_id"] for row in message_rows]
+        notification_ids = []
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            notification_ids = [
+                row["notification_id"]
+                for row in connection.execute(
+                    "SELECT notification_id FROM matm_notifications WHERE message_id IN (%s)" % placeholders,
+                    tuple(message_ids),
+                )
+            ]
+            self._delete_sql_ids(connection, "matm_receipts", "notification_id", notification_ids)
+            self._delete_sql_ids(connection, "matm_notifications", "message_id", message_ids)
+            self._delete_sql_ids(
+                connection,
+                "matm_outbox_events",
+                "aggregate_id",
+                message_ids,
+                "aggregate_type = ?",
+                ["message"],
+            )
+            self._delete_sql_ids(
+                connection,
+                "matm_storage_ledger",
+                "object_id",
+                message_ids,
+                "object_type = ?",
+                ["message"],
+            )
+            self._delete_sql_ids(connection, "matm_messages", "message_id", message_ids)
+
+        meeting_rows = list(
+            connection.execute(
+                """
+                SELECT m.meeting_message_id
+                FROM matm_meeting_messages m
+                LEFT JOIN matm_routing_decisions r ON r.meeting_message_id = m.meeting_message_id
+                WHERE m.created_at < ? AND r.routing_decision_id IS NULL
+                """,
+                (meeting_cutoff,),
+            )
+        )
+        meeting_message_ids = [row["meeting_message_id"] for row in meeting_rows]
+        if meeting_message_ids:
+            placeholders = ",".join("?" for _ in meeting_message_ids)
+            connection.execute(
+                "UPDATE matm_meeting_reads SET last_meeting_message_id = NULL WHERE last_meeting_message_id IN (%s)" % placeholders,
+                tuple(meeting_message_ids),
+            )
+            self._delete_sql_ids(
+                connection,
+                "matm_outbox_events",
+                "aggregate_id",
+                meeting_message_ids,
+                "aggregate_type = ?",
+                ["meeting_message"],
+            )
+            self._delete_sql_ids(
+                connection,
+                "matm_storage_ledger",
+                "object_id",
+                meeting_message_ids,
+                "object_type = ?",
+                ["meeting_message"],
+            )
+            self._delete_sql_ids(
+                connection,
+                "matm_meeting_messages",
+                "meeting_message_id",
+                meeting_message_ids,
+            )
+        return {
+            "directMessages": len(message_ids),
+            "notifications": len(notification_ids),
+            "meetingMessages": len(meeting_message_ids),
+        }
+
+    def _prune_expired_transient_sql(self, connection, now=None):
+        coordination = self._prune_coordination_sql(connection, now)
+        coordination["auditLog"] = self._prune_audit_log_sql(connection, now)
+        return coordination
+
     def audit_log(self, workspace_id, limit=50, action=None):
         try:
             limit_value = int(limit)
@@ -11166,17 +11478,63 @@ class SQLiteStore(FileStore):
         params.append(limit_value)
         with _LOCK:
             with self._open_connection() as connection:
-                rows = list(
-                    connection.execute(
-                        """
-                        SELECT * FROM matm_audit_log
-                        WHERE %s
-                        ORDER BY created_at DESC, audit_id DESC
-                        LIMIT ?
-                        """ % " AND ".join(clauses),
-                        tuple(params),
+                with connection:
+                    self._prune_expired_transient_sql(connection)
+                    rows = list(
+                        connection.execute(
+                            """
+                            SELECT * FROM matm_audit_log
+                            WHERE %s
+                            ORDER BY created_at DESC, audit_id DESC
+                            LIMIT ?
+                            """ % " AND ".join(clauses),
+                            tuple(params),
+                        )
                     )
-                )
+        rows.reverse()
+        items = []
+        for row in rows:
+            details = self._json_load(row["details_json"], {})
+            items.append(
+                {
+                    "auditId": row["audit_id"],
+                    "workspaceId": row["workspace_id"],
+                    "action": row["action"],
+                    "actor": redact_text(row["actor"] or ""),
+                    "target": redact_text(row["target"] or ""),
+                    "details": _public_value(details),
+                    "detailsSummary": _audit_detail_summary(details),
+                    "createdAt": row["created_at"],
+                    "valuesRedacted": self._bool(row["values_redacted"]),
+                    "rawCredentialExposed": self._bool(row["raw_credential_exposed"]),
+                    "rawPayloadExposed": self._bool(row["raw_payload_exposed"]),
+                }
+            )
+        return items
+
+    def company_audit_log(self, company_id, limit=5000):
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError):
+            limit_value = 5000
+        limit_value = max(1, min(limit_value, 5000))
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    self._prune_expired_transient_sql(connection)
+                    rows = list(
+                        connection.execute(
+                            """
+                            SELECT a.*
+                            FROM matm_audit_log a
+                            JOIN matm_workspaces w ON w.workspace_id = a.workspace_id
+                            WHERE w.company_id = ?
+                            ORDER BY a.created_at DESC, a.audit_id DESC
+                            LIMIT ?
+                            """,
+                            (company_id, limit_value),
+                        )
+                    )
         rows.reverse()
         items = []
         for row in rows:
@@ -13116,6 +13474,7 @@ class SQLiteStore(FileStore):
         return {"claim": _public_uai_edit_claim(claim), "head": _public_uai_collaboration_head(head)}, None, {}
 
     def _record_audit_sql(self, connection, workspace_id, action, actor, target, details=None):
+        self._prune_expired_transient_sql(connection)
         connection.execute(
             """
             INSERT INTO matm_audit_log (
@@ -13893,6 +14252,8 @@ class SQLiteStore(FileStore):
     def meeting_rooms(self, workspace_id, agent_id=None):
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_coordination_sql(connection)
                 return self._meeting_rooms_sql(connection, workspace_id, agent_id)
 
     def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
@@ -14034,6 +14395,8 @@ class SQLiteStore(FileStore):
         query_limit = limit_value + 1
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_coordination_sql(connection)
                 room = self._room_from_row(
                     connection.execute(
                         """
@@ -14122,6 +14485,8 @@ class SQLiteStore(FileStore):
             return None, None
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_coordination_sql(connection)
                 row = connection.execute(
                     """
                     SELECT * FROM matm_meeting_messages
@@ -14626,6 +14991,8 @@ class SQLiteStore(FileStore):
         """
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_coordination_sql(connection)
                 total_count = connection.execute(
                     """
                     SELECT COUNT(*) AS count
@@ -14748,6 +15115,8 @@ class SQLiteStore(FileStore):
             params.append(consumer_agent_id)
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_coordination_sql(connection)
                 rows = list(
                     connection.execute(
                         """
@@ -15336,6 +15705,8 @@ class SQLiteStore(FileStore):
     def _load(self):
         with _LOCK:
             with self._open_connection() as connection:
+                with connection:
+                    self._prune_expired_transient_sql(connection)
                 data = _blank_store()
                 data["schemaVersion"] = "memoryendpoints.sqlite_relational_store.v1"
 

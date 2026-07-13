@@ -249,14 +249,18 @@ def main(argv=None):
     )
     steps.append({"name": "verify_broadcast_and_targeted_inboxes", "ok": messaging_ok, "status": 200, "inboxCounts": inbox_counts})
 
-    status, audit = call_json(
+    status, audit_denial = call_json(
         base_url,
         "/api/matm/audit-log",
         token=token,
         query="workspace_id=%s&limit=50" % workspace_id,
     )
-    audit = require_ok(status, audit, "read audit log")
-    steps.append({"name": "read_redacted_audit_log", "ok": bool(audit.get("valuesRedacted") and audit.get("count", 0)), "status": status, "count": audit.get("count", 0)})
+    agent_audit_access_denied = bool(
+        status == 403
+        and ((audit_denial.get("error") or {}).get("code") == "human_owner_required")
+        and audit_denial.get("agentsCanAccess") is False
+    )
+    steps.append({"name": "verify_agent_audit_access_denied", "ok": agent_audit_access_denied, "status": status})
 
     secret_payload = {
         "baseUrl": base_url,
@@ -299,7 +303,7 @@ def main(argv=None):
         "searchReadbackCount": search.get("count", 0),
         "inboxCounts": inbox_counts,
         "messagingVerified": messaging_ok,
-        "auditLogCount": audit.get("count", 0),
+        "agentAuditAccessDenied": agent_audit_access_denied,
         "steps": steps,
         "ok": all(item.get("ok") for item in steps),
         "valuesRedacted": True,

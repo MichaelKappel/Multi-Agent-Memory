@@ -14,7 +14,6 @@ def submit_payload(event_id="mem-1", review_id="review-1"):
         "persisted": True,
         "visibleInSearch": True,
         "visibleInReviewQueue": True,
-        "visibleInAuditLog": True,
         "valuesRedacted": True,
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
@@ -38,11 +37,11 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
             submit_payload(),
             {"items": [{"eventId": "mem-1"}], "filters": {"eventId": "mem-1"}, "valuesRedacted": True},
             {"items": [{"memoryEventId": "mem-1"}], "statusCounts": {"pending": 1}, "valuesRedacted": True},
-            {"items": [{"target": "mem-1"}], "valuesRedacted": True},
+            {"error": {"code": "human_owner_required"}, "valuesRedacted": True},
         )
 
         self.assertTrue(check["ok"])
-        self.assertEqual({"exactSearchCount": 1, "reviewQueueMatchCount": 1, "auditMatchCount": 1}, check["durableReadback"])
+        self.assertEqual({"exactSearchCount": 1, "reviewQueueMatchCount": 1, "agentAuditAccessDenied": True}, check["durableReadback"])
         self.assertEqual([], check["mismatches"])
 
     def test_evaluate_probe_flags_visibility_claim_without_readback(self):
@@ -51,13 +50,13 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
             submit_payload("mem-missing"),
             {"items": [], "filters": {"eventId": "mem-missing"}, "valuesRedacted": True},
             {"items": [], "statusCounts": {}, "valuesRedacted": True},
-            {"items": [], "valuesRedacted": True},
+            {"error": {"code": "human_owner_required"}, "valuesRedacted": True},
         )
 
         self.assertFalse(check["ok"])
         self.assertIn("response_visible_search_without_exact_readback", check["mismatches"])
         self.assertIn("response_visible_review_without_review_readback", check["mismatches"])
-        self.assertIn("response_visible_audit_without_audit_readback", check["mismatches"])
+        self.assertNotIn("agent_audit_access_not_denied", check["mismatches"])
 
     def test_build_report_does_not_store_raw_secret_or_workspace_id(self):
         probes = [
@@ -66,7 +65,7 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
                 submit_payload(),
                 {"items": [{"eventId": "mem-1"}], "valuesRedacted": True},
                 {"items": [{"memoryEventId": "mem-1"}], "valuesRedacted": True},
-                {"items": [{"target": "mem-1"}], "valuesRedacted": True},
+                {"error": {"code": "human_owner_required"}, "valuesRedacted": True},
             )
         ]
 
@@ -101,8 +100,7 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
                 matches = [{"memoryEventId": "mem-lag"}] if search_attempt["count"] > 1 else []
                 return 200, {"items": matches, "statusCounts": {"pending": len(matches)}, "valuesRedacted": True}, {}
             if path == "/api/matm/audit-log":
-                matches = [{"target": "mem-lag"}] if search_attempt["count"] > 1 else []
-                return 200, {"items": matches, "valuesRedacted": True}, {}
+                return 403, {"error": {"code": "human_owner_required"}, "valuesRedacted": True}, {}
             raise AssertionError(path)
 
         with mock.patch.object(verifier, "request_json", side_effect=fake_submit):
@@ -123,7 +121,7 @@ class LiveMemorySubmitConsistencyTests(unittest.TestCase):
         self.assertTrue(check["ok"])
         self.assertEqual(2, check["readbackAttemptsUsed"])
         self.assertEqual(3, check["readbackAttemptCount"])
-        self.assertEqual({"exactSearchCount": 1, "reviewQueueMatchCount": 1, "auditMatchCount": 1}, check["durableReadback"])
+        self.assertEqual({"exactSearchCount": 1, "reviewQueueMatchCount": 1, "agentAuditAccessDenied": True}, check["durableReadback"])
 
 
 if __name__ == "__main__":

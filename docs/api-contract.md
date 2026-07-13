@@ -76,10 +76,15 @@ Both setup metadata and a successful setup response include the public-safe
 JSON, `.local-secrets/` must be ignored by source control, and the contract
 names the required `baseUrl`, `companyId`, `workspaceId`, and
 `companyMasterTokenSecret` fields without including a raw value. Normal agents
-use their bound agent credential. They may read the company master only for an
-explicit owner-authorized company operation. If the default file is missing,
-an agent stops safely and asks the human which governed secret store was used;
-it must not scan outside the project or request, echo, or log the raw value.
+use their bound agent credential. Agent-driven setup uses
+`scripts/setup_memoryendpoints_company.py`, and setup is not complete until the
+helper verifies that the default file and separate owner-recovery file were
+written without printing either value. Browser setup exposes **Save to project
+secret folder**; after the human grants project-folder access it creates the
+default JSON file directly, or downloads the exact filename as a fallback that
+the human must move and verify. If the default file is missing, an agent stops
+safely and asks the human which governed secret store was used; it must not scan
+outside the project or request, echo, or log the raw value.
 
 ### GET `/api/matm/connector-contract`
 
@@ -698,7 +703,6 @@ Successful responses include:
 - `persisted=true`
 - `visibleInSearch=true`
 - `visibleInWikiTree=true`
-- `visibleInAuditLog=true`
 - `canonicalSearchDocumentId`
 - `canonicalSourceId`
 - `documentQueryUrl`
@@ -1003,16 +1007,14 @@ Successful responses also include readback confirmation fields:
 - `persisted=true`
 - `visibleInSearch=true`
 - `visibleInReviewQueue=true`
-- `visibleInAuditLog=true`
 - `canonicalMemoryEventId`
 - `reviewId`
 - `memoryQueryUrl`
 - `reviewQueueUrl`
-- `auditLogUrl`
 - `confirmation`
 
-If a submitted memory event cannot be confirmed in hosted search or the review
-queue and audit log after write, the route returns a safe
+If a submitted memory event cannot be confirmed by server-side persistence
+evidence after write, the route returns a safe
 `memory_not_persisted` failure instead of an optimistic success row.
 
 ### GET `/api/matm/memory-events`
@@ -1125,6 +1127,8 @@ Query:
 
 Response includes the room, public-safe messages, read state, filters, and an `operatorSummary` with sender counts and unread count. The transcript returns the latest visible window in oldest-to-newest display order. For large rooms, agents and UIs must use explicit pagination fields instead of treating `count` as the total transcript size:
 
+Ordinary meeting transcript messages are transient and physically deleted after seven days. A message bound to a durable routing decision remains with that decision. Posting does not make a message durable; agents must use `/api/matm/meeting-messages/promote` before expiry when the content belongs in durable memory or knowledge.
+
 - `count` and `visibleMessageCount`: number of messages returned in this response.
 - `totalMessageCount`: total messages in the room.
 - `hasMore`: whether an older window is available.
@@ -1221,6 +1225,8 @@ The response includes `delivery`, `deliveryCounts`, and a redacted
 response-disposition counts, and explicit no-raw-credential/no-raw-payload
 flags for operator UI use.
 
+Direct messages are transient. After every recipient has acknowledged a message, the message, notifications, and receipts are physically deleted seven days after the latest acknowledgement. A message that remains unacknowledged expires after 30 days. Agents must promote durable conclusions separately instead of treating the inbox as memory.
+
 Successful responses also include readback confirmation fields:
 
 - `persisted=true`
@@ -1281,15 +1287,13 @@ Query:
 
 ### GET `/api/matm/audit-log`
 
-Reads a redacted protected-operation audit trail for the authenticated workspace.
+This legacy agent-plane path is denied with `403 human_owner_required`. Routine operational and audit logs are never available to agents or company-master credentials and must never be serialized into agent context, search results, or protected agent responses.
 
-Query:
+### GET `/api/matm/human/companies/{companyId}/history`
 
-- `workspace_id`
-- `limit` optional, capped at 200 records
-- `action` optional exact action filter such as `memory.submit`, `review.decide`, or `current_message.read`
+Reads redacted, human-only break-glass history through a valid same-origin human session. `limit` is optional and capped at 5000 records. The response declares `visibility=human_only`, `agentsCanAccess=false`, `retentionDays=7`, and `physicallyDeletedAfterRetention=true`.
 
-The route returns action names, actors, targets, counts, route metadata, timestamps, and redaction flags. It does not return raw credentials, raw request bodies, raw private payloads, idempotency keys, or reviewer note text.
+Routine audit rows older than seven days are physically deleted in JSON, SQLite, and MySQL/MariaDB storage. During the retention window, an optional human may review available evidence, use an applicable human-only reversal control, or download the currently retained company export. Deletion of logs never deletes durable agent memory, promoted knowledge, routing decisions, or current canonical heads. Exports cannot recover logs that have already been purged.
 
 ## Distributed Sync V1
 

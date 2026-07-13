@@ -32,9 +32,9 @@ def _company_master_guidance_markup(context):
 <aside class="human-access-credential-guide" aria-labelledby="{heading_id}">
   <p class="eyebrow">Credential help</p>
   <h3 id="{heading_id}">Where do I get the company master credential?</h3>
-  <p>MemoryEndpoints creates it on <a href="/agent-setup">Agent Setup</a> and shows it once after the first company workspace is created. It is not your account password or an agent invitation credential.</p>
+  <p>MemoryEndpoints creates it on <a href="/agent-setup">Agent Setup</a> and shows it once after the first company workspace is created. Setup must then write the credential file; displaying this path does not create the file. It is not your account password or an agent invitation credential.</p>
   <p><strong>Default agent-readable location</strong><code class="human-access-secret-path">&lt;project-root&gt;/{default_path}</code></p>
-  <p>If you cannot find it, ask your AI agent to check that exact project-relative file. The agent should read the ignored file directly. If it is missing, the agent must stop and ask which governed secret store was used&mdash;never ask you to paste the credential into chat.</p>
+  <p>If you cannot find it, ask your AI agent to check that exact project-relative file. The agent should read the ignored file directly. If it is missing, setup did not persist it at the default location: the agent must stop, must not claim the credential exists, and may check only an explicitly configured governed secret store&mdash;never ask you to paste the credential into chat.</p>
 </aside>
 """.format(
         heading_id=escape(heading_id, quote=True),

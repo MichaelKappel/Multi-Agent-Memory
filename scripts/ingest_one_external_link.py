@@ -307,7 +307,6 @@ def main(argv=None):
                 "persisted": bool(payload.get("persisted")),
                 "visibleInInternetSearch": bool(payload.get("visibleInInternetSearch")),
                 "visibleOnKnowledgeDocument": bool(payload.get("visibleOnKnowledgeDocument")),
-                "visibleInAuditLog": bool(payload.get("visibleInAuditLog")),
                 "linkQueryUrl": payload.get("linkQueryUrl"),
                 "internetSearchQueryUrl": payload.get("internetSearchQueryUrl"),
                 "knowledgeDocumentLinksQueryUrl": payload.get("knowledgeDocumentLinksQueryUrl"),
@@ -334,7 +333,6 @@ def main(argv=None):
                 result.get("persisted")
                 and result.get("visibleInInternetSearch")
                 and result.get("visibleOnKnowledgeDocument")
-                and result.get("visibleInAuditLog")
                 and result.get("readbackCanonicalLinkCount") == 1
                 and result.get("readbackMatchesReviewedMetadata")
                 and result.get("readbackCitationMatches")

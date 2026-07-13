@@ -25,18 +25,34 @@ def company_master_storage_guidance():
         "fileFormat": "json",
         "requiredFields": list(COMPANY_MASTER_SECRET_FIELDS),
         "gitignoreEntry": ".local-secrets/",
+        "persistenceRequiredBeforeSetupComplete": True,
+        "agentSetupHelper": "scripts/setup_memoryendpoints_company.py",
+        "humanSaveAction": (
+            "Use Save to project secret folder, select the project root, and let "
+            "the page create the default JSON file before leaving setup."
+        ),
+        "browserWriteBoundary": (
+            "A browser can create the default file only after the human grants "
+            "folder access. If folder access is unavailable, the page downloads "
+            "the exact JSON filename and the human must move it to the default path."
+        ),
+        "missingFileMeans": (
+            "The credential was not persisted at the default path; guidance alone "
+            "does not create a local file."
+        ),
         "humanIfMissing": (
             "Ask your AI agent to check the default project-relative path. "
             "Do not paste the raw credential into chat."
         ),
         "agentIfMissing": (
-            "Stop safely and tell the human that the default file was not found. "
-            "Ask which governed secret store was used; do not scan outside the "
-            "project or request, echo, or log the raw credential."
+            "Stop safely and report that autonomous setup is incomplete. Check only "
+            "an explicitly configured governed secret store; do not require a human, "
+            "scan outside configured paths, or request, echo, or log the raw credential."
         ),
         "agentUse": (
             "Use a bound agent credential for normal agent work. Read the company "
-            "master only for an explicit owner-authorized company operation."
+            "master only for a company-administration operation allowed by the "
+            "published agent policy."
         ),
         "localFileBoundary": (
             "Keep the file outside source control, restrict it to the owner and "

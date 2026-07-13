@@ -156,8 +156,10 @@ def create_ready_workspace(transport, label):
     return last_setup_status, last_setup, last_ready_status, last_ready
 
 
-def step(report, name, status, payload=None, required=True, verified=None):
-    http_ok = ok_status(status)
+def step(report, name, status, payload=None, required=True, verified=None, expected_status_prefixes=()):
+    http_ok = ok_status(status) or any(
+        str(status or "").startswith(prefix) for prefix in expected_status_prefixes
+    )
     ok = http_ok if verified is None else http_ok and bool(verified)
     item = {
         "name": name,
@@ -313,20 +315,20 @@ def append_progress(report):
     if report.get("liveDogfoodVerified"):
         detail = "Live MATM dogfood run verified against `https://memoryendpoints.com`"
     elif report.get("liveCoreDogfoodVerified"):
-        detail = "Live core MATM dogfood run verified against `https://memoryendpoints.com`; latest audit-log readback contract is not live yet"
+        detail = "Live core MATM dogfood run verified against `https://memoryendpoints.com`"
     elif report.get("localDogfoodVerified"):
         detail = "Local MATM dogfood run verified through WSGI"
     else:
         detail = "MATM dogfood run attempted but not fully verified"
     line = (
         "- Dogfood status: %s; report `docs/reports/dogfood-memory-run.json`; "
-        "local audit-log readback verified: %s; live audit-log readback verified: %s; "
+        "local agent audit denial verified: %s; live agent audit denial verified: %s; "
         "MATM update URL `https://memoryendpoints.com/api/matm/memory-events/submit`; "
         "raw credential values stored in report: false."
         % (
             detail,
-            str(bool(report.get("localAuditTrailReadbackVerified") or (report.get("localDogfoodVerified") and report.get("auditTrailReadbackVerified")))).lower(),
-            str(bool(report.get("liveAuditTrailReadbackVerified") or (report.get("liveDogfoodVerified") and report.get("auditTrailReadbackVerified")))).lower(),
+            str(bool(report.get("localAgentAuditAccessDenied") or (report.get("localDogfoodVerified") and report.get("agentAuditAccessDenied")))).lower(),
+            str(bool(report.get("liveAgentAuditAccessDenied") or (report.get("liveDogfoodVerified") and report.get("agentAuditAccessDenied")))).lower(),
         )
     )
     existing = PROGRESS_PATH.read_text(encoding="utf-8").splitlines()
@@ -401,7 +403,7 @@ def run_sequence(transport, label, base_url=None):
                 "memoryType": "status",
                 "subject": "MemoryEndpoints enterprise MATM hardening",
                 "title": "%s dogfood status" % label.title(),
-                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, meeting-room coordination, current-message readback, acknowledgement, receipt readback, and audit-log readback." % label.title(),
+                "summary": "%s dogfood verified workspace creation, agent registration, memory submit/search, meeting-room coordination, current-message readback, acknowledgement, receipt readback, and fail-closed agent audit access." % label.title(),
                 "tags": ["dogfood", label, "matm"],
                 "confidence": 0.86,
                 "source": "scripts/dogfood_memoryendpoints.py",
@@ -610,12 +612,24 @@ def run_sequence(transport, label, base_url=None):
         receipt_readback_verified = contains_receipt(receipts, notification_id, "memoryendpoints-followup-agent")
         step(report, "read_redacted_receipts", status, receipts, verified=receipt_readback_verified)
 
-        status, audit_log = transport.call(
+        status, audit_denial = transport.call(
             "/api/matm/audit-log",
             headers=auth,
             query=urlencode({"workspace_id": workspace_id, "limit": "50"}),
         )
-        step(report, "read_audit_log", status, audit_log)
+        agent_audit_access_denied = bool(
+            str(status).startswith("403")
+            and ((audit_denial.get("error") or {}).get("code") == "human_owner_required")
+            and audit_denial.get("agentsCanAccess") is False
+        )
+        step(
+            report,
+            "verify_agent_audit_access_denied",
+            status,
+            audit_denial,
+            verified=agent_audit_access_denied,
+            expected_status_prefixes=("403",),
+        )
 
         status, post_ack_current = read_current_message_until(
             transport,
@@ -632,11 +646,7 @@ def run_sequence(transport, label, base_url=None):
         step(report, "read_current_message_after_ack", status, post_ack_current, verified=post_ack_verified)
 
         required_ok = all(item["ok"] for item in report["steps"] if item["required"])
-        core_required_ok = all(
-            item["ok"]
-            for item in report["steps"]
-            if item["required"] and item["name"] != "read_audit_log"
-        )
+        core_required_ok = required_ok
         report["ok"] = required_ok
         report["coreDogfoodWorkflowVerified"] = core_required_ok
         report["latestDogfoodContractVerified"] = required_ok
@@ -660,8 +670,7 @@ def run_sequence(transport, label, base_url=None):
         report["currentMessagePostAckVerified"] = post_ack_verified
         report["postAckUnreadCount"] = post_ack_current.get("unreadCount", 0)
         report["receiptCount"] = receipts.get("count", 0)
-        report["auditLogCount"] = audit_log.get("count", 0)
-        report["auditTrailReadbackVerified"] = bool(audit_log.get("ok") and audit_log.get("valuesRedacted") and audit_log.get("count", 0))
+        report["agentAuditAccessDenied"] = agent_audit_access_denied
         report["requiredStepFailureCount"] = len([item for item in report["steps"] if item["required"] and not item["ok"]])
         report["optionalStepFailureCount"] = len([item for item in report["steps"] if not item["required"] and not item["ok"]])
     except Exception as exc:
@@ -676,16 +685,16 @@ def combine_reports(runs):
     live_verified = any(item.get("liveDogfoodVerified") for item in runs)
     live_core_verified = any(item.get("liveCoreDogfoodVerified") for item in runs)
     latest_contract_verified = all(item.get("latestDogfoodContractVerified") for item in runs)
-    local_audit_verified = any(
-        item.get("mode") == "local_wsgi" and item.get("auditTrailReadbackVerified")
+    local_audit_denied = any(
+        item.get("mode") == "local_wsgi" and item.get("agentAuditAccessDenied")
         for item in runs
     )
-    live_audit_verified = any(
-        item.get("mode") == "live_http" and item.get("auditTrailReadbackVerified")
+    live_audit_denied = any(
+        item.get("mode") == "live_http" and item.get("agentAuditAccessDenied")
         for item in runs
     )
     report = {
-        "schemaVersion": "memoryendpoints.dogfood_run.v3",
+        "schemaVersion": "memoryendpoints.dogfood_run.v4",
         "generatedAt": utc_now(),
         "mode": "combined" if len(runs) > 1 else runs[0]["mode"],
         "runs": runs,
@@ -694,8 +703,8 @@ def combine_reports(runs):
         "liveDogfoodVerified": live_verified,
         "liveCoreDogfoodVerified": live_core_verified,
         "latestDogfoodContractVerified": latest_contract_verified,
-        "localAuditTrailReadbackVerified": local_audit_verified,
-        "liveAuditTrailReadbackVerified": live_audit_verified,
+        "localAgentAuditAccessDenied": local_audit_denied,
+        "liveAgentAuditAccessDenied": live_audit_denied,
         "rawCredentialValuesStored": any(item.get("rawCredentialValuesStored") for item in runs),
         "rawPrivatePayloadsStored": any(item.get("rawPrivatePayloadsStored") for item in runs),
         "rawWorkspaceIdStoredInReport": False,
@@ -726,8 +735,7 @@ def combine_reports(runs):
         "currentMessagePostAckVerified",
         "postAckUnreadCount",
         "receiptCount",
-        "auditLogCount",
-        "auditTrailReadbackVerified",
+        "agentAuditAccessDenied",
     ):
         if key in primary:
             report[key] = primary[key]

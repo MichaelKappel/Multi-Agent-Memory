@@ -117,14 +117,15 @@ async function main() {
     requireContract(company.filters && archived.filters, "knowledge response omitted effective filters");
   });
 
-  await check("meeting receipt and audit filters", async () => {
+  await check("meeting receipt filters and agent audit denial", async () => {
     const taskRooms = await transport.request("/api/matm/meeting-rooms?scope=task", { method: "GET" });
     const receipts = await transport.request("/api/matm/receipts?consumer_agent_id=no-such-agent", { method: "GET" });
     const audit = await transport.request("/api/matm/audit-log?action=no-such-action", { method: "GET" });
     requireContract(taskRooms.items.length > 0 && taskRooms.items.every((item) => item.scope === "task"), "room scope filter did not narrow results");
     requireContract(receipts.count === 0, "receipt consumer filter did not narrow results");
-    requireContract(audit.count === 0, "audit action filter did not narrow results");
-    requireContract(taskRooms.filters && receipts.filters && audit.filters, "filtered response omitted effective filters");
+    requireContract(audit.ok === false && audit.agentsCanAccess === false, "agent audit request did not fail closed");
+    requireContract(audit.error && audit.error.code === "human_owner_required", "agent audit denial omitted stable error code");
+    requireContract(taskRooms.filters && receipts.filters, "filtered response omitted effective filters");
   });
 
   await check("unknown routing and device resources", async () => {

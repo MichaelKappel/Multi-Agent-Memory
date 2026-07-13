@@ -90,6 +90,7 @@ function createHarness(fetchImpl, options) {
   const resultHeading = node();
   const key = node({ type: "password" });
   const keyToggle = node({ textContent: "Show key" });
+  const saveKey = node({ disabled: true });
   const copyKey = node();
   const keySaved = node();
   const recovery = node({ type: "password" });
@@ -111,6 +112,7 @@ function createHarness(fetchImpl, options) {
     "[data-agent-setup-result-heading]": resultHeading,
     "[data-agent-setup-key]": key,
     "[data-agent-setup-key-toggle]": keyToggle,
+    "[data-agent-setup-save-key]": saveKey,
     "[data-agent-setup-copy-key]": copyKey,
     "[data-agent-setup-key-saved]": keySaved,
     "[data-agent-setup-recovery]": recovery,
@@ -137,6 +139,8 @@ function createHarness(fetchImpl, options) {
   const windowListeners = {};
   const assignedLocations = [];
   const confirmCalls = [];
+  const downloads = [];
+  const savedFiles = [];
   const confirmResponses = (options.confirmResponses || []).slice();
   const window = {
     addEventListener(type, handler) {
@@ -151,12 +155,84 @@ function createHarness(fetchImpl, options) {
       return fetchImpl(url, options, fetchCalls.length);
     },
     location: {
+      origin: "https://memoryendpoints.com",
       assign(url) {
         assignedLocations.push(url);
       },
     },
   };
+  if (options.fileSystemAccess) {
+    const files = new Set(options.existingFiles || []);
+    const secretDirectory = {
+      getFileHandle(name, createOptions) {
+        if (!createOptions || !createOptions.create) {
+          if (files.has(name)) {
+            return Promise.resolve({ name });
+          }
+          return Promise.reject({ name: "NotFoundError" });
+        }
+        files.add(name);
+        return Promise.resolve({
+          name,
+          createWritable() {
+            let content = "";
+            return Promise.resolve({
+              write(value) {
+                content = String(value);
+                return Promise.resolve();
+              },
+              close() {
+                savedFiles.push({ path: ".local-secrets/" + name, content });
+                return Promise.resolve();
+              },
+            });
+          },
+        });
+      },
+    };
+    window.showDirectoryPicker = function () {
+      return Promise.resolve({
+        name: "MemoryEndpoints.com",
+        getDirectoryHandle(name, createOptions) {
+          assert.strictEqual(name, ".local-secrets");
+          assert.strictEqual(createOptions.create, true);
+          return Promise.resolve(secretDirectory);
+        },
+      });
+    };
+  }
+  let pendingBlob = null;
+  if (options.downloadSupport) {
+    window.Blob = function (parts, blobOptions) {
+      this.parts = parts;
+      this.type = blobOptions.type;
+    };
+    window.URL = {
+      createObjectURL(blob) {
+        pendingBlob = blob;
+        return "blob:credential-file";
+      },
+      revokeObjectURL() {},
+    };
+    window.setTimeout = function (callback) {
+      callback();
+    };
+  }
   const document = {
+    body: options.downloadSupport ? {
+      appendChild() {},
+      removeChild() {},
+    } : null,
+    createElement: options.downloadSupport ? function () {
+      return {
+        click() {
+          downloads.push({
+            filename: this.download,
+            content: pendingBlob.parts.join(""),
+          });
+        },
+      };
+    } : null,
     querySelector(selector) {
       if (selector === "[data-agent-setup]") {
         return root;
@@ -184,6 +260,7 @@ function createHarness(fetchImpl, options) {
     copiedValues,
     copyKey,
     copyRecovery,
+    downloads,
     fetchCalls,
     form,
     key,
@@ -197,6 +274,8 @@ function createHarness(fetchImpl, options) {
     resetButton,
     result,
     resultHeading,
+    saveKey,
+    savedFiles,
     status,
     submit,
     windowListeners,
@@ -274,6 +353,35 @@ function submit(harness) {
   assert.strictEqual(success.windowListeners.beforeunload(beforeUnloadEvent), "");
   assert.strictEqual(beforeUnloadPrevented, true);
   assert.strictEqual(beforeUnloadEvent.returnValue, "");
+
+  const savedToProject = createHarness(() => Promise.resolve(response(201, successPayload)), { fileSystemAccess: true });
+  submit(savedToProject);
+  await settle();
+  assert.strictEqual(savedToProject.saveKey.disabled, false);
+  savedToProject.saveKey.emit("click");
+  await settle();
+  assert.strictEqual(savedToProject.savedFiles.length, 1);
+  assert.strictEqual(savedToProject.savedFiles[0].path, ".local-secrets/memoryendpoints-company-master.json");
+  assert.deepStrictEqual(JSON.parse(savedToProject.savedFiles[0].content), {
+    schemaVersion: "memoryendpoints.company_master_credential_file.v1",
+    baseUrl: "https://memoryendpoints.com",
+    companyId: "company-1",
+    workspaceId: "workspace-1",
+    companyMasterTokenSecret: oneTimeValue,
+  });
+  assert.strictEqual(savedToProject.keySaved.checked, true);
+  assert.strictEqual(savedToProject.status.textContent.includes(savedToProject.companyMasterDefaultPath), true);
+  assert.strictEqual(savedToProject.status.textContent.includes(oneTimeValue), false);
+
+  const downloaded = createHarness(() => Promise.resolve(response(201, successPayload)), { downloadSupport: true });
+  submit(downloaded);
+  await settle();
+  downloaded.saveKey.emit("click");
+  assert.strictEqual(downloaded.downloads.length, 1);
+  assert.strictEqual(downloaded.downloads[0].filename, "memoryendpoints-company-master.json");
+  assert.strictEqual(JSON.parse(downloaded.downloads[0].content).companyMasterTokenSecret, oneTimeValue);
+  assert.strictEqual(downloaded.keySaved.checked, false, "a download is not proof that the file reached the project path");
+  assert.strictEqual(downloaded.status.textContent.includes(downloaded.companyMasterDefaultPath), true);
 
   success.keyToggle.emit("click");
   assert.strictEqual(success.key.type, "text");
@@ -413,6 +521,8 @@ function submit(harness) {
     safeNoOpNoWorkspaceRetry: true,
     outcomeUnknownLocked: true,
     storageAvoided: true,
+    projectCredentialFileWritten: true,
+    credentialDownloadFallbackVerified: true,
   }) + "\n");
 })().catch((error) => {
   process.stderr.write(error.stack + "\n");

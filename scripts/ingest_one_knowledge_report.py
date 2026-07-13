@@ -567,7 +567,6 @@ def main(argv=None):
                 "persisted": bool(payload.get("persisted")),
                 "visibleInSearch": bool(payload.get("visibleInSearch")),
                 "visibleInWikiTree": bool(payload.get("visibleInWikiTree")),
-                "visibleInAuditLog": bool(payload.get("visibleInAuditLog")),
                 "documentQueryUrl": redact_query_identifiers(
                     payload.get("documentQueryUrl"),
                     (context.get("workspaceId"), context.get("companyId"), body.get("scopeId"), body.get("projectId")),

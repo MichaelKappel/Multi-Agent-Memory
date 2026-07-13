@@ -24,10 +24,10 @@ How it works:
 - `memoryendpoints/` contains the pure stdlib WSGI MATM endpoint runtime.
 - `sites/multiagentmemory.com/` contains the static GitHub companion documentation site.
 - `scripts/` contains verification, packaging, secret scanning, dogfood, readiness, and deploy helpers.
-- `tests/` covers public discovery, virtual UAIX startup and revision behavior, hash-only local edit claims, protected MATM workflows, hierarchy navigation, contextual knowledge search, external-link citations, curated web search, meeting-room routing, current-message delivery, distributed-sync conflicts, memory firewall behavior, idempotency, review decisions, audit readback, documentation freshness, and relational-backend parity.
+- `tests/` covers public discovery, virtual UAIX startup and revision behavior, hash-only local edit claims, protected MATM workflows, hierarchy navigation, contextual knowledge search, external-link citations, curated web search, meeting-room routing, bounded current-message delivery, distributed-sync conflicts, memory firewall behavior, idempotency, review decisions, human-only retained history, documentation freshness, and relational-backend parity.
 - `.uai/` remains active startup memory always; hosted MATM augments durable memory but does not replace local continuity.
 - MemoryEndpoints.com database records are the durable knowledge source of truth for reviewed company, workspace, and project wiki pages. Repository docs are not a second memory hierarchy.
-- MemoryEndpoints.com protected routes handle memory submit/search, hierarchy crawl, semantic page search, first-class external citations, curated web search, meeting-room routing, current-message coordination, conflict-safe distributed sync, notification acknowledgements, review decisions, receipts, and protected audit-log readback.
+- MemoryEndpoints.com protected routes handle memory submit/search, hierarchy crawl, semantic page search, first-class external citations, curated web search, meeting-room routing, current-message coordination, conflict-safe distributed sync, notification acknowledgements, review decisions, and receipts. Routine audit logs are never agent-visible; optional humans can inspect currently retained history for seven days.
 - The checked-in route table, GitHub route inventory and API contract, and companion API reference are compared by tests. Tracked reports remain point-in-time evidence rather than proof of a later commit.
 
 The documentation model follows the UAIX AI Memory Package Wizard MemoryEndpoints.com MATM setup boundary:

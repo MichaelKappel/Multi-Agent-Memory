@@ -921,7 +921,6 @@ def _memory_submission_confirmation(store, workspace_id, event):
         "persisted": bool(event.get("eventId") and (visible_in_search or visible_in_review_queue) and visible_in_audit_log),
         "visibleInSearch": visible_in_search,
         "visibleInReviewQueue": visible_in_review_queue,
-        "visibleInAuditLog": visible_in_audit_log,
         "canonicalMemoryEventId": event.get("eventId"),
         "reviewId": event.get("reviewId"),
         "memoryQueryUrl": _protected_query_url(
@@ -937,10 +936,6 @@ def _memory_submission_confirmation(store, workspace_id, event):
         "reviewQueueUrl": _protected_query_url(
             "/api/matm/review-queue",
             {"status": event.get("reviewStatus") or "pending"},
-        ),
-        "auditLogUrl": _protected_query_url(
-            "/api/matm/audit-log",
-            {"action": "memory.submit", "limit": "50"},
         ),
         "valuesRedacted": True,
     }
@@ -972,7 +967,6 @@ def _knowledge_document_confirmation(store, workspace_id, document):
         "persisted": bool(document_id and visible_in_search and visible_in_tree and visible_in_audit),
         "visibleInSearch": visible_in_search,
         "visibleInWikiTree": visible_in_tree,
-        "visibleInAuditLog": visible_in_audit,
         "canonicalSearchDocumentId": document_id,
         "canonicalSourceId": document.get("sourceId"),
         "documentQueryUrl": _protected_query_url(
@@ -1011,7 +1005,6 @@ def _external_link_confirmation(store, workspace_id, link, document_id=""):
         "persisted": bool(external_link_id and persisted_link and visible_on_document and visible_in_audit),
         "visibleInInternetSearch": bool(persisted_link),
         "visibleOnKnowledgeDocument": visible_on_document,
-        "visibleInAuditLog": visible_in_audit,
         "canonicalExternalLinkId": external_link_id,
         "linkQueryUrl": _protected_query_url("/api/matm/external-links", {"external_link_id": external_link_id}),
         "internetSearchQueryUrl": _protected_query_url("/api/matm/internet-search", {"q": link.get("pageTitle") or link.get("siteName")}),
@@ -2801,7 +2794,7 @@ def route_home(start_response):
   <article>
     <p class="eyebrow">Memory boundary</p>
     <h2>Local continuity plus protected durable memory</h2>
-    <p>Local <code>.uai</code> files remain the agent's active startup memory. MemoryEndpoints adds protected mid- and long-term memory, review, meetings, current messages, receipts, audit, and searchable wiki knowledge. Hosted memory augments local continuity; it never silently replaces it.</p>
+    <p>Local <code>.uai</code> files remain the agent's active startup memory. MemoryEndpoints adds protected mid- and long-term memory, review, meetings, current messages, receipts, and searchable wiki knowledge. Routine audit logs remain human-only for seven days and never enter agent context. Hosted memory augments local continuity; it never silently replaces it.</p>
     <p><a href="https://uaix.org">UAIX.org</a> provides portable setup guidance. <a href="{companion_docs_url}">MultiAgentMemory.com</a> and the <a href="{github_repo_url}">GitHub companion repository</a> explain this implementation.</p>
   </article>
 </section>
@@ -3102,17 +3095,17 @@ def route_agent_setup(start_response):
   <header class="setup-heading">
     <p class="eyebrow">Secure workspace onboarding</p>
     <h1>Start using MemoryEndpoints</h1>
-    <p class="lead">Create a bounded Account, Company, Workspace, and Project, redeem a human-approved agent invitation, or sign in with an existing governed credential.</p>
+    <p class="lead">Autonomous agents can create a bounded Account, Company, Workspace, and Project with no human interaction. Optional human access and governed invitation flows remain available for human-only controls.</p>
   </header>
   <section class="setup-onboarding" data-agent-setup data-agent-setup-available="__SETUP_AVAILABLE__" data-company-master-default-path="__COMPANY_MASTER_DEFAULT_SECRET_PATH__">
     <div class="setup-choice-grid">
       <article class="setup-card setup-card-primary">
         <p class="setup-step">New workspace</p>
         <h2>Create a free 200 MB workspace</h2>
-        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier.</p>
+        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier. Setup is not complete until the credential file exists.</p>
         <div class="setup-boundary-note setup-credential-location" data-company-master-storage-guidance>
-          <strong>Know where the credential will go before creating</strong>
-          <span>MemoryEndpoints creates the company master here and shows it once. For an AI-assisted project, the default local file is <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. Keep <code>.local-secrets/</code> out of source control.</span>
+          <strong>The setup workflow must create this file</strong>
+          <span>For browser setup, use <strong>Save to project secret folder</strong> after creation and select the project root. For agent-driven setup, use <code>scripts/setup_memoryendpoints_company.py</code>; it writes <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> without printing the credential. Keep <code>.local-secrets/</code> out of source control.</span>
         </div>
         __SETUP_FORM__
       </article>
@@ -3142,15 +3135,16 @@ def route_agent_setup(start_response):
         <div><dt>Project</dt><dd data-agent-setup-project-id></dd></div>
       </dl>
       <label class="setup-key-label" for="one-time-workspace-key">One-time company master credential</label>
-      <p class="setup-key-help" id="one-time-workspace-key-help">This credential can approve, invite, and revoke agents for the company. Copy only after an explicit action; clipboard history is controlled by your device.</p>
+      <p class="setup-key-help" id="one-time-workspace-key-help">This credential can approve, invite, and revoke agents for the company. Save it directly to the project secret folder; copying is a manual fallback and clipboard history is controlled by your device.</p>
       <div class="setup-key-row">
         <input id="one-time-workspace-key" type="password" readonly autocomplete="new-password" spellcheck="false" aria-describedby="one-time-workspace-key-help" data-agent-setup-key>
         <button class="button" type="button" aria-pressed="false" data-agent-setup-key-toggle>Show credential</button>
-        <button class="button primary" type="button" data-agent-setup-copy-key>Copy credential</button>
+        <button class="button primary" type="button" disabled data-agent-setup-save-key>Save to project secret folder</button>
+        <button class="button" type="button" data-agent-setup-copy-key>Copy only</button>
       </div>
       <div class="setup-boundary-note setup-secret-location" data-company-master-storage-guidance>
         <strong>Default agent-readable secret file</strong>
-        <span>Save an owner-readable JSON file at <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. Add <code>.local-secrets/</code> to <code>.gitignore</code>, restrict local access, and use a managed secret store instead when available.</span>
+        <span>Select the project root when prompted. The page creates <code>__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> inside it. If folder access is unavailable, the page downloads <code>memoryendpoints-company-master.json</code>; move that file into the project's <code>.local-secrets</code> folder before confirming it is saved.</span>
         <pre><code>{
   "baseUrl": "https://memoryendpoints.com",
   "companyId": "&lt;company id shown above&gt;",
@@ -3168,7 +3162,7 @@ def route_agent_setup(start_response):
       </div>
       <label class="setup-key-saved">
         <input type="checkbox" data-agent-setup-key-saved>
-        I saved this one-time company master credential at the default local path or in a documented secure alternative.
+        I verified that <code>__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> exists in the project (or documented the managed-secret alternative).
       </label>
       <label class="setup-key-saved">
         <input type="checkbox" data-agent-setup-recovery-saved>
@@ -3223,23 +3217,13 @@ def route_agent_setup(start_response):
   </section>
   <details class="setup-code-examples">
     <summary>Copy-Safe Setup for agents and developers</summary>
-    <p>These examples use placeholder labels only. Save the returned company master credential at <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> or a documented managed-secret alternative. If the default file is missing, an agent must stop and ask the human which governed store was used; it must not scan outside the project or request the raw value in chat.</p>
-    <h3>Bash</h3>
-    <pre><code>curl -sS -X POST "https://memoryendpoints.com/api/matm/agent-setup/free-account" \\
-  -H "Content-Type: application/json" \\
-  --data '{"companyLabel":"Example Company","label":"Example Workspace","projectLabel":"Example Project"}'</code></pre>
-    <h3>PowerShell</h3>
-    <pre><code>$body = @{
-  companyLabel = "Example Company"
-  label = "Example Workspace"
-  projectLabel = "Example Project"
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "https://memoryendpoints.com/api/matm/agent-setup/free-account" `
-  -ContentType "application/json" `
-  -Body $body</code></pre>
+    <p>Use the repository helper for agent-driven setup. It checks both target locations before creating anything, writes the company master to <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, saves the exceptional owner-recovery secret separately, and prints only redacted confirmation. If the default file is missing afterward, the agent must stop instead of claiming setup succeeded.</p>
+    <h3>Agent setup helper</h3>
+    <pre><code>python scripts/setup_memoryendpoints_company.py \\
+  --company-label "Example Company" \\
+  --workspace-label "Example Workspace" \\
+  --project-label "Example Project" \\
+  --project-root .</code></pre>
   </details>
 </section>
 """
@@ -3267,10 +3251,10 @@ def route_agent_coordination(start_response):
     body = """
   <section class="page">
   <h1>Agent Coordination Quickstart</h1>
-  <p>This is the shortest public path from a governed, human-approved agent credential to a useful MATM coordination loop. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
-    <p>Before using this flow, request a meaningful company-scoped agent name, have a company master or authenticated human owner approve it, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. LocalEndpoint Connect should instead use <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a>; arbitrary company-master registration is not supported.</p>
+  <p>This is the shortest public path from a governed agent credential to a useful MATM coordination loop. Autonomous setup and ordinary agent work require no human interaction. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+    <p>An autonomous setup agent may use its company master to approve a meaningful company-scoped agent name, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. Authenticated human approval remains an optional alternative for human-only controls. LocalEndpoint Connect uses <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a> and retains its narrower approval boundary.</p>
     <h2>Find Credentials Safely</h2>
-    <p>Agent Setup creates the company master credential and shows it once. The default agent-readable location is <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, with <code>.local-secrets/</code> excluded from source control. Normal agents use their bound agent credential, not the company master. If the default company-master file is missing, stop and ask the human which governed secret store was used; never scan outside the project or ask for the raw credential in chat.</p>
+    <p>Agent Setup creates the company master credential and shows it once. Displaying the default path does not create the file: agent-driven setup must use <code>scripts/setup_memoryendpoints_company.py</code> and verify <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> exists before claiming success. Keep <code>.local-secrets/</code> outside source control. Normal agents use their bound agent credential, not the company master. If the default company-master file is missing, stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request the raw credential in chat.</p>
   <h2>Choose The Active-Memory Mode</h2>
   <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after invite redemption. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the governed credential and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
   <h2>Inputs</h2>
@@ -3465,7 +3449,7 @@ def route_console(start_response, demo=False):
       <a href="#review-queue">Reviews</a>
       <a href="#meeting-rooms">Meetings</a>
       <a href="#message-lanes">Messages</a>
-      <a href="#receipts-audit">Receipts/Audit</a>
+      <a href="#receipts-audit">Receipts/History</a>
     </nav>
     <div class="console-utility-actions">
       <div class="console-view-switcher" role="group" aria-label="Workflow focus" data-console-view-switcher>
@@ -3521,7 +3505,7 @@ def route_console(start_response, demo=False):
       <button class="button compact" type="button" data-console-command="meetings">Meetings</button>
       <button class="button compact" type="button" data-console-command="messages">Messages</button>
       <button class="button compact" type="button" data-console-command="receipts">Receipts</button>
-      <button class="button compact" type="button" data-console-command="audit">Audit</button>
+      <button class="button compact" type="button" data-console-command="audit">Human history</button>
     </div>
   </div>
   <div class="operator-metrics" data-console-operator-metrics>
@@ -3560,7 +3544,7 @@ def route_console(start_response, demo=False):
       </section>
       <section class="operator-desk-panel" data-console-desk-evidence>
         <h3>Evidence</h3>
-        <p class="empty-state">Receipt and audit rows appear after refresh.</p>
+        <p class="empty-state">Receipt rows appear after refresh. Routine history is human-only.</p>
       </section>
     </div>
   </section>
@@ -4158,7 +4142,7 @@ def route_console(start_response, demo=False):
     <div class="section-heading">
       <div>
         <span class="section-kicker">Evidence</span>
-        <h2>Receipts And Audit</h2>
+        <h2>Receipts And Human History</h2>
       </div>
       <span class="status-badge good">redacted output</span>
     </div>
@@ -4171,42 +4155,16 @@ def route_console(start_response, demo=False):
       <button class="button" type="button" data-console-receipts>Refresh receipts</button>
       <button class="button" type="button" data-console-clear-receipts-filter>Clear receipt filter</button>
     </form>
-    <form class="console-grid" data-console-audit-filter>
-      <label>Audit action
-        <select name="action">
-          <option value="">all actions</option>
-          <option value="memory.search">memory.search</option>
-          <option value="memory.submit">memory.submit</option>
-          <option value="message.submit">message.submit</option>
-          <option value="current_message.read">current_message.read</option>
-          <option value="notification.ack">notification.ack</option>
-          <option value="receipts.read">receipts.read</option>
-          <option value="audit_log.read">audit_log.read</option>
-        </select>
-      </label>
-      <label>Limit
-        <select name="limit">
-          <option value="25">25</option>
-          <option value="50" selected>50</option>
-          <option value="100">100</option>
-        </select>
-      </label>
-      <button class="button" type="submit">Refresh audit</button>
-      <button class="button" type="button" data-console-clear-audit-filter>Clear audit filter</button>
-    </form>
+    <aside class="human-access-credential-guide">
+      <strong>Routine logs are never available to agents.</strong>
+      <p>They are human-only break-glass evidence and are physically deleted after seven days. An optional human can <a href="/human">sign in through Human Access</a> to review or download the history that is still retained.</p>
+    </aside>
     <div class="console-results" data-console-receipts-list>
       <p class="empty-state">Read receipts will appear after acknowledgements.</p>
     </div>
     <details class="debug-json">
       <summary>Receipts JSON</summary>
       <pre data-console-receipts-output>{}</pre>
-    </details>
-    <div class="console-results" data-console-audit-list>
-      <p class="empty-state">Audit events will appear after refresh.</p>
-    </div>
-    <details class="debug-json">
-      <summary>Audit JSON</summary>
-      <pre data-console-audit-output>{}</pre>
     </details>
   </section>
 </section>
@@ -4381,8 +4339,8 @@ def text_discovery(name):
         "Source repository: %s." % GITHUB_REPO_URL,
         "Memory boundary: hosted workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
-        "Company master storage: /agent-setup creates and shows it once; the default agent-readable file is <project-root>/%s and .local-secrets/ stays outside source control." % COMPANY_MASTER_DEFAULT_SECRET_PATH,
-        "Missing company master: agents stop and ask the human which governed secret store was used; never scan outside the project or request, echo, or log the raw credential.",
+        "Company master storage: /agent-setup creates and shows it once; displaying the path does not create the file. Browser setup uses Save to project secret folder, and agent-driven setup uses scripts/setup_memoryendpoints_company.py and verifies <project-root>/%s exists. Keep .local-secrets/ outside source control." % COMPANY_MASTER_DEFAULT_SECRET_PATH,
+        "Missing company master: agents stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request, echo, or log the raw credential.",
         "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "UAIX active memory: /api/matm/uai-memory/contract separates the accountless-browser virtual-package exception from hash-only local .uai edit coordination.",
@@ -6360,13 +6318,22 @@ def route_human(environ, start_response, path):
     if operation == "history":
         if method != "GET":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to read human-only forensic history.", "method_not_allowed", headers=[("Allow", "GET")])
+        query = _query(environ)
+        items = store.company_audit_log(company_id, query.get("limit") or 5000)
         return json_response(
             start_response,
             {
                 "ok": True,
+                "schemaVersion": "memoryendpoints.human_routine_history.v1",
                 "companyId": company_id,
                 "visibility": "human_only",
-                "items": [],
+                "agentsCanAccess": False,
+                "retentionDays": 7,
+                "physicallyDeletedAfterRetention": True,
+                "items": items,
+                "count": len(items),
+                "downloadAvailableUntilPurge": True,
+                "downloadPath": "/api/matm/human/companies/%s/exports" % company_id,
                 "auditActor": _human_audit_actor(session),
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
@@ -6946,6 +6913,8 @@ def route_protected(environ, start_response, path):
         if token and store.authenticate(token):
             return _access_problem(start_response, "insufficient_scope")
         return _access_problem(start_response, "invalid_token")
+    if path == "/api/matm/audit-log":
+        return _human_problem(start_response, "human_owner_required")
     workspace_id = auth["workspaceId"]
     idem = _idempotency_key(environ)
     acting_identity_fields = ()
@@ -7159,14 +7128,13 @@ def route_protected(environ, start_response, path):
             return problem(start_response, status, title, detail, error)
         confirmation = _external_link_confirmation(store, workspace_id, link, document_id)
         if not confirmation["persisted"]:
-            return problem(start_response, "500 Internal Server Error", "External link was not persisted", "The link could not be confirmed in search, citation, and audit readback after write.", "external_link_not_persisted")
+            return problem(start_response, "500 Internal Server Error", "External link was not persisted", "The link could not be confirmed by server-side persistence evidence after write.", "external_link_not_persisted")
         payload = {
             "ok": True,
             "link": link,
             "persisted": confirmation["persisted"],
             "visibleInInternetSearch": confirmation["visibleInInternetSearch"],
             "visibleOnKnowledgeDocument": confirmation["visibleOnKnowledgeDocument"],
-            "visibleInAuditLog": confirmation["visibleInAuditLog"],
             "canonicalExternalLinkId": confirmation["canonicalExternalLinkId"],
             "linkQueryUrl": confirmation["linkQueryUrl"],
             "internetSearchQueryUrl": confirmation["internetSearchQueryUrl"],
@@ -7310,14 +7278,13 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Knowledge document rejected", "The knowledge document could not be stored.", error)
         confirmation = _knowledge_document_confirmation(store, workspace_id, document)
         if not confirmation["persisted"]:
-            return problem(start_response, "500 Internal Server Error", "Knowledge document was not persisted", "The knowledge document could not be confirmed in search, tree, and audit readback after write.", "knowledge_document_not_persisted")
+            return problem(start_response, "500 Internal Server Error", "Knowledge document was not persisted", "The knowledge document could not be confirmed by server-side persistence evidence after write.", "knowledge_document_not_persisted")
         payload = {
             "ok": True,
             "document": document,
             "persisted": confirmation["persisted"],
             "visibleInSearch": confirmation["visibleInSearch"],
             "visibleInWikiTree": confirmation["visibleInWikiTree"],
-            "visibleInAuditLog": confirmation["visibleInAuditLog"],
             "canonicalSearchDocumentId": confirmation["canonicalSearchDocumentId"],
             "canonicalSourceId": confirmation["canonicalSourceId"],
             "documentQueryUrl": confirmation["documentQueryUrl"],
@@ -7514,34 +7481,6 @@ def route_protected(environ, start_response, path):
                 "items": heads,
                 "count": len(heads),
                 "filters": {"logicalMemoryId": logical_memory_id} if logical_memory_id else {},
-                "valuesRedacted": True,
-                "rawCredentialExposed": False,
-                "rawPayloadExposed": False,
-            },
-        )
-    if path == "/api/matm/audit-log" and method == "GET":
-        requested_limit = query.get("limit") or ""
-        audit_filters = {
-            "action": query.get("action") or "",
-            "limit": requested_limit or "50",
-        }
-        active_filters = {}
-        if audit_filters["action"]:
-            active_filters["action"] = audit_filters["action"]
-        if requested_limit:
-            active_filters["limit"] = audit_filters["limit"]
-        _audit_read(store, workspace_id, auth, "audit_log.read", path, {"actionFilter": audit_filters["action"], "limit": audit_filters["limit"]})
-        items = store.audit_log(workspace_id, audit_filters["limit"], audit_filters["action"])
-        operator_summary = _audit_log_operator_summary(items, active_filters)
-        return json_response(
-            start_response,
-            {
-                "ok": True,
-                "schemaVersion": "memoryendpoints.audit_log.v1",
-                "items": items,
-                "count": len(items),
-                "filters": active_filters,
-                "operatorSummary": operator_summary,
                 "valuesRedacted": True,
                 "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
@@ -7991,7 +7930,7 @@ def route_protected(environ, start_response, path):
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
         if not confirmation["persisted"]:
-            return problem(start_response, "500 Internal Server Error", "Memory was not persisted", "The memory event could not be confirmed in search, the review queue, and audit log after write.", "memory_not_persisted")
+            return problem(start_response, "500 Internal Server Error", "Memory was not persisted", "The memory event could not be confirmed by server-side persistence evidence after write.", "memory_not_persisted")
         payload = {
             "ok": True,
             "event": event,
@@ -8000,12 +7939,10 @@ def route_protected(environ, start_response, path):
             "persisted": confirmation["persisted"],
             "visibleInSearch": confirmation["visibleInSearch"],
             "visibleInReviewQueue": confirmation["visibleInReviewQueue"],
-            "visibleInAuditLog": confirmation["visibleInAuditLog"],
             "canonicalMemoryEventId": confirmation["canonicalMemoryEventId"],
             "reviewId": confirmation["reviewId"],
             "memoryQueryUrl": confirmation["memoryQueryUrl"],
             "reviewQueueUrl": confirmation["reviewQueueUrl"],
-            "auditLogUrl": confirmation["auditLogUrl"],
             "confirmation": confirmation,
             "valuesRedacted": True,
             "rawCredentialExposed": False,
@@ -8398,7 +8335,7 @@ def route_protected(environ, start_response, path):
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
         if not confirmation["persisted"]:
-            return problem(start_response, "500 Internal Server Error", "Promoted memory was not persisted", "The promoted memory event could not be confirmed in search, the review queue, and audit log after write.", "promoted_memory_not_persisted")
+            return problem(start_response, "500 Internal Server Error", "Promoted memory was not persisted", "The promoted memory event could not be confirmed by server-side persistence evidence after write.", "promoted_memory_not_persisted")
         payload = {
             "ok": True,
             "sourceMeetingMessage": message,
@@ -8408,12 +8345,10 @@ def route_protected(environ, start_response, path):
             "persisted": confirmation["persisted"],
             "visibleInSearch": confirmation["visibleInSearch"],
             "visibleInReviewQueue": confirmation["visibleInReviewQueue"],
-            "visibleInAuditLog": confirmation["visibleInAuditLog"],
             "canonicalMemoryEventId": confirmation["canonicalMemoryEventId"],
             "reviewId": confirmation["reviewId"],
             "memoryQueryUrl": confirmation["memoryQueryUrl"],
             "reviewQueueUrl": confirmation["reviewQueueUrl"],
-            "auditLogUrl": confirmation["auditLogUrl"],
             "confirmation": confirmation,
             "operatorSummary": _meeting_memory_promotion_operator_summary(message, room, event, promoted_by_agent_id),
             "valuesRedacted": True,

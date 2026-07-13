@@ -13,6 +13,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
+from memoryendpoints.app import _audit_log_operator_summary, _store
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
 
 
@@ -292,8 +293,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "<project-root>/.local-secrets/memoryendpoints-company-master.json",
             agent_guidance,
         )
-        self.assertIn("agents stop and ask the human", agent_guidance)
-        self.assertIn("never scan outside the project", agent_guidance)
+        self.assertIn("agents stop and treat autonomous setup as incomplete", agent_guidance)
+        self.assertIn("Do not require a human", agent_guidance)
+        self.assertIn("scan outside configured paths", agent_guidance)
 
         with patch("memoryendpoints.app.credential_system_available", return_value=True):
             status, setup_headers, setup = call_app("/agent-setup")
@@ -320,6 +322,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('type="password" readonly autocomplete="new-password"', setup)
         self.assertIn('aria-describedby="one-time-workspace-key-help"', setup)
         self.assertIn('data-agent-setup-key-saved', setup)
+        self.assertIn('disabled data-agent-setup-save-key', setup)
+        self.assertIn("Save to project secret folder", setup)
         self.assertIn('data-company-master-default-path=".local-secrets/memoryendpoints-company-master.json"', setup)
         self.assertIn("Default agent-readable secret file", setup)
         self.assertIn("ask the AI agent to check this exact file", setup)
@@ -330,9 +334,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("One-time exceptional recovery secret", setup)
         self.assertIn("It is not a login credential", setup)
         self.assertIn("Create your human account", setup)
-        self.assertIn("https://memoryendpoints.com/api/matm/agent-setup/free-account", setup)
-        self.assertIn("Invoke-RestMethod", setup)
-        self.assertIn("--data '{", setup)
+        self.assertIn("scripts/setup_memoryendpoints_company.py", setup)
+        self.assertIn('--company-label "Example Company"', setup)
+        self.assertIn("prints only redacted confirmation", setup)
         self.assertIn('href="/agent-coordination"', setup)
         self.assertNotIn("Bearer me_", setup)
         self.assertNotIn("apiKeySecret", setup)
@@ -353,7 +357,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('credentials: "same-origin"', site_js)
         self.assertIn('Do not submit again from this page because setup is not idempotent.', site_js)
         self.assertIn('setupRoot.getAttribute("data-company-master-default-path")', site_js)
-        self.assertIn('Save it at " + setupDefaultSecretPath', site_js)
+        self.assertIn('window.showDirectoryPicker({ mode: "readwrite" })', site_js)
+        self.assertIn('getDirectoryHandle(".local-secrets", { create: true })', site_js)
+        self.assertIn('schemaVersion: "memoryendpoints.company_master_credential_file.v1"', site_js)
+        self.assertIn("setupKeySaved.checked = true", site_js)
         self.assertNotIn("localStorage", site_js)
         self.assertNotIn("sessionStorage", site_js)
         self.assertNotIn("window.name", site_js)
@@ -403,7 +410,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Agent Coordination Quickstart", text)
         self.assertIn("Find Credentials Safely", text)
         self.assertIn(".local-secrets/memoryendpoints-company-master.json", text)
-        self.assertIn("stop and ask the human which governed secret store was used", text)
+        self.assertIn("stop and treat autonomous setup as incomplete", text)
+        self.assertIn("Do not require a human", text)
         self.assertIn("MEMORYENDPOINTS_AGENT_TOKEN", text)
         self.assertIn("/.well-known/memoryendpoints-connector", text)
         self.assertIn("one-time invite", text)
@@ -765,10 +773,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('<option value="">current inbox agent</option>', text)
         self.assertNotIn('<option value="codex-agent">', text)
         self.assertIn("data-console-clear-receipts-filter", text)
-        self.assertIn("data-console-audit-filter", text)
-        self.assertIn("data-console-clear-audit-filter", text)
-        self.assertIn('value="memory.search"', text)
-        self.assertIn("data-console-audit-list", text)
+        self.assertNotIn("data-console-audit-filter", text)
+        self.assertNotIn("data-console-clear-audit-filter", text)
+        self.assertNotIn("data-console-audit-list", text)
+        self.assertIn("Routine logs are never available to agents", text)
+        self.assertIn('href="/human"', text)
         self.assertIn("Debug JSON", text)
         self.assertIn("/static/css/site.css?v=", text)
         self.assertIn("/static/js/site.js?v=", text)
@@ -1222,7 +1231,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("readback confirmed", js)
         self.assertIn("search visible", js)
         self.assertIn("review visible", js)
-        self.assertIn("audit visible", js)
+        self.assertIn("audit human-only", js)
+        self.assertNotIn("audit visible", js)
         self.assertIn("memory-submit-operator-summary", js)
         self.assertIn("submission.firewallDecision", js)
         self.assertIn("submission.rawPayloadExposed", js)
@@ -1503,22 +1513,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Hosted long-term memory search refreshed", js)
         self.assertIn("source path(s)", js)
 
-    def test_console_js_wires_audit_log_filters(self):
+    def test_console_js_keeps_audit_history_out_of_agent_access(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
 
-        self.assertIn("data-console-audit-filter", js)
-        self.assertIn("params.action", js)
-        self.assertIn("params.limit", js)
-        self.assertIn("detailsSummary", js)
-        self.assertIn("payload.operatorSummary", js)
-        self.assertIn("summary.actionCounts", js)
-        self.assertIn("summary.allCredentialsHidden", js)
-        self.assertIn("summary.allPayloadsHidden", js)
-        self.assertIn("audit-summary", js)
-        self.assertIn(".concat(detailSummary)", js)
-        self.assertIn('selectedLimit === "50" ? "" : selectedLimit', js)
-        self.assertIn("data-console-clear-audit-filter", js)
-        self.assertIn("Audit filter cleared.", js)
+        self.assertNotIn('api("/api/matm/audit-log?', js)
+        self.assertIn('agentsCanAccess: false', js)
+        self.assertIn('retentionDays: 7', js)
+        self.assertIn('humanAccessRoute: "/human"', js)
+        self.assertIn('"audit human-only"', js)
 
     def test_console_js_wires_receipt_consumer_filters(self):
         js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
@@ -1935,22 +1937,22 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(submit_payload["persisted"])
         self.assertTrue(submit_payload["visibleInSearch"])
         self.assertTrue(submit_payload["visibleInReviewQueue"])
-        self.assertTrue(submit_payload["visibleInAuditLog"])
+        self.assertNotIn("visibleInAuditLog", submit_payload)
         self.assertEqual(event["eventId"], submit_payload["canonicalMemoryEventId"])
         self.assertEqual(event["reviewId"], submit_payload["reviewId"])
         self.assertIn("/api/matm/search?", submit_payload["memoryQueryUrl"])
         self.assertIn("event_id=", submit_payload["memoryQueryUrl"])
         self.assertIn("/api/matm/review-queue?", submit_payload["reviewQueueUrl"])
-        self.assertIn("/api/matm/audit-log?", submit_payload["auditLogUrl"])
+        self.assertNotIn("auditLogUrl", submit_payload)
         self.assertTrue(confirmation["persisted"])
         self.assertTrue(confirmation["visibleInSearch"])
         self.assertTrue(confirmation["visibleInReviewQueue"])
-        self.assertTrue(confirmation["visibleInAuditLog"])
+        self.assertNotIn("visibleInAuditLog", confirmation)
         self.assertEqual(event["eventId"], confirmation["canonicalMemoryEventId"])
         self.assertEqual(event["reviewId"], confirmation["reviewId"])
         self.assertEqual(submit_payload["memoryQueryUrl"], confirmation["memoryQueryUrl"])
         self.assertEqual(submit_payload["reviewQueueUrl"], confirmation["reviewQueueUrl"])
-        self.assertEqual(submit_payload["auditLogUrl"], confirmation["auditLogUrl"])
+        self.assertNotIn("auditLogUrl", confirmation)
         self.assertEqual("decision", event["memoryType"])
         self.assertEqual("project", event["scope"])
         self.assertEqual(project_id, event["scopeId"])
@@ -2158,8 +2160,19 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query="workspace_id=%s" % workspace_id,
         )
-        self.assertEqual("200 OK", status)
-        audit = json.loads(text)
+        self.assertEqual("403 Forbidden", status)
+        self.assertEqual("human_owner_required", json.loads(text)["error"]["code"])
+        audit_items = _store().audit_log(workspace_id, 200)
+        audit = {
+            "schemaVersion": "memoryendpoints.audit_log.v1",
+            "items": audit_items,
+            "count": len(audit_items),
+            "filters": {},
+            "operatorSummary": _audit_log_operator_summary(audit_items, {}),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
         self.assertEqual("memoryendpoints.audit_log.v1", audit["schemaVersion"])
         self.assertEqual({}, audit["filters"])
         self.assertTrue(audit["valuesRedacted"])
@@ -2172,7 +2185,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertGreaterEqual(audit_summary["actionCounts"]["memory.search"], 1)
         self.assertGreaterEqual(audit_summary["actionCounts"]["current_message.read"], 1)
         self.assertGreaterEqual(audit_summary["actionCounts"]["receipts.read"], 1)
-        self.assertGreaterEqual(audit_summary["actionCounts"]["audit_log.read"], 1)
+        self.assertNotIn("audit_log.read", audit_summary["actionCounts"])
         self.assertEqual(audit_summary["count"], audit_summary["redactedCount"])
         self.assertEqual(0, audit_summary["rawCredentialExposedCount"])
         self.assertEqual(0, audit_summary["rawPayloadExposedCount"])
@@ -2204,7 +2217,6 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "current_message.read",
                 "notification.ack",
                 "receipts.read",
-                "audit_log.read",
             }.issubset(actions),
             actions,
         )
@@ -2266,8 +2278,15 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query="workspace_id=%s&action=memory.search&limit=5" % workspace_id,
         )
-        self.assertEqual("200 OK", status)
-        filtered_audit = json.loads(text)
+        self.assertEqual("403 Forbidden", status)
+        self.assertEqual("human_owner_required", json.loads(text)["error"]["code"])
+        filtered_items = _store().audit_log(workspace_id, 5, "memory.search")
+        filtered_audit = {
+            "items": filtered_items,
+            "count": len(filtered_items),
+            "filters": {"action": "memory.search", "limit": "5"},
+            "operatorSummary": _audit_log_operator_summary(filtered_items, {"action": "memory.search", "limit": "5"}),
+        }
         self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_audit["filters"])
         filtered_summary = filtered_audit["operatorSummary"]
         self.assertEqual({"action": "memory.search", "limit": "5"}, filtered_summary["filters"])
@@ -2413,7 +2432,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 self.assertTrue(promote_payload["persisted"])
                 self.assertTrue(promote_payload["visibleInSearch"])
                 self.assertTrue(promote_payload["visibleInReviewQueue"])
-                self.assertTrue(promote_payload["visibleInAuditLog"])
+                self.assertNotIn("visibleInAuditLog", promote_payload)
                 self.assertEqual("memoryendpoints.meeting_memory_promotion_operator_summary.v1", summary["schemaVersion"])
                 self.assertEqual(meeting_message_id, summary["meetingMessageId"])
                 self.assertEqual(tinyrust_agent_id, summary["sourceSenderAgentId"])
@@ -2429,7 +2448,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 self.assertEqual(event["reviewId"], promote_payload["reviewId"])
                 self.assertIn("/api/matm/search?", promote_payload["memoryQueryUrl"])
                 self.assertIn("/api/matm/review-queue?", promote_payload["reviewQueueUrl"])
-                self.assertIn("/api/matm/audit-log?", promote_payload["auditLogUrl"])
+                self.assertNotIn("auditLogUrl", promote_payload)
+                self.assertNotIn("visibleInAuditLog", promote_payload)
                 self.assertFalse(promote_payload["rawCredentialExposed"])
                 self.assertFalse(promote_payload["rawPayloadExposed"])
                 self.assertNotIn(token, json.dumps(promote_payload))
@@ -3174,8 +3194,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query="workspace_id=%s&action=review_queue.read&limit=5" % workspace_id,
         )
-        self.assertEqual("200 OK", status)
-        review_audit = json.loads(text)
+        self.assertEqual("403 Forbidden", status)
+        self.assertEqual("human_owner_required", json.loads(text)["error"]["code"])
+        review_audit = {"items": _store().audit_log(workspace_id, 5, "review_queue.read")}
         review_summaries = [summary for item in review_audit["items"] for summary in item["detailsSummary"]]
         self.assertIn("reviews quarantined 1", review_summaries)
         self.assertIn("firewall quarantine_for_review 1", review_summaries)
@@ -3871,8 +3892,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             headers=auth,
             query="workspace_id=%s&action=review_queue.read&limit=5" % workspace_id,
         )
-        self.assertEqual("200 OK", status)
-        audit = json.loads(text)
+        self.assertEqual("403 Forbidden", status)
+        self.assertEqual("human_owner_required", json.loads(text)["error"]["code"])
+        audit = {"items": _store().audit_log(workspace_id, 5, "review_queue.read")}
         details = [detail for item in audit["items"] for detail in item["detailsSummary"]]
         self.assertIn("long-term reviews 1 sources / 2 actionable / 1 duplicates", details)
 
@@ -4245,7 +4267,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("L1", routes["/api/matm/agent-compatibility"]["agentCompatibility"]["lowestSafeAbilityLevel"])
         self.assertEqual("L6", routes["/api/matm/meeting-messages"]["agentCompatibility"]["lowestSafeAbilityLevel"])
         self.assertEqual("L7", routes["/api/matm/sync/mutations"]["agentCompatibility"]["lowestSafeAbilityLevel"])
-        self.assertEqual("safeNoOp auth_required", routes["/api/matm/audit-log"]["agentCompatibility"]["authUnavailableFallback"])
+        self.assertEqual("agent_access_denied", routes["/api/matm/audit-log"]["agentCompatibility"]["sideEffectStatus"])
+        self.assertEqual("safeNoOp human_owner_required", routes["/api/matm/audit-log"]["agentCompatibility"]["authUnavailableFallback"])
         self.assertIn("noOpBehavior", routes["/api/matm/review-queue/decide"]["agentCompatibility"])
 
     def test_sync_capabilities_are_public(self):

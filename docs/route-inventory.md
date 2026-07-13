@@ -117,6 +117,7 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | `/api/matm/human/connector-pairings/{publicRequestRef}/company-selection` | POST | Resolve a short-lived opaque company reference and rotate the authenticated human session for connector approval. |
 | `/api/matm/human/connector-pairings/{publicRequestRef}/approve` | POST | Approve the exact canonical agent, exact four scopes, and an existing or provisional workspace through an authenticated human session. |
 | `/api/matm/human/connector-pairings/{publicRequestRef}/cancel` | POST | Cancel a pending human approval request idempotently before any connector grant exists. |
+| `/api/matm/human/companies/{companyId}/history` | GET | Read currently retained human-only break-glass history; physically purged after seven days and never available to agents. |
 | `/api/matm/connector-pairings/{pairingId}` | GET | Verify exact workspace, agent, connector scope, and active grant state. |
 | `/api/matm/connector-pairings/{pairingId}/activate` | POST | Activate a securely stored pending connector grant idempotently. |
 | `/api/matm/connector-pairings/{pairingId}/rotations` | POST | Prepare and reveal a pending connector credential rotation once. |
@@ -139,16 +140,16 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | `/api/matm/review-queue` | GET | Memory review and promotion queue readback. |
 | `/api/matm/review-queue/decide` | POST | Idempotent memory promotion, rejection, or quarantine decision. |
 | `/api/matm/meeting-rooms` | GET, POST | Always-present company, workspace, project room discovery plus goal/task room creation. |
-| `/api/matm/meeting-messages` | GET, POST | Durable scoped meeting room transcript read and public-safe post creation. |
+| `/api/matm/meeting-messages` | GET, POST | Seven-day scoped meeting transcript read and public-safe post creation; durable content requires explicit promotion. |
 | `/api/matm/meeting-messages/promote` | POST | Promote a public-safe meeting transcript message into hosted workspace memory with source linkage. |
 | `/api/matm/meeting-rooms/read` | POST | Meeting room read cursor update for an agent. |
 | `/api/matm/routing-decisions` | GET, POST | Structured coordinator routing decisions with lane, destination room, goal, next action, and expected evidence. |
-| `/api/matm/agent-messages` | POST | Current-message creation. |
+| `/api/matm/agent-messages` | POST | Transient current-message creation with seven-day acknowledged and 30-day unacknowledged retention. |
 | `/api/matm/current-message` | GET | Current-message lane readback. |
 | `/api/matm/agent-inbox` | GET | Unread inbox readback. |
 | `/api/matm/notifications/ack` | POST | Notification acknowledgement and receipt creation. |
 | `/api/matm/receipts` | GET | Redacted receipt readback. |
-| `/api/matm/audit-log` | GET | Redacted protected-operation audit log readback. |
+| `/api/matm/audit-log` | GET | Denied legacy agent-plane audit path; routine logs are human-only and physically purged after seven days. |
 | `/api/matm/sync/devices` | POST | Register a public-safe distributed-sync device authority. |
 | `/api/matm/sync/devices/rotate` | POST | Rotate a sync device authority epoch. |
 | `/api/matm/sync/devices/revoke` | POST | Revoke a sync device authority epoch. |

@@ -121,6 +121,7 @@
     var setupResultHeading = setupRoot.querySelector("[data-agent-setup-result-heading]");
     var setupKey = setupRoot.querySelector("[data-agent-setup-key]");
     var setupKeyToggle = setupRoot.querySelector("[data-agent-setup-key-toggle]");
+    var setupSaveKey = setupRoot.querySelector("[data-agent-setup-save-key]");
     var setupCopyKey = setupRoot.querySelector("[data-agent-setup-copy-key]");
     var setupKeySaved = setupRoot.querySelector("[data-agent-setup-key-saved]");
     var setupRecovery = setupRoot.querySelector("[data-agent-setup-recovery]");
@@ -131,10 +132,12 @@
     var setupHuman = setupRoot.querySelector("[data-agent-setup-human]");
     var setupReset = setupRoot.querySelector("[data-agent-setup-reset]");
     var setupState = "idle";
+    var setupCredentialDocument = null;
     var setupDefaultSecretPath = (
       typeof setupRoot.getAttribute === "function"
       && setupRoot.getAttribute("data-company-master-default-path")
     ) || "the default local secret file shown on this page";
+    var setupCredentialFileName = setupDefaultSecretPath.split("/").pop() || "memoryendpoints-company-master.json";
 
     function setSetupStatus(message, isError) {
       if (!setupStatus) {
@@ -152,6 +155,7 @@
     }
 
     function resetSetupSecret() {
+      setupCredentialDocument = null;
       if (setupKey) {
         setupKey.value = "";
         setupKey.type = "password";
@@ -170,6 +174,9 @@
       }
       if (setupResult) {
         setupResult.setAttribute("data-secret-cleared", "true");
+      }
+      if (setupSaveKey) {
+        setupSaveKey.disabled = true;
       }
     }
 
@@ -226,6 +233,96 @@
       return setupState === "created_unsaved" && Boolean(
         (setupKey && setupKey.value) || (setupRecovery && setupRecovery.value)
       );
+    }
+
+    function buildCompanyMasterCredentialDocument(payload) {
+      return {
+        schemaVersion: "memoryendpoints.company_master_credential_file.v1",
+        baseUrl: (window.location && window.location.origin) || "https://memoryendpoints.com",
+        companyId: payload.companyId,
+        workspaceId: payload.workspaceId,
+        companyMasterTokenSecret: payload.companyMasterTokenSecret,
+      };
+    }
+
+    function serializedCompanyMasterCredential() {
+      return JSON.stringify(setupCredentialDocument, null, 2) + "\n";
+    }
+
+    function markCompanyMasterSaved(message) {
+      if (setupKeySaved) {
+        setupKeySaved.checked = true;
+      }
+      updateSetupSavedState();
+      setSetupStatus(message, false);
+    }
+
+    function downloadCompanyMasterCredential() {
+      if (!window.Blob || !window.URL || !window.URL.createObjectURL || !document.createElement || !document.body) {
+        setSetupStatus("This browser cannot save the credential file automatically. Keep this page open and use Copy only as a manual fallback.", true);
+        return;
+      }
+      var blob = new window.Blob([serializedCompanyMasterCredential()], { type: "application/json" });
+      var objectUrl = window.URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = setupCredentialFileName;
+      link.hidden = true;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function () {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 0);
+      setSetupStatus("Credential file downloaded as " + setupCredentialFileName + ". Move it to " + setupDefaultSecretPath + " inside the project, verify it exists there, then check the confirmation box.", false);
+    }
+
+    function createNewCredentialFile(secretDirectory) {
+      return secretDirectory.getFileHandle(setupCredentialFileName).then(function () {
+        throw setupRequestError("A company-master credential file already exists in the selected project. It was not overwritten.", false, "credential_file_exists");
+      }).catch(function (error) {
+        if (error && error.code === "credential_file_exists") {
+          throw error;
+        }
+        if (!error || error.name !== "NotFoundError") {
+          throw error;
+        }
+        return secretDirectory.getFileHandle(setupCredentialFileName, { create: true });
+      });
+    }
+
+    function saveCompanyMasterToProject() {
+      if (!setupCredentialDocument || !setupCredentialDocument.companyMasterTokenSecret) {
+        setSetupStatus("No one-time company master credential is available to save.", true);
+        return;
+      }
+      if (typeof window.showDirectoryPicker !== "function") {
+        downloadCompanyMasterCredential();
+        return;
+      }
+      setupSaveKey.disabled = true;
+      setSetupStatus("Select the project root. MemoryEndpoints will create " + setupDefaultSecretPath + " inside it.", false);
+      var projectDirectoryName = "the selected project";
+      window.showDirectoryPicker({ mode: "readwrite" }).then(function (projectDirectory) {
+        projectDirectoryName = projectDirectory.name || projectDirectoryName;
+        return projectDirectory.getDirectoryHandle(".local-secrets", { create: true });
+      }).then(createNewCredentialFile).then(function (fileHandle) {
+        return fileHandle.createWritable();
+      }).then(function (writer) {
+        return writer.write(serializedCompanyMasterCredential()).then(function () {
+          return writer.close();
+        });
+      }).then(function () {
+        setupSaveKey.disabled = false;
+        markCompanyMasterSaved("Credential saved to " + projectDirectoryName + "/" + setupDefaultSecretPath + ". Verify the file exists before leaving this page.");
+      }).catch(function (error) {
+        setupSaveKey.disabled = false;
+        if (error && error.name === "AbortError") {
+          setSetupStatus("Folder selection was cancelled. No credential file was written; keep this page open and try Save again.", true);
+          return;
+        }
+        setSetupStatus((error && error.message ? error.message : "The credential file could not be written.") + " Keep this page open and use the download or copy fallback.", true);
+      });
     }
 
     window.addEventListener("pagehide", function () {
@@ -313,6 +410,10 @@
         setupRecoveryToggle.textContent = reveal ? "Hide recovery secret" : "Show recovery secret";
         setupRecoveryToggle.setAttribute("aria-pressed", reveal ? "true" : "false");
       });
+    }
+
+    if (setupSaveKey) {
+      setupSaveKey.addEventListener("click", saveCompanyMasterToProject);
     }
 
     if (setupCopyKey && setupKey) {
@@ -443,6 +544,10 @@
           setSetupText("[data-agent-setup-project-id]", payload.projectId);
           setupKey.value = payload.companyMasterTokenSecret;
           setupRecovery.value = payload.humanOwnerRecoverySecret;
+          setupCredentialDocument = buildCompanyMasterCredentialDocument(payload);
+          if (setupSaveKey) {
+            setupSaveKey.disabled = false;
+          }
           setupResult.removeAttribute("data-secret-cleared");
           setupResult.hidden = false;
           setupState = "created_unsaved";
@@ -459,8 +564,8 @@
           );
           setSetupStatus(
             completeResponse
-              ? "Workspace created. Save the company master credential at " + setupDefaultSecretPath + " and keep the recovery secret separately before leaving or refreshing this page."
-              : "One-time credentials were returned, but some setup confirmation fields were missing. Save the company master credential at " + setupDefaultSecretPath + ", keep the recovery secret separately, and contact support before creating anything else.",
+              ? "Workspace created. Select Save to project secret folder now; setup is not complete until " + setupDefaultSecretPath + " exists. Keep the recovery secret separately before leaving or refreshing this page."
+              : "One-time credentials were returned, but some setup confirmation fields were missing. Save the company master file now, keep the recovery secret separately, and contact support before creating anything else.",
             !completeResponse
           );
           if (setupResultHeading) {
@@ -1646,7 +1751,7 @@
       !receiptsKnown ? checklistStatus("pending", "pending") : (state.receiptCount > 0 && state.receiptsPayloadsHidden !== false ? checklistStatus("pass", "pass") : checklistStatus("review", "review")),
       !receiptsKnown ? "Refresh receipts or acknowledge a visible notification." : (state.receiptCount + " receipt(s); payloads " + (state.receiptsPayloadsHidden === false ? "need review." : "hidden.")),
       "acknowledgement evidence",
-      { view: "evidence", label: "Open receipt evidence", status: "Receipts and audit evidence selected." }
+      { view: "evidence", label: "Open receipt evidence", status: "Receipts and human-history boundary selected." }
     ));
     node.appendChild(checklistRow(
       "Distributed sync",
@@ -1658,9 +1763,9 @@
     node.appendChild(checklistRow(
       "Redaction",
       !redactionKnown ? checklistStatus("pending", "pending") : (redactionReview ? checklistStatus("review", "review") : checklistStatus("pass", "pass")),
-      !redactionKnown ? "Refresh receipts and audit to verify hidden credentials and payloads." : (redactionReview ? "One redaction signal needs review." : "Credentials and private payloads are hidden in visible evidence."),
-      "receipts / audit",
-      { view: "evidence", label: "Open redaction evidence", status: "Receipts and audit evidence selected." }
+      !redactionKnown ? "Refresh receipts to verify hidden credentials and payloads." : (redactionReview ? "One redaction signal needs review." : "Credentials and private payloads are hidden in visible evidence."),
+      "receipts / human history",
+      { view: "evidence", label: "Open redaction evidence", status: "Receipts and human-history boundary selected." }
     ));
   }
 
@@ -1770,12 +1875,12 @@
     node.appendChild(metricCard(
       "Evidence",
       evidencePending ? "Evidence pending" : (state.receiptCount !== null && state.receiptCount !== undefined ? state.receiptCount : 0) + " receipts",
-      evidencePending ? "receipts / audit" : (state.auditCount !== null && state.auditCount !== undefined ? state.auditCount : 0) + " audit events",
+      evidencePending ? "receipts pending" : "human history unavailable to agents",
       [
         { text: state.auditCredentialsHidden === false ? "credential review" : "credentials hidden", kind: state.auditCredentialsHidden === false ? "warn" : "good" },
         { text: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "payload review" : "payloads hidden", kind: state.auditPayloadsHidden === false || state.receiptsPayloadsHidden === false ? "warn" : "good" },
       ],
-      { view: "evidence", label: "Open receipts and audit evidence", status: "Receipts and audit evidence selected." }
+      { view: "evidence", label: "Open receipts and human-history boundary", status: "Receipts and human-history boundary selected." }
     ));
     renderVerifierChecklist();
     renderOperatorDesk();
@@ -2473,7 +2578,7 @@
     appendBadge(summaryLine, payload.persisted || confirmation.persisted ? "readback confirmed" : "readback pending", payload.persisted || confirmation.persisted ? "good" : "warn");
     appendBadge(summaryLine, payload.visibleInSearch || confirmation.visibleInSearch ? "search visible" : "search pending", payload.visibleInSearch || confirmation.visibleInSearch ? "good" : "warn");
     appendBadge(summaryLine, payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "review visible" : "review pending", payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "good" : "warn");
-    appendBadge(summaryLine, payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "audit visible" : "audit pending", payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "good" : "warn");
+    appendBadge(summaryLine, "audit human-only", "neutral");
     appendBadge(
       summaryLine,
       operatorSummary.rawPayloadExposed ? "payload exposure review" : "payload hidden",
@@ -2493,7 +2598,7 @@
         { text: reviewStatus, kind: reviewStatus === "quarantined" ? "warn" : "good" },
         { text: firewallDecision, kind: firewallDecision === "quarantine_for_review" ? "warn" : "good" },
         { text: payload.persisted || confirmation.persisted ? "readback confirmed" : "readback pending", kind: payload.persisted || confirmation.persisted ? "good" : "warn" },
-        { text: payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "audit visible" : "audit pending", kind: payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "good" : "warn" },
+        { text: "audit human-only", kind: "neutral" },
         { text: operatorSummary.valuesRedacted || submission.valuesRedacted ? "redacted" : "", kind: "good" },
         { text: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "payload exposed" : "payload hidden", kind: operatorSummary.rawPayloadExposed || submission.rawPayloadExposed ? "warn" : "good" },
       ],
@@ -2502,7 +2607,7 @@
         "review " + shortId(operatorSummary.reviewId || submission.reviewId || event.reviewId),
         "search " + (payload.visibleInSearch || confirmation.visibleInSearch ? "visible" : "pending"),
         "review queue " + (payload.visibleInReviewQueue || confirmation.visibleInReviewQueue ? "visible" : "pending"),
-        "audit " + (payload.visibleInAuditLog || confirmation.visibleInAuditLog ? "visible" : "pending"),
+        "audit human-only / 7-day retention",
         "actor " + (operatorSummary.actorAgentId || event.actorAgentId || "unknown"),
         event.createdAt || "",
       ]
@@ -5278,18 +5383,21 @@
   }
 
   function refreshAudit() {
-    var params = {workspace_id: state.workspaceId};
-    var form = pick("[data-console-audit-filter]");
-    if (form) {
-      var selectedLimit = form.elements.limit ? form.elements.limit.value : "50";
-      params.action = form.elements.action ? form.elements.action.value : "";
-      params.limit = selectedLimit === "50" ? "" : selectedLimit;
-    }
-    var qs = query(params);
-    return api("/api/matm/audit-log?" + qs).then(function (payload) {
-      render("[data-console-audit-output]", payload);
-      renderAuditSummary(payload);
-      return payload;
+    state.latestAuditItems = [];
+    state.auditCount = 0;
+    state.auditCredentialsHidden = true;
+    state.auditPayloadsHidden = true;
+    renderOperatorMetrics();
+    return Promise.resolve({
+      ok: false,
+      visibility: "human_only",
+      agentsCanAccess: false,
+      retentionDays: 7,
+      physicallyDeletedAfterRetention: true,
+      humanAccessRoute: "/human",
+      valuesRedacted: true,
+      rawCredentialExposed: false,
+      rawPayloadExposed: false
     });
   }
 

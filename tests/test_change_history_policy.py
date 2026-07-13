@@ -115,9 +115,27 @@ class ChangeHistoryPolicyTests(unittest.TestCase):
                 with self.assertRaises(HumanOwnerSessionRequired):
                     history_records_for_human([result["historyRecord"]], session_kind=denied_session)
         human_records = history_records_for_human(
-            [result["historyRecord"]], session_kind=HUMAN_OWNER_SESSION
+            [result["historyRecord"]],
+            session_kind=HUMAN_OWNER_SESSION,
+            now="2026-01-04T00:00:00Z",
         )
         self.assertEqual("Current task", human_records[0]["beforeSnapshot"]["label"])
+
+    def test_human_history_access_is_seven_days_without_truncating_agent_state(self):
+        old = self._update("history-old", "2026-01-02T23:59:59Z")
+        boundary = self._update("history-boundary", "2026-01-03T00:00:00Z")
+        company = self._company_delete(recorded_at="2000-01-01T00:00:00Z")
+        visible = history_records_for_human(
+            [old["historyRecord"], boundary["historyRecord"], company["historyRecord"]],
+            session_kind=HUMAN_OWNER_SESSION,
+            now="2026-01-10T00:00:00Z",
+        )
+        self.assertEqual(
+            {"history-boundary", "history-company-delete"},
+            {record["historyId"] for record in visible},
+        )
+        self.assertEqual("after", old["application"]["currentState"]["summary"])
+        self.assertEqual("after", boundary["application"]["currentState"]["summary"])
 
     def test_only_human_owner_can_review_and_undo_without_clobbering_newer_state(self):
         result = self._update()
