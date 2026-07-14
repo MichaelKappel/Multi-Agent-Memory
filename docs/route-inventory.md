@@ -105,6 +105,7 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | Route | Methods | Purpose |
 | --- | --- | --- |
 | `/api/matm/me` | GET | Credential-derived principal, immutable scope, permission, and resource-context introspection. |
+| `/api/matm/access/company-master-credentials` | GET, POST | Company-master metadata inventory plus idempotent registration by an existing company master or enabled company-scoped top-level agent. |
 | `/api/matm/workspace` | GET | Workspace quota and status. |
 | `/api/matm/projects` | GET, POST | Workspace project list and project upsert for company/workspace/project hierarchy. |
 | `/api/matm/knowledge-tree` | GET | Database-backed company/workspace/project wiki tree for humans and agents. |
@@ -118,6 +119,7 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | `/api/matm/human/connector-pairings/{publicRequestRef}/approve` | POST | Approve the exact canonical agent, exact four scopes, and an existing or provisional workspace through an authenticated human session. |
 | `/api/matm/human/connector-pairings/{publicRequestRef}/cancel` | POST | Cancel a pending human approval request idempotently before any connector grant exists. |
 | `/api/matm/human/companies/{companyId}/history` | GET | Read currently retained human-only break-glass history; physically purged after seven days and never available to agents. |
+| `/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting` | GET, PATCH | Owner or credential-admin control for top-level-agent human-operator company-master creation. |
 | `/api/matm/connector-pairings/{pairingId}` | GET | Verify exact workspace, agent, connector scope, and active grant state. |
 | `/api/matm/connector-pairings/{pairingId}/activate` | POST | Activate a securely stored pending connector grant idempotently. |
 | `/api/matm/connector-pairings/{pairingId}/rotations` | POST | Prepare and reveal a pending connector credential rotation once. |

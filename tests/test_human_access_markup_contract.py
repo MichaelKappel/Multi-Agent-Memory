@@ -49,6 +49,8 @@ class HumanAccessMarkupContractTests(unittest.TestCase):
             "data-human-access-roster-list",
             "data-human-access-roster-empty",
             "data-human-access-roster-refresh",
+            "data-human-access-agent-master-setting-form",
+            "data-human-access-agent-master-setting-status",
             "data-human-access-reauth-dialog",
             "data-human-access-reauth-form",
             "data-human-access-reauth-cancel",
@@ -90,13 +92,11 @@ class HumanAccessMarkupContractTests(unittest.TestCase):
             "&lt;project-root&gt;/.local-secrets/memoryendpoints-company-master.json",
             signed_out,
         )
-        self.assertIn("ask your AI agent to check that exact project-relative file", signed_out)
+        self.assertIn("ask your top-level AI agent to check that exact project-relative file", signed_out)
         self.assertIn("displaying this path does not create the file", signed_out)
-        self.assertIn("setup did not persist it at the default location", signed_out)
-        self.assertIn("the agent must stop", signed_out)
-        self.assertIn("may check only an explicitly configured governed secret store", signed_out)
-        self.assertNotIn("must ask which governed secret store was used", signed_out)
-        self.assertIn("never ask you to paste the credential into chat", signed_out)
+        self.assertIn("scripts/recover_memoryendpoints_company_master.py", signed_out)
+        self.assertIn("without exposing it in chat", signed_out)
+        self.assertIn("Lower-scoped agents must ask", signed_out)
         self.assertLess(
             signed_out.index("human-access-credential-guide"),
             signed_out.index("data-human-access-master-proof-form"),

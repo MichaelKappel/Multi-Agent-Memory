@@ -34,7 +34,7 @@ def _company_master_guidance_markup(context):
   <h3 id="{heading_id}">Where do I get the company master credential?</h3>
   <p>MemoryEndpoints creates it on <a href="/agent-setup">Agent Setup</a> and shows it once after the first company workspace is created. Setup must then write the credential file; displaying this path does not create the file. It is not your account password or an agent invitation credential.</p>
   <p><strong>Default agent-readable location</strong><code class="human-access-secret-path">&lt;project-root&gt;/{default_path}</code></p>
-  <p>If you cannot find it, ask your AI agent to check that exact project-relative file. The agent should read the ignored file directly. If it is missing, setup did not persist it at the default location: the agent must stop, must not claim the credential exists, and may check only an explicitly configured governed secret store&mdash;never ask you to paste the credential into chat.</p>
+  <p>If you cannot find it, ask your top-level AI agent to check that exact project-relative file and run <code>scripts/recover_memoryendpoints_company_master.py</code> when it is missing. A company-scoped top-level agent can create and persist the human-operator credential there without exposing it in chat. Lower-scoped agents must ask a top-level agent or human administrator for help.</p>
 </aside>
 """.format(
         heading_id=escape(heading_id, quote=True),
@@ -113,6 +113,17 @@ def _protected_markup(demo=False):
       <button class="button quiet" type="button" data-human-access-logout>Sign out</button>
     </div>
   </div>
+  <section class="human-access-card human-access-agent-master-setting" aria-labelledby="human-agent-master-setting-title">
+    <div class="human-access-section-heading">
+      <div><p class="eyebrow">Company security</p><h2 id="human-agent-master-setting-title">Top-level agent credential recovery</h2></div>
+    </div>
+    <p>Enabled by default so a company-scoped top-level agent can create the standard human-operator company master without human interaction. Disable this to require an existing company master for recovery.</p>
+    <form data-human-access-agent-master-setting-form>
+      <label class="human-access-check"><input type="checkbox" data-human-access-agent-master-setting> Allow top-level agents to create a human-operator company master.</label>
+      <button class="button" type="submit">Save security setting</button>
+      <span class="human-access-live" data-human-access-agent-master-setting-status aria-live="polite"></span>
+    </form>
+  </section>
   <section class="human-access-card human-access-roster" aria-labelledby="human-roster-title">
     <div class="human-access-section-heading">
       <div><p class="eyebrow">Metadata only</p><h2 id="human-roster-title">Humans and one-agent credentials</h2></div>

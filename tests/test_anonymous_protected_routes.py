@@ -131,7 +131,7 @@ class AnonymousProtectedRouteTests(unittest.TestCase):
                         "invalid_request"
                         if human_connector_route
                         else "invalid_token"
-                        if route == "/api/matm/me" or route.startswith("/api/matm/connector-pairings/")
+                        if route == "/api/matm/me" or route.startswith("/api/matm/connector-pairings/") or route.startswith("/api/matm/access/")
                         else "auth_required"
                     )
                     self.assertEqual(expected_code, payload["error"]["code"])

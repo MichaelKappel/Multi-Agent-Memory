@@ -67,6 +67,20 @@ Every protected storage query is constrained by the authenticated workspace. Cli
 
 `POST /api/matm/agent-setup/free-account` creates the initial account/company/workspace/project graph and returns a workspace key exactly once. Persistence stores a verifier hash, never the raw key.
 
+Company-master credentials are individually identified full-company machine
+principals. An authenticated company master can register a client-generated
+sibling through `/api/matm/access/company-master-credentials`. An immutable
+company-scoped top-level agent can use the same endpoint to create a
+human-operator master when the company boolean
+`top_level_agent_master_credential_enabled` is true. The client stages the raw
+candidate before the request and the server atomically stores only its HMAC
+verifier, issuer lineage, and redacted idempotency/audit metadata. Lower-scoped
+and connector agents are denied. Human owners and credential admins can disable
+the top-level-agent path through the human console; database administrators can
+override the same standard column directly. Local disposable-agent isolation is
+an OS/vault concern because processes sharing one unrestricted filesystem
+identity can read the same secret file regardless of API policy.
+
 Protected mutations use an idempotency record bound to workspace, operation, key digest, and request-body digest:
 
 - Exact retry: replay the original public-safe status and response.

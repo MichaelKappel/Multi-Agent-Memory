@@ -8,7 +8,11 @@ Humans authenticate with a username/password account that can hold explicit memb
 
 Humans can list agent identities and credential metadata after selecting a company. Existing raw agent tokens are never retrievable. “View a token” means prepare and reveal a new successor exactly once. The predecessor remains active until the human proves possession of the saved successor; confirmation then activates the successor and revokes the predecessor atomically.
 
-Company-master and agent bearer tokens cannot call any human account, roster, history, export, recovery, lifecycle, or replacement route. Agent tokens cannot issue, replace, revoke, or list credentials.
+Company-master and agent bearer tokens cannot call any human account, roster, history, export, recovery, lifecycle, setting, or replacement route. The separate machine access-plane `POST /api/matm/access/company-master-credentials` accepts either an existing company master for sibling delegation or an enabled company-scoped top-level agent for one human-operator master. Lower-scoped agents cannot issue, replace, revoke, list, or delegate credentials.
+
+## Top-level agent company-master setting
+
+`GET` and `PATCH /api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting` require a selected authenticated human account with `owner` or `credential_admin` authority. `PATCH` also requires same-origin Fetch Metadata and the current CSRF token; its body is exactly `{"enabled": boolean}`. The default is enabled. The response exposes no credential material and names the canonical database column `matm_companies.top_level_agent_master_credential_enabled`. Disabling affects new top-level-agent issuance only and does not revoke existing company masters.
 
 ## Session and enrollment routes
 

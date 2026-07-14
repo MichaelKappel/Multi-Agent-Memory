@@ -82,9 +82,74 @@ helper verifies that the default file and separate owner-recovery file were
 written without printing either value. Browser setup exposes **Save to project
 secret folder**; after the human grants project-folder access it creates the
 default JSON file directly, or downloads the exact filename as a fallback that
-the human must move and verify. If the default file is missing, an agent stops
-safely and asks the human which governed secret store was used; it must not scan
-outside the project or request, echo, or log the raw value.
+ the human must move and verify. If the default file is missing, a company-scoped
+ top-level agent may run `scripts/recover_memoryendpoints_company_master.py` with
+ its governed `MEMORYENDPOINTS_AGENT_TOKEN`; lower-scoped agents ask a top-level
+ agent or human administrator. No agent scans outside the project or requests,
+ echoes, or logs the raw value.
+
+### GET, POST `/api/matm/access/company-master-credentials`
+
+`GET` is restricted to an authenticated `credentialType=company_master` and
+returns metadata only for its company. `POST` is authentication-discriminated:
+an existing company master uses `memoryendpoints.company_master_delegation.v1`;
+an immutable company-scoped top-level agent whose scope ID equals its company ID
+uses `memoryendpoints.top_level_agent_company_master.v1`. Connector agents,
+lower-scoped agents, invitation secrets, and human sessions are denied.
+
+`POST` is the proactive recovery/delegation path for a trusted company-master
+agent. The client generates and durably stages the complete candidate before it
+sends the request. The exact body is:
+
+```json
+{
+  "schemaVersion": "memoryendpoints.company_master_delegation.v1",
+  "workspaceId": "workspace in the bearer-derived company",
+  "candidateTokenSecret": "client-generated me_master_v1 candidate",
+  "label": "Human recovery master",
+  "principalName": "human-recovery"
+}
+```
+
+`Idempotency-Key` is required. The server derives the company and issuing
+`masterKeyId` from the bearer, validates the workspace and exact candidate
+format, and atomically persists only an HMAC verifier plus redacted lineage and
+replay metadata. It never returns or persists the raw candidate. An exact
+key/body retry returns the same metadata with `idempotentReplay=true`; changed
+reuse returns `409 idempotency_conflict` without mutation.
+
+For a top-level agent the same body uses
+`memoryendpoints.top_level_agent_company_master.v1`; the resulting lineage is
+`top_level_agent_human_operator`. This path is enabled by default and controlled
+by `matm_companies.top_level_agent_master_credential_enabled`. An authenticated
+human owner or credential admin reads or updates it through `GET`/`PATCH`
+`/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting`
+with exact body `{"enabled": false}`. A database administrator can apply the
+same emergency override directly:
+
+```sql
+UPDATE matm_companies
+SET top_level_agent_master_credential_enabled = FALSE
+WHERE company_id = ?;
+```
+
+The supported client protocol writes
+`.local-secrets/memoryendpoints-company-master.pending.json` with owner-only
+permissions before the request, retries that exact pending candidate after an
+unknown outcome, verifies the candidate through `/api/matm/me`, and only then
+atomically promotes it to
+`.local-secrets/memoryendpoints-company-master.json`. The reference helper is
+`scripts/recover_memoryendpoints_company_master.py`; it never prints a
+credential or identifier.
+
+This is additive delegation: the issuer stays active and the new sibling has
+the same company-master authority, including the ability to delegate another
+sibling. It restores a usable human-held file only while at least one trusted
+company master is still available. It cannot reconstruct a historical raw
+secret after every master is lost. Runtime secret isolation remains mandatory:
+agents that share the same OS identity and unrestricted filesystem can read the
+same project secret regardless of API authorization, so disposable agents must
+run without that secret mount or under a distinct vault/OS policy.
 
 ### GET `/api/matm/connector-contract`
 

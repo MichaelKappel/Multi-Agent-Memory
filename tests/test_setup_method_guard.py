@@ -112,8 +112,16 @@ class SetupMethodGuardTests(unittest.TestCase):
         )
         self.assertEqual("project_root", guidance["pathBase"])
         self.assertIn("companyMasterTokenSecret", guidance["requiredFields"])
-        self.assertIn("Ask your AI agent", guidance["humanIfMissing"])
-        self.assertIn("Stop safely", guidance["agentIfMissing"])
+        self.assertIn("Ask your top-level AI agent", guidance["humanIfMissing"])
+        self.assertIn("MEMORYENDPOINTS_AGENT_TOKEN", guidance["agentIfMissing"])
+        self.assertEqual(
+            "scripts/recover_memoryendpoints_company_master.py",
+            guidance["agentRecoveryHelper"],
+        )
+        self.assertEqual(
+            "/api/matm/access/company-master-credentials",
+            guidance["companyMasterDelegationRoute"],
+        )
         self.assertTrue(guidance["persistenceRequiredBeforeSetupComplete"])
         self.assertEqual(
             "scripts/setup_memoryendpoints_company.py",

@@ -132,6 +132,7 @@ ROUTE_TABLE = [
     {"route": "/.well-known/mcp.json", "access": "public", "methods": ["GET"], "purpose": "MCP discovery pointer."},
     {"route": "/.well-known/ai-agent.json", "access": "public", "methods": ["GET"], "purpose": "Agent discovery pointer."},
     {"route": "/api/matm/me", "access": "protected", "methods": ["GET"], "purpose": "Credential-derived principal, immutable scope, permission, and resource-context introspection."},
+    {"route": "/api/matm/access/company-master-credentials", "access": "protected", "methods": ["GET", "POST"], "purpose": "Company-master metadata inventory plus idempotent registration by an existing company master or enabled company-scoped top-level agent."},
     {"route": "/api/matm/workspace", "access": "protected", "methods": ["GET"], "purpose": "Workspace quota and status."},
     {"route": "/api/matm/projects", "access": "protected", "methods": ["GET", "POST"], "purpose": "Workspace project list and project upsert for company/workspace/project hierarchy."},
     {"route": "/api/matm/knowledge-tree", "access": "protected", "methods": ["GET"], "purpose": "Database-backed company/workspace/project wiki tree for humans and agents."},
@@ -145,6 +146,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/human/connector-pairings/{publicRequestRef}/approve", "access": "protected", "methods": ["POST"], "purpose": "Approve the exact canonical agent, exact four scopes, and an existing or provisional workspace through an authenticated human session."},
     {"route": "/api/matm/human/connector-pairings/{publicRequestRef}/cancel", "access": "protected", "methods": ["POST"], "purpose": "Cancel a pending human approval request idempotently before any connector grant exists."},
     {"route": "/api/matm/human/companies/{companyId}/history", "access": "human_only", "methods": ["GET"], "purpose": "Read currently retained human-only break-glass history; physically purged after seven days and never available to agents."},
+    {"route": "/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting", "access": "human_only", "methods": ["GET", "PATCH"], "purpose": "Owner or credential-admin control for top-level-agent human-operator company-master creation."},
     {"route": "/api/matm/connector-pairings/{pairingId}", "access": "protected", "methods": ["GET"], "purpose": "Verify exact workspace, agent, connector scope, and active grant state."},
     {"route": "/api/matm/connector-pairings/{pairingId}/activate", "access": "protected", "methods": ["POST"], "purpose": "Activate a securely stored pending connector grant idempotently."},
     {"route": "/api/matm/connector-pairings/{pairingId}/rotations", "access": "protected", "methods": ["POST"], "purpose": "Prepare and reveal a pending connector credential rotation once."},
@@ -1617,6 +1619,46 @@ def openapi_spec():
                 "x-physicallyDeletedAfterRetention": True,
             },
         },
+        "/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting": {
+            "get": {
+                "summary": "Read top-level agent company-master setting",
+                "description": "Requires an authenticated human owner or credential administrator with the company selected. Returns the standard database-backed boolean without credential material.",
+                "security": [{"humanSession": []}],
+                "parameters": [
+                    {"name": "companyId", "in": "path", "required": True, "schema": {"type": "string"}}
+                ],
+                "responses": {
+                    "200": {"description": "Current redacted setting and database column name.", "content": json_type},
+                    "401": safe_problem,
+                    "403": safe_problem,
+                    "404": safe_problem,
+                },
+                "x-agentAccess": "denied",
+            },
+            "patch": {
+                "summary": "Set top-level agent company-master permission",
+                "description": "Same-origin owner or credential-admin mutation. Disable to reject company-scoped top-level-agent creation while leaving existing company masters active.",
+                "security": [{"humanSession": []}],
+                "parameters": [
+                    {"name": "companyId", "in": "path", "required": True, "schema": {"type": "string"}},
+                    csrf_parameter,
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": {"type": "object", "additionalProperties": False, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}}},
+                },
+                "responses": {
+                    "200": {"description": "Updated redacted setting.", "content": json_type},
+                    "400": safe_problem,
+                    "401": safe_problem,
+                    "403": safe_problem,
+                    "404": safe_problem,
+                    "415": safe_problem,
+                },
+                "x-agentAccess": "denied",
+                "x-databaseColumn": "top_level_agent_master_credential_enabled",
+            },
+        },
         "/api/matm/human/connector-pairings/{publicRequestRef}/approve": {
             "post": {
                 "summary": "Approve connector pairing",
@@ -1778,6 +1820,57 @@ def openapi_spec():
                 "responses": dict(connector_error_responses, **{"200": {"description": "Credential-derived, redacted principal readback selected by the credentialType discriminator.", "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/ConnectorSelfReadbackResult"}, {"$ref": "#/components/schemas/GovernedSelfReadbackResult"}]}}}}}),
                 "x-noRedirects": True,
                 "x-maximumJsonResponseBytes": 65536,
+            },
+        },
+        "/api/matm/access/company-master-credentials": {
+            "get": {
+                "summary": "List company-master credential metadata",
+                "description": "Company-master-only inventory. Raw credentials and verifiers are never returned.",
+                "security": [{"companyMasterBearer": []}],
+                "responses": {
+                    "200": {"description": "Redacted company-master credential metadata.", "content": json_type},
+                    "401": safe_problem,
+                    "403": safe_problem,
+                    "503": safe_problem,
+                },
+            },
+            "post": {
+                "summary": "Register a client-generated sibling company master",
+                "description": "An authenticated company master may register a delegated sibling. An enabled company-scoped top-level agent may register a human-operator recovery master. The candidate is generated and durably staged by the client first; the server stores only an HMAC verifier. Lower-scoped agents, connectors, invite credentials, and human sessions are denied.",
+                "security": [{"companyMasterBearer": []}, {"workspaceBearer": []}],
+                "parameters": [idempotency_parameter],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["schemaVersion", "workspaceId", "candidateTokenSecret", "label", "principalName"],
+                                "properties": {
+                                    "schemaVersion": {"enum": ["memoryendpoints.company_master_delegation.v1", "memoryendpoints.top_level_agent_company_master.v1"]},
+                                    "workspaceId": {"type": "string"},
+                                    "candidateTokenSecret": {"type": "string", "pattern": "^me_master_v1\\.masterkey-[0-9a-f]{20}\\.[A-Za-z0-9_-]{43}$", "writeOnly": True},
+                                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                                    "principalName": {"type": "string", "minLength": 1, "maxLength": 80},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Exact idempotent replay; metadata only.", "content": json_type},
+                    "201": {"description": "Candidate accepted and verifier stored atomically; metadata only.", "content": json_type},
+                    "401": safe_problem,
+                    "403": safe_problem,
+                    "404": safe_problem,
+                    "409": safe_problem,
+                    "422": safe_problem,
+                    "503": safe_problem,
+                },
+                "x-idempotency": "Exact key/body retry replays the metadata result; changed reuse is a conflict-safe no-op.",
+                "x-rawCredentialPersisted": False,
+                "x-noRedirects": True,
             },
         },
         "/api/matm/workspace": {
@@ -2019,7 +2112,7 @@ def openapi_spec():
                 "workspaceBearer": {"type": "http", "scheme": "bearer", "description": "Workspace key supplied by the user; never echo or log."},
                 "workspaceHeader": {"type": "apiKey", "in": "header", "name": "X-MemoryEndpoints-Key", "description": "Alternate workspace key header for browser connectors."},
                 "connectorBearer": {"type": "http", "scheme": "bearer", "bearerFormat": "connector_agent", "description": "Connector-and-exact-agent-scoped pending or active credential. Raw values are returned once, stored only in an OS credential vault, and never placed in URLs or logs."},
-                "companyMasterBearer": {"type": "http", "scheme": "bearer", "bearerFormat": "company_master", "description": "Company master machine credential used only for authorized access administration such as connector revocation; audited by masterKeyId."},
+                "companyMasterBearer": {"type": "http", "scheme": "bearer", "bearerFormat": "company_master", "description": "Individually identified company-master machine credential used for authorized access administration, including audited registration of a client-generated sibling master. Never share it with ordinary or disposable agents."},
                 "humanSession": {"type": "apiKey", "in": "cookie", "name": "__Host-memoryendpoints-human", "description": "Opaque authenticated human account session with selected company membership. Mutations also require same-origin checks, Fetch Metadata, recent password reauthentication when specified, and X-CSRF-Token."},
             },
             "schemas": {
@@ -2513,11 +2606,12 @@ def openapi_spec():
                         "principal": {
                             "type": "object",
                             "additionalProperties": False,
-                            "required": ["credentialId", "credentialType", "ordinaryAgentCredential", "companyId", "agentIdentityId", "agentId", "displayName", "grantId", "resourceContext", "grant", "capabilities", "permissions", "approvedScopes", "scopeDigest", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
+                            "required": ["credentialId", "credentialType", "ordinaryAgentCredential", "masterCompanyAgentCredential", "companyId", "agentIdentityId", "agentId", "displayName", "grantId", "resourceContext", "grant", "capabilities", "permissions", "approvedScopes", "scopeDigest", "valuesRedacted", "rawCredentialExposed", "rawPayloadExposed"],
                             "properties": {
                                 "credentialId": {"type": "string"},
                                 "credentialType": {"const": "connector_agent"},
                                 "ordinaryAgentCredential": {"const": False},
+                                "masterCompanyAgentCredential": {"const": False},
                                 "companyId": {"type": "string"},
                                 "agentIdentityId": {"type": "string"},
                                 "agentId": {"const": CANONICAL_AGENT_ID},
@@ -2526,7 +2620,7 @@ def openapi_spec():
                                 "resourceContext": {"type": "object", "additionalProperties": False, "required": ["workspaceId", "projectId"], "properties": {"workspaceId": {"type": "string"}, "projectId": {"type": ["string", "null"]}}},
                                 "grant": {"type": "object", "additionalProperties": False, "required": ["grantId", "scopeType", "scopeId", "accessRule", "immutable", "approvedScopes", "scopeDigest", "supersedesCredentialId", "memoryTransferFromCredentialId"], "properties": {"grantId": {"type": ["string", "null"]}, "scopeType": {"const": "agent"}, "scopeId": {"const": CANONICAL_AGENT_ID}, "accessRule": {"const": "exact_connector_and_agent"}, "immutable": {"const": True}, "approvedScopes": {"$ref": "#/components/schemas/ConnectorExactScopes"}, "scopeDigest": {"const": connector_scope_digest()}, "supersedesCredentialId": {"type": ["string", "null"]}, "memoryTransferFromCredentialId": {"type": ["string", "null"]}}},
                                 "capabilities": {"$ref": "#/components/schemas/ConnectorExactScopes"},
-                                "permissions": {"type": "object", "additionalProperties": False, "required": ["canRead", "canWrite", "canApproveAgentAccess", "canIssueAgentInvites", "canListAgentTokens", "canRevokeAgentTokens", "canManageCompany", "canAccessWorkspaceOperations", "canReadConnectorSelf", "canConfirmConnectorAgentRegistration", "canSubmitPublicSafeMemory", "canSearchMemory"], "properties": {"canRead": {"const": True}, "canWrite": {"const": True}, "canApproveAgentAccess": {"const": False}, "canIssueAgentInvites": {"const": False}, "canListAgentTokens": {"const": False}, "canRevokeAgentTokens": {"const": False}, "canManageCompany": {"const": False}, "canAccessWorkspaceOperations": {"const": False}, "canReadConnectorSelf": {"const": True}, "canConfirmConnectorAgentRegistration": {"const": True}, "canSubmitPublicSafeMemory": {"const": True}, "canSearchMemory": {"const": True}}},
+                                "permissions": {"type": "object", "additionalProperties": False, "required": ["canRead", "canWrite", "canApproveAgentAccess", "canIssueAgentInvites", "canListAgentTokens", "canRevokeAgentTokens", "canDelegateCompanyMasterCredentials", "canManageCompany", "canAccessWorkspaceOperations", "canReadConnectorSelf", "canConfirmConnectorAgentRegistration", "canSubmitPublicSafeMemory", "canSearchMemory"], "properties": {"canRead": {"const": True}, "canWrite": {"const": True}, "canApproveAgentAccess": {"const": False}, "canIssueAgentInvites": {"const": False}, "canListAgentTokens": {"const": False}, "canRevokeAgentTokens": {"const": False}, "canDelegateCompanyMasterCredentials": {"const": False}, "canManageCompany": {"const": False}, "canAccessWorkspaceOperations": {"const": False}, "canReadConnectorSelf": {"const": True}, "canConfirmConnectorAgentRegistration": {"const": True}, "canSubmitPublicSafeMemory": {"const": True}, "canSearchMemory": {"const": True}}},
                                 "approvedScopes": {"$ref": "#/components/schemas/ConnectorExactScopes"},
                                 "scopeDigest": {"const": connector_scope_digest()},
                                 "valuesRedacted": {"const": True},

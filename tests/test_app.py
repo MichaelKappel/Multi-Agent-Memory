@@ -293,8 +293,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             "<project-root>/.local-secrets/memoryendpoints-company-master.json",
             agent_guidance,
         )
-        self.assertIn("agents stop and treat autonomous setup as incomplete", agent_guidance)
-        self.assertIn("Do not require a human", agent_guidance)
+        self.assertIn("authenticated credentialType=company_master agent", agent_guidance)
+        self.assertIn("recover_memoryendpoints_company_master.py", agent_guidance)
+        self.assertIn("Normal and disposable agents remain denied", agent_guidance)
         self.assertIn("scan outside configured paths", agent_guidance)
 
         with patch("memoryendpoints.app.credential_system_available", return_value=True):
@@ -326,7 +327,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Save to project secret folder", setup)
         self.assertIn('data-company-master-default-path=".local-secrets/memoryendpoints-company-master.json"', setup)
         self.assertIn("Default agent-readable secret file", setup)
-        self.assertIn("ask the AI agent to check this exact file", setup)
+        self.assertIn("credentialType=company_master", setup)
+        self.assertIn("must not receive this file", setup)
         self.assertIn('"companyMasterTokenSecret": "&lt;credential shown above&gt;"', setup)
         self.assertIn('disabled data-agent-setup-continue', setup)
         self.assertIn('data-agent-setup-reset', setup)
@@ -335,6 +337,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("It is not a login credential", setup)
         self.assertIn("Create your human account", setup)
         self.assertIn("scripts/setup_memoryendpoints_company.py", setup)
+        self.assertIn("scripts/recover_memoryendpoints_company_master.py", setup)
         self.assertIn('--company-label "Example Company"', setup)
         self.assertIn("prints only redacted confirmation", setup)
         self.assertIn('href="/agent-coordination"', setup)
@@ -410,8 +413,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Agent Coordination Quickstart", text)
         self.assertIn("Find Credentials Safely", text)
         self.assertIn(".local-secrets/memoryendpoints-company-master.json", text)
-        self.assertIn("stop and treat autonomous setup as incomplete", text)
-        self.assertIn("Do not require a human", text)
+        self.assertIn("credentialType=company_master", text)
+        self.assertIn("recover_memoryendpoints_company_master.py", text)
+        self.assertIn("disposable agents cannot use this route", text)
         self.assertIn("MEMORYENDPOINTS_AGENT_TOKEN", text)
         self.assertIn("/.well-known/memoryendpoints-connector", text)
         self.assertIn("one-time invite", text)
@@ -549,6 +553,17 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         paths = data["paths"]
         self.assertIn("/api/matm/agent-compatibility", paths)
         self.assertIn("/api/matm/agent-setup/free-account", paths)
+        self.assertIn("/api/matm/access/company-master-credentials", paths)
+        delegation = paths["/api/matm/access/company-master-credentials"]["post"]
+        self.assertEqual(
+            [{"companyMasterBearer": []}, {"workspaceBearer": []}],
+            delegation["security"],
+        )
+        self.assertIn(
+            "/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting",
+            paths,
+        )
+        self.assertFalse(delegation["x-rawCredentialPersisted"])
         self.assertIn("/api/matm/uai-memory/contract", paths)
         self.assertIn("/api/matm/uai-memory/packages", paths)
         self.assertIn("/api/matm/uai-memory/records", paths)
@@ -4244,6 +4259,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("/api/matm/connector-contract", routes)
         self.assertIn("/api/matm/uai-memory/contract", routes)
         self.assertIn("/api/matm/openapi.json", routes)
+        self.assertIn("/api/matm/access/company-master-credentials", routes)
         self.assertIn("/api/matm/readiness-result", routes)
         self.assertIn("/api/matm/review-queue/decide", routes)
         self.assertIn("/api/matm/audit-log", routes)
@@ -4263,6 +4279,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(["GET", "POST"], routes["/api/matm/uai-memory/edit-claims"]["methods"])
         self.assertEqual(["POST"], routes["/api/matm/uai-memory/edit-claims/complete"]["methods"])
         self.assertEqual(["GET"], routes["/api/matm/openapi.json"]["methods"])
+        self.assertEqual(
+            ["GET", "POST"],
+            routes["/api/matm/access/company-master-credentials"]["methods"],
+        )
         self.assertEqual("L0", routes["/llms.txt"]["agentCompatibility"]["lowestSafeAbilityLevel"])
         self.assertEqual("L1", routes["/api/matm/agent-compatibility"]["agentCompatibility"]["lowestSafeAbilityLevel"])
         self.assertEqual("L6", routes["/api/matm/meeting-messages"]["agentCompatibility"]["lowestSafeAbilityLevel"])
@@ -4753,7 +4773,20 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 for row in connection.execute("PRAGMA table_info(matm_company_master_keys)").fetchall()
             }
             self.assertEqual(
-                {"master_key_id", "company_id", "token_hash", "label", "principal_name", "created_at", "last_used_at", "revoked_at"},
+            {
+                "master_key_id",
+                "company_id",
+                "token_hash",
+                "label",
+                "principal_name",
+                "issuance_kind",
+                "issued_by_master_key_id",
+                "issued_by_agent_token_id",
+                "delegated_for_workspace_id",
+                "created_at",
+                "last_used_at",
+                "revoked_at",
+            },
                 key_columns,
             )
             token_parts = token.split(".")

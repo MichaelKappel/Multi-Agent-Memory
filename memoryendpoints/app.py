@@ -1371,6 +1371,7 @@ MASTER_CAPABILITIES = (
     "project:write",
     "access:manage",
     "agent_credentials:revoke",
+    "company_master_credentials:delegate",
 )
 AGENT_CAPABILITIES = (
     "scope:read",
@@ -1443,6 +1444,7 @@ def _auth_permissions(auth):
             "canIssueAgentInvites": False,
             "canListAgentTokens": False,
             "canRevokeAgentTokens": False,
+            "canDelegateCompanyMasterCredentials": False,
             "canManageCompany": False,
             "canAccessWorkspaceOperations": False,
             "canReadConnectorSelf": "connector:self:readback" in scopes,
@@ -1459,6 +1461,7 @@ def _auth_permissions(auth):
         "canIssueAgentInvites": company_master,
         "canListAgentTokens": company_master,
         "canRevokeAgentTokens": company_master,
+        "canDelegateCompanyMasterCredentials": company_master,
         "canManageCompany": company_master,
         "canAccessWorkspaceOperations": governed,
     }
@@ -1492,6 +1495,7 @@ def _public_auth_principal(auth):
         "credentialId": credential_id,
         "credentialType": credential_type,
         "ordinaryAgentCredential": internal_credential_type == "agent",
+        "masterCompanyAgentCredential": internal_credential_type == "company_master",
         "companyId": (auth or {}).get("companyId"),
         "agentIdentityId": (auth or {}).get("agentIdentityId"),
         "agentId": (auth or {}).get("agentId")
@@ -1540,6 +1544,8 @@ def _access_problem(start_response, code, detail=None):
     statuses = {
         "invalid_token": "401 Unauthorized",
         "company_master_required": "403 Forbidden",
+        "top_level_agent_required": "403 Forbidden",
+        "top_level_agent_master_credential_disabled": "403 Forbidden",
         "capability_required": "403 Forbidden",
         "principal_mismatch": "403 Forbidden",
         "agent_identity_mismatch": "403 Forbidden",
@@ -1548,10 +1554,17 @@ def _access_problem(start_response, code, detail=None):
         "access_request_not_found": "404 Not Found",
         "invite_not_found": "404 Not Found",
         "agent_token_not_found": "404 Not Found",
+        "workspace_not_found": "404 Not Found",
         "agent_name_invalid": "422 Unprocessable Entity",
         "access_decision_invalid": "422 Unprocessable Entity",
         "scope_invalid": "422 Unprocessable Entity",
         "scope_not_in_company": "422 Unprocessable Entity",
+        "idempotency_key_required": "422 Unprocessable Entity",
+        "idempotency_key_invalid": "422 Unprocessable Entity",
+        "company_master_candidate_invalid": "422 Unprocessable Entity",
+        "company_master_metadata_invalid": "422 Unprocessable Entity",
+        "company_master_delegation_invalid": "422 Unprocessable Entity",
+        "top_level_agent_master_credential_request_invalid": "422 Unprocessable Entity",
         "referenced_agent_token_invalid": "422 Unprocessable Entity",
         "agent_name_unavailable": "409 Conflict",
         "approval_already_final": "409 Conflict",
@@ -1561,6 +1574,9 @@ def _access_problem(start_response, code, detail=None):
         "one_time_secret_already_delivered": "409 Conflict",
         "invite_not_revocable": "409 Conflict",
         "agent_token_already_revoked": "409 Conflict",
+        "idempotency_conflict": "409 Conflict",
+        "company_master_credential_exists": "409 Conflict",
+        "company_master_credential_limit": "409 Conflict",
         "invite_expired": "410 Gone",
         "invite_redeemed": "410 Gone",
         "invite_revoked": "410 Gone",
@@ -1572,6 +1588,8 @@ def _access_problem(start_response, code, detail=None):
     defaults = {
         "invalid_token": "A valid governed bearer credential is required.",
         "company_master_required": "A company master credential is required for this access-management operation.",
+        "top_level_agent_required": "An active company-scoped top-level agent credential is required for this operation.",
+        "top_level_agent_master_credential_disabled": "An authenticated human administrator has disabled top-level-agent company-master issuance for this company.",
         "capability_required": "The authenticated credential does not have the required capability.",
         "principal_mismatch": "The requested acting identity does not match the authenticated principal.",
         "agent_identity_mismatch": "The requested agent identity does not match the connector credential's exact agent grant.",
@@ -1583,6 +1601,16 @@ def _access_problem(start_response, code, detail=None):
         "invite_redeemed": "The one-time invitation has already been redeemed.",
         "invite_revoked": "The one-time invitation has been revoked.",
         "credential_system_not_configured": "Governed credential verification is not configured.",
+        "workspace_not_found": "The selected workspace was not found in the authenticated company.",
+        "idempotency_key_required": "A high-entropy Idempotency-Key header is required.",
+        "idempotency_key_invalid": "The Idempotency-Key header is invalid.",
+        "idempotency_conflict": "The Idempotency-Key was already used for a different company-master credential request.",
+        "company_master_candidate_invalid": "The candidate must be a newly generated company-master credential in the published v1 format.",
+        "company_master_metadata_invalid": "The company-master label and principal name must be printable text from 1 through 80 characters.",
+        "company_master_delegation_invalid": "The request must match the published company-master delegation v1 schema exactly.",
+        "top_level_agent_master_credential_request_invalid": "The request must match the published top-level-agent company-master v1 schema exactly.",
+        "company_master_credential_exists": "The candidate company-master credential is already registered or unavailable.",
+        "company_master_credential_limit": "The company has reached the active company-master credential safety limit.",
     }
     status = statuses.get(code, "422 Unprocessable Entity")
     headers = list(_CONNECTOR_JSON_HEADERS)
@@ -1697,6 +1725,7 @@ def _human_problem(start_response, code, detail=None):
         "company_master_proof_used": "410 Gone",
         "selected_company_required": "409 Conflict",
         "human_company_not_found": "404 Not Found",
+        "top_level_agent_master_credential_setting_invalid": "422 Unprocessable Entity",
         "replacement_not_found": "404 Not Found",
         "replacement_predecessor_inactive": "409 Conflict",
         "replacement_pending": "409 Conflict",
@@ -1729,6 +1758,7 @@ def _human_problem(start_response, code, detail=None):
         "csrf_required": "The human session requires its in-memory CSRF token.",
         "csrf_invalid": "The CSRF token does not match the human session.",
         "recent_reauthentication_required": "Re-enter the account password before this sensitive action.",
+        "top_level_agent_master_credential_setting_invalid": "The setting payload must contain exactly one boolean enabled value.",
         "export_opportunity_acknowledgement_required": "Review the company export opportunity before continuing.",
     }
     return problem(
@@ -3151,7 +3181,7 @@ def route_agent_setup(start_response):
   "workspaceId": "&lt;workspace id shown above&gt;",
   "companyMasterTokenSecret": "&lt;credential shown above&gt;"
 }</code></pre>
-        <span>Normal agents should use their own bound agent credential. An agent may read the company master only for an explicit owner-authorized company operation. If a human cannot find it, ask the AI agent to check this exact file. If the file is missing, the agent must stop and ask which governed secret store was used&mdash;never request or echo the raw credential in chat.</span>
+        <span>Normal and disposable agents use their own bound credentials and must not receive this file. If it is missing while an AI agent is already authenticated as <code>credentialType=company_master</code>, that trusted agent can use <code>scripts/recover_memoryendpoints_company_master.py</code> with its explicitly configured source to stage and register a new sibling without printing it. Otherwise stop safely. Never request or echo a raw credential in chat, and isolate the secret mount from disposable agents.</span>
       </div>
       <label class="setup-key-label" for="one-time-human-owner-recovery">One-time exceptional recovery secret</label>
       <p class="setup-key-help" id="one-time-human-owner-recovery-help">This secret authorizes only bounded export and company-closure recovery. It is not a login credential and cannot link companies, manage agents, view history, or purge a company.</p>
@@ -3217,13 +3247,17 @@ def route_agent_setup(start_response):
   </section>
   <details class="setup-code-examples">
     <summary>Copy-Safe Setup for agents and developers</summary>
-    <p>Use the repository helper for agent-driven setup. It checks both target locations before creating anything, writes the company master to <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, saves the exceptional owner-recovery secret separately, and prints only redacted confirmation. If the default file is missing afterward, the agent must stop instead of claiming setup succeeded.</p>
+    <p>Use the repository helper for agent-driven setup. It checks both target locations before creating anything, writes the company master to <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, saves the exceptional owner-recovery secret separately, and prints only redacted confirmation. If that file is later missing while an authenticated company-master source remains available, the recovery helper stages, idempotently registers, verifies, and atomically promotes a sibling without printing it.</p>
     <h3>Agent setup helper</h3>
     <pre><code>python scripts/setup_memoryendpoints_company.py \\
   --company-label "Example Company" \\
   --workspace-label "Example Workspace" \\
   --project-label "Example Project" \\
   --project-root .</code></pre>
+    <h3>Company-master recovery helper</h3>
+    <pre><code>python scripts/recover_memoryendpoints_company_master.py \\
+  --project-root . \\
+  --source-credential-file "&lt;explicit governed source file&gt;"</code></pre>
   </details>
 </section>
 """
@@ -3254,7 +3288,7 @@ def route_agent_coordination(start_response):
   <p>This is the shortest public path from a governed agent credential to a useful MATM coordination loop. Autonomous setup and ordinary agent work require no human interaction. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
     <p>An autonomous setup agent may use its company master to approve a meaningful company-scoped agent name, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. Authenticated human approval remains an optional alternative for human-only controls. LocalEndpoint Connect uses <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a> and retains its narrower approval boundary.</p>
     <h2>Find Credentials Safely</h2>
-    <p>Agent Setup creates the company master credential and shows it once. Displaying the default path does not create the file: agent-driven setup must use <code>scripts/setup_memoryendpoints_company.py</code> and verify <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> exists before claiming success. Keep <code>.local-secrets/</code> outside source control. Normal agents use their bound agent credential, not the company master. If the default company-master file is missing, stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request the raw credential in chat.</p>
+    <p>Agent Setup creates the company master credential and shows it once. Agent-driven setup uses <code>scripts/setup_memoryendpoints_company.py</code> and verifies <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. If that file is missing, <code>scripts/recover_memoryendpoints_company_master.py</code> can stage, register, verify, and atomically promote a replacement without printing it. Use <code>MEMORYENDPOINTS_AGENT_TOKEN</code> for a company-scoped top-level agent, or <code>MEMORYENDPOINTS_COMPANY_MASTER_TOKEN</code> for an existing company master. Lower-scoped, connector, and disposable agents cannot use this route and must ask a top-level agent or human administrator. Keep the secret mount unavailable to them through an OS identity or vault boundary; do not scan outside configured paths or request the raw credential in chat.</p>
   <h2>Choose The Active-Memory Mode</h2>
   <p>Read <a href="/api/matm/uai-memory/contract"><code>/api/matm/uai-memory/contract</code></a> after invite redemption. Use the complete virtual UAIX package only when the embedding browser AI has no durable local filesystem. It binds protected records to the governed credential and registered agent. For ordinary local agents, do not upload <code>.uai</code> bodies: read project file heads, acquire a bounded edit claim before changing a path, and resolve conflicts through the project meeting room and source control.</p>
   <h2>Inputs</h2>
@@ -4340,7 +4374,7 @@ def text_discovery(name):
         "Memory boundary: hosted workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
         "Company master storage: /agent-setup creates and shows it once; displaying the path does not create the file. Browser setup uses Save to project secret folder, and agent-driven setup uses scripts/setup_memoryendpoints_company.py and verifies <project-root>/%s exists. Keep .local-secrets/ outside source control." % COMPANY_MASTER_DEFAULT_SECRET_PATH,
-        "Missing company master: agents stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request, echo, or log the raw credential.",
+        "Missing company master: an authenticated credentialType=company_master agent may use scripts/recover_memoryendpoints_company_master.py with an explicitly configured source to stage and register a new sibling without printing it. Otherwise stop safely; never scan outside configured paths. Normal and disposable agents remain denied, and shared unrestricted filesystems require separate OS/vault secret isolation.",
         "Agent ability compatibility: /api/matm/agent-compatibility maps L0-L7 agents to safe routes, fallbacks, and no-op behavior.",
         "Current-message lane: /api/matm/current-message with acknowledgement at /api/matm/notifications/ack.",
         "UAIX active memory: /api/matm/uai-memory/contract separates the accountless-browser virtual-package exception from hash-only local .uai edit coordination.",
@@ -4803,7 +4837,7 @@ _ACCESS_REQUEST_DECISION_ROUTE = re.compile(r"^/api/matm/access/agent-name-reque
 _ACCESS_INVITE_REVOKE_ROUTE = re.compile(r"^/api/matm/access/invites/([^/]+)/revoke$")
 _ACCESS_TOKEN_REVOKE_ROUTE = re.compile(r"^/api/matm/access/agent-tokens/([^/]+)/revoke$")
 _HUMAN_COMPANY_ROUTE = re.compile(
-    r"^/api/matm/human/companies/([^/]+)/(export-plan|exports|closure-intents|close|delete|restore|permanent-purge|history|history/clear)$"
+    r"^/api/matm/human/companies/([^/]+)/(export-plan|exports|closure-intents|close|delete|restore|permanent-purge|history|history/clear|top-level-agent-master-credential-setting)$"
 )
 _HUMAN_AGENT_TOKENS_ROUTE = re.compile(
     r"^/api/matm/human/companies/([^/]+)/agent-tokens$"
@@ -6158,6 +6192,40 @@ def route_human(environ, start_response, path):
     if rejected:
         return rejected
 
+    if operation == "top-level-agent-master-credential-setting":
+        if method == "GET":
+            result = store.human_top_level_agent_master_credential_setting(
+                session_secret, company_id
+            )
+        elif method == "PATCH":
+            body, rejected = _access_body(environ, start_response)
+            if rejected:
+                return rejected
+            if set(body) != {"enabled"} or not isinstance(
+                body.get("enabled"), bool
+            ):
+                return _human_problem(
+                    start_response,
+                    "top_level_agent_master_credential_setting_invalid",
+                )
+            result = store.set_human_top_level_agent_master_credential_setting(
+                session_secret, company_id, body.get("enabled")
+            )
+        else:
+            return problem(
+                start_response,
+                "405 Method Not Allowed",
+                "Method not allowed",
+                "Use GET or PATCH for the top-level-agent company-master setting.",
+                "method_not_allowed",
+                headers=[("Allow", "GET, PATCH")],
+            )
+        return (
+            json_response(start_response, result)
+            if result.get("ok")
+            else _human_storage_error(start_response, result)
+        )
+
     if operation == "export-plan":
         if method != "GET":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET to review the company export plan.", "method_not_allowed", headers=[("Allow", "GET")])
@@ -6386,6 +6454,7 @@ def route_access(environ, start_response, path):
         path == "/api/matm/me"
         or path == "/api/matm/access/agent-name-requests"
         or path == "/api/matm/access/scope-catalog"
+        or path == "/api/matm/access/company-master-credentials"
         or path == "/api/matm/access/invites"
         or path == "/api/matm/access/agent-tokens"
         or bool(_ACCESS_REQUEST_DECISION_ROUTE.fullmatch(path))
@@ -6427,10 +6496,124 @@ def route_access(environ, start_response, path):
     if _is_connector_principal(auth):
         return _connector_problem(start_response, "connector_scope_forbidden")
 
+    if (
+        path == "/api/matm/access/company-master-credentials"
+        and method == "POST"
+        and auth.get("credentialType") == "agent"
+    ):
+        grant = auth.get("grant") if isinstance(auth.get("grant"), dict) else {}
+        scope_type = auth.get("scopeType") or grant.get("scopeType")
+        scope_id = auth.get("scopeId") or grant.get("scopeId")
+        if scope_type != "company" or scope_id != auth.get("companyId"):
+            return _access_problem(start_response, "top_level_agent_required")
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        required = {
+            "schemaVersion",
+            "workspaceId",
+            "candidateTokenSecret",
+            "label",
+            "principalName",
+        }
+        if (
+            set(body) != required
+            or body.get("schemaVersion")
+            != "memoryendpoints.top_level_agent_company_master.v1"
+        ):
+            return _access_problem(
+                start_response,
+                "top_level_agent_master_credential_request_invalid",
+            )
+        idempotency_key = _idempotency_key(environ)
+        if not idempotency_key:
+            return _access_problem(start_response, "idempotency_key_required")
+        result = store.register_top_level_agent_company_master_credential(
+            _token(environ),
+            body.get("workspaceId"),
+            body.get("candidateTokenSecret"),
+            body.get("label"),
+            body.get("principalName"),
+            idempotency_key,
+        )
+        if not result.get("ok"):
+            return _access_result_error(start_response, result)
+        return json_response(
+            start_response,
+            result,
+            "200 OK" if result.get("idempotentReplay") else "201 Created",
+            headers=list(_CONNECTOR_JSON_HEADERS),
+        )
+
     master_rejected = _company_master_or_problem(auth, start_response)
     if master_rejected:
         return master_rejected
     master_token = _token(environ)
+
+    if path == "/api/matm/access/company-master-credentials":
+        if method == "GET":
+            result = store.list_company_master_credentials(master_token)
+            return (
+                json_response(
+                    start_response,
+                    result,
+                    headers=list(_CONNECTOR_JSON_HEADERS),
+                )
+                if result.get("ok")
+                else _access_result_error(start_response, result)
+            )
+        if method != "POST":
+            return problem(
+                start_response,
+                "405 Method Not Allowed",
+                "Method not allowed",
+                "Use GET or POST for company-master credentials.",
+                "method_not_allowed",
+                headers=[("Allow", "GET, POST")],
+            )
+        body, rejected = _access_body(environ, start_response)
+        if rejected:
+            return rejected
+        required = {
+            "schemaVersion",
+            "workspaceId",
+            "candidateTokenSecret",
+            "label",
+            "principalName",
+        }
+        if (
+            set(body) != required
+            or body.get("schemaVersion")
+            != "memoryendpoints.company_master_delegation.v1"
+            or any(not isinstance(body.get(field), str) for field in required)
+        ):
+            return _access_problem(
+                start_response, "company_master_delegation_invalid"
+            )
+        idempotency_key = _idempotency_key(environ)
+        if not idempotency_key:
+            return _access_problem(start_response, "idempotency_key_required")
+        try:
+            result = store.delegate_company_master_credential(
+                master_token,
+                body.get("workspaceId"),
+                body.get("candidateTokenSecret"),
+                body.get("label"),
+                body.get("principalName"),
+                idempotency_key,
+            )
+        except RuntimeError:
+            return _access_problem(
+                start_response, "credential_system_not_configured"
+            )
+        if not result.get("ok"):
+            return _access_result_error(start_response, result)
+        return json_response(
+            start_response,
+            result,
+            "200 OK" if result.get("idempotentReplay") else "201 Created",
+            headers=list(_CONNECTOR_JSON_HEADERS),
+        )
 
     if path == "/api/matm/access/scope-catalog":
         if method != "GET":

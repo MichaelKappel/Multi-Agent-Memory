@@ -2,15 +2,19 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from contextlib import closing
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from app import application
+from memoryendpoints.app import HUMAN_SESSION_COOKIE
+from memoryendpoints.storage import FileStore, SQLiteStore
 
 
 GOVERNED_CREDENTIAL = re.compile(r"me_(?:master|agent|invite)_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
@@ -266,6 +270,42 @@ class GovernedAgentAccessApiContract:
             secret_component = credential.rsplit(".", 1)[-1]
             self.assertNotIn(secret_component.encode("utf-8"), persisted)
 
+    def _candidate_master(self):
+        return "me_master_v1.masterkey-%s.%s" % (
+            uuid.uuid4().hex[:20],
+            secrets.token_urlsafe(32),
+        )
+
+    def _delegate_master(
+        self,
+        candidate=None,
+        idempotency_key="company-master-recovery-00000001",
+        workspace_id=None,
+        token=None,
+        body_overrides=None,
+        expected_status=201,
+    ):
+        candidate = candidate or self._candidate_master()
+        body = {
+            "schemaVersion": "memoryendpoints.company_master_delegation.v1",
+            "workspaceId": workspace_id or self.workspace_id,
+            "candidateTokenSecret": candidate,
+            "label": "Human recovery master",
+            "principalName": "human-recovery",
+        }
+        body.update(body_overrides or {})
+        status, headers, payload = call_api(
+            "/api/matm/access/company-master-credentials",
+            "POST",
+            body,
+            token or self.master_token,
+            extra_headers={"HTTP_IDEMPOTENCY_KEY": idempotency_key}
+            if idempotency_key is not None
+            else None,
+        )
+        self.assertEqual(expected_status, status, payload)
+        return candidate, headers, payload
+
     def test_free_setup_returns_master_secret_and_me_reports_master_capabilities(self):
         self.assertIn("credentialId", self.account)
         status, _headers, payload = call_api(
@@ -278,7 +318,162 @@ class GovernedAgentAccessApiContract:
         self.assertEqual(self.company_id, payload["principal"]["companyId"])
         self.assertTrue(payload["principal"]["permissions"]["canIssueAgentInvites"])
         self.assertTrue(payload["principal"]["permissions"]["canRevokeAgentTokens"])
+        self.assertTrue(payload["principal"]["masterCompanyAgentCredential"])
+        self.assertFalse(payload["principal"]["ordinaryAgentCredential"])
+        self.assertTrue(
+            payload["principal"]["permissions"][
+                "canDelegateCompanyMasterCredentials"
+            ]
+        )
+        self.assertIn(
+            "company_master_credentials:delegate",
+            payload["principal"]["capabilities"],
+        )
         self._assert_no_governed_credential(payload)
+
+    def test_company_master_can_delegate_crash_safe_sibling_for_human(self):
+        candidate, headers, delegated = self._delegate_master()
+        candidate_id = candidate.split(".", 2)[1]
+        self.assertTrue(delegated["ok"])
+        self.assertTrue(delegated["credentialAccepted"])
+        self.assertFalse(delegated["credentialReturned"])
+        self.assertFalse(delegated["rawCredentialPersisted"])
+        self.assertFalse(delegated["idempotentReplay"])
+        self.assertEqual(
+            candidate_id,
+            delegated["companyMasterCredential"]["masterKeyId"],
+        )
+        self.assertEqual(
+            "delegated_recovery",
+            delegated["companyMasterCredential"]["issuanceKind"],
+        )
+        self.assertEqual(
+            self.workspace_id,
+            delegated["companyMasterCredential"]["delegatedForWorkspaceId"],
+        )
+        self.assertIn("no-store", headers.get("Cache-Control", ""))
+        self._assert_no_governed_credential(delegated)
+
+        status, _headers, candidate_me = call_api(
+            "/api/matm/me", token=candidate, query="workspace_id=" + self.workspace_id
+        )
+        self.assertEqual(200, status, candidate_me)
+        self.assertEqual("company_master", candidate_me["principal"]["credentialType"])
+        self.assertEqual(self.company_id, candidate_me["principal"]["companyId"])
+        self.assertTrue(candidate_me["principal"]["masterCompanyAgentCredential"])
+
+        status, _headers, issuer_me = call_api(
+            "/api/matm/me", token=self.master_token
+        )
+        self.assertEqual(200, status, issuer_me)
+        status, _headers, inventory = call_api(
+            "/api/matm/access/company-master-credentials",
+            token=candidate,
+        )
+        self.assertEqual(200, status, inventory)
+        self.assertEqual(2, inventory["count"])
+        self.assertEqual(
+            {self.account["credentialId"], candidate_id},
+            {item["masterKeyId"] for item in inventory["items"]},
+        )
+        self._assert_no_governed_credential(inventory)
+        self._assert_not_persisted(self.master_token, candidate)
+
+    def test_company_master_delegation_replays_exactly_and_conflicts_safely(self):
+        candidate = self._candidate_master()
+        key = "company-master-recovery-replay-0001"
+        _candidate, _headers, first = self._delegate_master(
+            candidate=candidate, idempotency_key=key
+        )
+        _candidate, _headers, replay = self._delegate_master(
+            candidate=candidate,
+            idempotency_key=key,
+            expected_status=200,
+        )
+        self.assertFalse(first["idempotentReplay"])
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(
+            first["companyMasterCredential"], replay["companyMasterCredential"]
+        )
+
+        _candidate, _headers, conflict = self._delegate_master(
+            candidate=self._candidate_master(),
+            idempotency_key=key,
+            expected_status=409,
+        )
+        self._assert_error(409, conflict, 409, "idempotency_conflict")
+        status, _headers, inventory = call_api(
+            "/api/matm/access/company-master-credentials", token=self.master_token
+        )
+        self.assertEqual(200, status, inventory)
+        self.assertEqual(2, inventory["count"])
+        self._assert_not_persisted(self.master_token, candidate)
+
+    def test_company_master_delegation_rejects_spoofing_and_invalid_contracts(self):
+        second = self._create_account(
+            "Other Recovery Company", "Other Recovery Workspace", "Other Project"
+        )
+        candidate = self._candidate_master()
+        _candidate, _headers, cross_company = self._delegate_master(
+            candidate=candidate,
+            workspace_id=second["workspaceId"],
+            idempotency_key="company-master-cross-company-0001",
+            expected_status=404,
+        )
+        self._assert_error(404, cross_company, 404, "workspace_not_found")
+
+        cases = (
+            (
+                "missing-idempotency",
+                None,
+                {},
+                422,
+                "idempotency_key_required",
+            ),
+            (
+                "weak-idempotency",
+                "weak",
+                {},
+                422,
+                "idempotency_key_invalid",
+            ),
+            (
+                "wrong-schema",
+                "company-master-invalid-schema-0001",
+                {"schemaVersion": "memoryendpoints.company_master_delegation.v2"},
+                422,
+                "company_master_delegation_invalid",
+            ),
+            (
+                "unknown-field",
+                "company-master-unknown-field-0001",
+                {"companyId": self.company_id},
+                422,
+                "company_master_delegation_invalid",
+            ),
+            (
+                "wrong-kind",
+                "company-master-wrong-kind-0001",
+                {
+                    "candidateTokenSecret": "me_agent_v1.agenttoken-%s.%s"
+                    % (uuid.uuid4().hex[:20], secrets.token_urlsafe(32))
+                },
+                422,
+                "company_master_candidate_invalid",
+            ),
+        )
+        for name, key, overrides, expected_status, expected_code in cases:
+            with self.subTest(name=name):
+                _candidate, _headers, payload = self._delegate_master(
+                    candidate=self._candidate_master(),
+                    idempotency_key=key,
+                    body_overrides=overrides,
+                    expected_status=expected_status,
+                )
+                self._assert_error(
+                    expected_status, payload, expected_status, expected_code
+                )
+        self._assert_not_persisted(candidate, second["companyMasterTokenSecret"])
 
     def test_company_is_auth_derived_and_approval_is_separate_from_issuance(self):
         invalid_body = self._request_body(requested_name="spoofed-company-agent")
@@ -316,18 +511,31 @@ class GovernedAgentAccessApiContract:
         invite_id = provisioned["issued"]["invite"]["inviteId"]
         credential_id = provisioned["principal"]["credentialId"]
         management_calls = (
-            ("POST", "/api/matm/access/agent-name-requests", self._request_body(requested_name="forbidden-agent")),
-            ("POST", "/api/matm/access/agent-name-requests/%s/decision" % request_id, {"decision": "deny", "decisionReason": "forbidden"}),
-            ("POST", "/api/matm/access/invites", {"approvedRequestId": request_id, "expiresInSeconds": 900}),
-            ("GET", "/api/matm/access/invites", None),
-            ("POST", "/api/matm/access/invites/%s/revoke" % invite_id, {}),
-            ("GET", "/api/matm/access/agent-tokens", None),
-            ("POST", "/api/matm/access/agent-tokens/%s/revoke" % credential_id, {}),
+            ("POST", "/api/matm/access/agent-name-requests", self._request_body(requested_name="forbidden-agent"), "company_master_required"),
+            ("POST", "/api/matm/access/agent-name-requests/%s/decision" % request_id, {"decision": "deny", "decisionReason": "forbidden"}, "company_master_required"),
+            ("POST", "/api/matm/access/invites", {"approvedRequestId": request_id, "expiresInSeconds": 900}, "company_master_required"),
+            ("GET", "/api/matm/access/invites", None, "company_master_required"),
+            ("POST", "/api/matm/access/invites/%s/revoke" % invite_id, {}, "company_master_required"),
+            ("GET", "/api/matm/access/agent-tokens", None, "company_master_required"),
+            ("POST", "/api/matm/access/agent-tokens/%s/revoke" % credential_id, {}, "company_master_required"),
+            ("GET", "/api/matm/access/company-master-credentials", None, "company_master_required"),
+            (
+                "POST",
+                "/api/matm/access/company-master-credentials",
+                {
+                    "schemaVersion": "memoryendpoints.company_master_delegation.v1",
+                    "workspaceId": self.workspace_id,
+                    "candidateTokenSecret": self._candidate_master(),
+                    "label": "Forbidden recovery",
+                    "principalName": "ordinary-agent",
+                },
+                "top_level_agent_required",
+            ),
         )
-        for method, path, body in management_calls:
+        for method, path, body, expected_code in management_calls:
             with self.subTest(method=method, path=path):
                 status, _headers, payload = call_api(path, method, body, agent_token)
-                self._assert_error(status, payload, 403, "company_master_required")
+                self._assert_error(status, payload, 403, expected_code)
 
         status, _headers, payload = call_api(
             "/api/matm/access/invites",
@@ -674,6 +882,127 @@ class GovernedAgentAccessApiContract:
         self.assertNotIn("agentTokenSecret", replay)
         self.assertEqual(counts_after_first, self._access_counts())
         self._assert_not_persisted(first_secret, first["agentTokenSecret"])
+
+    def _top_level_master_candidate(self):
+        return "me_master_v1.masterkey-%s.%s" % (
+            uuid.uuid4().hex[:20],
+            secrets.token_urlsafe(32),
+        )
+
+    def _register_top_level_master(self, agent_token, candidate=None, expected=201):
+        candidate = candidate or self._top_level_master_candidate()
+        status, headers, payload = call_api(
+            "/api/matm/access/company-master-credentials",
+            "POST",
+            {
+                "schemaVersion": "memoryendpoints.top_level_agent_company_master.v1",
+                "workspaceId": self.workspace_id,
+                "candidateTokenSecret": candidate,
+                "label": "Human operator master",
+                "principalName": "human-operator",
+            },
+            agent_token,
+            extra_headers={"HTTP_IDEMPOTENCY_KEY": "top-level-agent-" + uuid.uuid4().hex},
+        )
+        self.assertEqual(expected, status, payload)
+        return candidate, headers, payload
+
+    def _selected_human_owner_session(self):
+        store = SQLiteStore(self.sqlite_path) if self.backend == "sqlite" else FileStore(self.store_path)
+        proof = store.create_company_master_proof(self.master_token)
+        created = store.create_human_account_with_session(
+            "operator-owner-" + uuid.uuid4().hex[:8],
+            "Valid-human-password-%s!" % secrets.token_urlsafe(24),
+            proof["masterProofSecret"],
+            "Operator Owner",
+        )
+        self.assertTrue(created["ok"], created)
+        selected = store.select_human_company_membership(
+            created["sessionSecret"], created["membership"]["authorityId"]
+        )
+        self.assertTrue(selected["ok"], selected)
+        return selected
+
+    def test_company_scoped_agent_can_register_crash_safe_human_operator_master(self):
+        top_level = self._provision_agent(
+            requested_name="company-operator-agent",
+            scope_type="company",
+            scope_id=self.company_id,
+        )
+        candidate, headers, payload = self._register_top_level_master(
+            top_level["agentTokenSecret"]
+        )
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["topLevelAgentMasterCredentialEnabled"])
+        self.assertEqual(
+            "top_level_agent_human_operator",
+            payload["companyMasterCredential"]["issuanceKind"],
+        )
+        self.assertEqual("agent", payload["companyMasterCredential"]["issuedByCredentialType"])
+        self.assertNotIn(candidate, json.dumps(payload, sort_keys=True))
+        self.assertIn("no-store", headers.get("Cache-Control", ""))
+        status, _headers, me = call_api(
+            "/api/matm/me",
+            token=candidate,
+            query="workspace_id=" + self.workspace_id,
+        )
+        self.assertEqual(200, status, me)
+        self.assertEqual("company_master", me["principal"]["credentialType"])
+
+        lower = self._provision_agent(requested_name="lower-scope-recovery-agent")
+        _candidate, _headers, denied = self._register_top_level_master(
+            lower["agentTokenSecret"], expected=403
+        )
+        self.assertEqual("top_level_agent_required", denied["error"]["code"])
+
+    def test_human_admin_toggle_and_database_boolean_disable_agent_registration(self):
+        top_level = self._provision_agent(
+            requested_name="toggle-recovery-agent",
+            scope_type="company",
+            scope_id=self.company_id,
+        )
+        session = self._selected_human_owner_session()
+        path = "/api/matm/human/companies/%s/top-level-agent-master-credential-setting" % self.company_id
+        headers = {
+            "HTTP_COOKIE": "%s=%s" % (HUMAN_SESSION_COOKIE, session["sessionSecret"]),
+            "HTTP_X_CSRF_TOKEN": session["csrfToken"],
+            "HTTP_ORIGIN": "https://memoryendpoints.com",
+            "HTTP_SEC_FETCH_SITE": "same-origin",
+            "HTTP_SEC_FETCH_MODE": "cors",
+            "HTTP_SEC_FETCH_DEST": "empty",
+            "CONTENT_TYPE": "application/json",
+        }
+        status, _response_headers, initial = call_api(path, extra_headers=headers)
+        self.assertEqual(200, status, initial)
+        self.assertTrue(initial["enabled"])
+        self.assertEqual("top_level_agent_master_credential_enabled", initial["databaseColumn"])
+
+        status, _response_headers, disabled = call_api(
+            path, "PATCH", {"enabled": False}, extra_headers=headers
+        )
+        self.assertEqual(200, status, disabled)
+        self.assertFalse(disabled["enabled"])
+        if self.backend == "sqlite":
+            with sqlite3.connect(self.sqlite_path) as connection:
+                value = connection.execute(
+                    "SELECT top_level_agent_master_credential_enabled FROM matm_companies WHERE company_id = ?",
+                    (self.company_id,),
+                ).fetchone()[0]
+            self.assertEqual(0, value)
+        else:
+            stored = json.loads(self.store_path.read_text(encoding="utf-8"))
+            self.assertIs(False, stored["companies"][self.company_id]["topLevelAgentMasterCredentialEnabled"])
+
+        _candidate, _headers, denied = self._register_top_level_master(
+            top_level["agentTokenSecret"], expected=403
+        )
+        self.assertEqual("top_level_agent_master_credential_disabled", denied["error"]["code"])
+
+        status, _response_headers, enabled = call_api(
+            path, "PATCH", {"enabled": True}, extra_headers=headers
+        )
+        self.assertEqual(200, status, enabled)
+        self.assertTrue(enabled["enabled"])
 
 
 class FileStoreAgentAccessApiTests(GovernedAgentAccessApiContract, unittest.TestCase):

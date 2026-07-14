@@ -148,6 +148,70 @@ def _parse_governed_credential(token, expected_kind):
     return parts[1], parts[2]
 
 
+_COMPANY_MASTER_DELEGATION_SCHEMA = "memoryendpoints.company_master_delegation.v1"
+_COMPANY_MASTER_DELEGATION_OPERATION = "company_master_credential_delegate"
+_TOP_LEVEL_AGENT_MASTER_SCHEMA = "memoryendpoints.top_level_agent_company_master.v1"
+_TOP_LEVEL_AGENT_MASTER_OPERATION = "top_level_agent_company_master_for_human_operator"
+_MAX_ACTIVE_COMPANY_MASTER_CREDENTIALS = 32
+
+
+def _parse_delegated_company_master_candidate(token):
+    """Parse the exact client-generated company-master credential v1 shape."""
+    master_key_id, secret = _parse_governed_credential(token, "master")
+    if not master_key_id or not secret:
+        return None, None
+    if not re.fullmatch(r"masterkey-[0-9a-f]{20}", master_key_id):
+        return None, None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", secret):
+        return None, None
+    return master_key_id, secret
+
+
+def _company_master_delegation_text(value, fallback):
+    normalized = " ".join(str(value or fallback or "").strip().split())
+    if not 1 <= len(normalized) <= 80:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        return None
+    return redact_text(normalized)
+
+
+def _company_master_delegation_idempotency_hash(value):
+    key = str(value or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,199}", key):
+        return None
+    return "sha256:" + _hash(key)
+
+
+def _company_master_delegation_record_key(
+    workspace_id, issuer_id, key_hash, operation=_COMPANY_MASTER_DELEGATION_OPERATION
+):
+    return "%s:%s:%s:%s" % (
+        workspace_id,
+        operation,
+        issuer_id,
+        key_hash,
+    )
+
+
+def _company_master_delegation_response(
+    record, idempotent_replay=False, schema_version=_COMPANY_MASTER_DELEGATION_SCHEMA
+):
+    return {
+        "ok": True,
+        "schemaVersion": schema_version,
+        "companyMasterCredential": _public_company_master_key(record),
+        "credentialAccepted": True,
+        "credentialReturned": False,
+        "idempotentReplay": bool(idempotent_replay),
+        "idempotencyKeyExposed": False,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawCredentialPersisted": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def _normalize_human_username(value):
     try:
         return canonicalize_username(value)
@@ -2268,11 +2332,23 @@ def _safe_company_export_value(value):
 
 
 def _public_company_master_key(record):
+    issuer_credential_id = record.get("issuedByAgentTokenId") or record.get(
+        "issuedByMasterKeyId"
+    )
+    issuer_credential_type = None
+    if record.get("issuedByAgentTokenId"):
+        issuer_credential_type = "agent"
+    elif record.get("issuedByMasterKeyId"):
+        issuer_credential_type = "company_master"
     return {
         "masterKeyId": record.get("masterKeyId"),
         "companyId": record.get("companyId"),
         "label": record.get("label"),
         "principalName": record.get("principalName"),
+        "issuanceKind": record.get("issuanceKind") or "bootstrap",
+        "issuedByCredentialId": issuer_credential_id,
+        "issuedByCredentialType": issuer_credential_type,
+        "delegatedForWorkspaceId": record.get("delegatedForWorkspaceId"),
         "createdAt": record.get("createdAt"),
         "lastUsedAt": record.get("lastUsedAt"),
         "revokedAt": record.get("revokedAt"),
@@ -2547,6 +2623,9 @@ def _normalize_store(data):
         return blank
     for key, value in blank.items():
         data.setdefault(key, value)
+    for company in data.get("companies", {}).values():
+        if isinstance(company, dict):
+            company.setdefault("topLevelAgentMasterCredentialEnabled", True)
     _prune_audit_log_data(data)
     _prune_coordination_data(data)
     return data
@@ -4135,6 +4214,7 @@ class FileStore(object):
             "label": redact_text(company_label or label or "Free Agent Company"),
             "status": "active",
             "historyRetentionDays": 7,
+            "topLevelAgentMasterCredentialEnabled": True,
             "softDeletedAt": None,
             "preDeleteStatus": None,
             "createdAt": created_at,
@@ -4174,6 +4254,9 @@ class FileStore(object):
             "tokenHash": token_digest,
             "label": "Initial company master",
             "principalName": "account-owner",
+            "issuanceKind": "bootstrap",
+            "issuedByMasterKeyId": None,
+            "delegatedForWorkspaceId": None,
             "createdAt": created_at,
             "lastUsedAt": None,
             "revokedAt": None,
@@ -4318,6 +4401,9 @@ class FileStore(object):
                 "tokenHash": token_digest,
                 "label": redact_text(label or "Company master"),
                 "principalName": redact_text(principal_name or "company-owner"),
+                "issuanceKind": "bootstrap",
+                "issuedByMasterKeyId": None,
+                "delegatedForWorkspaceId": None,
                 "createdAt": utc_now(),
                 "lastUsedAt": None,
                 "revokedAt": None,
@@ -4365,6 +4451,304 @@ class FileStore(object):
                 "rawPayloadExposed": False,
             }
         return None
+
+    def delegate_company_master_credential(
+        self,
+        issuer_token,
+        workspace_id,
+        candidate_token,
+        label,
+        principal_name,
+        idempotency_key,
+    ):
+        """Register a client-generated sibling master without persisting its raw value."""
+        issuer_id, issuer_secret = _parse_governed_credential(issuer_token, "master")
+        candidate_id, candidate_secret = _parse_delegated_company_master_candidate(
+            candidate_token
+        )
+        key_hash = _company_master_delegation_idempotency_hash(idempotency_key)
+        safe_label = _company_master_delegation_text(label, "")
+        safe_principal = _company_master_delegation_text(principal_name, "")
+        workspace_id = str(workspace_id or "").strip()
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        if not candidate_id or candidate_id == issuer_id:
+            return _agent_access_error("company_master_candidate_invalid")
+        if not safe_label or not safe_principal:
+            return _agent_access_error("company_master_metadata_invalid")
+        with _LOCK:
+            data = self._load()
+            issuer = data.get("companyMasterKeys", {}).get(issuer_id)
+            if not issuer or issuer.get("revokedAt"):
+                return _agent_access_error("company_master_required")
+            company = data.get("companies", {}).get(issuer.get("companyId"))
+            if not company or company.get("status") != "active":
+                return _agent_access_error("company_master_required")
+            expected_issuer = _governed_credential_digest(
+                "master", issuer.get("companyId"), issuer_id, issuer_secret
+            )
+            if not secrets.compare_digest(
+                str(issuer.get("tokenHash") or ""), expected_issuer
+            ):
+                return _agent_access_error("company_master_required")
+            workspace = data.get("workspaces", {}).get(workspace_id)
+            if not workspace or workspace.get("companyId") != issuer.get("companyId"):
+                return _agent_access_error("workspace_not_found")
+
+            request_body = {
+                "schemaVersion": _COMPANY_MASTER_DELEGATION_SCHEMA,
+                "workspaceId": workspace_id,
+                "candidateTokenSecret": candidate_token,
+                "label": str(label or ""),
+                "principalName": str(principal_name or ""),
+            }
+            record_key = _company_master_delegation_record_key(
+                workspace_id, issuer_id, key_hash
+            )
+            prior = data.get("idempotency", {}).get(record_key)
+            if prior:
+                if prior.get("bodyHash") != _canonical_hash(request_body):
+                    return _agent_access_error("idempotency_conflict")
+                replay = dict(prior.get("response") or {})
+                replay.update(
+                    {
+                        "idempotentReplay": True,
+                        "idempotencyKeyExposed": False,
+                        "rawCredentialExposed": False,
+                        "rawCredentialPersisted": False,
+                        "rawPayloadExposed": False,
+                    }
+                )
+                return replay
+
+            if candidate_id in data.get("companyMasterKeys", {}):
+                return _agent_access_error("company_master_credential_exists")
+            active_count = sum(
+                1
+                for item in data.get("companyMasterKeys", {}).values()
+                if item.get("companyId") == issuer.get("companyId")
+                and not item.get("revokedAt")
+            )
+            if active_count >= _MAX_ACTIVE_COMPANY_MASTER_CREDENTIALS:
+                return _agent_access_error("company_master_credential_limit")
+
+            now = utc_now()
+            record = {
+                "masterKeyId": candidate_id,
+                "companyId": issuer.get("companyId"),
+                "tokenHash": _governed_credential_digest(
+                    "master", issuer.get("companyId"), candidate_id, candidate_secret
+                ),
+                "label": safe_label,
+                "principalName": safe_principal,
+                "issuanceKind": "delegated_recovery",
+                "issuedByMasterKeyId": issuer_id,
+                "delegatedForWorkspaceId": workspace_id,
+                "createdAt": now,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            data.setdefault("companyMasterKeys", {})[candidate_id] = record
+            response = _company_master_delegation_response(record)
+            data.setdefault("idempotency", {})[record_key] = {
+                "workspaceId": workspace_id,
+                "operation": _COMPANY_MASTER_DELEGATION_OPERATION,
+                "bodyHash": _canonical_hash(request_body),
+                "response": response,
+                "httpStatus": "201 Created",
+                "createdAt": now,
+                "idempotencyKeyExposed": False,
+            }
+            issuer["lastUsedAt"] = now
+            self.audit(
+                data,
+                "company_master.delegate",
+                issuer_id,
+                candidate_id,
+                workspace_id,
+                {
+                    "companyId": issuer.get("companyId"),
+                    "issuanceKind": "delegated_recovery",
+                    "rawCredentialPersisted": False,
+                },
+            )
+            self._save(data)
+            return response
+
+    def register_top_level_agent_company_master_credential(
+        self,
+        agent_token,
+        workspace_id,
+        candidate_token,
+        label,
+        principal_name,
+        idempotency_key,
+    ):
+        agent_token_id, _agent_secret = _parse_governed_credential(
+            agent_token, "agent"
+        )
+        candidate_id, candidate_secret = _parse_delegated_company_master_candidate(
+            candidate_token
+        )
+        key_hash = _company_master_delegation_idempotency_hash(idempotency_key)
+        safe_label = _company_master_delegation_text(
+            label, "Human operator master"
+        )
+        safe_principal = _company_master_delegation_text(
+            principal_name, "human-operator"
+        )
+        workspace_id = str(workspace_id or "").strip()
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        if not agent_token_id:
+            return _agent_access_error("top_level_agent_required")
+        if not candidate_id:
+            return _agent_access_error("company_master_candidate_invalid")
+        if not safe_label or not safe_principal:
+            return _agent_access_error("company_master_metadata_invalid")
+
+        with _LOCK:
+            data = self._load()
+            token_record, grant, identity = self._verify_agent_credential_data(
+                data, agent_token
+            )
+            company = (
+                data.get("companies", {}).get(grant.get("companyId"))
+                if grant
+                else None
+            )
+            if (
+                not token_record
+                or token_record.get("revokedAt")
+                or not grant
+                or grant.get("status") != "active"
+                or grant.get("revokedAt")
+                or not identity
+                or identity.get("status") != "active"
+                or not company
+                or company.get("status") != "active"
+                or grant.get("scopeType") != "company"
+                or grant.get("scopeId") != grant.get("companyId")
+            ):
+                return _agent_access_error("top_level_agent_required")
+            if not company.get("topLevelAgentMasterCredentialEnabled", True):
+                return _agent_access_error(
+                    "top_level_agent_master_credential_disabled"
+                )
+            workspace = data.get("workspaces", {}).get(workspace_id)
+            if not workspace or workspace.get("companyId") != grant.get("companyId"):
+                return _agent_access_error("workspace_not_found")
+
+            request_body = {
+                "schemaVersion": _TOP_LEVEL_AGENT_MASTER_SCHEMA,
+                "workspaceId": workspace_id,
+                "candidateTokenSecret": candidate_token,
+                "label": str(label or ""),
+                "principalName": str(principal_name or ""),
+            }
+            record_key = _company_master_delegation_record_key(
+                workspace_id,
+                agent_token_id,
+                key_hash,
+                _TOP_LEVEL_AGENT_MASTER_OPERATION,
+            )
+            prior = data.get("idempotency", {}).get(record_key)
+            if prior:
+                if prior.get("bodyHash") != _canonical_hash(request_body):
+                    return _agent_access_error("idempotency_conflict")
+                replay = dict(prior.get("response") or {})
+                replay.update(
+                    {
+                        "idempotentReplay": True,
+                        "idempotencyKeyExposed": False,
+                        "rawCredentialExposed": False,
+                        "rawCredentialPersisted": False,
+                        "rawPayloadExposed": False,
+                    }
+                )
+                return replay
+
+            if candidate_id in data.get("companyMasterKeys", {}):
+                return _agent_access_error("company_master_credential_exists")
+            active_count = sum(
+                1
+                for item in data.get("companyMasterKeys", {}).values()
+                if item.get("companyId") == grant.get("companyId")
+                and not item.get("revokedAt")
+            )
+            if active_count >= _MAX_ACTIVE_COMPANY_MASTER_CREDENTIALS:
+                return _agent_access_error("company_master_credential_limit")
+
+            now = utc_now()
+            record = {
+                "masterKeyId": candidate_id,
+                "companyId": grant.get("companyId"),
+                "tokenHash": _governed_credential_digest(
+                    "master", grant.get("companyId"), candidate_id, candidate_secret
+                ),
+                "label": safe_label,
+                "principalName": safe_principal,
+                "issuanceKind": "top_level_agent_human_operator",
+                "issuedByMasterKeyId": None,
+                "issuedByAgentTokenId": agent_token_id,
+                "delegatedForWorkspaceId": workspace_id,
+                "createdAt": now,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            data.setdefault("companyMasterKeys", {})[candidate_id] = record
+            response = _company_master_delegation_response(
+                record, schema_version=_TOP_LEVEL_AGENT_MASTER_SCHEMA
+            )
+            response["topLevelAgentMasterCredentialEnabled"] = True
+            data.setdefault("idempotency", {})[record_key] = {
+                "workspaceId": workspace_id,
+                "operation": _TOP_LEVEL_AGENT_MASTER_OPERATION,
+                "bodyHash": _canonical_hash(request_body),
+                "response": response,
+                "httpStatus": "201 Created",
+                "createdAt": now,
+                "idempotencyKeyExposed": False,
+            }
+            token_record["lastUsedAt"] = now
+            self.audit(
+                data,
+                "company_master.issue_for_human_operator",
+                identity.get("agentId"),
+                candidate_id,
+                workspace_id,
+                {
+                    "companyId": grant.get("companyId"),
+                    "agentTokenId": agent_token_id,
+                    "issuanceKind": "top_level_agent_human_operator",
+                    "rawCredentialPersisted": False,
+                },
+            )
+            self._save(data)
+            return response
+
+    def list_company_master_credentials(self, master_token):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        data = self._load()
+        items = [
+            _public_company_master_key(item)
+            for item in data.get("companyMasterKeys", {}).values()
+            if item.get("companyId") == principal.get("companyId")
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("masterKeyId") or ""))
+        return {
+            "ok": True,
+            "schemaVersion": "memoryendpoints.company_master_inventory.v1",
+            "companyId": principal.get("companyId"),
+            "items": items,
+            "count": len(items),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawCredentialPersisted": False,
+            "rawPayloadExposed": False,
+        }
 
     def authenticate_human_owner(self, recovery_secret, company_id=None):
         credential_id, secret = _parse_governed_credential(recovery_secret, "human")
@@ -4885,6 +5269,77 @@ class FileStore(object):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
+
+    def human_top_level_agent_master_credential_setting(
+        self, session_secret, company_id
+    ):
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        company = self._load().get("companies", {}).get(company_id)
+        if not company:
+            return _agent_access_error("human_company_not_found")
+        return {
+            "ok": True,
+            "companyId": company_id,
+            "enabled": bool(
+                company.get("topLevelAgentMasterCredentialEnabled", True)
+            ),
+            "databaseColumn": "top_level_agent_master_credential_enabled",
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def set_human_top_level_agent_master_credential_setting(
+        self, session_secret, company_id, enabled
+    ):
+        if not isinstance(enabled, bool):
+            return _agent_access_error(
+                "top_level_agent_master_credential_setting_invalid"
+            )
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        with _LOCK:
+            data = self._load()
+            company = data.get("companies", {}).get(company_id)
+            if not company:
+                return _agent_access_error("human_company_not_found")
+            company["topLevelAgentMasterCredentialEnabled"] = enabled
+            company["updatedAt"] = utc_now()
+            workspace_id = next(
+                (
+                    item.get("workspaceId")
+                    for item in data.get("workspaces", {}).values()
+                    if item.get("companyId") == company_id
+                ),
+                None,
+            )
+            self.audit(
+                data,
+                "company.top_level_agent_master_credential_setting.update",
+                actor.get("humanAccountId"),
+                company_id,
+                workspace_id,
+                {
+                    "enabled": enabled,
+                    "authorityId": actor.get("selectedAuthorityId"),
+                    "databaseColumn": "top_level_agent_master_credential_enabled",
+                },
+            )
+            self._save(data)
+        return self.human_top_level_agent_master_credential_setting(
+            session_secret, company_id
+        )
 
     def select_human_company_membership(self, session_secret, authority_id):
         session = self.authenticate_human_account_session(session_secret)
@@ -9785,6 +10240,7 @@ class SQLiteStore(FileStore):
               label TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'active',
               history_retention_days INTEGER NOT NULL DEFAULT 7,
+              top_level_agent_master_credential_enabled BOOLEAN NOT NULL DEFAULT 1,
               soft_deleted_at TEXT,
               pre_delete_status TEXT,
               created_at TEXT NOT NULL,
@@ -9864,10 +10320,15 @@ class SQLiteStore(FileStore):
               token_hash TEXT NOT NULL UNIQUE,
               label TEXT NOT NULL,
               principal_name TEXT NOT NULL,
+              issuance_kind TEXT NOT NULL DEFAULT 'bootstrap',
+              issued_by_master_key_id TEXT,
+              issued_by_agent_token_id TEXT,
+              delegated_for_workspace_id TEXT,
               created_at TEXT NOT NULL,
               last_used_at TEXT,
               revoked_at TEXT,
-              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (delegated_for_workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_company_master_keys_company ON matm_company_master_keys (company_id, revoked_at);
 
@@ -10892,15 +11353,55 @@ class SQLiteStore(FileStore):
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
         self._ensure_company_lifecycle_schema_columns(connection)
+        self._ensure_company_master_schema_columns(connection)
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
         connection.commit()
 
+    def _ensure_company_master_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = [
+            (
+                "issuance_kind",
+                "VARCHAR(32) NOT NULL DEFAULT 'bootstrap'"
+                if mysql
+                else "TEXT NOT NULL DEFAULT 'bootstrap'",
+            ),
+            (
+                "issued_by_master_key_id",
+                "VARCHAR(96) NULL" if mysql else "TEXT",
+            ),
+            (
+                "issued_by_agent_token_id",
+                "VARCHAR(96) NULL" if mysql else "TEXT",
+            ),
+            (
+                "delegated_for_workspace_id",
+                "VARCHAR(96) NULL" if mysql else "TEXT",
+            ),
+        ]
+        for column, definition in additions:
+            try:
+                connection.execute(
+                    "ALTER TABLE matm_company_master_keys ADD COLUMN %s %s"
+                    % (column, definition)
+                )
+            except Exception as exc:
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
+
     def _ensure_company_lifecycle_schema_columns(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
         additions = [
             ("history_retention_days", "INT NOT NULL DEFAULT 7" if mysql else "INTEGER NOT NULL DEFAULT 7"),
+            (
+                "top_level_agent_master_credential_enabled",
+                "BOOLEAN NOT NULL DEFAULT TRUE"
+                if mysql
+                else "BOOLEAN NOT NULL DEFAULT 1",
+            ),
             ("soft_deleted_at", "TIMESTAMP NULL" if mysql else "TEXT"),
             ("pre_delete_status", "VARCHAR(32) NULL" if mysql else "TEXT"),
         ]
@@ -12476,10 +12977,12 @@ class SQLiteStore(FileStore):
                     )
                     connection.execute(
                         """
-                        INSERT INTO matm_companies (company_id, label, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO matm_companies (
+                          company_id, label, status,
+                          top_level_agent_master_credential_enabled, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (company_id, company_label, "active", created_at, None),
+                        (company_id, company_label, "active", self._int_bool(True), created_at, None),
                     )
                     connection.execute(
                         """
@@ -13639,6 +14142,9 @@ class SQLiteStore(FileStore):
             "companyId": company_id,
             "label": redact_text(label or "Company master"),
             "principalName": redact_text(principal_name or "company-owner"),
+            "issuanceKind": "bootstrap",
+            "issuedByMasterKeyId": None,
+            "delegatedForWorkspaceId": None,
             "createdAt": now,
             "lastUsedAt": None,
             "revokedAt": None,
@@ -13674,6 +14180,601 @@ class SQLiteStore(FileStore):
                         "rawCredentialExposed": False,
                         "rawPayloadExposed": False,
                     }
+
+    def delegate_company_master_credential(
+        self,
+        issuer_token,
+        workspace_id,
+        candidate_token,
+        label,
+        principal_name,
+        idempotency_key,
+    ):
+        """Atomically register a client-generated sibling company master."""
+        issuer_id, issuer_secret = _parse_governed_credential(issuer_token, "master")
+        candidate_id, candidate_secret = _parse_delegated_company_master_candidate(
+            candidate_token
+        )
+        key_hash = _company_master_delegation_idempotency_hash(idempotency_key)
+        safe_label = _company_master_delegation_text(label, "")
+        safe_principal = _company_master_delegation_text(principal_name, "")
+        workspace_id = str(workspace_id or "").strip()
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        if not candidate_id or candidate_id == issuer_id:
+            return _agent_access_error("company_master_candidate_invalid")
+        if not safe_label or not safe_principal:
+            return _agent_access_error("company_master_metadata_invalid")
+
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    mysql = getattr(connection, "dialect", "") == "mysql"
+                    issuer = connection.execute(
+                        "SELECT * FROM matm_company_master_keys WHERE master_key_id = ? AND revoked_at IS NULL"
+                        + (" FOR UPDATE" if mysql else ""),
+                        (issuer_id,),
+                    ).fetchone()
+                    if not issuer:
+                        return _agent_access_error("company_master_required")
+                    company = connection.execute(
+                        "SELECT status FROM matm_companies WHERE company_id = ?"
+                        + (" FOR UPDATE" if mysql else ""),
+                        (issuer["company_id"],),
+                    ).fetchone()
+                    if not company or company["status"] != "active":
+                        return _agent_access_error("company_master_required")
+                    expected_issuer = _governed_credential_digest(
+                        "master", issuer["company_id"], issuer_id, issuer_secret
+                    )
+                    if not secrets.compare_digest(
+                        str(issuer["token_hash"] or ""), expected_issuer
+                    ):
+                        return _agent_access_error("company_master_required")
+                    workspace = connection.execute(
+                        "SELECT company_id FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if not workspace or workspace["company_id"] != issuer["company_id"]:
+                        return _agent_access_error("workspace_not_found")
+
+                    request_body = {
+                        "schemaVersion": _COMPANY_MASTER_DELEGATION_SCHEMA,
+                        "workspaceId": workspace_id,
+                        "candidateTokenSecret": candidate_token,
+                        "label": str(label or ""),
+                        "principalName": str(principal_name or ""),
+                    }
+                    body_hash = _canonical_hash(request_body)
+                    record_key = _company_master_delegation_record_key(
+                        workspace_id, issuer_id, key_hash
+                    )
+                    prior = connection.execute(
+                        "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                        (record_key,),
+                    ).fetchone()
+                    if prior:
+                        if prior["body_hash"] != body_hash:
+                            return _agent_access_error("idempotency_conflict")
+                        replay = dict(
+                            self._json_load(prior["response_json"], {}) or {}
+                        )
+                        replay.update(
+                            {
+                                "idempotentReplay": True,
+                                "idempotencyKeyExposed": False,
+                                "rawCredentialExposed": False,
+                                "rawCredentialPersisted": False,
+                                "rawPayloadExposed": False,
+                            }
+                        )
+                        return replay
+
+                    now = utc_now()
+                    acquired = connection.execute(
+                        """
+                        INSERT OR IGNORE INTO matm_idempotency (
+                          record_key, workspace_id, operation, body_hash, response_json,
+                          http_status, created_at, idempotency_key_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record_key,
+                            workspace_id,
+                            _COMPANY_MASTER_DELEGATION_OPERATION,
+                            body_hash,
+                            "{}",
+                            "201 Created",
+                            now,
+                            self._int_bool(False),
+                        ),
+                    )
+                    if acquired.rowcount == 0:
+                        prior = connection.execute(
+                            "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        ).fetchone()
+                        if not prior or prior["body_hash"] != body_hash:
+                            return _agent_access_error("idempotency_conflict")
+                        replay = dict(
+                            self._json_load(prior["response_json"], {}) or {}
+                        )
+                        if not replay:
+                            return _agent_access_error("idempotency_conflict")
+                        replay.update(
+                            {
+                                "idempotentReplay": True,
+                                "idempotencyKeyExposed": False,
+                                "rawCredentialExposed": False,
+                                "rawCredentialPersisted": False,
+                                "rawPayloadExposed": False,
+                            }
+                        )
+                        return replay
+
+                    existing = connection.execute(
+                        "SELECT master_key_id FROM matm_company_master_keys WHERE master_key_id = ? OR token_hash = ? LIMIT 1"
+                        + (" FOR UPDATE" if mysql else ""),
+                        (
+                            candidate_id,
+                            _governed_credential_digest(
+                                "master",
+                                issuer["company_id"],
+                                candidate_id,
+                                candidate_secret,
+                            ),
+                        ),
+                    ).fetchone()
+                    if existing:
+                        connection.execute(
+                            "DELETE FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        )
+                        return _agent_access_error("company_master_credential_exists")
+                    active = connection.execute(
+                        "SELECT COUNT(*) AS item_count FROM matm_company_master_keys WHERE company_id = ? AND revoked_at IS NULL",
+                        (issuer["company_id"],),
+                    ).fetchone()
+                    if int(active["item_count"] or 0) >= _MAX_ACTIVE_COMPANY_MASTER_CREDENTIALS:
+                        connection.execute(
+                            "DELETE FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        )
+                        return _agent_access_error("company_master_credential_limit")
+
+                    token_digest = _governed_credential_digest(
+                        "master", issuer["company_id"], candidate_id, candidate_secret
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_company_master_keys (
+                          master_key_id, company_id, token_hash, label, principal_name,
+                          issuance_kind, issued_by_master_key_id,
+                          delegated_for_workspace_id, created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            candidate_id,
+                            issuer["company_id"],
+                            token_digest,
+                            safe_label,
+                            safe_principal,
+                            "delegated_recovery",
+                            issuer_id,
+                            workspace_id,
+                            now,
+                            None,
+                            None,
+                        ),
+                    )
+                    record = {
+                        "masterKeyId": candidate_id,
+                        "companyId": issuer["company_id"],
+                        "label": safe_label,
+                        "principalName": safe_principal,
+                        "issuanceKind": "delegated_recovery",
+                        "issuedByMasterKeyId": issuer_id,
+                        "delegatedForWorkspaceId": workspace_id,
+                        "createdAt": now,
+                        "lastUsedAt": None,
+                        "revokedAt": None,
+                    }
+                    result = _company_master_delegation_response(record)
+                    connection.execute(
+                        "UPDATE matm_idempotency SET response_json = ? WHERE record_key = ?",
+                        (
+                            json.dumps(result, sort_keys=True, separators=(",", ":")),
+                            record_key,
+                        ),
+                    )
+                    connection.execute(
+                        "UPDATE matm_company_master_keys SET last_used_at = ? WHERE master_key_id = ?",
+                        (now, issuer_id),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "company_master.delegate",
+                        issuer_id,
+                        candidate_id,
+                        {
+                            "companyId": issuer["company_id"],
+                            "issuanceKind": "delegated_recovery",
+                            "rawCredentialPersisted": False,
+                        },
+                    )
+                    return result
+
+    def register_top_level_agent_company_master_credential(
+        self,
+        agent_token,
+        workspace_id,
+        candidate_token,
+        label,
+        principal_name,
+        idempotency_key,
+    ):
+        agent_token_id, agent_secret = _parse_governed_credential(
+            agent_token, "agent"
+        )
+        candidate_id, candidate_secret = _parse_delegated_company_master_candidate(
+            candidate_token
+        )
+        key_hash = _company_master_delegation_idempotency_hash(idempotency_key)
+        safe_label = _company_master_delegation_text(
+            label, "Human operator master"
+        )
+        safe_principal = _company_master_delegation_text(
+            principal_name, "human-operator"
+        )
+        workspace_id = str(workspace_id or "").strip()
+        if not key_hash:
+            return _agent_access_error("idempotency_key_invalid")
+        if not agent_token_id:
+            return _agent_access_error("top_level_agent_required")
+        if not candidate_id:
+            return _agent_access_error("company_master_candidate_invalid")
+        if not safe_label or not safe_principal:
+            return _agent_access_error("company_master_metadata_invalid")
+
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    mysql = getattr(connection, "dialect", "") == "mysql"
+                    issuer = connection.execute(
+                        """
+                        SELECT t.agent_token_id, t.token_hash, t.revoked_at,
+                               g.company_id, g.scope_type, g.scope_id,
+                               g.status AS grant_status,
+                               g.revoked_at AS grant_revoked_at,
+                               i.agent_id, i.status AS identity_status,
+                               c.status AS company_status,
+                               c.top_level_agent_master_credential_enabled
+                          FROM matm_agent_tokens t
+                          JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
+                          JOIN matm_agent_identities i ON i.agent_identity_id = t.agent_identity_id
+                          JOIN matm_companies c ON c.company_id = g.company_id
+                         WHERE t.agent_token_id = ?
+                        """
+                        + (" FOR UPDATE" if mysql else ""),
+                        (agent_token_id,),
+                    ).fetchone()
+                    if (
+                        not issuer
+                        or issuer["revoked_at"]
+                        or issuer["grant_status"] != "active"
+                        or issuer["grant_revoked_at"]
+                        or issuer["identity_status"] != "active"
+                        or issuer["company_status"] != "active"
+                        or issuer["scope_type"] != "company"
+                        or issuer["scope_id"] != issuer["company_id"]
+                    ):
+                        return _agent_access_error("top_level_agent_required")
+                    expected = _governed_credential_digest(
+                        "agent", issuer["company_id"], agent_token_id, agent_secret
+                    )
+                    if not secrets.compare_digest(
+                        str(issuer["token_hash"] or ""), expected
+                    ):
+                        return _agent_access_error("top_level_agent_required")
+                    if not bool(
+                        issuer["top_level_agent_master_credential_enabled"]
+                    ):
+                        return _agent_access_error(
+                            "top_level_agent_master_credential_disabled"
+                        )
+                    workspace = connection.execute(
+                        "SELECT company_id FROM matm_workspaces WHERE workspace_id = ?",
+                        (workspace_id,),
+                    ).fetchone()
+                    if (
+                        not workspace
+                        or workspace["company_id"] != issuer["company_id"]
+                    ):
+                        return _agent_access_error("workspace_not_found")
+
+                    request_body = {
+                        "schemaVersion": _TOP_LEVEL_AGENT_MASTER_SCHEMA,
+                        "workspaceId": workspace_id,
+                        "candidateTokenSecret": candidate_token,
+                        "label": str(label or ""),
+                        "principalName": str(principal_name or ""),
+                    }
+                    body_hash = _canonical_hash(request_body)
+                    record_key = _company_master_delegation_record_key(
+                        workspace_id,
+                        agent_token_id,
+                        key_hash,
+                        _TOP_LEVEL_AGENT_MASTER_OPERATION,
+                    )
+                    prior = connection.execute(
+                        "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                        (record_key,),
+                    ).fetchone()
+                    if prior:
+                        if prior["body_hash"] != body_hash:
+                            return _agent_access_error("idempotency_conflict")
+                        replay = dict(
+                            self._json_load(prior["response_json"], {}) or {}
+                        )
+                        replay.update(
+                            {
+                                "idempotentReplay": True,
+                                "idempotencyKeyExposed": False,
+                                "rawCredentialExposed": False,
+                                "rawCredentialPersisted": False,
+                                "rawPayloadExposed": False,
+                            }
+                        )
+                        return replay
+
+                    now = utc_now()
+                    acquired = connection.execute(
+                        """
+                        INSERT OR IGNORE INTO matm_idempotency (
+                          record_key, workspace_id, operation, body_hash, response_json,
+                          http_status, created_at, idempotency_key_exposed
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record_key,
+                            workspace_id,
+                            _TOP_LEVEL_AGENT_MASTER_OPERATION,
+                            body_hash,
+                            "{}",
+                            "201 Created",
+                            now,
+                            self._int_bool(False),
+                        ),
+                    )
+                    if acquired.rowcount == 0:
+                        prior = connection.execute(
+                            "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        ).fetchone()
+                        if not prior or prior["body_hash"] != body_hash:
+                            return _agent_access_error("idempotency_conflict")
+                        replay = dict(
+                            self._json_load(prior["response_json"], {}) or {}
+                        )
+                        if not replay:
+                            return _agent_access_error("idempotency_conflict")
+                        replay.update(
+                            {
+                                "idempotentReplay": True,
+                                "idempotencyKeyExposed": False,
+                                "rawCredentialExposed": False,
+                                "rawCredentialPersisted": False,
+                                "rawPayloadExposed": False,
+                            }
+                        )
+                        return replay
+
+                    token_digest = _governed_credential_digest(
+                        "master", issuer["company_id"], candidate_id, candidate_secret
+                    )
+                    existing = connection.execute(
+                        "SELECT master_key_id FROM matm_company_master_keys WHERE master_key_id = ? OR token_hash = ? LIMIT 1"
+                        + (" FOR UPDATE" if mysql else ""),
+                        (candidate_id, token_digest),
+                    ).fetchone()
+                    active = connection.execute(
+                        "SELECT COUNT(*) AS item_count FROM matm_company_master_keys WHERE company_id = ? AND revoked_at IS NULL",
+                        (issuer["company_id"],),
+                    ).fetchone()
+                    if existing or int(active["item_count"] or 0) >= _MAX_ACTIVE_COMPANY_MASTER_CREDENTIALS:
+                        connection.execute(
+                            "DELETE FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        )
+                        return _agent_access_error(
+                            "company_master_credential_exists"
+                            if existing
+                            else "company_master_credential_limit"
+                        )
+
+                    connection.execute(
+                        """
+                        INSERT INTO matm_company_master_keys (
+                          master_key_id, company_id, token_hash, label, principal_name,
+                          issuance_kind, issued_by_master_key_id,
+                          issued_by_agent_token_id, delegated_for_workspace_id,
+                          created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            candidate_id,
+                            issuer["company_id"],
+                            token_digest,
+                            safe_label,
+                            safe_principal,
+                            "top_level_agent_human_operator",
+                            None,
+                            agent_token_id,
+                            workspace_id,
+                            now,
+                            None,
+                            None,
+                        ),
+                    )
+                    record = {
+                        "masterKeyId": candidate_id,
+                        "companyId": issuer["company_id"],
+                        "label": safe_label,
+                        "principalName": safe_principal,
+                        "issuanceKind": "top_level_agent_human_operator",
+                        "issuedByMasterKeyId": None,
+                        "issuedByAgentTokenId": agent_token_id,
+                        "delegatedForWorkspaceId": workspace_id,
+                        "createdAt": now,
+                        "lastUsedAt": None,
+                        "revokedAt": None,
+                    }
+                    result = _company_master_delegation_response(
+                        record, schema_version=_TOP_LEVEL_AGENT_MASTER_SCHEMA
+                    )
+                    result["topLevelAgentMasterCredentialEnabled"] = True
+                    connection.execute(
+                        "UPDATE matm_idempotency SET response_json = ? WHERE record_key = ?",
+                        (
+                            json.dumps(result, sort_keys=True, separators=(",", ":")),
+                            record_key,
+                        ),
+                    )
+                    connection.execute(
+                        "UPDATE matm_agent_tokens SET last_used_at = ? WHERE agent_token_id = ?",
+                        (now, agent_token_id),
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "company_master.issue_for_human_operator",
+                        issuer["agent_id"],
+                        candidate_id,
+                        {
+                            "companyId": issuer["company_id"],
+                            "agentTokenId": agent_token_id,
+                            "issuanceKind": "top_level_agent_human_operator",
+                            "rawCredentialPersisted": False,
+                        },
+                    )
+                    return result
+
+    def human_top_level_agent_master_credential_setting(
+        self, session_secret, company_id
+    ):
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        with _LOCK:
+            with self._open_connection() as connection:
+                company = connection.execute(
+                    "SELECT top_level_agent_master_credential_enabled FROM matm_companies WHERE company_id = ?",
+                    (company_id,),
+                ).fetchone()
+        if not company:
+            return _agent_access_error("human_company_not_found")
+        return {
+            "ok": True,
+            "companyId": company_id,
+            "enabled": bool(
+                company["top_level_agent_master_credential_enabled"]
+            ),
+            "databaseColumn": "top_level_agent_master_credential_enabled",
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def set_human_top_level_agent_master_credential_setting(
+        self, session_secret, company_id, enabled
+    ):
+        if not isinstance(enabled, bool):
+            return _agent_access_error(
+                "top_level_agent_master_credential_setting_invalid"
+            )
+        actor = self._credential_management_human_session(
+            session_secret, require_recent_reauth=False
+        )
+        if not actor:
+            return _agent_access_error("human_credential_authority_required")
+        if actor.get("companyId") != company_id:
+            return _agent_access_error("human_company_not_found")
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    changed = connection.execute(
+                        "UPDATE matm_companies SET top_level_agent_master_credential_enabled = ?, updated_at = ? WHERE company_id = ?",
+                        (self._int_bool(enabled), now, company_id),
+                    )
+                    if changed.rowcount != 1:
+                        return _agent_access_error("human_company_not_found")
+                    workspace = connection.execute(
+                        "SELECT workspace_id FROM matm_workspaces WHERE company_id = ? ORDER BY created_at, workspace_id LIMIT 1",
+                        (company_id,),
+                    ).fetchone()
+                    self._record_audit_sql(
+                        connection,
+                        workspace["workspace_id"] if workspace else None,
+                        "company.top_level_agent_master_credential_setting.update",
+                        actor.get("humanAccountId"),
+                        company_id,
+                        {
+                            "enabled": enabled,
+                            "authorityId": actor.get("selectedAuthorityId"),
+                            "databaseColumn": "top_level_agent_master_credential_enabled",
+                        },
+                    )
+        return self.human_top_level_agent_master_credential_setting(
+            session_secret, company_id
+        )
+
+    def list_company_master_credentials(self, master_token):
+        principal = self.authenticate_company_master(master_token)
+        if not principal:
+            return _agent_access_error("company_master_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM matm_company_master_keys WHERE company_id = ? ORDER BY created_at, master_key_id",
+                    (principal["companyId"],),
+                ).fetchall()
+        items = [
+            _public_company_master_key(
+                {
+                    "masterKeyId": row["master_key_id"],
+                    "companyId": row["company_id"],
+                    "label": row["label"],
+                    "principalName": row["principal_name"],
+                    "issuanceKind": row["issuance_kind"] or "bootstrap",
+                    "issuedByMasterKeyId": row["issued_by_master_key_id"],
+                    "issuedByAgentTokenId": row["issued_by_agent_token_id"],
+                    "delegatedForWorkspaceId": row[
+                        "delegated_for_workspace_id"
+                    ],
+                    "createdAt": row["created_at"],
+                    "lastUsedAt": row["last_used_at"],
+                    "revokedAt": row["revoked_at"],
+                }
+            )
+            for row in rows
+        ]
+        return {
+            "ok": True,
+            "schemaVersion": "memoryendpoints.company_master_inventory.v1",
+            "companyId": principal["companyId"],
+            "items": items,
+            "count": len(items),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawCredentialPersisted": False,
+            "rawPayloadExposed": False,
+        }
 
     def authenticate(self, token, workspace_id=None):
         master = self.authenticate_company_master(token)
@@ -15726,6 +16827,12 @@ class SQLiteStore(FileStore):
                         "companyId": row["company_id"],
                         "label": row["label"],
                         "status": row["status"],
+                        "historyRetentionDays": int(row["history_retention_days"] or 7),
+                        "topLevelAgentMasterCredentialEnabled": bool(
+                            row["top_level_agent_master_credential_enabled"]
+                        ),
+                        "softDeletedAt": row["soft_deleted_at"],
+                        "preDeleteStatus": row["pre_delete_status"],
                         "createdAt": row["created_at"],
                         "valuesRedacted": True,
                     }
@@ -15794,6 +16901,10 @@ class SQLiteStore(FileStore):
                         "tokenHash": row["token_hash"],
                         "label": row["label"],
                         "principalName": row["principal_name"],
+                        "issuanceKind": row["issuance_kind"] or "bootstrap",
+                        "issuedByMasterKeyId": row["issued_by_master_key_id"],
+                        "issuedByAgentTokenId": row["issued_by_agent_token_id"],
+                        "delegatedForWorkspaceId": row["delegated_for_workspace_id"],
                         "createdAt": row["created_at"],
                         "lastUsedAt": row["last_used_at"],
                         "revokedAt": row["revoked_at"],
@@ -16184,13 +17295,19 @@ class SQLiteStore(FileStore):
                         connection.execute(
                             """
                             INSERT INTO matm_companies (
-                              company_id, label, status, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, ?)
+                              company_id, label, status,
+                              top_level_agent_master_credential_enabled, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 company.get("companyId"),
                                 company.get("label") or "Free Agent Company",
                                 company.get("status") or "active",
+                                self._int_bool(
+                                    company.get(
+                                        "topLevelAgentMasterCredentialEnabled", True
+                                    )
+                                ),
                                 company.get("createdAt") or utc_now(),
                                 company.get("updatedAt"),
                             ),
@@ -16272,8 +17389,11 @@ class SQLiteStore(FileStore):
                             """
                             INSERT INTO matm_company_master_keys (
                               master_key_id, company_id, token_hash, label, principal_name,
-                              created_at, last_used_at, revoked_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                              issuance_kind, issued_by_master_key_id,
+                              issued_by_agent_token_id, delegated_for_workspace_id,
+                              created_at, last_used_at,
+                              revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 master_key.get("masterKeyId") or key_id,
@@ -16281,6 +17401,10 @@ class SQLiteStore(FileStore):
                                 master_key.get("tokenHash"),
                                 master_key.get("label") or "Company master",
                                 master_key.get("principalName") or "company-owner",
+                                master_key.get("issuanceKind") or "bootstrap",
+                                master_key.get("issuedByMasterKeyId"),
+                                master_key.get("issuedByAgentTokenId"),
+                                master_key.get("delegatedForWorkspaceId"),
                                 master_key.get("createdAt") or utc_now(),
                                 master_key.get("lastUsedAt"),
                                 master_key.get("revokedAt"),
@@ -21918,6 +23042,7 @@ def _mysql_config_from_env():
     return config
 
 
+
 class MySQLStore(SQLiteStore):
     def _open_connection(self):
         return self._connect()
@@ -21983,6 +23108,7 @@ class MySQLStore(SQLiteStore):
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
         self._ensure_company_lifecycle_schema_columns(connection)
+        self._ensure_company_master_schema_columns(connection)
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)

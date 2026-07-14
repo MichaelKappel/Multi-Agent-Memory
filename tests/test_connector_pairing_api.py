@@ -1840,6 +1840,7 @@ class ConnectorPairingApiContract:
             "/api/matm/access/agent-name-requests",
             "/api/matm/access/invites",
             "/api/matm/access/agent-tokens",
+            "/api/matm/access/company-master-credentials",
             "/api/matm/human/company-memberships",
             "/api/matm/human/companies/%s/history" % self.company_id,
             "/api/matm/human/companies/%s/export-plan" % self.company_id,
@@ -1872,6 +1873,7 @@ class ConnectorPairingApiContract:
             "/api/matm/sync/mutations",
             "/api/matm/access/agent-name-requests",
             "/api/matm/access/invites",
+            "/api/matm/access/company-master-credentials",
             "/api/matm/human/companies/%s/exports" % self.company_id,
             "/api/matm/human/companies/%s/history/clear" % self.company_id,
         )

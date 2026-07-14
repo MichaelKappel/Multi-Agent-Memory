@@ -108,6 +108,9 @@ function createHarness(options) {
   const rosterList = add(api.SELECTORS.rosterList, new Element("div", documentRef));
   const rosterEmpty = add(api.SELECTORS.rosterEmpty, new Element("p", documentRef));
   const rosterRefresh = add(api.SELECTORS.rosterRefresh, new Element("button", documentRef));
+  const agentMasterSetting = add(api.SELECTORS.agentMasterSetting, input(documentRef, "checkbox"));
+  const agentMasterSettingForm = add(api.SELECTORS.agentMasterSettingForm, form(documentRef, {enabled: agentMasterSetting}));
+  const agentMasterSettingStatus = add(api.SELECTORS.agentMasterSettingStatus, new Element("span", documentRef));
   const reauthPassword = input(documentRef, "password");
   const reauthDialog = add(api.SELECTORS.reauthDialog, new Element("dialog", documentRef));
   const reauthForm = add(api.SELECTORS.reauthForm, form(documentRef, {password: reauthPassword}));
@@ -142,7 +145,7 @@ function createHarness(options) {
   const controller = api.create({root, documentRef, windowRef, clipboard, transport, sessionAuthority: options && options.sessionAuthority, demoMode: true});
   controller.mount();
   return {
-    accountConfirmation, accountForm, accountPassword, clipboard, controller, demoLabel, documentRef, lifecycle,
+    accountConfirmation, accountForm, accountPassword, agentMasterSetting, agentMasterSettingForm, agentMasterSettingStatus, clipboard, controller, demoLabel, documentRef, lifecycle,
     linkCancel, linkCompany, linkDialog, linkMaster, linkProofForm, locked, loginForm, loginPassword, logout, master, membershipForm, membershipList, possessionForm, possessionToken,
     protectedEl, proofForm, reauthCancel, reauthDialog, reauthForm, reauthPassword, replacementCancel,
     replacementDialog, replacementRetry, rosterEmpty, rosterList, rosterRefresh, root, status, successorClear,
@@ -487,6 +490,17 @@ async function main() {
 
   const lifecycle = createHarness();
   await login(lifecycle);
+  assert.strictEqual(lifecycle.controller.getSnapshot().agentMasterEnabled, true);
+  assert.strictEqual(lifecycle.agentMasterSetting.checked, true);
+  lifecycle.agentMasterSetting.checked = false;
+  lifecycle.agentMasterSettingForm.dispatch("submit");
+  await settle();
+  assert.strictEqual(lifecycle.controller.getSnapshot().agentMasterEnabled, false);
+  assert.match(lifecycle.agentMasterSettingStatus.textContent, /disabled/i);
+  const settingCalls = lifecycle.transport.inspect().calls.filter((call) => call.operation === "agentMasterSettingUpdate");
+  assert.strictEqual(settingCalls.length, 1);
+  assert.strictEqual(settingCalls[0].csrfAccepted, true);
+  assert.deepStrictEqual(settingCalls[0].bodyKeys, ["enabled"]);
   const callsBeforeHide = lifecycle.transport.inspect().calls.length;
   dispatchLifecycle(lifecycle, "pagehide");
   assert.strictEqual(lifecycle.controller.getSnapshot().sessionState, api.SESSION_STATES.LOCKED);

@@ -46,8 +46,8 @@ Protected MATM workflow:
 - Company master origin: Agent Setup creates it and shows it once after the first company workspace is created.
 - Default agent-readable company-master file: <project-root>/.local-secrets/memoryendpoints-company-master.json; keep .local-secrets/ outside source control.
 - Persistence requirement: displaying the path does not create the file. Browser setup uses Save to project secret folder; agent-driven setup uses scripts/setup_memoryendpoints_company.py and must verify the file exists before claiming success.
-- Missing credential fallback: stop and treat autonomous setup as incomplete; check only an explicitly configured governed secret store. Do not require a human, scan outside configured paths, or request, echo, or log the raw credential.
-- Normal agent authority: use the bound agent credential for normal work; read the company master only for an explicit owner-authorized company operation.
+- Missing credential recovery: a company-scoped top-level agent may run scripts/recover_memoryendpoints_company_master.py with MEMORYENDPOINTS_AGENT_TOKEN; an existing company master may use MEMORYENDPOINTS_COMPANY_MASTER_TOKEN. The helper stages, registers, verifies, and atomically persists without printing the credential.
+- Authority boundary: GET inventory requires credentialType=company_master. POST accepts an existing company master or enabled immutable company-scoped top-level agent. Lower-scoped, connector, invitation, and disposable agents remain denied. Human owners and credential admins can disable top-level-agent creation; the standard database override is matm_companies.top_level_agent_master_credential_enabled.
 - Memory write: POST /api/matm/memory-events/submit
 - Virtual UAIX packages: GET, POST /api/matm/uai-memory/packages
 - Virtual UAIX records: GET, POST /api/matm/uai-memory/records

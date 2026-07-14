@@ -257,6 +257,10 @@
   min-inline-size: 0;
 }
 
+.human-access-agent-master-setting {
+  margin-block-end: 1rem;
+}
+
 .human-access-roster,
 .human-access-roster-list {
   inline-size: 100%;

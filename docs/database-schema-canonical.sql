@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS matm_companies (
   label VARCHAR(255) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   history_retention_days INT NOT NULL DEFAULT 7,
+  top_level_agent_master_credential_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   soft_deleted_at TIMESTAMP NULL,
   pre_delete_status VARCHAR(32) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -96,12 +97,17 @@ CREATE TABLE IF NOT EXISTS matm_company_master_keys (
   token_hash VARCHAR(80) NOT NULL,
   label VARCHAR(255) NOT NULL,
   principal_name VARCHAR(255) NOT NULL,
+  issuance_kind VARCHAR(32) NOT NULL DEFAULT 'bootstrap',
+  issued_by_master_key_id VARCHAR(96) NULL,
+  issued_by_agent_token_id VARCHAR(96) NULL,
+  delegated_for_workspace_id VARCHAR(96) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_used_at TIMESTAMP NULL,
   revoked_at TIMESTAMP NULL,
   UNIQUE KEY ux_matm_company_master_keys_hash (token_hash),
   KEY ix_matm_company_master_keys_company (company_id, revoked_at),
-  CONSTRAINT fk_matm_company_master_keys_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
+  CONSTRAINT fk_matm_company_master_keys_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_company_master_keys_workspace FOREIGN KEY (delegated_for_workspace_id) REFERENCES matm_workspaces (workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_human_owner_credentials (

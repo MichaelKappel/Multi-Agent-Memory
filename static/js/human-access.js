@@ -17,6 +17,8 @@
     membershipLink: Object.freeze({method: "POST", path: "/api/matm/human/company-memberships/link"}),
     membershipSelect: Object.freeze({method: "POST", path: "/api/matm/human/session/company"}),
     roster: Object.freeze({method: "GET", path: "/api/matm/human/companies/{companyId}/agent-tokens"}),
+    agentMasterSetting: Object.freeze({method: "GET", path: "/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting"}),
+    agentMasterSettingUpdate: Object.freeze({method: "PATCH", path: "/api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting"}),
     replacementPrepare: Object.freeze({method: "POST", path: "/api/matm/human/companies/{companyId}/agent-tokens/{credentialId}/replacements"}),
     replacementConfirm: Object.freeze({method: "POST", path: "/api/matm/human/companies/{companyId}/agent-tokens/{credentialId}/replacements/{replacementId}/confirm"}),
     replacementCancel: Object.freeze({method: "POST", path: "/api/matm/human/companies/{companyId}/agent-tokens/{credentialId}/replacements/{replacementId}/cancel"}),
@@ -42,6 +44,9 @@
     rosterList: "[data-human-access-roster-list]",
     rosterEmpty: "[data-human-access-roster-empty]",
     rosterRefresh: "[data-human-access-roster-refresh]",
+    agentMasterSettingForm: "[data-human-access-agent-master-setting-form]",
+    agentMasterSetting: "[data-human-access-agent-master-setting]",
+    agentMasterSettingStatus: "[data-human-access-agent-master-setting-status]",
     reauthDialog: "[data-human-access-reauth-dialog]",
     reauthForm: "[data-human-access-reauth-form]",
     reauthCancel: "[data-human-access-reauth-cancel]",
@@ -280,6 +285,7 @@
     var pending = null;
     var csrfVersion = 0;
     var currentCsrf = "";
+    var agentMasterEnabled = true;
     var initialMemberships = [{
       authorityId: "mock-authority-owner",
       companyId: "mock-company-memoryendpoints",
@@ -331,7 +337,7 @@
         var operation = String(requestOptions.operation || "");
         var body = requestOptions.body ? JSON.parse(requestOptions.body) : {};
         var requestCsrf = requestOptions.headers && requestOptions.headers["X-CSRF-Token"] || "";
-        var csrfRequired = ["sessionReauth", "sessionLogout", "memberships", "membershipLink", "membershipSelect", "roster", "replacementPrepare", "replacementConfirm", "replacementCancel", "replacementStatus"].indexOf(operation) >= 0;
+        var csrfRequired = ["sessionReauth", "sessionLogout", "memberships", "membershipLink", "membershipSelect", "roster", "agentMasterSetting", "agentMasterSettingUpdate", "replacementPrepare", "replacementConfirm", "replacementCancel", "replacementStatus"].indexOf(operation) >= 0;
         var csrfAccepted = !csrfRequired || Boolean(currentCsrf && requestCsrf === currentCsrf);
         calls.push({
           operation: operation,
@@ -371,6 +377,8 @@
           return {ok: true, membership: clone(linked), memberships: clone(memberships), selectedCompanyId: selected || null, mockData: true};
         }
         if (operation === "roster") return {ok: true, items: clone(roster), mockData: true};
+        if (operation === "agentMasterSetting") return {ok: true, enabled: agentMasterEnabled, databaseColumn: "top_level_agent_master_credential_enabled", mockData: true};
+        if (operation === "agentMasterSettingUpdate") { agentMasterEnabled = body.enabled === true; return {ok: true, enabled: agentMasterEnabled, databaseColumn: "top_level_agent_master_credential_enabled", mockData: true}; }
         if (operation === "sessionReauth") return sessionEnvelope("reauth");
         if (operation === "replacementPrepare") {
           pending = {replacementId: "mock-replacement-pending", credentialId: path.split("/").slice(-2, -1)[0], status: "prepared", predecessorRemainsActive: true};
@@ -391,6 +399,7 @@
         selected = "";
         pending = null;
         currentCsrf = "";
+        agentMasterEnabled = true;
         csrfVersion = 0;
         calls.length = 0;
       },
@@ -473,6 +482,7 @@
       agentId: "",
       memberships: [],
       roster: [],
+      agentMasterEnabled: null,
       inventory: [],
       results: [],
       recoveryOperation: ""
@@ -497,6 +507,9 @@
       rosterList: preauthOnly ? null : required(root, SELECTORS.rosterList),
       rosterEmpty: preauthOnly ? null : required(root, SELECTORS.rosterEmpty),
       rosterRefresh: preauthOnly ? null : required(root, SELECTORS.rosterRefresh),
+      agentMasterSettingForm: preauthOnly ? null : required(root, SELECTORS.agentMasterSettingForm),
+      agentMasterSetting: preauthOnly ? null : required(root, SELECTORS.agentMasterSetting),
+      agentMasterSettingStatus: preauthOnly ? null : required(root, SELECTORS.agentMasterSettingStatus),
       reauthDialog: preauthOnly ? null : required(root, SELECTORS.reauthDialog),
       reauthForm: preauthOnly ? null : required(root, SELECTORS.reauthForm),
       reauthCancel: preauthOnly ? null : required(root, SELECTORS.reauthCancel),
@@ -600,6 +613,15 @@
       });
     }
 
+    function renderAgentMasterSetting() {
+      if (!elements.agentMasterSetting) return;
+      elements.agentMasterSetting.checked = state.agentMasterEnabled === true;
+      elements.agentMasterSetting.disabled = state.agentMasterEnabled === null;
+      elements.agentMasterSettingStatus.textContent = state.agentMasterEnabled === null
+        ? "Setting unavailable."
+        : (state.agentMasterEnabled ? "Top-level agent recovery is enabled." : "Top-level agent recovery is disabled.");
+    }
+
     function hideProtected() {
       elements.locked.hidden = false;
       if (elements.protected) {
@@ -635,6 +657,7 @@
       state.agentId = "";
       state.memberships = [];
       state.roster = [];
+      state.agentMasterEnabled = null;
       state.inventory = [];
       state.results = [];
       state.recoveryOperation = "";
@@ -647,6 +670,11 @@
       if (elements.membershipList) clearNode(elements.membershipList);
       if (elements.rosterList) clearNode(elements.rosterList);
       if (elements.rosterEmpty) elements.rosterEmpty.hidden = true;
+      if (elements.agentMasterSetting) {
+        elements.agentMasterSetting.checked = false;
+        elements.agentMasterSetting.disabled = true;
+      }
+      if (elements.agentMasterSettingStatus) elements.agentMasterSettingStatus.textContent = "";
       elements.accountStep.hidden = true;
       if (elements.reauthDialog && (elements.reauthDialog.open || elements.reauthDialog.hasAttribute("open"))) closeDialog(elements.reauthDialog);
       if (elements.linkDialog && (elements.linkDialog.open || elements.linkDialog.hasAttribute("open"))) closeDialog(elements.linkDialog);
@@ -718,6 +746,37 @@
       } catch (error) { if (actionEpoch === epoch) applyError(error, ""); }
     }
 
+    async function refreshAgentMasterSetting() {
+      if (!state.selectedCompanyId || !sessionAuthority.csrfToken()) return;
+      var actionEpoch = epoch;
+      try {
+        var payload = await requestOperation("agentMasterSetting", {companyId: state.selectedCompanyId}, undefined, {csrf: true});
+        if (actionEpoch !== epoch) return;
+        state.agentMasterEnabled = payload.enabled === true;
+        renderAgentMasterSetting();
+      } catch (error) { if (actionEpoch === epoch) applyError(error, ""); }
+    }
+
+    async function saveAgentMasterSetting() {
+      if (!state.selectedCompanyId || !sessionAuthority.csrfToken()) return;
+      var actionEpoch = epoch;
+      var enabled = elements.agentMasterSetting.checked === true;
+      elements.agentMasterSetting.disabled = true;
+      elements.agentMasterSettingStatus.textContent = "Saving...";
+      try {
+        var payload = await requestOperation("agentMasterSettingUpdate", {companyId: state.selectedCompanyId}, {enabled: enabled}, {csrf: true});
+        if (actionEpoch !== epoch) return;
+        state.agentMasterEnabled = payload.enabled === true;
+        renderAgentMasterSetting();
+        setStatus("Top-level agent recovery setting saved.", "success");
+      } catch (error) {
+        if (actionEpoch === epoch) {
+          renderAgentMasterSetting();
+          applyError(error, "");
+        }
+      }
+    }
+
     async function unlockFromSession(payload, actionEpoch, unlockOptions) {
       var config = unlockOptions || {};
       var nextCsrf = takeSecret(payload, ["csrfToken"]);
@@ -760,6 +819,8 @@
         setStatus("Human session authority rotated successfully.", "success");
         return;
       }
+      await refreshAgentMasterSetting();
+      if (actionEpoch !== epoch) return;
       await refreshRoster();
     }
 
@@ -1117,6 +1178,7 @@
         selectedCompanyPresent: Boolean(state.selectedCompanyId),
         membershipCount: state.memberships.length,
         rosterCount: state.roster.length,
+        agentMasterEnabled: state.agentMasterEnabled,
         replacementPending: Boolean(replacementId),
         successorAvailable: Boolean(successorTokenSecret),
         recoveryOperation: state.recoveryOperation,
@@ -1145,6 +1207,7 @@
         elements.linkCancel.addEventListener("click", cancelLinkCompanyDialog);
         elements.linkDialog.addEventListener("cancel", cancelLinkCompanyDialog);
         elements.rosterRefresh.addEventListener("click", refreshRoster);
+        elements.agentMasterSettingForm.addEventListener("submit", function (event) { event.preventDefault(); saveAgentMasterSetting(); });
         elements.reauthForm.addEventListener("submit", function (event) { event.preventDefault(); submitReauthentication(); });
         elements.reauthCancel.addEventListener("click", cancelReauthentication);
         elements.reauthDialog.addEventListener("cancel", cancelReauthentication);
@@ -1180,6 +1243,8 @@
       revalidateHumanSession: revalidateHumanSession,
       getSnapshot: getSnapshot,
       refreshRoster: refreshRoster,
+      refreshAgentMasterSetting: refreshAgentMasterSetting,
+      saveAgentMasterSetting: saveAgentMasterSetting,
       beginReplacement: beginReplacement,
       beginLinkCompany: beginLinkCompany,
       confirmReplacement: confirmReplacement,

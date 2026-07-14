@@ -44,6 +44,8 @@
   },
   "protectedRoutePurposes": {
     "agentSetup": "POST /api/matm/agent-setup/free-account",
+    "companyMasterDelegation": "GET, POST /api/matm/access/company-master-credentials",
+    "topLevelAgentMasterSetting": "GET, PATCH /api/matm/human/companies/{companyId}/top-level-agent-master-credential-setting",
     "uaiPackages": "GET, POST /api/matm/uai-memory/packages",
     "uaiRecords": "GET, POST /api/matm/uai-memory/records",
     "uaiStartup": "GET /api/matm/uai-memory/startup",
