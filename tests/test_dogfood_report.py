@@ -13,13 +13,125 @@ class FakeTransport(object):
         self.calls = []
 
     def call(self, path, method="GET", body=None, headers=None, query=""):
-        self.calls.append({"path": path, "query": query, "method": method})
+        self.calls.append({"path": path, "query": query, "method": method, "headers": headers or {}})
         if self.responses:
             return self.responses.pop(0)
         return "200 OK", {"ok": True, "items": [], "valuesRedacted": True}
 
 
 class DogfoodReportTests(unittest.TestCase):
+    def test_agent_audit_denial_uses_stable_human_owner_error(self):
+        self.assertTrue(
+            dogfood_memoryendpoints.agent_audit_denial_verified(
+                "403 Forbidden",
+                {"error": {"code": "human_owner_required"}},
+            )
+        )
+        self.assertFalse(
+            dogfood_memoryendpoints.agent_audit_denial_verified(
+                "403 Forbidden",
+                {"error": {"code": "insufficient_scope"}},
+            )
+        )
+
+    def test_setup_authority_uses_current_company_master_field_only(self):
+        current = "me_master_v1.master-current.secret-current"
+        self.assertEqual(
+            current,
+            dogfood_memoryendpoints.setup_authority_token(
+                {
+                    "companyMasterTokenSecret": current,
+                    "apiKeySecret": "obsolete-must-not-be-used",
+                }
+            ),
+        )
+        self.assertEqual(
+            "",
+            dogfood_memoryendpoints.setup_authority_token(
+                {"apiKeySecret": "obsolete-must-not-be-used"}
+            ),
+        )
+
+        transport = FakeTransport(
+            [
+                (
+                    "201 Created",
+                    {
+                        "ok": True,
+                        "companyMasterTokenSecret": current,
+                        "workspaceId": "ws-current",
+                    },
+                ),
+                ("200 OK", {"ok": True, "workspaceId": "ws-current"}),
+            ]
+        )
+        setup_status, _setup, ready_status, _ready = (
+            dogfood_memoryendpoints.create_ready_workspace(transport, "current")
+        )
+        self.assertEqual("201 Created", setup_status)
+        self.assertEqual("200 OK", ready_status)
+        self.assertEqual(
+            "Bearer " + current,
+            transport.calls[1]["headers"]["HTTP_AUTHORIZATION"],
+        )
+
+    def test_workspace_agent_provisioning_uses_governed_invite_flow(self):
+        master = "me_master_v1.master-current.secret-current"
+        agent = "me_agent_v1.agent-current.secret-current"
+        transport = FakeTransport(
+            [
+                ("201 Created", {"ok": True, "request": {"requestId": "request-1"}}),
+                ("200 OK", {"ok": True, "request": {"status": "approved"}}),
+                (
+                    "201 Created",
+                    {
+                        "ok": True,
+                        "inviteUrl": "https://memoryendpoints.com/agent-setup#invite=me_invite_v1.invite-current.secret-current",
+                    },
+                ),
+                (
+                    "201 Created",
+                    {
+                        "ok": True,
+                        "agentTokenSecret": agent,
+                        "principal": {
+                            "credentialType": "agent_token",
+                            "agentId": "dogfood-primary-current",
+                            "grant": {"scopeType": "workspace", "scopeId": "ws-current"},
+                        },
+                    },
+                ),
+            ]
+        )
+
+        status, payload = dogfood_memoryendpoints.provision_workspace_agent(
+            transport,
+            master,
+            "ws-current",
+            "project-current",
+            "dogfood-primary-current",
+            "Dogfood Primary Current",
+        )
+
+        self.assertEqual("201 Created", status)
+        self.assertEqual(agent, payload["agentTokenSecret"])
+        self.assertEqual(
+            [
+                "/api/matm/access/agent-name-requests",
+                "/api/matm/access/agent-name-requests/request-1/decision",
+                "/api/matm/access/invites",
+                "/api/matm/access/invites/redeem",
+            ],
+            [item["path"] for item in transport.calls],
+        )
+        self.assertTrue(
+            all(
+                item["headers"].get("HTTP_AUTHORIZATION") == "Bearer " + master
+                for item in transport.calls[:3]
+            )
+        )
+        self.assertNotIn("HTTP_AUTHORIZATION", transport.calls[3]["headers"])
+
     def test_canonical_url_helpers_parse_relative_and_absolute_urls(self):
         self.assertEqual(
             ("/api/matm/current-message", "agent_id=agent-b"),

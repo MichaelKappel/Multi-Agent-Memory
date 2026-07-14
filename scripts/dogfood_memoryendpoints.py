@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -104,6 +104,102 @@ def ok_status(status):
     return str(status).startswith(("200", "201", "202"))
 
 
+def setup_authority_token(payload):
+    """Return only the governed company-master field from current setup responses."""
+    token = (payload or {}).get("companyMasterTokenSecret", "")
+    return token if isinstance(token, str) else ""
+
+
+def agent_audit_denial_verified(status, payload):
+    """Verify the stable fail-closed audit boundary without optional fields."""
+    return bool(
+        str(status or "").startswith("403")
+        and ((payload or {}).get("error") or {}).get("code")
+        == "human_owner_required"
+    )
+
+
+def provision_workspace_agent(
+    transport,
+    master_token,
+    workspace_id,
+    project_id,
+    requested_name,
+    display_name,
+):
+    """Provision one bound workspace agent through the governed invite flow."""
+    master_auth = {"HTTP_AUTHORIZATION": "Bearer " + master_token}
+    status, requested = call_with_retries(
+        transport,
+        "/api/matm/access/agent-name-requests",
+        method="POST",
+        headers=master_auth,
+        body={
+            "requestedName": requested_name,
+            "displayName": display_name,
+            "requestedGrant": {
+                "scopeType": "workspace",
+                "scopeId": workspace_id,
+            },
+            "assignmentContext": {
+                "projectId": project_id,
+                "taskId": "enterprise-dogfood",
+                "taskLabel": "Enterprise dogfood",
+            },
+            "justification": "Exercise the current governed agent workflow end to end.",
+        },
+        retry_statuses=("500",),
+        attempts=LIVE_WRITE_ATTEMPTS,
+    )
+    request_id = (requested.get("request") or {}).get("requestId", "")
+    if not ok_status(status) or not request_id:
+        return status, requested
+
+    status, decided = call_with_retries(
+        transport,
+        "/api/matm/access/agent-name-requests/%s/decision" % request_id,
+        method="POST",
+        headers=master_auth,
+        body={
+            "decision": "approve",
+            "decisionReason": "Approved for the bounded enterprise dogfood run.",
+        },
+        retry_statuses=("500",),
+        attempts=LIVE_WRITE_ATTEMPTS,
+    )
+    if not ok_status(status):
+        return status, decided
+
+    status, issued = call_with_retries(
+        transport,
+        "/api/matm/access/invites",
+        method="POST",
+        headers=master_auth,
+        body={"approvedRequestId": request_id, "expiresInSeconds": 900},
+        retry_statuses=("500",),
+        attempts=LIVE_WRITE_ATTEMPTS,
+    )
+    if not ok_status(status):
+        return status, issued
+    fragment = parse_qs(urlparse(issued.get("inviteUrl") or "").fragment)
+    invite_secret = ((fragment.get("invite") or [""])[0]).strip()
+    if not invite_secret:
+        return "500 Missing Invite Secret", {
+            "ok": False,
+            "error": {"code": "invite_secret_missing"},
+            "valuesRedacted": True,
+        }
+
+    return call_with_retries(
+        transport,
+        "/api/matm/access/invites/redeem",
+        method="POST",
+        body={"inviteSecret": invite_secret},
+        retry_statuses=("500",),
+        attempts=LIVE_WRITE_ATTEMPTS,
+    )
+
+
 def retryable_status(status, prefixes):
     text = str(status or "")
     return any(text.startswith(prefix) for prefix in prefixes)
@@ -137,7 +233,7 @@ def create_ready_workspace(transport, label):
             retry_statuses=("500",),
             attempts=LIVE_WRITE_ATTEMPTS,
         )
-        token = last_setup.get("apiKeySecret", "")
+        token = setup_authority_token(last_setup)
         workspace_id = last_setup.get("workspaceId", "")
         if ok_status(last_setup_status) and token and workspace_id:
             last_ready_status, last_ready = call_with_retries(
@@ -370,27 +466,66 @@ def run_sequence(transport, label, base_url=None):
         "valuesRedacted": True,
         "steps": [],
     }
+    master_token = ""
     token = ""
+    followup_token = ""
     workspace_id = ""
     try:
         status, setup, ready_status, workspace_ready = create_ready_workspace(transport, label)
         step(report, "create_free_workspace", status, setup)
-        token = setup.get("apiKeySecret", "")
+        master_token = setup_authority_token(setup)
         workspace_id = setup.get("workspaceId", "")
-        auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+        project_id = setup.get("projectId", "")
         run_tag = hashlib.sha256((workspace_id + label + utc_now()).encode("utf-8")).hexdigest()[:12]
         step(report, "workspace_key_ready", ready_status, workspace_ready)
 
-        status, agent = call_with_retries(
+        status, agent = provision_workspace_agent(
             transport,
-            "/api/matm/agents/register",
-            method="POST",
-            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-register-" + run_tag),
-            body={"workspaceId": workspace_id, "agentId": "memoryendpoints-dogfood-agent", "displayName": "MemoryEndpoints Dogfood Agent"},
-            retry_statuses=("401", "413", "500"),
-            attempts=LIVE_WRITE_ATTEMPTS,
+            master_token,
+            workspace_id,
+            project_id,
+            "dogfood-primary-" + run_tag,
+            "MemoryEndpoints Dogfood Primary Agent",
         )
-        step(report, "register_agent", status, agent)
+        token = agent.get("agentTokenSecret", "")
+        agent_principal = agent.get("principal") or {}
+        agent_id = agent_principal.get("agentId", "")
+        agent_verified = bool(
+            token
+            and agent_id
+            and agent_principal.get("credentialType") == "agent_token"
+            and (agent_principal.get("grant") or {}).get("scopeType") == "workspace"
+            and (agent_principal.get("grant") or {}).get("scopeId") == workspace_id
+        )
+        step(report, "register_agent", status, agent, verified=agent_verified)
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
+
+        followup_status, followup = provision_workspace_agent(
+            transport,
+            master_token,
+            workspace_id,
+            project_id,
+            "dogfood-followup-" + run_tag,
+            "MemoryEndpoints Dogfood Follow-up Agent",
+        )
+        followup_token = followup.get("agentTokenSecret", "")
+        followup_principal = followup.get("principal") or {}
+        followup_agent_id = followup_principal.get("agentId", "")
+        followup_verified = bool(
+            followup_token
+            and followup_agent_id
+            and followup_principal.get("credentialType") == "agent_token"
+            and (followup_principal.get("grant") or {}).get("scopeType") == "workspace"
+            and (followup_principal.get("grant") or {}).get("scopeId") == workspace_id
+        )
+        step(
+            report,
+            "register_followup_agent",
+            followup_status,
+            followup,
+            verified=followup_verified,
+        )
+        followup_auth = {"HTTP_AUTHORIZATION": "Bearer " + followup_token}
 
         status, memory = call_with_retries(
             transport,
@@ -399,7 +534,7 @@ def run_sequence(transport, label, base_url=None):
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-memory-" + run_tag),
             body={
                 "workspaceId": workspace_id,
-                "actorAgentId": "memoryendpoints-dogfood-agent",
+                "actorAgentId": agent_id,
                 "memoryType": "status",
                 "subject": "MemoryEndpoints enterprise MATM hardening",
                 "title": "%s dogfood status" % label.title(),
@@ -436,7 +571,7 @@ def run_sequence(transport, label, base_url=None):
         status, meeting_rooms = transport.call(
             "/api/matm/meeting-rooms",
             headers=auth,
-            query=urlencode({"workspace_id": workspace_id, "agent_id": "memoryendpoints-followup-agent"}),
+            query=urlencode({"workspace_id": workspace_id, "agent_id": agent_id}),
         )
         step(report, "read_meeting_rooms", status, meeting_rooms)
         meeting_room_items = meeting_rooms.get("items") or []
@@ -451,7 +586,7 @@ def run_sequence(transport, label, base_url=None):
             body={
                 "workspaceId": workspace_id,
                 "roomId": meeting_room_id,
-                "senderAgentId": "memoryendpoints-dogfood-agent",
+                "senderAgentId": agent_id,
                 "safeSummary": "Project meeting dogfood: use first-class meeting rooms for project coordination and routing.",
             },
             retry_statuses=("401", "404", "500"),
@@ -480,7 +615,7 @@ def run_sequence(transport, label, base_url=None):
             body={
                 "workspaceId": workspace_id,
                 "meetingMessageId": meeting_message_id,
-                "promotedByAgentId": "memoryendpoints-dogfood-agent",
+                "promotedByAgentId": agent_id,
                 "memoryType": "evidence",
                 "title": "%s meeting transcript evidence" % label.title(),
                 "tags": ["dogfood", label, "meeting-message"],
@@ -534,7 +669,7 @@ def run_sequence(transport, label, base_url=None):
             body={
                 "workspaceId": workspace_id,
                 "roomId": canonical_room_id,
-                "agentId": "memoryendpoints-dogfood-agent",
+                "agentId": agent_id,
                 "lastMeetingMessageId": meeting_message_id,
             },
             retry_statuses=("401", "404", "500"),
@@ -553,8 +688,8 @@ def run_sequence(transport, label, base_url=None):
             headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-message-" + run_tag),
             body={
                 "workspaceId": workspace_id,
-                "senderAgentId": "memoryendpoints-dogfood-agent",
-                "targetAgentId": "memoryendpoints-followup-agent",
+                "senderAgentId": agent_id,
+                "targetAgentId": followup_agent_id,
                 "safeSummary": "Action required: review the dogfood memory report and continue hardening work.",
                 "responseRequired": True,
             },
@@ -567,9 +702,9 @@ def run_sequence(transport, label, base_url=None):
 
         status, current = read_current_message_until(
             transport,
-            auth,
+            followup_auth,
             workspace_id,
-            "memoryendpoints-followup-agent",
+            followup_agent_id,
             message_id,
             notification_id,
             expected_visible=True,
@@ -583,11 +718,11 @@ def run_sequence(transport, label, base_url=None):
             transport,
             "/api/matm/notifications/ack",
             method="POST",
-            headers=dict(auth, HTTP_IDEMPOTENCY_KEY="dogfood-ack-" + run_tag),
+            headers=dict(followup_auth, HTTP_IDEMPOTENCY_KEY="dogfood-ack-" + run_tag),
             body={
                 "workspaceId": workspace_id,
                 "notificationId": notification_id,
-                "consumerAgentId": "memoryendpoints-followup-agent",
+                "consumerAgentId": followup_agent_id,
                 "status": "read",
             },
             retry_statuses=("401", "404", "500"),
@@ -596,20 +731,20 @@ def run_sequence(transport, label, base_url=None):
         ack_verified = bool(
             ack.get("ok")
             and (ack.get("receipt") or {}).get("notificationId") == notification_id
-            and (ack.get("receipt") or {}).get("consumerAgentId") == "memoryendpoints-followup-agent"
+            and (ack.get("receipt") or {}).get("consumerAgentId") == followup_agent_id
         )
         step(report, "acknowledge_notification", status, ack, verified=ack_verified)
 
         status, receipts = read_receipts_until(
             transport,
-            auth,
+            followup_auth,
             workspace_id,
             notification_id,
-            "memoryendpoints-followup-agent",
+            followup_agent_id,
             attempts=LIVE_ACK_READBACK_ATTEMPTS if transport.mode == "live_http" else 1,
             delay_seconds=LIVE_ACK_READ_DELAY_SECONDS,
         )
-        receipt_readback_verified = contains_receipt(receipts, notification_id, "memoryendpoints-followup-agent")
+        receipt_readback_verified = contains_receipt(receipts, notification_id, followup_agent_id)
         step(report, "read_redacted_receipts", status, receipts, verified=receipt_readback_verified)
 
         status, audit_denial = transport.call(
@@ -617,10 +752,8 @@ def run_sequence(transport, label, base_url=None):
             headers=auth,
             query=urlencode({"workspace_id": workspace_id, "limit": "50"}),
         )
-        agent_audit_access_denied = bool(
-            str(status).startswith("403")
-            and ((audit_denial.get("error") or {}).get("code") == "human_owner_required")
-            and audit_denial.get("agentsCanAccess") is False
+        agent_audit_access_denied = agent_audit_denial_verified(
+            status, audit_denial
         )
         step(
             report,
@@ -633,9 +766,9 @@ def run_sequence(transport, label, base_url=None):
 
         status, post_ack_current = read_current_message_until(
             transport,
-            auth,
+            followup_auth,
             workspace_id,
-            "memoryendpoints-followup-agent",
+            followup_agent_id,
             message_id,
             notification_id,
             expected_visible=False,
@@ -676,7 +809,11 @@ def run_sequence(transport, label, base_url=None):
     except Exception as exc:
         report["exceptionType"] = exc.__class__.__name__
         report["safeNoOp"] = True
-    report["rawCredentialValuesStored"] = bool(token and token in json.dumps(report, sort_keys=True))
+    serialized_report = json.dumps(report, sort_keys=True)
+    report["rawCredentialValuesStored"] = any(
+        secret and secret in serialized_report
+        for secret in (master_token, token, followup_token)
+    )
     return report
 
 
