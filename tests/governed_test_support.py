@@ -67,6 +67,10 @@ class GovernedAgentProvisioner:
         if not scope_id:
             raise AssertionError("The requested governed test grant has no scope id.")
         master_headers = {"HTTP_AUTHORIZATION": "Bearer " + master_bearer}
+        request_headers = dict(
+            master_headers,
+            HTTP_IDEMPOTENCY_KEY="governed-test-name-request-" + requested_name,
+        )
 
         requested = self._json_call(
             "/api/matm/access/agent-name-requests",
@@ -85,7 +89,7 @@ class GovernedAgentProvisioner:
                 },
                 "justification": "Provision a governed principal for an isolated contract test.",
             },
-            master_headers,
+            request_headers,
             "201 Created",
             "agent name request",
         )
@@ -100,7 +104,10 @@ class GovernedAgentProvisioner:
                 "decision": "approve",
                 "decisionReason": "Approved for the isolated governed-principal contract test.",
             },
-            master_headers,
+            dict(
+                master_headers,
+                HTTP_IDEMPOTENCY_KEY="governed-test-name-decision-" + request_id,
+            ),
             "200 OK",
             "agent name approval",
         )

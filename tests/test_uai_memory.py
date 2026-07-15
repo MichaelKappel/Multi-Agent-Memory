@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from app import application
@@ -122,6 +123,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "justification": "Test fixture needs a governed workspace-scoped agent.",
             },
             setup["companyMasterTokenSecret"],
+            idempotency_key="uai-access-request-%s" % agent_id,
         )
         self.assertEqual("201 Created", status)
         status, approved = call_app(
@@ -129,6 +131,8 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
             "POST",
             {"decision": "approve", "decisionReason": "Approved by test fixture."},
             setup["companyMasterTokenSecret"],
+            idempotency_key="uai-access-decision-%s"
+            % requested["request"]["requestId"],
         )
         self.assertEqual("200 OK", status)
         self.assertEqual("approved", approved["request"]["status"])
@@ -314,7 +318,8 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                             "content": uai_content(logical_path),
                         },
                         browser_token,
-                        idempotency_key="record-%s-%s" % (backend, index),
+                        idempotency_key="uai-record-write-%s-%s"
+                        % (backend, index),
                     )
                     self.assertEqual("201 Created", status, logical_path)
                     self.assertTrue(record_payload["persisted"])
@@ -428,7 +433,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "leaseSeconds": 600,
             },
             token_a,
-            idempotency_key="claim-a",
+            idempotency_key="uai-edit-claim-a-0001",
         )
         self.assertEqual("201 Created", status)
         self.assertTrue(acquired["claimAcquired"])
@@ -449,7 +454,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "intentSummary": "Edit the same local context file for another change.",
             },
             token_b,
-            idempotency_key="claim-b-conflict",
+            idempotency_key="uai-edit-claim-b-conflict-0001",
         )
         self.assertEqual("409 Conflict", status)
         self.assertEqual("uai_edit_claim_conflict", conflict["error"]["code"])
@@ -469,7 +474,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "intentSummary": "Try a locally forbidden aggregate file.",
             },
             token_b,
-            idempotency_key="claim-forbidden",
+            idempotency_key="uai-edit-claim-forbidden-0001",
         )
         self.assertEqual("422 Unprocessable Entity", status)
         self.assertEqual("unsupported_local_uai_path", forbidden["error"]["code"])
@@ -485,7 +490,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "completionSummary": "Completed the local context edit and verified the resulting hash.",
             },
             token_a,
-            idempotency_key="claim-a-complete",
+            idempotency_key="uai-edit-claim-a-complete-0001",
         )
         self.assertEqual("200 OK", status)
         self.assertTrue(completed["persisted"])
@@ -506,7 +511,7 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
                 "intentSummary": "Attempt an edit from a stale local copy.",
             },
             token_b,
-            idempotency_key="claim-b-stale",
+            idempotency_key="uai-edit-claim-b-stale-0001",
         )
         self.assertEqual("409 Conflict", status)
         self.assertEqual("uai_base_hash_mismatch", stale["error"]["code"])
@@ -527,7 +532,9 @@ class UaiMemoryIntegrationTests(unittest.TestCase):
         schema_agent = self.register_agent(setup, "schema-agent")
         self.create_package(setup, "schema-agent", schema_agent["agentTokenSecret"])
 
-        with sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"]) as connection:
+        with closing(
+            sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
+        ) as connection:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
         self.assertTrue(

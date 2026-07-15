@@ -1,6 +1,13 @@
 # AGENTS.md
 
-This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endpoint reference.
+This repository is the public GitHub edition of Multi-Agent Memory: a pure
+Python/TypeScript/HTML5 private-intranet MATM endpoint reference. It is the
+free single-organization codebase. MultiAgentMemory.com is the public GitHub
+companion documentation site for this edition. MemoryEndpoints.com, hosted
+customer accounts, authenticated business-model surfaces, pricing, billing,
+paid storage, paid NPC memory stores, sponsored partner setup, and
+customer-facing sales operations belong in a separate private commercial
+repository or deployment.
 
 ## Startup Order
 
@@ -11,9 +18,9 @@ This repository is MemoryEndpoints.com, a pure Python/TypeScript/HTML5 MATM endp
    - `agent-file-handoff/Content`
    - `agent-file-handoff/Improvement`
 5. Use the full `.uai/` suite as active startup memory.
-6. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory boundary when reachable and authenticated.
+6. Use the configured MATM endpoint as the live mid-to-long-term memory boundary when reachable and authenticated. Existing project dogfood coordination may still use MemoryEndpoints.com credentials when explicitly configured.
 7. Use MultiAgentMemory.com as the GitHub companion documentation site.
-8. Coordinate active work through protected MemoryEndpoints meeting rooms. Record concise cold-start continuity in typed `.uai` files and point-in-time verifier output under ignored `var/reports/`.
+8. Coordinate active work through protected MATM meeting rooms. Record concise cold-start continuity in typed `.uai` files and point-in-time verifier output under ignored `var/reports/`.
 9. Before editing a local `.uai` path while another agent may share the codebase, read the protected project file head and acquire a bounded edit claim. On conflict or stale hash, stop and coordinate in the project room.
 
 ## Hard Rules
@@ -50,8 +57,8 @@ python scripts\enterprise_readiness_audit.py --run-checks
 
 ## Deployment
 
-Unless the human explicitly requests local-only work, completing an authorized website change includes committing, pushing, deploying, and verifying the live revision. Do not ask again solely for deployment permission.
+Unless the human explicitly requests local-only work, completing an authorized public GitHub or companion-site change includes committing, pushing, publishing the relevant public companion site when its source changed, and verifying the published revision. Do not deploy the reserved MemoryEndpoints.com hosted commercial product from this public checkout unless the human explicitly names that commercial target and the private-repo/security gates are cleared.
 
-Use `scripts/ftp_deploy_memoryendpoints.py` only after tests pass. The script must resolve host, user, password, package, and remote directory while redacting values. Run explicit-FTPS dry-run and connection-check gates before the live upload.
+Use `scripts/ftp_deploy_memoryendpoints.py` for a private-network endpoint deployment only after tests pass and the target is explicitly authorized. The script must resolve host, user, password, package, and remote directory while redacting values. Run explicit-FTPS dry-run and connection-check gates before any live upload.
 
-The verified FileZilla profile logs into the MemoryEndpoints.com deployment root. Let the deployer use that login root unless the hosting configuration explicitly changes.
+MultiAgentMemory.com companion publishing uses `scripts/ftp_deploy_static_site.py` and the `multiagentmemory` FileZilla profile. The old MemoryEndpoints.com deployment profile is reserved for the private commercial repo boundary unless explicitly authorized.

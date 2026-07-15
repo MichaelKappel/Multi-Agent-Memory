@@ -3,8 +3,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SITE_NAME = "MemoryEndpoints.com"
-SITE_URL = os.environ.get("MEMORYENDPOINTS_SITE_URL", "https://memoryendpoints.com")
+SITE_NAME = os.environ.get("MEMORYENDPOINTS_SITE_NAME", "Private MATM Intranet")
+SITE_URL = os.environ.get("MEMORYENDPOINTS_SITE_URL", "https://matm-intranet.local")
+SITE_DESCRIPTION = os.environ.get(
+    "MEMORYENDPOINTS_SITE_DESCRIPTION",
+    "Free private-network MATM hive for one company, local agents, and internal memory coordination.",
+)
 COMPANION_DOCS_URL = os.environ.get("MEMORYENDPOINTS_COMPANION_DOCS_URL", "https://multiagentmemory.com")
 GITHUB_REPO_URL = os.environ.get(
     "MEMORYENDPOINTS_GITHUB_REPO_URL",

@@ -1,5 +1,5 @@
 from . import __version__
-from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, SITE_NAME, SITE_URL, utc_now
+from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, SITE_DESCRIPTION, SITE_NAME, SITE_URL, utc_now
 from .connector_pairing import (
     AGENT_NAME_MAX_LENGTH,
     AGENT_NAME_MIN_LENGTH,
@@ -133,6 +133,14 @@ ROUTE_TABLE = [
     {"route": "/.well-known/ai-agent.json", "access": "public", "methods": ["GET"], "purpose": "Agent discovery pointer."},
     {"route": "/api/matm/me", "access": "protected", "methods": ["GET"], "purpose": "Credential-derived principal, immutable scope, permission, and resource-context introspection."},
     {"route": "/api/matm/access/company-master-credentials", "access": "protected", "methods": ["GET", "POST"], "purpose": "Company-master metadata inventory plus idempotent registration by an existing company master or enabled company-scoped top-level agent."},
+    {"route": "/api/matm/access/scope-catalog", "access": "protected", "methods": ["GET"], "purpose": "Company-master-only catalog of company, workspace, project, game, session, goal, and task grant scopes."},
+    {"route": "/api/matm/access/agent-name-requests", "access": "protected", "methods": ["GET", "POST"], "purpose": "List governed name requests or create one with required public-safe idempotent retry semantics."},
+    {"route": "/api/matm/access/agent-name-requests/{requestId}/decision", "access": "protected", "methods": ["POST"], "purpose": "Approve or deny a governed name request with required public-safe idempotent retry semantics."},
+    {"route": "/api/matm/access/invites", "access": "protected", "methods": ["GET", "POST"], "purpose": "List invitation metadata or issue one non-replayable invitation URL once; issuance forbids Idempotency-Key."},
+    {"route": "/api/matm/access/invites/redeem", "access": "protected", "methods": ["POST"], "purpose": "Redeem a body-only one-time invitation and reveal one agent credential once; redemption forbids Idempotency-Key."},
+    {"route": "/api/matm/access/invites/{inviteId}/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke an issued invitation with required public-safe idempotent retry semantics."},
+    {"route": "/api/matm/access/agent-tokens", "access": "protected", "methods": ["GET"], "purpose": "List redacted governed agent-credential metadata for a company master."},
+    {"route": "/api/matm/access/agent-tokens/{credentialId}/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke an agent credential with required public-safe idempotent retry semantics."},
     {"route": "/api/matm/workspace", "access": "protected", "methods": ["GET"], "purpose": "Workspace quota and status."},
     {"route": "/api/matm/projects", "access": "protected", "methods": ["GET", "POST"], "purpose": "Workspace project list and project upsert for company/workspace/project hierarchy."},
     {"route": "/api/matm/knowledge-tree", "access": "protected", "methods": ["GET"], "purpose": "Database-backed company/workspace/project wiki tree for humans and agents."},
@@ -168,7 +176,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/search", "access": "protected", "methods": ["GET", "POST"], "purpose": "Hosted workspace memory search; connectors use exact body-only POST search."},
     {"route": "/api/matm/review-queue", "access": "protected", "methods": ["GET"], "purpose": "Memory review and promotion queue readback."},
     {"route": "/api/matm/review-queue/decide", "access": "protected", "methods": ["POST"], "purpose": "Idempotent memory promotion, rejection, or quarantine decision."},
-    {"route": "/api/matm/meeting-rooms", "access": "protected", "methods": ["GET", "POST"], "purpose": "Always-present company, workspace, project room discovery plus goal/task room creation."},
+    {"route": "/api/matm/meeting-rooms", "access": "protected", "methods": ["GET", "POST"], "purpose": "Always-present company, workspace, project room discovery plus goal/task/game/session room creation."},
     {"route": "/api/matm/meeting-messages", "access": "protected", "methods": ["GET", "POST"], "purpose": "Seven-day scoped meeting transcript read and public-safe post creation; durable content requires explicit promotion."},
     {"route": "/api/matm/meeting-messages/promote", "access": "protected", "methods": ["POST"], "purpose": "Promote a public-safe meeting transcript message into hosted workspace memory with source linkage."},
     {"route": "/api/matm/meeting-rooms/read", "access": "protected", "methods": ["POST"], "purpose": "Meeting room read cursor update for an agent."},
@@ -765,7 +773,9 @@ def capability_matrix():
             "promoteMessageRoute": "/api/matm/meeting-messages/promote",
             "readCursorRoute": "/api/matm/meeting-rooms/read",
             "defaultScopes": ["company", "workspace", "project"],
-            "customScopes": ["goal", "task"],
+            "customScopes": ["goal", "task", "game", "session"],
+            "npcCommunicationScopes": ["game", "session"],
+            "npcBoundary": "NPC agents may not use company, workspace, or project meeting rooms; NPC-to-NPC communication is restricted to game and session rooms.",
             "alwaysAvailable": True,
             "firstClassStorage": ["matm_meeting_rooms", "matm_meeting_messages", "matm_meeting_reads"],
         },
@@ -1462,7 +1472,11 @@ def openapi_spec():
                     "name": "Idempotency-Key",
                     "in": "header",
                     "required": True,
-                    "schema": {"type": "string"},
+                    "schema": {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 200,
+                    },
                     "description": "Stable idempotency key for exact retries. Never include secrets.",
                 }
             ]
@@ -1498,6 +1512,13 @@ def openapi_spec():
         "schema": {"type": "string", "minLength": 16, "maxLength": 200},
         "description": "High-entropy request key. Exact key/body retry replays the original result; changed reuse returns 409. Never include credentials.",
     }
+    optional_registration_idempotency_parameter = dict(idempotency_parameter)
+    optional_registration_idempotency_parameter.update(
+        {
+            "required": False,
+            "description": "Required for connector self-registration. Optional only for the deprecated exact company-master LocalEndpoint transition. Never include credentials.",
+        }
+    )
     csrf_parameter = {
         "name": "X-CSRF-Token",
         "in": "header",
@@ -1529,6 +1550,76 @@ def openapi_spec():
             "x-noRedirects": True,
             "x-maximumJsonRequestBytes": 32768,
             "x-maximumJsonResponseBytes": 65536,
+        }
+
+    def access_read(summary, description):
+        return {
+            "summary": summary,
+            "description": description,
+            "security": [{"companyMasterBearer": []}],
+            "responses": {
+                "200": {
+                    "description": "Redacted governed-access metadata.",
+                    "content": json_type,
+                },
+                "401": safe_problem,
+                "403": safe_problem,
+                "404": safe_problem,
+                "503": safe_problem,
+            },
+            "x-rawCredentialExposed": False,
+            "x-noRedirects": True,
+        }
+
+    def access_idempotent_mutation(
+        summary, description, success_code=200, parameters=None, body_required=True
+    ):
+        return {
+            "summary": summary,
+            "description": description,
+            "security": [{"companyMasterBearer": []}],
+            "parameters": list(parameters or ()) + [idempotency_parameter],
+            "requestBody": {"required": bool(body_required), "content": json_type},
+            "responses": {
+                str(success_code): {
+                    "description": "Public-safe governed-access result; exact retries replay this response.",
+                    "content": json_type,
+                },
+                "401": safe_problem,
+                "403": safe_problem,
+                "404": safe_problem,
+                "409": safe_problem,
+                "422": safe_problem,
+                "503": safe_problem,
+            },
+            "x-idempotency": "required_public_safe_replay",
+            "x-rawCredentialPersisted": False,
+            "x-noRedirects": True,
+        }
+
+    def access_one_time_mutation(summary, description, security, success_code=201):
+        return {
+            "summary": summary,
+            "description": description,
+            "security": security,
+            "requestBody": {"required": True, "content": json_type},
+            "responses": {
+                str(success_code): {
+                    "description": "One-time secret response. Store it immediately; it cannot be replayed.",
+                    "content": json_type,
+                },
+                "401": safe_problem,
+                "403": safe_problem,
+                "404": safe_problem,
+                "409": safe_problem,
+                "410": safe_problem,
+                "422": safe_problem,
+                "503": safe_problem,
+            },
+            "x-idempotency": "forbidden_one_time_secret_response",
+            "x-idempotencyHeaderAllowed": False,
+            "x-rawCredentialPersisted": False,
+            "x-noRedirects": True,
         }
 
     paths = {
@@ -1873,6 +1964,94 @@ def openapi_spec():
                 "x-noRedirects": True,
             },
         },
+        "/api/matm/access/scope-catalog": {
+            "get": access_read(
+                "List governed grant scopes",
+                "Company-master-only catalog used to choose an immutable company, workspace, project, game, session, goal, or task grant.",
+            ),
+        },
+        "/api/matm/access/agent-name-requests": {
+            "get": access_read(
+                "List agent-name requests",
+                "List redacted request metadata, optionally filtered by status.",
+            ),
+            "post": access_idempotent_mutation(
+                "Request a governed agent name",
+                "Creates no credential. Idempotency-Key is required because the public-safe response can be replayed without persisting secret material.",
+                201,
+            ),
+        },
+        "/api/matm/access/agent-name-requests/{requestId}/decision": {
+            "post": access_idempotent_mutation(
+                "Decide an agent-name request",
+                "Approve or deny one pending request. Exact retries replay the public-safe decision metadata.",
+                200,
+                [
+                    {
+                        "name": "requestId",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+            ),
+        },
+        "/api/matm/access/invites": {
+            "get": access_read(
+                "List invitation metadata",
+                "List current invitation IDs, request IDs, status, scope, and expiry without any raw invitation secret.",
+            ),
+            "post": access_one_time_mutation(
+                "Issue a one-time agent invitation",
+                "Returns one fragment-only invitation URL once. Idempotency-Key is forbidden because raw invitation material is never persisted or replayed. After an unknown outcome, list metadata, revoke the issued invite idempotently, then issue a replacement from the same approved request.",
+                [{"companyMasterBearer": []}],
+            ),
+        },
+        "/api/matm/access/invites/redeem": {
+            "post": access_one_time_mutation(
+                "Redeem a one-time agent invitation",
+                "Consumes the body-only invitation secret and returns one agent credential once. Idempotency-Key is forbidden; a successful response cannot be replayed.",
+                [],
+            ),
+        },
+        "/api/matm/access/invites/{inviteId}/revoke": {
+            "post": access_idempotent_mutation(
+                "Revoke an invitation",
+                "Revokes an issued invitation. The exact key and target retry replays public-safe revoked metadata.",
+                200,
+                [
+                    {
+                        "name": "inviteId",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                body_required=False,
+            ),
+        },
+        "/api/matm/access/agent-tokens": {
+            "get": access_read(
+                "List agent credential metadata",
+                "Company-master-only redacted credential inventory; raw credential values and verifiers are never returned.",
+            ),
+        },
+        "/api/matm/access/agent-tokens/{credentialId}/revoke": {
+            "post": access_idempotent_mutation(
+                "Revoke an agent credential",
+                "Immediately revokes one governed agent credential. The exact key and target retry replays the public-safe revoked result.",
+                200,
+                [
+                    {
+                        "name": "credentialId",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                body_required=False,
+            ),
+        },
         "/api/matm/workspace": {
             "get": {
                 "summary": "Load workspace boundary",
@@ -1905,7 +2084,7 @@ def openapi_spec():
                 "summary": "Confirm connector self-registration or use the deprecated exact LocalEndpoint transition",
                 "description": "A connector credential may only idempotently confirm its already-bound localendpoint-agent identity with the exact one-field body. A company master may use the narrow deprecated exact localendpoint-agent transition; every other identity returns 409 registration_requires_invite and must follow name request, approval, one-time invite, and redemption.",
                 "security": [{"connectorBearer": []}, {"companyMasterBearer": []}],
-                "parameters": [idempotency_parameter],
+                "parameters": [optional_registration_idempotency_parameter],
                 "requestBody": {"required": True, "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/ConnectorSelfRegistrationInput"}, {"$ref": "#/components/schemas/LocalEndpointCompatibilityRegistrationInput"}]}}}},
                 "responses": dict(connector_error_responses, **{
                     "200": {"description": "Connector self-registration confirmed without minting a credential.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ConnectorAgentRegistrationResult"}}}},
@@ -1968,8 +2147,8 @@ def openapi_spec():
         "/api/matm/review-queue": {"get": protected_operation("Read review queue", "Read memory review and long-term-memory promotion health without parsing raw debug JSON.")},
         "/api/matm/review-queue/decide": {"post": protected_operation("Decide review", "Promote, reject, or quarantine a review-pending memory item with idempotent reviewer action.", "post", True)},
         "/api/matm/meeting-rooms": {
-            "get": protected_operation("List meeting rooms", "List always-present company/workspace/project rooms plus goal/task rooms."),
-            "post": protected_operation("Create goal or task room", "Create first-class goal/task coordination room.", "post", True),
+            "get": protected_operation("List meeting rooms", "List always-present company/workspace/project rooms plus goal/task/game/session rooms."),
+            "post": protected_operation("Create custom meeting room", "Create first-class goal/task/game/session coordination room.", "post", True),
         },
         "/api/matm/meeting-messages": {
             "get": protected_operation("Read meeting transcript", "Read durable room transcript and read-state summary."),
@@ -1999,7 +2178,7 @@ def openapi_spec():
         {"name": "workspace_id", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Authorized workspace id."},
         {"name": "q", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Public-safe text query. Leave blank when using an exact event_id readback."},
         {"name": "event_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact memory event id for deterministic post-submit readback."},
-        {"name": "scope", "in": "query", "required": False, "schema": {"type": "string", "enum": ["company", "workspace", "project", "goal", "task"]}, "description": "Exact memory scope filter."},
+        {"name": "scope", "in": "query", "required": False, "schema": {"type": "string", "enum": ["company", "workspace", "project", "game", "session", "goal", "task"]}, "description": "Exact memory scope filter."},
         {"name": "scope_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact scope id filter."},
         {"name": "source_prefix", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Source URI prefix filter."},
         {"name": "tag", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Exact tag filter."},
@@ -2818,11 +2997,11 @@ def manifest():
         "schemaVersion": "memoryendpoints.ai_manifest.v1",
         "name": SITE_NAME,
         "url": SITE_URL,
-        "description": "Pure Python/TypeScript/HTML5 MATM endpoint reference implementation.",
+        "description": SITE_DESCRIPTION,
         "version": __version__,
         "companionDocumentation": {
             "site": COMPANION_DOCS_URL,
-            "role": "GitHub companion documentation site for the repository, MATM setup, and public memory model.",
+            "role": "Public GitHub companion documentation site for the free private-intranet MATM edition.",
             "sourceRepository": GITHUB_REPO_URL,
         },
         "aiReadyWeb": {
@@ -2889,7 +3068,7 @@ def readiness_result():
             "https://uaix.org/en-us/spec/capability-adaptive-agent-interoperability/",
             "https://uaix.org/en-us/spec/capability-surface-matrix/",
             "https://uaix.org/en-us/spec/agent-executability-matrix/",
-            "https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints",
+            "https://uaix.org/en-us/tools/ai-memory-package-wizard/",
             COMPANION_DOCS_URL,
             GITHUB_REPO_URL,
         ],
@@ -2937,7 +3116,7 @@ def readiness_result():
             {
                 "id": "meeting_rooms",
                 "status": "pass_local",
-                "evidence": ["/api/matm/meeting-rooms", "/api/matm/meeting-messages", "/api/matm/meeting-rooms/read", "default company/workspace/project rooms plus custom goal/task rooms"],
+                "evidence": ["/api/matm/meeting-rooms", "/api/matm/meeting-messages", "/api/matm/meeting-rooms/read", "default company/workspace/project rooms plus custom goal/task/game/session rooms"],
             },
             {
                 "id": "optional_connector_contract",

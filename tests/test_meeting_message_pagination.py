@@ -91,7 +91,10 @@ class MeetingMessagePaginationTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/meeting-messages",
             method="POST",
-            headers=agent.auth_headers,
+            headers=dict(
+                agent.auth_headers,
+                HTTP_IDEMPOTENCY_KEY="meeting-pagination-message-%d" % index,
+            ),
             body={
                 "workspaceId": workspace_id,
                 "roomId": room_id,

@@ -14,9 +14,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from app import application
+from memoryendpoints.config import SITE_URL
 
 
-ORIGIN = "https://memoryendpoints.com"
+ORIGIN = SITE_URL.rstrip("/")
 GOVERNED_SECRET = re.compile(
     r"me_(?:master|agent|invite|human|accountsession|accountcsrf|masterproof|closure)_v1\."
     r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
@@ -340,6 +341,10 @@ class HumanAccountCompanyLifecycleContract:
                 "justification": "Verify portable memory and governed token lifecycle behavior.",
             },
             master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "lifecycle-access-request-"
+                + requested_name
+            },
         )
         self.assertEqual(201, status)
         request_id = requested["request"]["requestId"]
@@ -348,6 +353,10 @@ class HumanAccountCompanyLifecycleContract:
             "POST",
             {"decision": "approve", "decisionReason": "Approved for acceptance testing."},
             master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "lifecycle-access-decision-"
+                + request_id
+            },
         )
         self.assertEqual(200, status)
         status, _headers, issued = call_api(

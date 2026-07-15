@@ -13,7 +13,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from app import application
-from memoryendpoints.app import HUMAN_SESSION_COOKIE
+from memoryendpoints.app import (
+    _ACCESS_IDEMPOTENCY_REQUIRED_POST_ROUTE_TEMPLATES,
+    _ACCESS_ONE_TIME_SECRET_POST_ROUTE_TEMPLATES,
+    HUMAN_SESSION_COOKIE,
+)
+from memoryendpoints.config import SITE_URL
 from memoryendpoints.storage import FileStore, SQLiteStore
 
 
@@ -104,6 +109,43 @@ class GovernedAgentAccessApiContract:
         self._assert_one_time_secret_headers(headers)
         return payload
 
+    def test_openapi_access_idempotency_policy_is_explicit_and_complete(self):
+        status, _headers, spec = call_api("/api/matm/openapi.json")
+        self.assertEqual(200, status, spec)
+        paths = spec["paths"]
+        required = set()
+        one_time = set()
+        for path, path_item in paths.items():
+            operation = path_item.get("post") or {}
+            policy = operation.get("x-idempotency")
+            if policy == "required_public_safe_replay":
+                required.add(path)
+                parameter = next(
+                    item
+                    for item in operation.get("parameters") or ()
+                    if item.get("name") == "Idempotency-Key"
+                )
+                self.assertTrue(parameter["required"], path)
+                self.assertEqual(16, parameter["schema"]["minLength"], path)
+                self.assertEqual(200, parameter["schema"]["maxLength"], path)
+            elif policy == "forbidden_one_time_secret_response":
+                one_time.add(path)
+                self.assertFalse(operation["x-idempotencyHeaderAllowed"], path)
+                self.assertFalse(
+                    any(
+                        item.get("name") == "Idempotency-Key"
+                        for item in operation.get("parameters") or ()
+                    ),
+                    path,
+                )
+                self.assertFalse(operation["x-rawCredentialPersisted"], path)
+        self.assertEqual(
+            set(_ACCESS_IDEMPOTENCY_REQUIRED_POST_ROUTE_TEMPLATES), required
+        )
+        self.assertEqual(
+            set(_ACCESS_ONE_TIME_SECRET_POST_ROUTE_TEMPLATES), one_time
+        )
+
     def _request_body(
         self,
         requested_name="escape-game-agent",
@@ -133,12 +175,16 @@ class GovernedAgentAccessApiContract:
             body["memoryTransferFromCredentialId"] = memory_transfer_from_credential_id
         return body
 
-    def _request_access(self, token=None, **overrides):
+    def _request_access(self, token=None, idempotency_key=None, **overrides):
         status, _headers, payload = call_api(
             "/api/matm/access/agent-name-requests",
             "POST",
             self._request_body(**overrides),
             token or self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": idempotency_key
+                or "access-name-request-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(201, status, payload)
         self.assertTrue(payload["ok"])
@@ -146,12 +192,16 @@ class GovernedAgentAccessApiContract:
         self._assert_no_governed_credential(payload)
         return payload["request"]
 
-    def _approve(self, request_id, token=None):
+    def _approve(self, request_id, token=None, idempotency_key=None):
         status, _headers, payload = call_api(
             "/api/matm/access/agent-name-requests/%s/decision" % request_id,
             "POST",
             {"decision": "approve", "decisionReason": "Approved for the initial game setup."},
             token or self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": idempotency_key
+                or "access-name-decision-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(200, status, payload)
         self.assertTrue(payload["ok"])
@@ -172,8 +222,9 @@ class GovernedAgentAccessApiContract:
         self.assertIn("inviteUrl", payload)
         self._assert_one_time_secret_headers(headers)
         invite_url = urlsplit(payload["inviteUrl"])
-        self.assertEqual("https", invite_url.scheme)
-        self.assertEqual("memoryendpoints.com", invite_url.netloc)
+        expected_url = urlsplit(SITE_URL)
+        self.assertEqual(expected_url.scheme, invite_url.scheme)
+        self.assertEqual(expected_url.netloc, invite_url.netloc)
         self.assertEqual("/agent-setup", invite_url.path)
         self.assertEqual("", invite_url.query)
         fragment = parse_qs(invite_url.fragment, strict_parsing=True)
@@ -483,6 +534,9 @@ class GovernedAgentAccessApiContract:
             "POST",
             invalid_body,
             self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-auth-derived-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(201, status, payload)
         self.assertEqual(self.company_id, payload["request"]["companyId"])
@@ -581,6 +635,15 @@ class GovernedAgentAccessApiContract:
             "/api/matm/access/invites/redeem", "POST", {"inviteSecret": expired_secret}
         )
         self._assert_error(status, expired, 410, "invite_expired")
+        expired_reissue, expired_reissue_secret = self._issue(expired_request["requestId"])
+        self.assertNotEqual(
+            expired_issue["invite"]["inviteId"],
+            expired_reissue["invite"]["inviteId"],
+        )
+        self.assertNotEqual(expired_secret, expired_reissue_secret)
+        self.assertEqual("issued", expired_reissue["invite"]["status"])
+        self.assertFalse(expired_reissue["rawCredentialPersisted"])
+        self.assertTrue(expired_reissue["showCredentialOnce"])
 
         revoked_request = self._request_access(requested_name="revoked-invite-agent")
         self._approve(revoked_request["requestId"])
@@ -591,6 +654,9 @@ class GovernedAgentAccessApiContract:
             "POST",
             {},
             self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-invite-revoke-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(200, status, revoked)
         self.assertEqual("revoked", revoked["invite"]["status"])
@@ -599,6 +665,228 @@ class GovernedAgentAccessApiContract:
             "/api/matm/access/invites/redeem", "POST", {"inviteSecret": revoked_secret}
         )
         self._assert_error(status, rejected, 410, "invite_revoked")
+
+    def test_access_retry_contract_and_lost_invite_response_recovery(self):
+        request_body = self._request_body(requested_name="retry-contract-agent")
+        before_counts = self._access_counts()
+        status, _headers, missing = call_api(
+            "/api/matm/access/agent-name-requests",
+            "POST",
+            request_body,
+            self.master_token,
+        )
+        self._assert_error(status, missing, 422, "idempotency_key_required")
+        self.assertEqual(before_counts, self._access_counts())
+
+        request_key = "access-retry-request-" + uuid.uuid4().hex
+        request_headers = {"HTTP_IDEMPOTENCY_KEY": request_key}
+        status, _headers, requested = call_api(
+            "/api/matm/access/agent-name-requests",
+            "POST",
+            request_body,
+            self.master_token,
+            extra_headers=request_headers,
+        )
+        self.assertEqual(201, status, requested)
+        self.assertFalse(requested["idempotentReplay"])
+        request_id = requested["request"]["requestId"]
+        status, _headers, request_replay = call_api(
+            "/api/matm/access/agent-name-requests",
+            "POST",
+            request_body,
+            self.master_token,
+            extra_headers=request_headers,
+        )
+        self.assertEqual(201, status, request_replay)
+        self.assertTrue(request_replay["idempotentReplay"])
+        self.assertEqual(request_id, request_replay["request"]["requestId"])
+
+        changed_body = dict(request_body, justification="Changed request body")
+        status, _headers, conflict = call_api(
+            "/api/matm/access/agent-name-requests",
+            "POST",
+            changed_body,
+            self.master_token,
+            extra_headers=request_headers,
+        )
+        self._assert_error(status, conflict, 409, "idempotency_conflict")
+
+        decision_path = (
+            "/api/matm/access/agent-name-requests/%s/decision" % request_id
+        )
+        decision_body = {
+            "decision": "approve",
+            "decisionReason": "Approved for retry-contract verification.",
+        }
+        status, _headers, missing = call_api(
+            decision_path, "POST", decision_body, self.master_token
+        )
+        self._assert_error(status, missing, 422, "idempotency_key_required")
+        decision_headers = {
+            "HTTP_IDEMPOTENCY_KEY": "access-retry-decision-" + uuid.uuid4().hex
+        }
+        status, _headers, decided = call_api(
+            decision_path,
+            "POST",
+            decision_body,
+            self.master_token,
+            extra_headers=decision_headers,
+        )
+        self.assertEqual(200, status, decided)
+        self.assertFalse(decided["idempotentReplay"])
+        status, _headers, decision_replay = call_api(
+            decision_path,
+            "POST",
+            decision_body,
+            self.master_token,
+            extra_headers=decision_headers,
+        )
+        self.assertEqual(200, status, decision_replay)
+        self.assertTrue(decision_replay["idempotentReplay"])
+
+        issue_body = {"approvedRequestId": request_id, "expiresInSeconds": 900}
+        status, _headers, rejected_issue_key = call_api(
+            "/api/matm/access/invites",
+            "POST",
+            issue_body,
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "invite-secret-replay-forbidden"
+            },
+        )
+        self._assert_error(
+            status, rejected_issue_key, 422, "idempotency_key_not_allowed"
+        )
+
+        first_issue, first_secret = self._issue(request_id)
+        first_invite_id = first_issue["invite"]["inviteId"]
+        status, _headers, issued_inventory = call_api(
+            "/api/matm/access/invites", "GET", token=self.master_token
+        )
+        self.assertEqual(200, status, issued_inventory)
+        issued_metadata = next(
+            item
+            for item in issued_inventory["items"]
+            if item["inviteId"] == first_invite_id
+        )
+        self.assertEqual("issued", issued_metadata["status"])
+        self.assertNotIn("inviteSecret", issued_metadata)
+
+        revoke_path = "/api/matm/access/invites/%s/revoke" % first_invite_id
+        status, _headers, missing = call_api(
+            revoke_path, "POST", {}, self.master_token
+        )
+        self._assert_error(status, missing, 422, "idempotency_key_required")
+        revoke_headers = {
+            "HTTP_IDEMPOTENCY_KEY": "access-retry-invite-revoke-"
+            + uuid.uuid4().hex
+        }
+        status, _headers, revoked = call_api(
+            revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers=revoke_headers,
+        )
+        self.assertEqual(200, status, revoked)
+        self.assertFalse(revoked["idempotentReplay"])
+        status, _headers, revoke_replay = call_api(
+            revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers=revoke_headers,
+        )
+        self.assertEqual(200, status, revoke_replay)
+        self.assertTrue(revoke_replay["idempotentReplay"])
+        self.assertEqual(first_invite_id, revoke_replay["invite"]["inviteId"])
+        status, _headers, second_revoke = call_api(
+            revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-new-invite-revoke-"
+                + uuid.uuid4().hex
+            },
+        )
+        self._assert_error(status, second_revoke, 409, "invite_not_revocable")
+
+        # Recovery from a lost one-time issue response is metadata-only: list
+        # the issued invite, revoke it idempotently, and issue a wholly new
+        # secret from the same approved request.
+        second_issue, second_secret = self._issue(request_id)
+        second_invite_id = second_issue["invite"]["inviteId"]
+        self.assertNotEqual(first_invite_id, second_invite_id)
+        self.assertNotEqual(first_secret, second_secret)
+        status, _headers, old_secret_rejected = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            {"inviteSecret": first_secret},
+        )
+        self._assert_error(status, old_secret_rejected, 401, "invalid_invite")
+
+        status, _headers, rejected_redeem_key = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            {"inviteSecret": second_secret},
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "redeem-secret-replay-forbidden"
+            },
+        )
+        self._assert_error(
+            status, rejected_redeem_key, 422, "idempotency_key_not_allowed"
+        )
+        redeemed = self._redeem(second_secret)
+        credential_id = redeemed["principal"]["credentialId"]
+
+        token_revoke_path = (
+            "/api/matm/access/agent-tokens/%s/revoke" % credential_id
+        )
+        status, _headers, missing = call_api(
+            token_revoke_path, "POST", {}, self.master_token
+        )
+        self._assert_error(status, missing, 422, "idempotency_key_required")
+        token_revoke_headers = {
+            "HTTP_IDEMPOTENCY_KEY": "access-retry-token-revoke-"
+            + uuid.uuid4().hex
+        }
+        status, _headers, token_revoked = call_api(
+            token_revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers=token_revoke_headers,
+        )
+        self.assertEqual(200, status, token_revoked)
+        self.assertFalse(token_revoked["idempotentReplay"])
+        status, _headers, token_revoke_replay = call_api(
+            token_revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers=token_revoke_headers,
+        )
+        self.assertEqual(200, status, token_revoke_replay)
+        self.assertTrue(token_revoke_replay["idempotentReplay"])
+        self.assertEqual(credential_id, token_revoke_replay["credentialId"])
+        status, _headers, second_token_revoke = call_api(
+            token_revoke_path,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-new-token-revoke-"
+                + uuid.uuid4().hex
+            },
+        )
+        self._assert_error(
+            status,
+            second_token_revoke,
+            409,
+            "agent_token_already_revoked",
+        )
+        self._assert_not_persisted(first_secret, second_secret, redeemed["agentTokenSecret"])
 
     def test_workspace_agent_is_bound_to_name_scope_and_workspace_rooms_only(self):
         provisioned = self._provision_agent()
@@ -658,6 +946,9 @@ class GovernedAgentAccessApiContract:
                 "safeSummary": "Escape Game agent joined the workspace for initial setup.",
             },
             agent_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "agent-access-meeting-message-1"
+            },
         )
         self.assertEqual(201, status, posted)
         self.assertEqual(principal["agentId"], posted["message"]["senderAgentId"])
@@ -672,6 +963,9 @@ class GovernedAgentAccessApiContract:
                 "safeSummary": "This must not be persisted.",
             },
             agent_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "agent-access-impersonation-1"
+            },
         )
         self._assert_error(status, impersonation, 403, "principal_mismatch")
 
@@ -723,6 +1017,9 @@ class GovernedAgentAccessApiContract:
             "POST",
             {},
             self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-token-revoke-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(200, status, revoked)
         self.assertEqual(credential_id, revoked["credentialId"])
@@ -737,7 +1034,13 @@ class GovernedAgentAccessApiContract:
         first = self._provision_agent()
         duplicate_body = self._request_body(display_name="Same Name, Different Display")
         status, _headers, duplicate = call_api(
-            "/api/matm/access/agent-name-requests", "POST", duplicate_body, self.master_token
+            "/api/matm/access/agent-name-requests",
+            "POST",
+            duplicate_body,
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-duplicate-name-" + uuid.uuid4().hex
+            },
         )
         self._assert_error(status, duplicate, 409, "agent_name_unavailable")
 
@@ -750,6 +1053,9 @@ class GovernedAgentAccessApiContract:
             "POST",
             second_request_body,
             second_account["companyMasterTokenSecret"],
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-second-company-request-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(201, status, second_requested)
         second_request_id = second_requested["request"]["requestId"]
@@ -758,6 +1064,9 @@ class GovernedAgentAccessApiContract:
             "POST",
             {"decision": "approve", "decisionReason": "Company-scoped name is available."},
             second_account["companyMasterTokenSecret"],
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "access-second-company-decision-" + uuid.uuid4().hex
+            },
         )
         self.assertEqual(200, status, second_approved)
         status, _headers, second_issue = call_api(
@@ -966,7 +1275,7 @@ class GovernedAgentAccessApiContract:
         headers = {
             "HTTP_COOKIE": "%s=%s" % (HUMAN_SESSION_COOKIE, session["sessionSecret"]),
             "HTTP_X_CSRF_TOKEN": session["csrfToken"],
-            "HTTP_ORIGIN": "https://memoryendpoints.com",
+            "HTTP_ORIGIN": SITE_URL,
             "HTTP_SEC_FETCH_SITE": "same-origin",
             "HTTP_SEC_FETCH_MODE": "cors",
             "HTTP_SEC_FETCH_DEST": "empty",
@@ -983,7 +1292,7 @@ class GovernedAgentAccessApiContract:
         self.assertEqual(200, status, disabled)
         self.assertFalse(disabled["enabled"])
         if self.backend == "sqlite":
-            with sqlite3.connect(self.sqlite_path) as connection:
+            with closing(sqlite3.connect(self.sqlite_path)) as connection:
                 value = connection.execute(
                     "SELECT top_level_agent_master_credential_enabled FROM matm_companies WHERE company_id = ?",
                     (self.company_id,),

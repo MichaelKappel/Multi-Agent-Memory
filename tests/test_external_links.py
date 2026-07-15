@@ -6,6 +6,7 @@ import sqlite3
 import unittest
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from app import application
 from tests.governed_test_support import GovernedAgentProvisioner
@@ -137,6 +138,28 @@ class ExternalLinkTests(unittest.TestCase):
         self.assertEqual(document_id, payload["link"]["mentions"][0]["knowledgeDocumentId"])
         self.assertEqual("Agent Memory Architecture Research.md", payload["link"]["mentions"][0]["sourceReportName"])
         self.assertNotIn("sourceReportName", payload["link"]["metadata"])
+        for key in (
+            "linkQueryUrl",
+            "internetSearchQueryUrl",
+            "knowledgeDocumentLinksQueryUrl",
+        ):
+            self.assertEqual(
+                [setup["workspaceId"]],
+                parse_qs(urlsplit(payload[key]).query)["workspace_id"],
+            )
+        link_readback_url = urlsplit(payload["linkQueryUrl"])
+        status, _headers, text = call_app(
+            link_readback_url.path,
+            headers=agent.auth_headers,
+            query=link_readback_url.query,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertTrue(
+            any(
+                item["externalLinkId"] == payload["canonicalExternalLinkId"]
+                for item in json.loads(text)["items"]
+            )
+        )
 
         status, _headers, text = call_app(
             "/api/matm/internet-search",

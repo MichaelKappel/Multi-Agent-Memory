@@ -129,11 +129,15 @@ def provision_workspace_agent(
 ):
     """Provision one bound workspace agent through the governed invite flow."""
     master_auth = {"HTTP_AUTHORIZATION": "Bearer " + master_token}
+    request_auth = dict(
+        master_auth,
+        HTTP_IDEMPOTENCY_KEY="dogfood-access-request-" + requested_name,
+    )
     status, requested = call_with_retries(
         transport,
         "/api/matm/access/agent-name-requests",
         method="POST",
-        headers=master_auth,
+        headers=request_auth,
         body={
             "requestedName": requested_name,
             "displayName": display_name,
@@ -159,7 +163,10 @@ def provision_workspace_agent(
         transport,
         "/api/matm/access/agent-name-requests/%s/decision" % request_id,
         method="POST",
-        headers=master_auth,
+        headers=dict(
+            master_auth,
+            HTTP_IDEMPOTENCY_KEY="dogfood-access-decision-" + request_id,
+        ),
         body={
             "decision": "approve",
             "decisionReason": "Approved for the bounded enterprise dogfood run.",

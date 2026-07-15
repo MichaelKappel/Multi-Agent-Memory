@@ -130,6 +130,8 @@ class AnonymousProtectedRouteTests(unittest.TestCase):
                     expected_code = (
                         "invalid_request"
                         if human_connector_route
+                        else "invalid_invite"
+                        if route == "/api/matm/access/invites/redeem"
                         else "invalid_token"
                         if route == "/api/matm/me" or route.startswith("/api/matm/connector-pairings/") or route.startswith("/api/matm/access/")
                         else "auth_required"

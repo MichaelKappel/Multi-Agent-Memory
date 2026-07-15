@@ -1,20 +1,38 @@
-MemoryEndpoints.com Notice
+Multi-Agent Memory Notice
 
-Project: MemoryEndpoints.com / Multi-Agent Memory
+Project: Multi-Agent Memory / MATM private-intranet hive
+Public companion site: MultiAgentMemory.com
+Reserved commercial hosted service: MemoryEndpoints.com
 Primary author: Michael Joseph Kappel
-Purpose: Public, source-available reference implementation for Multi-Agent
-Transactive Memory (MATM) endpoints.
+
+Purpose:
+
+This public repository is the free private-intranet MATM edition. It is meant
+to be downloaded, studied, modified, and run by one organization on its own
+private network. MultiAgentMemory.com remains the public GitHub companion
+documentation site for this edition.
+
+Reserved commercial boundary:
+
+MemoryEndpoints.com, public hosted customer accounts, authenticated business
+model surfaces, pricing, billing, subscriptions, overage charging, paid or
+unlimited hosted storage, paid or unlimited NPC memory stores, partner
+sponsorship flows, and customer-facing sales operations belong in a separate
+private commercial repository or deployment. They are not granted for resale or
+public hosted reuse by the public GitHub license.
 
 Attribution requirement:
 
 If you publish screenshots, demos, forks, excerpts, articles, integrations, or
-derived examples based on this repository, identify MemoryEndpoints.com and the
-Multi-Agent Memory project as the source.
+derived examples based on this repository, identify Multi-Agent Memory,
+MultiAgentMemory.com, and the original repository as the source.
 
-No deceptive rebranding:
+No deceptive rebranding or resale:
 
 Do not copy the repository, change the name, remove provenance, and present the
-result as independent original work.
+result as independent original work. Do not offer this repository or a
+substantially similar derivative as a public SaaS, managed service, paid API,
+subscription product, agency platform, or competing hosted memory service.
 
 Standards references:
 

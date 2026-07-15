@@ -1,6 +1,6 @@
 # Route Inventory
 
-The route table below mirrors `memoryendpoints.site_data.ROUTE_TABLE`. The test suite fails when a code route is missing from this document or the companion API reference. The live machine-readable inventory at [`/api/matm/route-inventory`](https://memoryendpoints.com/api/matm/route-inventory) remains authoritative for the deployed revision.
+The route table below mirrors `memoryendpoints.site_data.ROUTE_TABLE`. The test suite fails when a code route is missing from this document or the companion API reference. The machine-readable inventory at `/api/matm/route-inventory` remains authoritative for the deployed private-intranet revision.
 
 Public routes are readable without a durable credential. Connector request,
 body-only authorization-code claim, and exchange routes instead require
@@ -106,6 +106,14 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | --- | --- | --- |
 | `/api/matm/me` | GET | Credential-derived principal, immutable scope, permission, and resource-context introspection. |
 | `/api/matm/access/company-master-credentials` | GET, POST | Company-master metadata inventory plus idempotent registration by an existing company master or enabled company-scoped top-level agent. |
+| `/api/matm/access/scope-catalog` | GET | Company-master-only catalog of company, workspace, project, game, session, goal, and task grant scopes. |
+| `/api/matm/access/agent-name-requests` | GET, POST | List governed name requests or create one with required public-safe idempotent retry semantics. |
+| `/api/matm/access/agent-name-requests/{requestId}/decision` | POST | Approve or deny a governed name request with required public-safe idempotent retry semantics. |
+| `/api/matm/access/invites` | GET, POST | List invitation metadata or issue one non-replayable invitation URL once; issuance forbids Idempotency-Key. |
+| `/api/matm/access/invites/redeem` | POST | Redeem a body-only one-time invitation and reveal one agent credential once; redemption forbids Idempotency-Key. |
+| `/api/matm/access/invites/{inviteId}/revoke` | POST | Revoke an issued invitation with required public-safe idempotent retry semantics. |
+| `/api/matm/access/agent-tokens` | GET | List redacted governed agent-credential metadata for a company master. |
+| `/api/matm/access/agent-tokens/{credentialId}/revoke` | POST | Revoke an agent credential with required public-safe idempotent retry semantics. |
 | `/api/matm/workspace` | GET | Workspace quota and status. |
 | `/api/matm/projects` | GET, POST | Workspace project list and project upsert for company/workspace/project hierarchy. |
 | `/api/matm/knowledge-tree` | GET | Database-backed company/workspace/project wiki tree for humans and agents. |
@@ -141,7 +149,7 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | `/api/matm/search` | GET, POST | Hosted workspace memory search; connectors use exact body-only POST search. |
 | `/api/matm/review-queue` | GET | Memory review and promotion queue readback. |
 | `/api/matm/review-queue/decide` | POST | Idempotent memory promotion, rejection, or quarantine decision. |
-| `/api/matm/meeting-rooms` | GET, POST | Always-present company, workspace, project room discovery plus goal/task room creation. |
+| `/api/matm/meeting-rooms` | GET, POST | Always-present company, workspace, project room discovery plus goal/task/game/session room creation. |
 | `/api/matm/meeting-messages` | GET, POST | Seven-day scoped meeting transcript read and public-safe post creation; durable content requires explicit promotion. |
 | `/api/matm/meeting-messages/promote` | POST | Promote a public-safe meeting transcript message into hosted workspace memory with source linkage. |
 | `/api/matm/meeting-rooms/read` | POST | Meeting room read cursor update for an agent. |

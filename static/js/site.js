@@ -238,7 +238,7 @@
     function buildCompanyMasterCredentialDocument(payload) {
       return {
         schemaVersion: "memoryendpoints.company_master_credential_file.v1",
-        baseUrl: (window.location && window.location.origin) || "https://memoryendpoints.com",
+        baseUrl: (window.location && window.location.origin) || "https://matm-intranet.local",
         companyId: payload.companyId,
         workspaceId: payload.workspaceId,
         companyMasterTokenSecret: payload.companyMasterTokenSecret,
@@ -301,7 +301,7 @@
         return;
       }
       setupSaveKey.disabled = true;
-      setSetupStatus("Select the project root. MemoryEndpoints will create " + setupDefaultSecretPath + " inside it.", false);
+      setSetupStatus("Select the project root. The private MATM intranet will create " + setupDefaultSecretPath + " inside it.", false);
       var projectDirectoryName = "the selected project";
       window.showDirectoryPicker({ mode: "readwrite" }).then(function (projectDirectory) {
         projectDirectoryName = projectDirectory.name || projectDirectoryName;
@@ -425,7 +425,7 @@
         }
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(value).then(function () {
-            setSetupStatus("Company master credential copied. Save it at " + setupDefaultSecretPath + " or in your documented secure alternative; device clipboard history is outside MemoryEndpoints.", false);
+            setSetupStatus("Company master credential copied. Save it at " + setupDefaultSecretPath + " or in your documented secure alternative; device clipboard history is outside the intranet service.", false);
           }).catch(function () {
             setupKey.focus();
             setupKey.select();
@@ -1145,6 +1145,19 @@
       return (number / 1024).toFixed(1) + " KB";
     }
     return number + " B";
+  }
+
+  function formatStorageRemaining(storage, workspace) {
+    if ((storage && storage.unlimited) || (workspace && workspace.storageUnlimited)) {
+      return "unlimited remaining";
+    }
+    if (storage && storage.remainingDisplay === "unlimited") {
+      return "unlimited remaining";
+    }
+    if (workspace && workspace.storageRemainingDisplay === "unlimited") {
+      return "unlimited remaining";
+    }
+    return formatBytes(storage && storage.remainingBytes !== undefined ? storage.remainingBytes : workspace.storageRemainingBytes) + " remaining";
   }
 
   function badgeTargetOptions(options, key) {
@@ -2087,7 +2100,7 @@
     node.appendChild(summaryCard(
       "Storage",
       formatBytes(storage.usedBytes !== undefined ? storage.usedBytes : workspace.storageUsedBytes) + " used",
-      formatBytes(storage.remainingBytes !== undefined ? storage.remainingBytes : workspace.storageRemainingBytes) + " remaining",
+      formatStorageRemaining(storage, workspace),
       [{ text: (storage.quotaExceeded || workspace.quotaExceeded) ? "quota exceeded" : "within quota", kind: (storage.quotaExceeded || workspace.quotaExceeded) ? "warn" : "good" }]
     ));
     node.appendChild(summaryCard("Redaction", (privacy.rawKeyStoredByServer || workspace.rawKeyStoredByServer) ? "Check key handling" : "Key not stored raw", "Values are public-safe", [
@@ -4773,13 +4786,32 @@
     return "neutral";
   }
 
+  function accessIdempotencyKey(action, target) {
+    var cryptoApi = window.crypto || window.msCrypto;
+    var entropy;
+    if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
+      entropy = cryptoApi.randomUUID();
+    } else if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+      var words = new Uint32Array(4);
+      cryptoApi.getRandomValues(words);
+      entropy = Array.prototype.map.call(words, function (word) {
+        return ("00000000" + word.toString(16)).slice(-8);
+      }).join("");
+    } else {
+      throw new Error("Secure retry-key generation is unavailable in this browser.");
+    }
+    return "console-access-" + action + "-" + String(target || "mutation") + "-" + entropy;
+  }
+
   function decideAccessRequest(requestId, decision) {
     if (!hasPermission("canApproveAgentAccess")) {
       return Promise.reject(new Error("This credential cannot approve agent access."));
     }
     accessStatus((decision === "approve" ? "Approving" : "Denying") + " the selected name request…", false);
+    var idempotencyKey = accessIdempotencyKey("decision", requestId + "-" + decision);
     return api("/api/matm/access/agent-name-requests/" + encodeURIComponent(requestId) + "/decision", {
       method: "POST",
+      headers: {"Idempotency-Key": idempotencyKey},
       body: {decision: decision, decisionReason: decision === "approve" ? "Human approval from the authenticated Access workflow." : "Human denial from the authenticated Access workflow."},
     }).then(function () {
       accessReceipt(decision === "approve" ? "Name request approved" : "Name request denied", "The decision was recorded without exposing credential material.", [
@@ -4818,7 +4850,8 @@
       ? "/api/matm/access/agent-tokens/" + encodeURIComponent(id) + "/revoke"
       : "/api/matm/access/invites/" + encodeURIComponent(id) + "/revoke";
     accessStatus("Revoking the selected " + (isToken ? "agent credential" : "invitation") + "…", false);
-    return api(path, {method: "POST"}).then(function () {
+    var idempotencyKey = accessIdempotencyKey(isToken ? "token-revoke" : "invite-revoke", id);
+    return api(path, {method: "POST", headers: {"Idempotency-Key": idempotencyKey}}).then(function () {
       accessReceipt(isToken ? "Agent credential revoked" : "Invitation revoked", "Authority was removed immediately. Inventory remains metadata-only.", [
         {text: "revoked", kind: "warn"},
         {text: "credential hidden", kind: "good"},
@@ -5900,7 +5933,12 @@
       var submit = accessRequestForm.querySelector("button[type='submit']");
       submit.disabled = true;
       accessStatus("Submitting the human-recognizable name and immutable grant for approval…", false);
-      api("/api/matm/access/agent-name-requests", {method: "POST", body: body}).then(function () {
+      var idempotencyKey = accessIdempotencyKey("name-request", body.requestedName);
+      api("/api/matm/access/agent-name-requests", {
+        method: "POST",
+        headers: {"Idempotency-Key": idempotencyKey},
+        body: body,
+      }).then(function () {
         accessRequestForm.reset();
         accessReceipt("Agent-name request created", "The name and immutable scope are awaiting an explicit human decision.", [
           {text: "pending approval", kind: "neutral"},
@@ -5980,7 +6018,7 @@
           summary: memoryForm.elements.summary.value.trim(),
           tags: tags,
           memoryType: "status",
-          source: "MemoryEndpoints.com human verification console",
+          source: "Private MATM intranet human verification console",
         },
       })
         .then(function (payload) {

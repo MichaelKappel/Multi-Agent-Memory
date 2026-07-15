@@ -47,7 +47,7 @@ from .connector_pairing import (
     validate_requested_scopes,
     validate_redirect_uri,
 )
-from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_NAME, SITE_URL, utc_now
+from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_DESCRIPTION, SITE_NAME, SITE_URL, utc_now
 from .credential_guidance import (
     COMPANY_MASTER_DEFAULT_SECRET_PATH,
     company_master_storage_guidance,
@@ -65,12 +65,18 @@ from .runtime import backend_error_code, configured_store_backend, store_backend
 from .security import evaluate_memory_firewall, governed_bearer_token, redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
 from .storage import (
+    _knowledge_tree_from_documents,
+    _normalize_taxonomy_path,
+    _parse_limit,
+    _public_external_link,
     FileStore,
     MySQLStore,
+    NPC_MEETING_SCOPE_TYPES,
     SQLiteStore,
     credential_system_available,
     mysql_config_diagnostics,
     mysql_connection_stage_diagnostics,
+    normalize_project_id,
 )
 from .uai_memory import virtual_uai_contract
 
@@ -80,6 +86,46 @@ LONG_TERM_MEMORY_TAG = "long-term-memory-migration"
 LONG_TERM_MEMORY_SOURCE_PREFIX = "docs/long-term-memory/"
 DEFAULT_CORS_ALLOWED_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-CSRF-Token, X-MemoryEndpoints-Key"
 DEFAULT_CORS_ALLOWED_METHODS = "GET, POST, OPTIONS"
+_ROUTE_PROTECTED_POST_MUTATIONS = frozenset(
+    {
+        "/api/matm/projects",
+        "/api/matm/knowledge-documents",
+        "/api/matm/knowledge-documents/upsert",
+        "/api/matm/external-links",
+        "/api/matm/external-links/upsert",
+        "/api/matm/agents/register",
+        "/api/matm/uai-memory/packages",
+        "/api/matm/uai-memory/records",
+        "/api/matm/uai-memory/edit-claims",
+        "/api/matm/uai-memory/edit-claims/heartbeat",
+        "/api/matm/uai-memory/edit-claims/complete",
+        "/api/matm/uai-memory/edit-claims/release",
+        "/api/matm/memory-events/submit",
+        "/api/matm/review-queue/decide",
+        "/api/matm/meeting-rooms",
+        "/api/matm/meeting-messages",
+        "/api/matm/meeting-messages/promote",
+        "/api/matm/meeting-rooms/read",
+        "/api/matm/routing-decisions",
+        "/api/matm/agent-messages",
+        "/api/matm/notifications/ack",
+        "/api/matm/sync/devices",
+        "/api/matm/sync/devices/rotate",
+        "/api/matm/sync/devices/revoke",
+        "/api/matm/sync/mutations",
+    }
+)
+_IDEMPOTENCY_OPTIONAL_PROTECTED_POST_MUTATIONS = frozenset(
+    {
+        # Deprecated exact company-master LocalEndpoint transition. Connector
+        # self-registration is dispatched earlier and still requires a key.
+        "/api/matm/agents/register",
+    }
+)
+_IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS = (
+    _ROUTE_PROTECTED_POST_MUTATIONS
+    - _IDEMPOTENCY_OPTIONAL_PROTECTED_POST_MUTATIONS
+)
 KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/knowledge/(?:company|workspace|project)/(?:[a-z0-9]+(?:-[a-z0-9]+)*/)*[a-z0-9]+(?:-[a-z0-9]+)*$")
 TOUR_KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/tour/knowledge/(?:company|workspace|project)/(?:[a-z0-9]+(?:-[a-z0-9]+)*/)*[a-z0-9]+(?:-[a-z0-9]+)*$")
 HUMAN_SESSION_COOKIE = "__Host-memoryendpoints-human"
@@ -203,6 +249,64 @@ def _token(environ):
 
 def _idempotency_key(environ):
     return environ.get("HTTP_IDEMPOTENCY_KEY", "").strip()
+
+
+def _validated_idempotency_key_or_problem(environ, start_response, required=True):
+    raw_key = environ.get("HTTP_IDEMPOTENCY_KEY", "")
+    if not raw_key:
+        if not required:
+            return "", None
+        return "", problem(
+            start_response,
+            "422 Unprocessable Entity",
+            "Idempotency key required",
+            "Protected mutations require Idempotency-Key so exact retries cannot create duplicate effects.",
+            "idempotency_key_required",
+        )
+    try:
+        return validate_idempotency_key(raw_key), None
+    except PairingPolicyError:
+        return "", problem(
+            start_response,
+            "422 Unprocessable Entity",
+            "Invalid idempotency key",
+            "Idempotency-Key must be 16 to 200 visible ASCII characters with no surrounding whitespace.",
+            "idempotency_key_invalid",
+        )
+
+
+def _principal_scoped_idempotency_key(auth, key):
+    """Hide the caller key and isolate reservations between principals."""
+    if not key:
+        return ""
+    credential_type = str((auth or {}).get("credentialType") or "unknown")
+    if credential_type == "company_master":
+        principal_id = (auth or {}).get("masterKeyId")
+    elif credential_type == "agent":
+        principal_id = (
+            (auth or {}).get("agentIdentityId")
+            or (auth or {}).get("agentTokenId")
+            or (auth or {}).get("credentialId")
+            or (auth or {}).get("agentId")
+        )
+    else:
+        principal_id = (
+            (auth or {}).get("connectorCredentialId")
+            or (auth or {}).get("credentialId")
+            or (auth or {}).get("pairingId")
+            or (auth or {}).get("agentId")
+        )
+    namespace = {
+        "credentialType": credential_type,
+        "principalId": principal_id or (auth or {}).get("principalName") or "",
+        "companyId": (auth or {}).get("companyId") or "",
+        "workspaceId": (auth or {}).get("workspaceId") or "",
+    }
+    material = "%s\n%s" % (
+        json.dumps(namespace, sort_keys=True, separators=(",", ":")),
+        key,
+    )
+    return "principal-v2-" + hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _connector_json(start_response, data, status="200 OK", headers=None):
@@ -926,6 +1030,7 @@ def _memory_submission_confirmation(store, workspace_id, event):
         "memoryQueryUrl": _protected_query_url(
             "/api/matm/search",
             {
+                "workspace_id": workspace_id,
                 "q": "",
                 "event_id": event.get("eventId"),
                 "scope": event.get("scope"),
@@ -935,7 +1040,10 @@ def _memory_submission_confirmation(store, workspace_id, event):
         ),
         "reviewQueueUrl": _protected_query_url(
             "/api/matm/review-queue",
-            {"status": event.get("reviewStatus") or "pending"},
+            {
+                "workspace_id": workspace_id,
+                "status": event.get("reviewStatus") or "pending",
+            },
         ),
         "valuesRedacted": True,
     }
@@ -971,11 +1079,16 @@ def _knowledge_document_confirmation(store, workspace_id, document):
         "canonicalSourceId": document.get("sourceId"),
         "documentQueryUrl": _protected_query_url(
             "/api/matm/knowledge-documents",
-            {"document_id": document_id, "include_text": "1"},
+            {
+                "workspace_id": workspace_id,
+                "document_id": document_id,
+                "include_text": "1",
+            },
         ),
         "searchQueryUrl": _protected_query_url(
             "/api/matm/knowledge-documents",
             {
+                "workspace_id": workspace_id,
                 "q": document.get("title"),
                 "scope": document.get("scope"),
                 "scope_id": document.get("scopeId"),
@@ -984,7 +1097,11 @@ def _knowledge_document_confirmation(store, workspace_id, document):
         ),
         "treeQueryUrl": _protected_query_url(
             "/api/matm/knowledge-tree",
-            {"scope": document.get("scope"), "scope_id": document.get("scopeId")},
+            {
+                "workspace_id": workspace_id,
+                "scope": document.get("scope"),
+                "scope_id": document.get("scopeId"),
+            },
         ),
         "valuesRedacted": True,
     }
@@ -1006,9 +1123,25 @@ def _external_link_confirmation(store, workspace_id, link, document_id=""):
         "visibleInInternetSearch": bool(persisted_link),
         "visibleOnKnowledgeDocument": visible_on_document,
         "canonicalExternalLinkId": external_link_id,
-        "linkQueryUrl": _protected_query_url("/api/matm/external-links", {"external_link_id": external_link_id}),
-        "internetSearchQueryUrl": _protected_query_url("/api/matm/internet-search", {"q": link.get("pageTitle") or link.get("siteName")}),
-        "knowledgeDocumentLinksQueryUrl": _protected_query_url("/api/matm/external-links", {"document_id": document_id}) if document_id else None,
+        "linkQueryUrl": _protected_query_url(
+            "/api/matm/external-links",
+            {"workspace_id": workspace_id, "external_link_id": external_link_id},
+        ),
+        "internetSearchQueryUrl": _protected_query_url(
+            "/api/matm/internet-search",
+            {
+                "workspace_id": workspace_id,
+                "q": link.get("pageTitle") or link.get("siteName"),
+            },
+        ),
+        "knowledgeDocumentLinksQueryUrl": (
+            _protected_query_url(
+                "/api/matm/external-links",
+                {"workspace_id": workspace_id, "document_id": document_id},
+            )
+            if document_id
+            else None
+        ),
         "valuesRedacted": True,
     }
 
@@ -1043,6 +1176,114 @@ def _external_link_filters(query):
         "scopeId": query.get("scope_id") or query.get("scopeId") or "",
         "taxonomyPath": query.get("taxonomy_path") or query.get("taxonomyPath") or query.get("taxonomy_prefix") or query.get("taxonomyPrefix") or "",
     }
+
+
+def _scope_allowed_cached(store, auth, cache, scope, scope_id):
+    key = (str(scope or "").strip().lower(), str(scope_id or "").strip())
+    if key not in cache:
+        cache[key] = store.auth_allows_scope(auth, key[0], key[1])
+    return cache[key]
+
+
+def _authorized_scope_items(store, auth, items):
+    scope_cache = {}
+    return [
+        item
+        for item in items
+        if _scope_allowed_cached(
+            store, auth, scope_cache, item.get("scope"), item.get("scopeId")
+        )
+    ]
+
+
+def _authorized_external_link_items(store, workspace_id, auth, filters, limit):
+    """Authorize links and their mentions before ranking and pagination."""
+    storage_filters = dict(filters or {})
+    query_text = storage_filters.pop("q", "") or ""
+    # These filters depend on mentions. Applying them in storage before scope
+    # filtering can reveal a link because of a hidden sibling mention.
+    for key in ("documentId", "relationshipType", "scope", "scopeId", "taxonomyPath"):
+        storage_filters.pop(key, None)
+    candidates = store.external_links(
+        workspace_id, storage_filters, limit=limit, _all=True
+    )
+    requested_document_id = (filters or {}).get("documentId") or ""
+    requested_relationship = str(
+        (filters or {}).get("relationshipType") or ""
+    ).strip().lower()
+    requested_scope = str((filters or {}).get("scope") or "").strip().lower()
+    requested_scope_id = (filters or {}).get("scopeId") or ""
+    requested_taxonomy = (filters or {}).get("taxonomyPath") or ""
+    wanted_taxonomy = [
+        segment.lower() for segment in _normalize_taxonomy_path(requested_taxonomy)
+    ]
+    visible_items = []
+    scope_cache = {}
+    for item in candidates:
+        mentions = item.get("mentions") or []
+        visible_mentions = [
+            mention
+            for mention in mentions
+            if _scope_allowed_cached(
+                store,
+                auth,
+                scope_cache,
+                mention.get("scope"),
+                mention.get("scopeId"),
+            )
+        ]
+        if mentions and not visible_mentions:
+            continue
+        if not mentions and not _scope_allowed_cached(
+            store, auth, scope_cache, "workspace", workspace_id
+        ):
+            continue
+        if requested_document_id and not any(
+            mention.get("knowledgeDocumentId") == requested_document_id
+            for mention in visible_mentions
+        ):
+            continue
+        if requested_relationship and not any(
+            str(mention.get("relationshipType") or "").lower()
+            == requested_relationship
+            for mention in visible_mentions
+        ):
+            continue
+        if requested_scope and not any(
+            str(mention.get("scope") or "").lower() == requested_scope
+            for mention in visible_mentions
+        ):
+            continue
+        if requested_scope_id and not any(
+            mention.get("scopeId") == requested_scope_id
+            for mention in visible_mentions
+        ):
+            continue
+        if wanted_taxonomy and not any(
+            any(
+                [
+                    segment.lower()
+                    for segment in _normalize_taxonomy_path(path_label)
+                ][: len(wanted_taxonomy)]
+                == wanted_taxonomy
+                for path_label in mention.get("taxonomyPathLabels") or []
+            )
+            for mention in visible_mentions
+        ):
+            continue
+        visible_item = _public_external_link(item, visible_mentions, query_text)
+        if query_text and not visible_item.get("matchScore"):
+            continue
+        visible_items.append(visible_item)
+    visible_items.sort(
+        key=lambda item: (
+            -int(item.get("matchScore") or 0),
+            item.get("siteName") or "",
+            item.get("pageTitle") or "",
+            item.get("externalLinkId") or "",
+        )
+    )
+    return visible_items[: _parse_limit(limit, 50, 500)]
 
 
 def _external_link_operator_summary(items, filters):
@@ -1124,13 +1365,10 @@ def _resolve_knowledge_scope(store, workspace_id, body):
         return None, "project_id_required"
     projects = {project.get("projectId"): project for project in status.get("projects", [])}
     if project_id not in projects:
-        project_label = body.get("projectLabel") or body.get("project_label") or ""
-        if not project_label:
-            return None, "project_not_found"
-        project, error = store.upsert_project(workspace_id, project_id, project_label, body.get("actorAgentId") or body.get("actor_agent_id") or "system")
-        if error:
-            return None, error
-        projects[project.get("projectId")] = project
+        # Project creation is a separate workspace-authorized mutation. Keeping
+        # scope resolution read-only prevents a knowledge write from creating a
+        # sibling project before its idempotency reservation and authority check.
+        return None, "project_not_found"
     payload["scope"] = "project"
     payload["scopeId"] = project_id
     payload["projectId"] = project_id
@@ -1406,6 +1644,16 @@ def _is_connector_principal(auth):
     )
 
 
+def _principal_scope_type(auth):
+    auth = auth or {}
+    grant = auth.get("grant") if isinstance(auth.get("grant"), dict) else {}
+    return str(
+        auth.get("scopeType")
+        or grant.get("scopeType")
+        or ("company" if auth.get("credentialType") == "company_master" else "")
+    ).strip().lower()
+
+
 def _connector_principal_scopes(auth):
     if not _is_connector_principal(auth):
         return []
@@ -1471,6 +1719,23 @@ def _auth_actor_id(auth):
     if (auth or {}).get("credentialType") == "agent":
         return auth.get("agentId") or ""
     return (auth or {}).get("principalName") or ""
+
+
+def _is_npc_principal(auth):
+    return (
+        (auth or {}).get("credentialType") == "agent"
+        and str((auth or {}).get("agentId") or "").strip().lower().startswith("npc-")
+    )
+
+
+def _npc_meeting_scope_allowed(auth, scope):
+    if not _is_npc_principal(auth):
+        return True
+    return str(scope or "").strip().lower() in NPC_MEETING_SCOPE_TYPES
+
+
+def _npc_room_allowed(auth, room):
+    return _npc_meeting_scope_allowed(auth, (room or {}).get("scope"))
 
 
 def _public_auth_principal(auth):
@@ -1550,6 +1815,8 @@ def _access_problem(start_response, code, detail=None):
         "principal_mismatch": "403 Forbidden",
         "agent_identity_mismatch": "403 Forbidden",
         "insufficient_scope": "403 Forbidden",
+        "npc_scope_forbidden": "403 Forbidden",
+        "npc_game_scope_required": "403 Forbidden",
         "resource_not_found": "404 Not Found",
         "access_request_not_found": "404 Not Found",
         "invite_not_found": "404 Not Found",
@@ -1561,6 +1828,7 @@ def _access_problem(start_response, code, detail=None):
         "scope_not_in_company": "422 Unprocessable Entity",
         "idempotency_key_required": "422 Unprocessable Entity",
         "idempotency_key_invalid": "422 Unprocessable Entity",
+        "idempotency_key_not_allowed": "422 Unprocessable Entity",
         "company_master_candidate_invalid": "422 Unprocessable Entity",
         "company_master_metadata_invalid": "422 Unprocessable Entity",
         "company_master_delegation_invalid": "422 Unprocessable Entity",
@@ -1594,6 +1862,8 @@ def _access_problem(start_response, code, detail=None):
         "principal_mismatch": "The requested acting identity does not match the authenticated principal.",
         "agent_identity_mismatch": "The requested agent identity does not match the connector credential's exact agent grant.",
         "insufficient_scope": "The requested resource is outside the credential's immutable grant scope.",
+        "npc_scope_forbidden": "NPC credentials may only be issued at project, game, or session scope.",
+        "npc_game_scope_required": "NPC-to-NPC communication is allowed only inside game or session meeting rooms.",
         "resource_not_found": "No matching resource is visible to the authenticated principal.",
         "invalid_invite": "The one-time invitation is invalid.",
         "invite_unavailable": "The one-time invitation is unavailable.",
@@ -1604,6 +1874,7 @@ def _access_problem(start_response, code, detail=None):
         "workspace_not_found": "The selected workspace was not found in the authenticated company.",
         "idempotency_key_required": "A high-entropy Idempotency-Key header is required.",
         "idempotency_key_invalid": "The Idempotency-Key header is invalid.",
+        "idempotency_key_not_allowed": "One-time invitation issue and redemption operations do not accept Idempotency-Key because their raw secret responses are never persisted or replayed.",
         "idempotency_conflict": "The Idempotency-Key was already used for a different company-master credential request.",
         "company_master_candidate_invalid": "The candidate must be a newly generated company-master credential in the published v1 format.",
         "company_master_metadata_invalid": "The company-master label and principal name must be printable text from 1 through 80 characters.",
@@ -1926,7 +2197,7 @@ def html_page(title, main, extra_head="", extra_scripts="", script_nonce=""):
             "@type": "WebSite",
             "name": SITE_NAME,
             "url": SITE_URL,
-            "description": "Pure MATM Multi-Agent Transactive Memory endpoint reference implementation.",
+            "description": SITE_DESCRIPTION,
             "version": __version__,
         },
         sort_keys=True,
@@ -1939,8 +2210,8 @@ def html_page(title, main, extra_head="", extra_scripts="", script_nonce=""):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title} | MemoryEndpoints.com</title>
-  <meta name="description" content="Pure MATM Multi-Agent Transactive Memory endpoint reference implementation.">
+  <title>{title} | {site_name}</title>
+  <meta name="description" content="{site_description}">
   <link rel="stylesheet" href="/static/css/site.css?v={asset_version}">
   {extra_head}
   <script type="application/ld+json"{nonce_attribute}>{json_ld}</script>
@@ -1948,9 +2219,9 @@ def html_page(title, main, extra_head="", extra_scripts="", script_nonce=""):
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="MemoryEndpoints home">
+    <a class="brand" href="/" aria-label="{site_name} home">
       <img src="/static/img/memory-endpoints-mark.svg" alt="" width="36" height="36">
-      <span class="brand-name"><strong>Memory</strong>Endpoints<span class="brand-tld">.com</span></span>
+      <span class="brand-name"><strong>{site_name}</strong></span>
     </a>
     <button class="site-nav-toggle" type="button" aria-expanded="false" aria-controls="site-navigation" data-site-nav-toggle>
       <span class="site-nav-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -1979,13 +2250,15 @@ def html_page(title, main, extra_head="", extra_scripts="", script_nonce=""):
   </header>
   <main id="main-content">{main}</main>
   <footer>
-    <p>Source-available MATM endpoint reference. No certification, endorsement, or hidden authority claim is implied.</p>
+    <p>Free private-intranet MATM hive reference. No resale, certification, endorsement, or hidden authority claim is implied.</p>
   </footer>
   <script src="/static/js/site.js?v={asset_version}"></script>
   {extra_scripts}
 </body>
 </html>""".format(
         title=escape_html(title),
+        site_name=escape_html(SITE_NAME),
+        site_description=escape_html(SITE_DESCRIPTION),
         main=main,
         json_ld=json_ld,
         nonce_attribute=nonce_attribute,
@@ -2590,32 +2863,75 @@ def _routing_decision_confirmation(store, workspace_id, decision, message, sourc
     message = message or {}
     source_room = source_room or {}
     room_id = decision.get("sourceRoomId") or source_room.get("roomId") or message.get("roomId")
+    coordinator_agent_id = decision.get("coordinatorAgentId") or ""
     routed_agent_id = decision.get("routedAgentId") or ""
     decisions = store.routing_decisions(workspace_id, {"routedAgentId": routed_agent_id, "destinationRoomId": decision.get("destinationRoomId")}, 200)
-    visible_decision = any(item.get("routingDecisionId") == decision.get("routingDecisionId") for item in decisions)
-    _room, messages, _read_state = store.meeting_messages(workspace_id, room_id, routed_agent_id, 200)
-    visible_message = any(item.get("meetingMessageId") == message.get("meetingMessageId") for item in messages)
+    routed_agent_authorized = store.agent_has_scope(
+        workspace_id,
+        routed_agent_id,
+        decision.get("destinationScope"),
+        decision.get("destinationScopeId"),
+    )
+    visible_decision = routed_agent_authorized and any(
+        item.get("routingDecisionId") == decision.get("routingDecisionId")
+        for item in decisions
+    )
+    _room, messages, _read_state = store.meeting_messages(workspace_id, room_id, coordinator_agent_id, 200)
+    visible_source_message = any(item.get("meetingMessageId") == message.get("meetingMessageId") for item in messages)
     return {
-        "persisted": visible_decision and visible_message,
-        "visibleToRoutedAgent": visible_decision and visible_message,
+        "persisted": visible_decision and visible_source_message,
+        "visibleToRoutedAgent": visible_decision,
         "canonicalRoutingDecisionId": decision.get("routingDecisionId"),
         "canonicalRoomId": room_id,
         "destinationRoomId": decision.get("destinationRoomId"),
         "messageId": message.get("meetingMessageId"),
         "routingDecisionQueryUrl": _protected_query_url(
             "/api/matm/routing-decisions",
-            {"routed_agent_id": routed_agent_id, "destination_room_id": decision.get("destinationRoomId")},
+            {
+                "workspace_id": workspace_id,
+                "routed_agent_id": routed_agent_id,
+                "destination_room_id": decision.get("destinationRoomId"),
+            },
         ),
         "transcriptQueryUrl": _protected_query_url(
             "/api/matm/meeting-messages",
-            {"room_id": room_id, "agent_id": routed_agent_id},
+            {
+                "workspace_id": workspace_id,
+                "room_id": room_id,
+                "agent_id": coordinator_agent_id,
+            },
         ),
         "destinationTranscriptQueryUrl": _protected_query_url(
             "/api/matm/meeting-messages",
-            {"room_id": decision.get("destinationRoomId"), "agent_id": routed_agent_id},
+            {
+                "workspace_id": workspace_id,
+                "room_id": decision.get("destinationRoomId"),
+                "agent_id": routed_agent_id,
+            },
         ),
         "valuesRedacted": True,
     }
+
+
+def _routing_decision_visible_to_auth(store, workspace_id, auth, decision, rooms):
+    source_room = rooms.get(decision.get("sourceRoomId")) or {}
+    destination_room = rooms.get(decision.get("destinationRoomId")) or {}
+    return bool(
+        (
+            source_room
+            and store.auth_allows_scope(
+                auth, source_room.get("scope"), source_room.get("scopeId")
+            )
+        )
+        or (
+            destination_room
+            and store.auth_allows_scope(
+                auth,
+                destination_room.get("scope"),
+                destination_room.get("scopeId"),
+            )
+        )
+    )
 
 
 def _audit_log_operator_summary(items, filters):
@@ -2682,51 +2998,127 @@ def _review_decision_operator_summary(review):
     }
 
 
+def _workspace_status_for_auth(store, auth, workspace):
+    """Remove hierarchy and sibling resources from lower-scoped readback."""
+    if not workspace or _principal_scope_type(auth) not in ("project", "game", "session", "goal", "task"):
+        return workspace
+
+    visible_projects = [
+        dict(project)
+        for project in workspace.get("projects") or []
+        if store.auth_allows_scope(auth, "project", project.get("projectId"))
+    ]
+    visible_rooms = [
+        dict(room)
+        for room in workspace.get("meetingRooms") or []
+        if store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId"))
+        and _npc_room_allowed(auth, room)
+    ]
+    scope_type = _principal_scope_type(auth)
+    grant = auth.get("grant") if isinstance(auth.get("grant"), dict) else {}
+    return {
+        "workspaceId": workspace.get("workspaceId"),
+        "label": workspace.get("label"),
+        "primaryProjectId": (
+            visible_projects[0].get("projectId") if len(visible_projects) == 1 else None
+        ),
+        "meetingRooms": visible_rooms,
+        "projects": visible_projects,
+        "plan": workspace.get("plan"),
+        "status": workspace.get("status"),
+        "billingStatus": workspace.get("billingStatus"),
+        "checkoutRequired": bool(workspace.get("checkoutRequired")),
+        "storageLimitBytes": workspace.get("storageLimitBytes") or 0,
+        "storageLimitDisplay": workspace.get("storageLimitDisplay") or "",
+        "storageUsedBytes": workspace.get("storageUsedBytes") or 0,
+        "storageRemainingBytes": workspace.get("storageRemainingBytes"),
+        "storageRemainingDisplay": workspace.get("storageRemainingDisplay") or "",
+        "storageUnlimited": bool(workspace.get("storageUnlimited")),
+        "storageQuotaEnforced": bool(workspace.get("storageQuotaEnforced")),
+        "quotaExceeded": bool(workspace.get("quotaExceeded")),
+        "npcMemoryUnlimited": bool(workspace.get("npcMemoryUnlimited")),
+        "planEntitlement": workspace.get("planEntitlement") or {},
+        "rawKeyStoredByServer": bool(workspace.get("rawKeyStoredByServer")),
+        "hierarchyRedacted": True,
+        "authorizedScope": {
+            "scopeType": scope_type,
+            "scopeId": auth.get("scopeId") or grant.get("scopeId") or "",
+        },
+    }
+
+
 def _workspace_operator_summary(workspace):
     workspace = workspace or {}
-    accounts = workspace.get("accounts") or []
-    account = accounts[0] if accounts else {}
-    company = workspace.get("company") or {}
     projects = workspace.get("projects") or []
-    project = projects[0] if projects else {}
     meeting_rooms = workspace.get("meetingRooms") or []
-    hierarchy = [
-        {
-            "level": "account",
-            "id": account.get("accountId") or workspace.get("accountId") or "",
-            "label": account.get("label") or workspace.get("accountId") or "",
-            "status": account.get("status") or "active",
-            "role": account.get("role") or "owner",
-        },
-        {
-            "level": "company",
-            "id": company.get("companyId") or workspace.get("companyId") or "",
-            "label": company.get("label") or workspace.get("companyId") or "",
-            "status": company.get("status") or "active",
-        },
-        {
-            "level": "workspace",
-            "id": workspace.get("workspaceId") or "",
-            "label": workspace.get("label") or workspace.get("workspaceId") or "",
-            "status": workspace.get("status") or "active",
-            "plan": workspace.get("plan") or "",
-        },
-        {
-            "level": "project",
-            "id": project.get("projectId") or workspace.get("primaryProjectId") or "",
-            "label": project.get("label") or workspace.get("primaryProjectId") or "",
-            "status": project.get("status") or "active",
-        },
-    ]
-    return {
+    hierarchy_redacted = bool(workspace.get("hierarchyRedacted"))
+    if hierarchy_redacted:
+        hierarchy = [
+            {
+                "level": "workspace",
+                "id": workspace.get("workspaceId") or "",
+                "label": workspace.get("label") or workspace.get("workspaceId") or "",
+                "status": workspace.get("status") or "active",
+                "plan": workspace.get("plan") or "",
+            }
+        ]
+        hierarchy.extend(
+            {
+                "level": "project",
+                "id": project.get("projectId") or "",
+                "label": project.get("label") or project.get("projectId") or "",
+                "status": project.get("status") or "active",
+            }
+            for project in projects
+        )
+    else:
+        accounts = workspace.get("accounts") or []
+        account = accounts[0] if accounts else {}
+        company = workspace.get("company") or {}
+        project = projects[0] if projects else {}
+        hierarchy = [
+            {
+                "level": "account",
+                "id": account.get("accountId") or workspace.get("accountId") or "",
+                "label": account.get("label") or workspace.get("accountId") or "",
+                "status": account.get("status") or "active",
+                "role": account.get("role") or "owner",
+            },
+            {
+                "level": "company",
+                "id": company.get("companyId") or workspace.get("companyId") or "",
+                "label": company.get("label") or workspace.get("companyId") or "",
+                "status": company.get("status") or "active",
+            },
+            {
+                "level": "workspace",
+                "id": workspace.get("workspaceId") or "",
+                "label": workspace.get("label") or workspace.get("workspaceId") or "",
+                "status": workspace.get("status") or "active",
+                "plan": workspace.get("plan") or "",
+            },
+            {
+                "level": "project",
+                "id": project.get("projectId") or workspace.get("primaryProjectId") or "",
+                "label": project.get("label") or workspace.get("primaryProjectId") or "",
+                "status": project.get("status") or "active",
+            },
+        ]
+    summary = {
         "schemaVersion": "memoryendpoints.workspace_operator_summary.v1",
         "hierarchy": hierarchy,
         "hierarchyReady": all(item.get("id") for item in hierarchy),
         "storage": {
             "limitBytes": workspace.get("storageLimitBytes") or 0,
+            "limitDisplay": workspace.get("storageLimitDisplay") or "",
             "usedBytes": workspace.get("storageUsedBytes") or 0,
-            "remainingBytes": workspace.get("storageRemainingBytes") or 0,
+            "remainingBytes": workspace.get("storageRemainingBytes"),
+            "remainingDisplay": workspace.get("storageRemainingDisplay") or "",
+            "unlimited": bool(workspace.get("storageUnlimited")),
+            "quotaEnforced": bool(workspace.get("storageQuotaEnforced")),
             "quotaExceeded": bool(workspace.get("quotaExceeded")),
+            "billingStatus": workspace.get("billingStatus") or "",
+            "npcMemoryUnlimited": bool(workspace.get("npcMemoryUnlimited")),
         },
         "privacy": {
             "workspaceKeyEchoed": False,
@@ -2747,6 +3139,10 @@ def _workspace_operator_summary(workspace):
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
     }
+    if hierarchy_redacted:
+        summary["hierarchyRedacted"] = True
+        summary["authorizedScope"] = workspace.get("authorizedScope") or {}
+    return summary
 
 
 def _free_account_setup_operator_summary(account_id, company_id, workspace_id, project_id):
@@ -2779,15 +3175,15 @@ def route_home(start_response):
     body = """
 <section class="hero">
   <div>
-    <p class="eyebrow">Shared memory infrastructure for AI teams</p>
-    <h1>Give every agent the right memory, in the right boundary.</h1>
-    <p class="lead">A practical MATM operator surface for durable workspace memory, current messages, redacted receipts, and AI-ready knowledge.</p>
+    <p class="eyebrow">Private-network memory for AI teams</p>
+    <h1>Run a single-company MATM hive inside your own boundary.</h1>
+    <p class="lead">A free intranet reference for durable workspace memory, current messages, redacted receipts, and AI-ready knowledge without public hosted sales features.</p>
     <div class="actions">
       <a class="button primary" href="/tour">Try the interactive demo</a>
       <a class="button" href="/agent-setup">Create agent workspace</a>
       <a class="button" href="/console">Open human console</a>
     </div>
-    <p class="hero-note"><strong>No sign-in needed for the demo.</strong> It uses the real authenticated interface with clearly labeled, session-only mock data.</p>
+    <p class="hero-note"><strong>No sign-in needed for the demo.</strong> It uses the real authenticated interface with clearly labeled, session-only mock data. Production use is intended for a trusted private network.</p>
   </div>
   <aside class="home-status" aria-label="Operational entry points">
     <p class="eyebrow">Operational Surface</p>
@@ -2813,7 +3209,7 @@ def route_home(start_response):
   <article>
     <p class="eyebrow">Ownership hierarchy</p>
     <h2>One account can work across durable team boundaries</h2>
-    <p>People belong to an account and company. A company owns workspaces; each workspace owns projects. Durable knowledge and memory stay inside the authorized company, workspace, or project boundary.</p>
+    <p>People belong to one internal account and company. That company owns workspaces; each workspace owns projects. Durable knowledge and memory stay inside the authorized company, workspace, or project boundary.</p>
     <ol class="hierarchy-list">
       <li><strong>Account</strong><span>human membership</span></li>
       <li><strong>Company</strong><span>organization boundary</span></li>
@@ -2824,7 +3220,7 @@ def route_home(start_response):
   <article>
     <p class="eyebrow">Memory boundary</p>
     <h2>Local continuity plus protected durable memory</h2>
-    <p>Local <code>.uai</code> files remain the agent's active startup memory. MemoryEndpoints adds protected mid- and long-term memory, review, meetings, current messages, receipts, and searchable wiki knowledge. Routine audit logs remain human-only for seven days and never enter agent context. Hosted memory augments local continuity; it never silently replaces it.</p>
+    <p>Local <code>.uai</code> files remain the agent's active startup memory. The intranet MATM service adds protected mid- and long-term memory, review, meetings, current messages, receipts, and searchable wiki knowledge. Routine audit logs remain human-only for seven days and never enter agent context. Hosted memory augments local continuity; it never silently replaces it.</p>
     <p><a href="https://uaix.org">UAIX.org</a> provides portable setup guidance. <a href="{companion_docs_url}">MultiAgentMemory.com</a> and the <a href="{github_repo_url}">GitHub companion repository</a> explain this implementation.</p>
   </article>
 </section>
@@ -2836,7 +3232,7 @@ def route_docs(start_response):
     body = """
 <section class="page">
   <h1>Documentation</h1>
-  <p>MemoryEndpoints follows an AI-ready web model: human-first pages, deterministic discovery files, safe APIs, bounded capability claims, privacy-preserving receipts, and validation evidence.</p>
+  <p>This private MATM intranet follows an AI-ready web model: human-first pages, deterministic discovery files, safe APIs, bounded capability claims, privacy-preserving receipts, and validation evidence.</p>
   <h2>Companion documentation</h2>
   <p><a href="{companion_docs_url}">MultiAgentMemory.com</a> is the public GitHub companion documentation site. It explains how the repository, `.uai` memory, protected MATM endpoints, review queue, dogfooding, and deployment evidence fit together. The source repository is <a href="{github_repo_url}">MichaelKappel/Multi-Agent-Memory</a>.</p>
   <h2>Discovery routes</h2>
@@ -3124,7 +3520,7 @@ def route_agent_setup(start_response):
 <section class="page">
   <header class="setup-heading">
     <p class="eyebrow">Secure workspace onboarding</p>
-    <h1>Start using MemoryEndpoints</h1>
+    <h1>Start using the private MATM intranet</h1>
     <p class="lead">Autonomous agents can create a bounded Account, Company, Workspace, and Project with no human interaction. Optional human access and governed invitation flows remain available for human-only controls.</p>
   </header>
   <section class="setup-onboarding" data-agent-setup data-agent-setup-available="__SETUP_AVAILABLE__" data-company-master-default-path="__COMPANY_MASTER_DEFAULT_SECRET_PATH__">
@@ -3132,7 +3528,7 @@ def route_agent_setup(start_response):
       <article class="setup-card setup-card-primary">
         <p class="setup-step">New workspace</p>
         <h2>Create a free 200 MB workspace</h2>
-        <p>MemoryEndpoints returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier. Setup is not complete until the credential file exists.</p>
+        <p>The intranet service returns one company master credential. It stays on this page only until you leave or refresh, and the server stores only a verifier. Setup is not complete until the credential file exists.</p>
         <div class="setup-boundary-note setup-credential-location" data-company-master-storage-guidance>
           <strong>The setup workflow must create this file</strong>
           <span>For browser setup, use <strong>Save to project secret folder</strong> after creation and select the project root. For agent-driven setup, use <code>scripts/setup_memoryendpoints_company.py</code>; it writes <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code> without printing the credential. Keep <code>.local-secrets/</code> out of source control.</span>
@@ -3147,7 +3543,7 @@ def route_agent_setup(start_response):
         <a class="setup-guide-link" href="/agent-coordination">Read the agent coordination guide</a>
         <div class="setup-boundary-note">
           <strong>Local memory remains local</strong>
-          <span>Your active <code>.uai</code> files stay on your device. Hosted MemoryEndpoints memory adds protected, durable team context.</span>
+          <span>Your active <code>.uai</code> files stay on your device. Private MATM memory adds protected, durable team context.</span>
         </div>
       </article>
     </div>
@@ -3285,7 +3681,7 @@ def route_agent_coordination(start_response):
     body = """
   <section class="page">
   <h1>Agent Coordination Quickstart</h1>
-  <p>This is the shortest public path from a governed agent credential to a useful MATM coordination loop. Autonomous setup and ordinary agent work require no human interaction. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in MemoryEndpoints, and use meeting rooms for durable multi-agent coordination.</p>
+  <p>This is the shortest local path from a governed agent credential to a useful MATM coordination loop. Autonomous setup and ordinary agent work require no human interaction. Keep the local <code>.uai</code> startup memory active, store long-term public-safe memory in the private MATM service, and use meeting rooms for durable multi-agent coordination.</p>
     <p>An autonomous setup agent may use its company master to approve a meaningful company-scoped agent name, issue a one-time invite, and redeem it once. The returned agent credential is bound to that identity and immutable scope. Authenticated human approval remains an optional alternative for human-only controls. LocalEndpoint Connect uses <a href="/.well-known/memoryendpoints-connector">connector pairing discovery</a> and retains its narrower approval boundary.</p>
     <h2>Find Credentials Safely</h2>
     <p>Agent Setup creates the company master credential and shows it once. Agent-driven setup uses <code>scripts/setup_memoryendpoints_company.py</code> and verifies <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>. If that file is missing, <code>scripts/recover_memoryendpoints_company_master.py</code> can stage, register, verify, and atomically promote a replacement without printing it. Use <code>MEMORYENDPOINTS_AGENT_TOKEN</code> for a company-scoped top-level agent, or use <code>MEMORYENDPOINTS_COMPANY_MASTER_TOKEN</code> when <code>/api/matm/me</code> reports <code>credentialType=company_master</code>. Lower-scoped, connector, and disposable agents cannot use this route and must ask a top-level agent or human administrator. Keep the secret mount unavailable to them through an OS identity or vault boundary; do not scan outside configured paths or request the raw credential in chat.</p>
@@ -3465,7 +3861,7 @@ def route_console(start_response, demo=False):
     <div>
       <p class="eyebrow">Operator console</p>
       <h1>Human Verification Console</h1>
-      <p>Load a governed credential, verify its bound identity and immutable scope, then operate only within the permissions returned by MemoryEndpoints.</p>
+      <p>Load a governed credential, verify its bound identity and immutable scope, then operate only within the permissions returned by the private MATM service.</p>
     </div>
     <aside class="operator-guardrails" aria-label="Console guardrails">
       <span class="status-badge neutral" data-console-surface-badge>Surface pending</span>
@@ -3522,7 +3918,7 @@ def route_console(start_response, demo=False):
       </select>
     </label>
     <button class="button primary" type="submit">Open selected workspace</button>
-    <p>Company masters must explicitly select a workspace. MemoryEndpoints never infers the first workspace.</p>
+    <p>Company masters must explicitly select a workspace. The intranet service never infers the first workspace.</p>
   </form>
   <div class="console-status" role="status" aria-live="polite" aria-atomic="true" data-console-status>Waiting for a governed credential.</div>
   <div class="console-command-bar" data-console-command-bar aria-label="Loaded workspace commands">
@@ -3609,7 +4005,7 @@ def route_console(start_response, demo=False):
           <input name="requestedName" autocomplete="off" placeholder="memoryendpoints-frontend-agent" required>
         </label>
         <label>Display name
-          <input name="displayName" autocomplete="off" placeholder="MemoryEndpoints Frontend Agent" required>
+          <input name="displayName" autocomplete="off" placeholder="Intranet Frontend Agent" required>
         </label>
         <label class="wide">Immutable grant
           <select name="scopeKey" required data-console-access-scope-select>
@@ -4119,7 +4515,7 @@ def route_console(start_response, demo=False):
         <input name="targetAgentId" placeholder="blank means every agent">
       </label>
       <label class="wide">Safe summary
-        <textarea name="safeSummary" rows="3" required>Hello MemoryEndpoints agents: please confirm this workspace memory and message lane are readable from the human console.</textarea>
+        <textarea name="safeSummary" rows="3" required>Hello MATM intranet agents: please confirm this workspace memory and message lane are readable from the human console.</textarea>
       </label>
       <label class="checkline">
         <input type="checkbox" name="responseRequired" checked>
@@ -4328,7 +4724,7 @@ def route_memory_lifecycle(start_response):
   <ol>
     <li>The full <code>.uai/</code> suite is active startup memory; <code>.uai/startup-packet.uai</code> defines the read order.</li>
     <li>File handoff enters <code>agent-file-handoff/Content</code> or <code>agent-file-handoff/Improvement</code>.</li>
-    <li>Reviewed durable strategy is dogfooded into hosted MemoryEndpoints workspace memory once MySQL is verified.</li>
+    <li>Reviewed durable strategy is dogfooded into private workspace memory once relational storage is verified.</li>
     <li>Current messages are read through <code>/api/matm/current-message</code> and acknowledged through <code>/api/matm/notifications/ack</code>.</li>
     <li>Production database persistence requires the live MySQL/MariaDB backend to connect and pass protected workflow verification.</li>
   </ol>
@@ -4366,12 +4762,12 @@ def text_discovery(name):
     matrix = capability_matrix()
     lines = [
         SITE_NAME,
-        "Purpose: pure MATM Multi-Agent Transactive Memory endpoint reference.",
+        "Purpose: %s" % SITE_DESCRIPTION,
         "Live public routes: " + ", ".join(matrix["publicRoutes"]),
         "Protected MATM routes: " + ", ".join(matrix["protectedRoutes"]),
         "Companion documentation: %s." % COMPANION_DOCS_URL,
         "Source repository: %s." % GITHUB_REPO_URL,
-        "Memory boundary: hosted workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
+        "Memory boundary: private workspace memory and database-backed knowledge wiki for protected search; local files remain startup and migration evidence.",
         "Agent coordination quickstart: /agent-coordination.",
         "Company master storage: /agent-setup creates and shows it once; displaying the path does not create the file. Browser setup uses Save to project secret folder, and agent-driven setup uses scripts/setup_memoryendpoints_company.py and verifies <project-root>/%s exists. Keep .local-secrets/ outside source control." % COMPANY_MASTER_DEFAULT_SECRET_PATH,
         "Missing company master: an authenticated credentialType=company_master agent may use scripts/recover_memoryendpoints_company_master.py with an explicitly configured source to stage and register a new sibling without printing it. Otherwise stop safely; never scan outside configured paths. Normal and disposable agents remain denied, and shared unrestricted filesystems require separate OS/vault secret isolation.",
@@ -4605,7 +5001,7 @@ def route_admin_mysql_diagnostics(environ, start_response):
     return json_response(start_response, payload)
 
 
-def route_setup(environ, start_response):
+def route_setup(environ, start_response, path="/api/matm/agent-setup/free-account"):
     method = environ["REQUEST_METHOD"]
     if method == "GET":
         return json_response(
@@ -4615,7 +5011,11 @@ def route_setup(environ, start_response):
                 "site": SITE_NAME,
                 "route": "/api/matm/agent-setup/free-account",
                 "method": "POST",
+                "plan": "free_agent",
+                "billingStatus": "free",
                 "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+                "storageUnlimited": False,
+                "npcMemoryUnlimited": False,
                 "hierarchy": {
                     "account": "identity or owner boundary",
                     "company": "organization boundary; accounts and companies are many-to-many through memberships",
@@ -4628,6 +5028,7 @@ def route_setup(environ, start_response):
                 "credentialSystemAvailable": credential_system_available(),
                 "idempotencySupported": False,
                 "checkoutRequired": False,
+                "setupCredentialRequired": False,
             },
         )
     if method != "POST":
@@ -4665,7 +5066,8 @@ def route_setup(environ, start_response):
             return problem(start_response, "422 Unprocessable Entity", "Setup label too long", "%s must be at most 120 characters." % canonical_name, "setup_label_too_long")
         setup_labels[canonical_name] = value
     try:
-        workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret = _store().create_free_account(
+        setup_store = _store()
+        workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret = setup_store.create_free_account(
             setup_labels["label"],
             setup_labels["companyLabel"],
             setup_labels["projectLabel"],
@@ -4710,7 +5112,11 @@ def route_setup(environ, start_response):
                 "workspaceToProject": True,
             },
             "storeCredentialSafely": True,
+            "plan": "free_agent",
+            "billingStatus": "free",
             "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+            "storageUnlimited": False,
+            "npcMemoryUnlimited": False,
             "checkoutRequired": False,
             "idempotencySupported": False,
             "operatorSummary": _free_account_setup_operator_summary(account_id, company_id, workspace_id, project_id),
@@ -4720,15 +5126,170 @@ def route_setup(environ, start_response):
 
 
 def _idempotency_replay_or_conflict(
-    store, start_response, workspace_id, key, operation, body, headers=None
+    store,
+    environ,
+    start_response,
+    workspace_id,
+    key,
+    operation,
+    body,
+    headers=None,
 ):
-    replay = store.check_idempotency(workspace_id, key, operation, body)
+    replay = store.claim_idempotency(workspace_id, key, operation, body)
     if not replay:
+        return None
+    if replay.pop("_idempotencyClaimed", False):
+        environ.setdefault("memoryendpoints.idempotencyClaims", []).append(
+            {
+                "store": store,
+                "workspaceId": workspace_id,
+                "key": key,
+                "operation": operation,
+                "claimId": replay.get("_claimId"),
+                "mutationStarted": False,
+                "finalized": False,
+            }
+        )
         return None
     if replay.get("status") == "idempotency_conflict":
         return json_response(start_response, replay, "409 Conflict", headers=headers)
     replay_status = replay.pop("_httpStatus", "200 OK")
     return json_response(start_response, replay, replay_status, headers=headers)
+
+
+class _IdempotencyFinalizationError(RuntimeError):
+    pass
+
+
+def _request_idempotency_claim(
+    environ, store, workspace_id, key, operation
+):
+    for claim in reversed(
+        environ.get("memoryendpoints.idempotencyClaims", [])
+    ):
+        if (
+            claim.get("store") is store
+            and claim.get("workspaceId") == workspace_id
+            and claim.get("key") == key
+            and claim.get("operation") == operation
+        ):
+            return claim
+    return None
+
+
+def _mark_idempotent_mutation_started(
+    environ, store, workspace_id, key, operation
+):
+    if not key:
+        return
+    claim = _request_idempotency_claim(
+        environ, store, workspace_id, key, operation
+    )
+    if claim is None:
+        raise _IdempotencyFinalizationError(
+            "Mutation started without an owned idempotency claim."
+        )
+    claim["mutationStarted"] = True
+
+
+def _record_request_idempotency(
+    store,
+    environ,
+    workspace_id,
+    key,
+    operation,
+    body,
+    response_payload,
+    http_status="200 OK",
+):
+    if not key:
+        return True
+    claim = _request_idempotency_claim(
+        environ, store, workspace_id, key, operation
+    )
+    if claim is None:
+        raise _IdempotencyFinalizationError(
+            "Idempotency finalization has no owned claim."
+        )
+    try:
+        finalized = store.record_idempotency(
+            workspace_id,
+            key,
+            operation,
+            body,
+            response_payload,
+            http_status,
+            claim_id=claim.get("claimId"),
+        )
+    except Exception as exc:
+        raise _IdempotencyFinalizationError(
+            "Idempotency finalization failed after mutation."
+        ) from exc
+    if not finalized:
+        raise _IdempotencyFinalizationError(
+            "Idempotency claim ownership changed before finalization."
+        )
+    claim["finalized"] = True
+    return True
+
+
+def _release_request_idempotency_claims(environ):
+    claims = environ.pop("memoryendpoints.idempotencyClaims", [])
+    for claim in reversed(claims):
+        if (
+            claim.get("finalized")
+            or claim.get("mutationStarted")
+            or claim.get("outcomeUncertain")
+        ):
+            continue
+        try:
+            claim["store"].release_idempotency_claim(
+                claim["workspaceId"],
+                claim["key"],
+                claim["operation"],
+                claim["claimId"],
+            )
+        except Exception:
+            # Cleanup failure leaves the reservation durable and fail-closed.
+            # It requires operator reconciliation; never discard it on a timer
+            # or replace the original safe response with cleanup diagnostics.
+            continue
+
+
+def _preserve_uncertain_request_idempotency_claims(environ):
+    """Keep every owned, unfinished claim durable after an exception."""
+    preserved = False
+    for claim in environ.get("memoryendpoints.idempotencyClaims", []):
+        if claim.get("finalized"):
+            continue
+        claim["outcomeUncertain"] = True
+        preserved = True
+    return preserved
+
+
+def _idempotency_uncertain_response(start_response):
+    return json_response(
+        start_response,
+        {
+            "ok": False,
+            "safeNoOp": False,
+            "outcomeUncertain": True,
+            "idempotencyKeyReserved": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+            "error": {
+                "code": "idempotency_finalization_uncertain",
+                "title": "Mutation outcome is still being finalized",
+                "detail": "The mutation may have committed, so this idempotency key remains reserved. Retry the exact request later; the server will not repeat the effect while finalization is uncertain.",
+                "safeNoOp": False,
+                "outcomeUncertain": True,
+                "valuesRedacted": True,
+            },
+        },
+        "503 Service Unavailable",
+        headers=[("Retry-After", "5")],
+    )
 
 
 def _audit_read(store, workspace_id, auth, action, route, details=None):
@@ -4836,6 +5397,20 @@ def _uai_error_response(start_response, code, details=None):
 _ACCESS_REQUEST_DECISION_ROUTE = re.compile(r"^/api/matm/access/agent-name-requests/([^/]+)/decision$")
 _ACCESS_INVITE_REVOKE_ROUTE = re.compile(r"^/api/matm/access/invites/([^/]+)/revoke$")
 _ACCESS_TOKEN_REVOKE_ROUTE = re.compile(r"^/api/matm/access/agent-tokens/([^/]+)/revoke$")
+_ACCESS_IDEMPOTENCY_REQUIRED_POST_ROUTE_TEMPLATES = frozenset(
+    {
+        "/api/matm/access/agent-name-requests",
+        "/api/matm/access/agent-name-requests/{requestId}/decision",
+        "/api/matm/access/invites/{inviteId}/revoke",
+        "/api/matm/access/agent-tokens/{credentialId}/revoke",
+    }
+)
+_ACCESS_ONE_TIME_SECRET_POST_ROUTE_TEMPLATES = frozenset(
+    {
+        "/api/matm/access/invites",
+        "/api/matm/access/invites/redeem",
+    }
+)
 _HUMAN_COMPANY_ROUTE = re.compile(
     r"^/api/matm/human/companies/([^/]+)/(export-plan|exports|closure-intents|close|delete|restore|permanent-purge|history|history/clear|top-level-agent-master-credential-setting)$"
 )
@@ -4882,6 +5457,137 @@ def _access_body(environ, start_response):
     if not isinstance(body, dict):
         return None, problem(start_response, "422 Unprocessable Entity", "Object required", "Access operations require a JSON object.", "access_object_required")
     return body, None
+
+
+def _access_scope_workspace_id(store, master_token, scope_type, scope_id):
+    """Resolve a stable, company-owned idempotency anchor for one access scope."""
+    catalog = store.company_scope_catalog(master_token)
+    if not catalog.get("ok"):
+        return ""
+    scope_type = str(scope_type or "").strip().lower()
+    scope_id = str(scope_id or "").strip()
+    workspaces = list(catalog.get("workspaces") or ())
+    if scope_type == "workspace":
+        return next(
+            (
+                item.get("workspaceId")
+                for item in workspaces
+                if item.get("workspaceId") == scope_id
+            ),
+            "",
+        )
+    if scope_type == "project":
+        return next(
+            (
+                item.get("workspaceId")
+                for item in catalog.get("projects") or ()
+                if item.get("projectId") == scope_id
+            ),
+            "",
+        )
+    if scope_type in ("game", "session", "goal", "task"):
+        return next(
+            (
+                item.get("workspaceId")
+                for item in catalog.get("scopeNodes") or ()
+                if item.get("scopeType") == scope_type
+                and item.get("scopeId") == scope_id
+            ),
+            "",
+        )
+    if scope_type == "company" and scope_id == (catalog.get("company") or {}).get(
+        "companyId"
+    ):
+        # Company-scoped access still needs an existing workspace row as the
+        # generic receipt anchor. IDs are stable even when labels are renamed.
+        return min(
+            (item.get("workspaceId") for item in workspaces if item.get("workspaceId")),
+            default="",
+        )
+    return ""
+
+
+def _access_inventory_item(result, public_id, *id_fields):
+    if not (result or {}).get("ok"):
+        return None
+    return next(
+        (
+            item
+            for item in result.get("items") or ()
+            if any(item.get(field) == public_id for field in id_fields)
+        ),
+        None,
+    )
+
+
+def _access_idempotency_or_problem(
+    store,
+    environ,
+    start_response,
+    auth,
+    master_token,
+    scope_type,
+    scope_id,
+    operation,
+    canonical_body,
+):
+    client_key, rejected = _validated_idempotency_key_or_problem(
+        environ, start_response
+    )
+    if rejected:
+        return None, None, rejected
+    workspace_id = _access_scope_workspace_id(
+        store, master_token, scope_type, scope_id
+    )
+    if not workspace_id:
+        return None, None, _access_problem(start_response, "workspace_not_found")
+    key = _principal_scoped_idempotency_key(auth, client_key)
+    replay = _idempotency_replay_or_conflict(
+        store,
+        environ,
+        start_response,
+        workspace_id,
+        key,
+        operation,
+        canonical_body,
+        headers=list(_CONNECTOR_JSON_HEADERS),
+    )
+    return (workspace_id, key, replay)
+
+
+def _finalize_access_idempotency(
+    store,
+    environ,
+    workspace_id,
+    key,
+    operation,
+    canonical_body,
+    result,
+    http_status,
+):
+    result = dict(
+        result,
+        idempotentReplay=False,
+        idempotencyKeyExposed=False,
+        rawCredentialExposed=False,
+        rawPayloadExposed=False,
+    )
+    # The storage mutation has returned successfully. From here onward a crash
+    # must leave the reservation fail-closed rather than permitting a duplicate.
+    _mark_idempotent_mutation_started(
+        environ, store, workspace_id, key, operation
+    )
+    _record_request_idempotency(
+        store,
+        environ,
+        workspace_id,
+        key,
+        operation,
+        canonical_body,
+        result,
+        http_status,
+    )
+    return result
 
 
 def _public_invite_with_grant(invite):
@@ -6421,6 +7127,8 @@ def route_access(environ, start_response, path):
     if path == "/api/matm/access/invites/redeem":
         if method != "POST":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to redeem an invitation.", "method_not_allowed", headers=[("Allow", "POST")])
+        if _idempotency_key(environ):
+            return _access_problem(start_response, "idempotency_key_not_allowed")
         body, rejected = _access_body(environ, start_response)
         if rejected:
             return rejected
@@ -6479,7 +7187,7 @@ def route_access(environ, start_response, path):
                 "namePolicy": AGENT_NAME_POLICY,
                 "scopeLevels": []
                 if _is_connector_principal(auth)
-                else ["company", "workspace", "project", "goal", "task"],
+                else ["company", "workspace", "project", "game", "session", "goal", "task"],
                 "scopeRule": "exact_connector_and_agent"
                 if _is_connector_principal(auth)
                 else "exact_scope_and_descendants",
@@ -6633,6 +7341,20 @@ def route_access(environ, start_response, path):
         requested_grant = body.get("requestedGrant") or {}
         if not isinstance(requested_grant, dict):
             return _access_problem(start_response, "scope_invalid")
+        operation = "access-agent-name-request"
+        workspace_id, idempotency_key, replay = _access_idempotency_or_problem(
+            store,
+            environ,
+            start_response,
+            auth,
+            master_token,
+            requested_grant.get("scopeType"),
+            requested_grant.get("scopeId"),
+            operation,
+            body,
+        )
+        if replay:
+            return replay
         result = store.request_agent_access(
             auth.get("companyId"),
             body.get("requestedName"),
@@ -6647,7 +7369,22 @@ def route_access(environ, start_response, path):
         )
         if not result.get("ok"):
             return _access_result_error(start_response, result)
-        return json_response(start_response, result, "201 Created")
+        result = _finalize_access_idempotency(
+            store,
+            environ,
+            workspace_id,
+            idempotency_key,
+            operation,
+            body,
+            result,
+            "201 Created",
+        )
+        return json_response(
+            start_response,
+            result,
+            "201 Created",
+            headers=list(_CONNECTOR_JSON_HEADERS),
+        )
 
     decision_match = _ACCESS_REQUEST_DECISION_ROUTE.fullmatch(path)
     if decision_match:
@@ -6660,12 +7397,49 @@ def route_access(environ, start_response, path):
         decision = decisions.get(str(body.get("decision") or "").strip().lower())
         if not decision:
             return _access_problem(start_response, "access_decision_invalid")
-        result = store.decide_agent_access_request(master_token, decision_match.group(1), decision, body.get("decisionReason"))
+        request_id = decision_match.group(1)
+        inventory = store.list_agent_access_requests(master_token)
+        target = _access_inventory_item(inventory, request_id, "requestId")
+        if not target:
+            return _access_result_error(
+                start_response,
+                inventory
+                if not inventory.get("ok")
+                else {"status": "access_request_not_found"},
+            )
+        operation = "access-agent-name-decision"
+        canonical_body = dict(body, requestId=request_id)
+        workspace_id, idempotency_key, replay = _access_idempotency_or_problem(
+            store,
+            environ,
+            start_response,
+            auth,
+            master_token,
+            target.get("scopeType"),
+            target.get("scopeId"),
+            operation,
+            canonical_body,
+        )
+        if replay:
+            return replay
+        result = store.decide_agent_access_request(master_token, request_id, decision, body.get("decisionReason"))
         if not result.get("ok"):
             if result.get("status") == "access_request_not_pending":
                 result = dict(result, status="approval_already_final")
             return _access_result_error(start_response, result)
-        return json_response(start_response, result)
+        result = _finalize_access_idempotency(
+            store,
+            environ,
+            workspace_id,
+            idempotency_key,
+            operation,
+            canonical_body,
+            result,
+            "200 OK",
+        )
+        return json_response(
+            start_response, result, headers=list(_CONNECTOR_JSON_HEADERS)
+        )
 
     if path == "/api/matm/access/invites":
         if method == "GET":
@@ -6673,6 +7447,8 @@ def route_access(environ, start_response, path):
             return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
         if method != "POST":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use GET or POST for agent invitations.", "method_not_allowed", headers=[("Allow", "GET, POST")])
+        if _idempotency_key(environ):
+            return _access_problem(start_response, "idempotency_key_not_allowed")
         body, rejected = _access_body(environ, start_response)
         if rejected:
             return rejected
@@ -6696,8 +7472,47 @@ def route_access(environ, start_response, path):
     if invite_revoke_match:
         if method != "POST":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to revoke an invitation.", "method_not_allowed", headers=[("Allow", "POST")])
-        result = store.revoke_agent_invite(master_token, invite_revoke_match.group(1))
-        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+        invite_id = invite_revoke_match.group(1)
+        inventory = store.list_agent_invites(master_token)
+        target = _access_inventory_item(inventory, invite_id, "inviteId")
+        if not target:
+            return _access_result_error(
+                start_response,
+                inventory
+                if not inventory.get("ok")
+                else {"status": "invite_not_found"},
+            )
+        operation = "access-invite-revoke"
+        canonical_body = {"inviteId": invite_id}
+        workspace_id, idempotency_key, replay = _access_idempotency_or_problem(
+            store,
+            environ,
+            start_response,
+            auth,
+            master_token,
+            target.get("scopeType"),
+            target.get("scopeId"),
+            operation,
+            canonical_body,
+        )
+        if replay:
+            return replay
+        result = store.revoke_agent_invite(master_token, invite_id)
+        if not result.get("ok"):
+            return _access_result_error(start_response, result)
+        result = _finalize_access_idempotency(
+            store,
+            environ,
+            workspace_id,
+            idempotency_key,
+            operation,
+            canonical_body,
+            result,
+            "200 OK",
+        )
+        return json_response(
+            start_response, result, headers=list(_CONNECTOR_JSON_HEADERS)
+        )
 
     if path == "/api/matm/access/agent-tokens":
         if method != "GET":
@@ -6717,13 +7532,52 @@ def route_access(environ, start_response, path):
     if token_revoke_match:
         if method != "POST":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to revoke an agent token.", "method_not_allowed", headers=[("Allow", "POST")])
-        result = store.revoke_agent_token(master_token, token_revoke_match.group(1))
-        if not result.get("ok") and result.get("status") == "agent_token_already_revoked":
-            result = {"ok": True, "agentTokenId": token_revoke_match.group(1), "alreadyRevoked": True, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False}
+        credential_id = token_revoke_match.group(1)
+        inventory = store.list_agent_tokens(master_token)
+        target = _access_inventory_item(
+            inventory, credential_id, "credentialId", "agentTokenId"
+        )
+        if not target:
+            return _access_result_error(
+                start_response,
+                inventory
+                if not inventory.get("ok")
+                else {"status": "agent_token_not_found"},
+            )
+        operation = "access-agent-token-revoke"
+        canonical_body = {"credentialId": credential_id}
+        workspace_id, idempotency_key, replay = _access_idempotency_or_problem(
+            store,
+            environ,
+            start_response,
+            auth,
+            master_token,
+            target.get("scopeType"),
+            target.get("scopeId"),
+            operation,
+            canonical_body,
+        )
+        if replay:
+            return replay
+        result = store.revoke_agent_token(master_token, credential_id)
         if result.get("ok"):
-            result = dict(result, credentialId=result.get("credentialId") or result.get("agentTokenId") or token_revoke_match.group(1))
+            result = dict(result, credentialId=result.get("credentialId") or result.get("agentTokenId") or credential_id)
             result.pop("agentTokenId", None)
-        return json_response(start_response, result) if result.get("ok") else _access_result_error(start_response, result)
+        else:
+            return _access_result_error(start_response, result)
+        result = _finalize_access_idempotency(
+            store,
+            environ,
+            workspace_id,
+            idempotency_key,
+            operation,
+            canonical_body,
+            result,
+            "200 OK",
+        )
+        return json_response(
+            start_response, result, headers=list(_CONNECTOR_JSON_HEADERS)
+        )
     return None
 
 
@@ -6927,11 +7781,15 @@ def _route_connector_scoped_operation(
         idempotency_key, rejected = _connector_idempotency_or_problem(environ, start_response)
         if rejected:
             return rejected
+        storage_idempotency_key = _principal_scoped_idempotency_key(
+            auth, idempotency_key
+        )
         replay = _idempotency_replay_or_conflict(
             store,
+            environ,
             start_response,
             auth.get("workspaceId"),
-            idempotency_key,
+            storage_idempotency_key,
             "connector-public-safe-memory-submit",
             parsed,
             headers=_CONNECTOR_JSON_HEADERS,
@@ -6954,6 +7812,13 @@ def _route_connector_scoped_operation(
             1.0,
             auth.get("workspaceId"),
         )
+        _mark_idempotent_mutation_started(
+            environ,
+            store,
+            auth.get("workspaceId"),
+            storage_idempotency_key,
+            "connector-public-safe-memory-submit",
+        )
         item = _connector_public_memory_item(event)
         payload = {
             "ok": True,
@@ -6973,9 +7838,11 @@ def _route_connector_scoped_operation(
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(
+        _record_request_idempotency(
+            store,
+            environ,
             auth.get("workspaceId"),
-            idempotency_key,
+            storage_idempotency_key,
             "connector-public-safe-memory-submit",
             parsed,
             payload,
@@ -7100,6 +7967,25 @@ def route_protected(environ, start_response, path):
         return _human_problem(start_response, "human_owner_required")
     workspace_id = auth["workspaceId"]
     idem = _idempotency_key(environ)
+    if method == "POST" and path in _ROUTE_PROTECTED_POST_MUTATIONS:
+        idem, idempotency_problem = _validated_idempotency_key_or_problem(
+            environ,
+            start_response,
+            required=path in _IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS,
+        )
+        if idempotency_problem:
+            return idempotency_problem
+    if (
+        path.startswith("/api/matm/sync/")
+        and path != "/api/matm/sync/capabilities"
+        and not store.auth_allows_scope(auth, "workspace", workspace_id)
+    ):
+        # Sync heads do not yet persist project ownership. Keep every protected
+        # sync read and write at workspace/company authority until they do. POST
+        # requests reach this boundary only after key syntax is validated.
+        return _access_problem(start_response, "insufficient_scope")
+    client_idem = idem
+    idem = _principal_scoped_idempotency_key(auth, client_idem)
     acting_identity_fields = ()
     if method == "POST":
         if path in (
@@ -7157,7 +8043,9 @@ def route_protected(environ, start_response, path):
         if binding_problem:
             return binding_problem
     if path == "/api/matm/workspace" and method == "GET":
-        status = store.workspace_status(workspace_id)
+        status = _workspace_status_for_auth(
+            store, auth, store.workspace_status(workspace_id)
+        )
         operator_summary = _workspace_operator_summary(status)
         _audit_read(
             store,
@@ -7180,6 +8068,11 @@ def route_protected(environ, start_response, path):
         )
     if path == "/api/matm/projects" and method == "GET":
         items = store.projects(workspace_id)
+        items = [
+            item
+            for item in items
+            if store.auth_allows_scope(auth, "project", item.get("projectId"))
+        ]
         _audit_read(store, workspace_id, auth, "projects.read", path, {"count": len(items)})
         return json_response(
             start_response,
@@ -7201,9 +8094,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/projects" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "project-upsert", body)
-        if replay:
-            return replay
         actor_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7214,6 +8104,35 @@ def route_protected(environ, start_response, path):
             return binding_problem
         if not (body.get("label") or body.get("projectLabel") or body.get("project_label")):
             return problem(start_response, "422 Unprocessable Entity", "Project label required", "Project upsert requires a label.", "project_label_required")
+        canonical_project_id = normalize_project_id(
+            body.get("projectId") or body.get("project_id"),
+            body.get("label")
+            or body.get("projectLabel")
+            or body.get("project_label"),
+        )
+        existing_project = next(
+            (
+                item
+                for item in store.projects(workspace_id)
+                if item.get("projectId") == canonical_project_id
+            ),
+            None,
+        )
+        required_scope = "project" if existing_project else "workspace"
+        required_scope_id = canonical_project_id if existing_project else workspace_id
+        if not store.auth_allows_scope(auth, required_scope, required_scope_id):
+            return _access_problem(start_response, "insufficient_scope")
+        replay = _idempotency_replay_or_conflict(
+            store,
+            environ,
+            start_response,
+            workspace_id,
+            idem,
+            "project-upsert",
+            body,
+        )
+        if replay:
+            return replay
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this project record.", "quota_exceeded")
         project, error = store.upsert_project(
@@ -7224,21 +8143,60 @@ def route_protected(environ, start_response, path):
         )
         if error == "workspace_not_found":
             return problem(start_response, "404 Not Found", "Workspace not found", "No matching workspace exists for the authenticated key.", "workspace_not_found")
+        if error == "project_id_conflict":
+            return problem(
+                start_response,
+                "409 Conflict",
+                "Project id conflict",
+                "That project id is already bound to another workspace and was not changed.",
+                "project_id_conflict",
+            )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "project-upsert"
+        )
+        project_room = next(
+            (
+                room
+                for room in store.meeting_rooms(workspace_id, actor_agent_id)
+                if room.get("scope") == "project"
+                and room.get("scopeId") == project.get("projectId")
+            ),
+            None,
+        )
+        if not project_room:
+            return problem(
+                start_response,
+                "500 Internal Server Error",
+                "Project room unavailable",
+                "The project was saved but its canonical project meeting room could not be confirmed.",
+                "project_room_not_persisted",
+            )
         payload = {
             "ok": True,
             "project": project,
             "persisted": bool(project),
+            "canonicalRoomId": project_room.get("roomId"),
             "projectQueryUrl": _protected_query_url("/api/matm/projects", {"workspace_id": workspace_id}),
+            "projectMeetingRoomQueryUrl": _protected_query_url(
+                "/api/matm/meeting-rooms",
+                {
+                    "workspace_id": workspace_id,
+                    "scope": "project",
+                    "scope_id": project.get("projectId"),
+                },
+            ),
             "valuesRedacted": True,
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "project-upsert", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "project-upsert", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path in ("/api/matm/external-links", "/api/matm/internet-search") and method == "GET":
         filters = _external_link_filters(query)
         active_filters = {key: value for key, value in filters.items() if value}
-        items = store.external_links(workspace_id, filters, query.get("limit") or "50")
+        items = _authorized_external_link_items(
+            store, workspace_id, auth, filters, query.get("limit") or "50"
+        )
         _audit_read(
             store,
             workspace_id,
@@ -7265,9 +8223,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path in ("/api/matm/external-links", "/api/matm/external-links/upsert") and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "external-link-upsert", body)
-        if replay:
-            return replay
         actor_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7276,6 +8231,23 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
+        document_id = body.get("knowledgeDocumentId") or body.get("knowledge_document_id") or body.get("documentId") or body.get("document_id") or ""
+        if document_id:
+            documents = store.knowledge_documents(
+                workspace_id, {"documentId": document_id}, 1, False
+            )
+            if not documents:
+                return problem(start_response, "404 Not Found", "Knowledge document not found", "The cited knowledge document does not exist in this workspace.", "knowledge_document_not_found")
+            document = documents[0]
+            if not store.auth_allows_scope(
+                auth, document.get("scope"), document.get("scopeId")
+            ):
+                return _access_problem(start_response, "insufficient_scope")
+        elif not store.auth_allows_scope(auth, "workspace", workspace_id):
+            return _access_problem(start_response, "insufficient_scope")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "external-link-upsert", body)
+        if replay:
+            return replay
         if not str(body.get("url") or "").strip():
             return problem(start_response, "422 Unprocessable Entity", "URL required", "External link upsert requires an HTTP or HTTPS URL.", "external_url_required")
         if not str(body.get("siteName") or body.get("site_name") or "").strip():
@@ -7286,7 +8258,6 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Description required", "External link upsert requires a useful search-result description.", "external_link_description_required")
         if not _listish_values(body.get("keywords") or body.get("keyword") or body.get("tags")):
             return problem(start_response, "422 Unprocessable Entity", "Keywords required", "External link upsert requires at least one search keyword.", "external_link_keywords_required")
-        document_id = body.get("knowledgeDocumentId") or body.get("knowledge_document_id") or body.get("documentId") or body.get("document_id") or ""
         if document_id and not str(body.get("contextDescription") or body.get("context_description") or "").strip():
             return problem(start_response, "422 Unprocessable Entity", "Citation context required", "A link attached to a knowledge document requires contextDescription explaining why the page cites it.", "external_link_context_required")
         if not store.has_quota_for(workspace_id, body):
@@ -7309,6 +8280,9 @@ def route_protected(environ, start_response, path):
             title, detail = error_details.get(error, ("External link rejected", "The external link could not be stored."))
             status = "404 Not Found" if error == "knowledge_document_not_found" else "422 Unprocessable Entity"
             return problem(start_response, status, title, detail, error)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "external-link-upsert"
+        )
         confirmation = _external_link_confirmation(store, workspace_id, link, document_id)
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "External link was not persisted", "The link could not be confirmed by server-side persistence evidence after write.", "external_link_not_persisted")
@@ -7328,12 +8302,19 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "external-link-upsert", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "external-link-upsert", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/knowledge-tree" and method == "GET":
         filters = _knowledge_filters(query)
         active_filters = {key: value for key, value in filters.items() if value}
-        tree = store.knowledge_tree(workspace_id, filters)
+        visible_documents = _authorized_scope_items(
+            store,
+            auth,
+            store.knowledge_documents(
+                workspace_id, filters, include_text=False, _all=True
+            ),
+        )
+        tree = _knowledge_tree_from_documents(visible_documents)
         _audit_read(
             store,
             workspace_id,
@@ -7360,7 +8341,12 @@ def route_protected(environ, start_response, path):
         filters = _knowledge_filters(query)
         active_filters = {key: value for key, value in filters.items() if value}
         include_text = _truthy(query.get("include_text") or query.get("includeText"))
-        items = store.knowledge_documents(workspace_id, filters, query.get("limit") or "50", include_text)
+        requested_limit = query.get("limit") or "50"
+        items = store.knowledge_documents(
+            workspace_id, filters, include_text=include_text, _all=True
+        )
+        items = _authorized_scope_items(store, auth, items)
+        items = items[: _parse_limit(requested_limit, 50, 500)]
         operator_summary = _knowledge_operator_summary(items, active_filters)
         _audit_read(
             store,
@@ -7387,9 +8373,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path in ("/api/matm/knowledge-documents", "/api/matm/knowledge-documents/upsert") and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "knowledge-document-upsert", body)
-        if replay:
-            return replay
         actor_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7438,6 +8421,13 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "404 Not Found", "Project not found", "Project-scoped knowledge requires an existing project or a projectLabel to create one.", "project_not_found")
         if scope_error:
             return problem(start_response, "422 Unprocessable Entity", "Knowledge scope could not be resolved", "The requested knowledge document scope could not be resolved.", scope_error)
+        if not store.auth_allows_scope(
+            auth, scoped_payload.get("scope"), scoped_payload.get("scopeId")
+        ):
+            return _access_problem(start_response, "insufficient_scope")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "knowledge-document-upsert", body)
+        if replay:
+            return replay
         document, error = store.upsert_knowledge_document(workspace_id, actor_agent_id, scoped_payload)
         if error == "unsupported_scope":
             return problem(start_response, "422 Unprocessable Entity", "Unsupported knowledge scope", "Knowledge documents can only be stored at company, workspace, or project scope.", "unsupported_knowledge_scope")
@@ -7459,6 +8449,9 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Invalid supersession", "A knowledge document cannot supersede itself.", error)
         if error:
             return problem(start_response, "422 Unprocessable Entity", "Knowledge document rejected", "The knowledge document could not be stored.", error)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "knowledge-document-upsert"
+        )
         confirmation = _knowledge_document_confirmation(store, workspace_id, document)
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "Knowledge document was not persisted", "The knowledge document could not be confirmed by server-side persistence evidence after write.", "knowledge_document_not_persisted")
@@ -7480,7 +8473,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "knowledge-document-upsert", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "knowledge-document-upsert", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/sync/retention" and method == "GET":
         _audit_read(store, workspace_id, auth, "sync.retention.read", path, {"hardForgetSupported": False})
@@ -7496,9 +8489,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/sync/devices" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-register", body)
-        if replay:
-            return replay
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7507,9 +8497,17 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
+        if not store.auth_allows_scope(auth, "workspace", workspace_id):
+            return _access_problem(start_response, "insufficient_scope")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "sync-device-register", body)
+        if replay:
+            return replay
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this sync device.", "quota_exceeded")
         device = store.register_sync_device(workspace_id, agent_id, body.get("deviceId") or body.get("device_id"), body.get("label"))
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "sync-device-register"
+        )
         visible_device = store.sync_device(workspace_id, device.get("deviceId") if device else "")
         if not visible_device:
             return problem(start_response, "500 Internal Server Error", "Sync device was not persisted", "The sync device could not be confirmed by readback after registration.", "sync_device_not_persisted")
@@ -7538,13 +8536,10 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "sync-device-register", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "sync-device-register", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path in ("/api/matm/sync/devices/rotate", "/api/matm/sync/devices/revoke") and method == "POST":
         operation = "rotate" if path.endswith("/rotate") else "revoke"
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-device-" + operation, body)
-        if replay:
-            return replay
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7553,9 +8548,19 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
+        if not store.auth_allows_scope(auth, "workspace", workspace_id):
+            return _access_problem(start_response, "insufficient_scope")
         device_id = body.get("deviceId") or body.get("device_id")
         if not device_id:
             return problem(start_response, "422 Unprocessable Entity", "Device id required", "Sync device authority changes require deviceId.", "device_id_required")
+        requested_device = store.sync_device(workspace_id, device_id)
+        if not requested_device:
+            return problem(start_response, "404 Not Found", "Sync device not found", "No matching sync device exists for this workspace.", "sync_device_not_found")
+        if auth.get("credentialType") == "agent" and requested_device.get("agentId") != agent_id:
+            return problem(start_response, "404 Not Found", "Sync device not found", "No matching sync device exists for the authenticated agent.", "sync_device_not_found")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "sync-device-" + operation, body)
+        if replay:
+            return replay
         if operation == "rotate":
             device, error = store.rotate_sync_device(workspace_id, device_id, agent_id)
         else:
@@ -7564,6 +8569,9 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "404 Not Found", "Sync device not found", "No matching sync device exists for this workspace.", "sync_device_not_found")
         if error == "device_revoked":
             return problem(start_response, "409 Conflict", "Sync device revoked", "Revoked devices cannot be rotated.", "sync_device_revoked")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "sync-device-" + operation
+        )
         visible_device = store.sync_device(workspace_id, device.get("deviceId") if device else "")
         if not visible_device:
             return problem(start_response, "500 Internal Server Error", "Sync device was not persisted", "The sync device authority change could not be confirmed by readback.", "sync_device_not_persisted")
@@ -7592,14 +8600,11 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "sync-device-" + operation, body, payload, "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, "sync-device-" + operation, body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/sync/mutations" and method == "POST":
         if not idem:
             return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Sync mutations require Idempotency-Key so offline clients can recover receipts after timeouts.", "idempotency_key_required")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "sync-mutation", body)
-        if replay:
-            return replay
         actor_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7608,11 +8613,37 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
+        requested_scope = str(body.get("scope") or "workspace").strip().lower()
+        requested_scope_id = body.get("scopeId") or body.get("scope_id") or workspace_id
+        if not store.auth_allows_scope(
+            auth, requested_scope, requested_scope_id
+        ):
+            return _access_problem(start_response, "insufficient_scope")
+        requested_device_id = body.get("deviceId") or body.get("device_id") or ""
+        requested_device = (
+            store.sync_device(workspace_id, requested_device_id)
+            if requested_device_id
+            else None
+        )
+        if (
+            requested_device
+            and auth.get("credentialType") == "agent"
+            and requested_device.get("agentId") != actor_agent_id
+        ):
+            return problem(start_response, "404 Not Found", "Sync device not found", "No matching sync device exists for the authenticated agent.", "sync_device_not_found")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "sync-mutation", body)
+        if replay:
+            return replay
         if len(body.get("summary") or "") > 4000:
             return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Sync mutation summaries must be at most 4000 characters.", "summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this sync mutation.", "quota_exceeded")
-        payload, http_status = store.submit_sync_mutation(workspace_id, actor_agent_id, body, idem)
+        payload, http_status = store.submit_sync_mutation(
+            workspace_id, actor_agent_id, body, client_idem
+        )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "sync-mutation"
+        )
         payload["operatorSummary"] = _sync_operator_summary("mutation", payload)
         payload["receiptQueryUrl"] = _sync_query_url("/api/matm/sync/receipts", workspace_id, {"receipt_id": (payload.get("receipt") or {}).get("receiptId")})
         payload["changesQueryUrl"] = _sync_query_url("/api/matm/sync/changes", workspace_id, {"after_sequence": max(0, int(payload.get("serverSequence") or 0) - 1)})
@@ -7622,7 +8653,7 @@ def route_protected(environ, start_response, path):
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "Sync mutation was not persisted", "The sync mutation could not be confirmed in receipt, changes, and head readback after write.", "sync_mutation_not_persisted")
         payload["confirmation"] = confirmation
-        store.record_idempotency(workspace_id, idem, "sync-mutation", body, payload, http_status)
+        _record_request_idempotency(store, environ, workspace_id, idem, "sync-mutation", body, payload, http_status)
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/sync/receipts" and method == "GET":
         lookup_key = _idempotency_key(environ) or query.get("idempotency_key") or query.get("idempotencyKey") or ""
@@ -7695,6 +8726,7 @@ def route_protected(environ, start_response, path):
             replay = (
                 _idempotency_replay_or_conflict(
                     store,
+                    environ,
                     start_response,
                     workspace_id,
                     idem,
@@ -7711,6 +8743,10 @@ def route_protected(environ, start_response, path):
                 CONNECTOR_AGENT_ID,
                 CONNECTOR_AGENT_DISPLAY_NAME,
             )
+            if idem:
+                _mark_idempotent_mutation_started(
+                    environ, store, workspace_id, idem, operation
+                )
             payload = {
                 "ok": True,
                 "agent": agent,
@@ -7732,7 +8768,9 @@ def route_protected(environ, start_response, path):
                 "rawPayloadExposed": False,
             }
             if idem:
-                store.record_idempotency(
+                _record_request_idempotency(
+                    store,
+                    environ,
                     workspace_id,
                     idem,
                     operation,
@@ -7778,9 +8816,6 @@ def route_protected(environ, start_response, path):
     if path == "/api/matm/uai-memory/packages" and method == "POST":
         if not idem:
             return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Virtual UAIX package creation requires Idempotency-Key for exact browser retries.", "idempotency_key_required")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-package-create", body)
-        if replay:
-            return replay
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7798,6 +8833,9 @@ def route_protected(environ, start_response, path):
         local_filesystem_available = body.get("localFilesystemAvailable") if "localFilesystemAvailable" in body else body.get("local_filesystem_available")
         if not isinstance(local_filesystem_available, bool):
             return problem(start_response, "422 Unprocessable Entity", "Filesystem capability invalid", "localFilesystemAvailable must be a JSON boolean.", "local_filesystem_available_invalid")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "uai-package-create", body)
+        if replay:
+            return replay
         package, created, error, details = store.create_uai_package(
             workspace_id,
             agent_id,
@@ -7806,6 +8844,9 @@ def route_protected(environ, start_response, path):
         )
         if error:
             return _uai_error_response(start_response, error, details)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "uai-package-create"
+        )
         package_id = package.get("packageId")
         payload = {
             "ok": True,
@@ -7822,7 +8863,7 @@ def route_protected(environ, start_response, path):
             "rawPayloadExposed": False,
         }
         http_status = "201 Created" if created else "200 OK"
-        store.record_idempotency(workspace_id, idem, "uai-package-create", body, payload, http_status)
+        _record_request_idempotency(store, environ, workspace_id, idem, "uai-package-create", body, payload, http_status)
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/uai-memory/records" and method == "GET":
         agent_id = query.get("agent_id") or query.get("agentId") or ""
@@ -7864,9 +8905,6 @@ def route_protected(environ, start_response, path):
     if path == "/api/matm/uai-memory/records" and method == "POST":
         if not idem:
             return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Virtual UAIX record writes require Idempotency-Key for exact browser retries.", "idempotency_key_required")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-record-upsert", body)
-        if replay:
-            return replay
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -7884,6 +8922,11 @@ def route_protected(environ, start_response, path):
             return _uai_error_response(start_response, "unsupported_uai_logical_path")
         if content is None:
             return _uai_error_response(start_response, "uai_content_required")
+        if not store.uai_packages(workspace_id, agent_id, package_id):
+            return _uai_error_response(start_response, "uai_package_not_found")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "uai-record-upsert", body)
+        if replay:
+            return replay
         result, error, details = store.upsert_uai_record(
             workspace_id,
             agent_id,
@@ -7895,6 +8938,9 @@ def route_protected(environ, start_response, path):
         )
         if error:
             return _uai_error_response(start_response, error, details)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "uai-record-upsert"
+        )
         record = result["record"]
         readback = store.uai_records(workspace_id, agent_id, package_id, record.get("logicalPath"), True)
         visible = any(
@@ -7926,7 +8972,7 @@ def route_protected(environ, start_response, path):
             "rawPayloadExposed": False,
         }
         http_status = "201 Created" if result["created"] else "200 OK"
-        store.record_idempotency(workspace_id, idem, "uai-record-upsert", body, payload, http_status)
+        _record_request_idempotency(store, environ, workspace_id, idem, "uai-record-upsert", body, payload, http_status)
         return json_response(start_response, payload, http_status)
     if path == "/api/matm/uai-memory/startup" and method == "GET":
         agent_id = query.get("agent_id") or query.get("agentId") or ""
@@ -7951,6 +8997,11 @@ def route_protected(environ, start_response, path):
         project_id = query.get("project_id") or query.get("projectId") or ""
         logical_path = query.get("logical_path") or query.get("logicalPath") or ""
         items = store.uai_collaboration_heads(workspace_id, project_id, logical_path)
+        items = [
+            item
+            for item in items
+            if store.auth_allows_scope(auth, "project", item.get("projectId"))
+        ]
         _audit_read(store, workspace_id, auth, "uai_file_heads.read", path, {"count": len(items), "projectId": project_id, "logicalPath": logical_path})
         return json_response(start_response, {"ok": True, "schemaVersion": "memoryendpoints.uai_collaboration_heads.v1", "items": items, "count": len(items), "localContentStored": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
     if path == "/api/matm/uai-memory/edit-claims" and method == "GET":
@@ -7970,14 +9021,16 @@ def route_protected(environ, start_response, path):
             if binding_problem:
                 return binding_problem
         items = store.uai_edit_claims(workspace_id, filters["projectId"], filters["agentId"], filters["logicalPath"], filters["status"])
+        items = [
+            item
+            for item in items
+            if store.auth_allows_scope(auth, "project", item.get("projectId"))
+        ]
         _audit_read(store, workspace_id, auth, "uai_edit_claims.read", path, {"count": len(items), "projectId": filters["projectId"], "agentId": filters["agentId"]})
         return json_response(start_response, {"ok": True, "schemaVersion": "memoryendpoints.uai_edit_claims.v1", "items": items, "count": len(items), "filters": {key: value for key, value in filters.items() if value}, "localContentStored": False, "valuesRedacted": True, "rawCredentialExposed": False, "rawPayloadExposed": False})
     if path == "/api/matm/uai-memory/edit-claims" and method == "POST":
         if not idem:
             return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Local .uai edit-claim acquisition requires Idempotency-Key.", "idempotency_key_required")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "uai-edit-claim-acquire", body)
-        if replay:
-            return replay
         project_id = body.get("projectId") or body.get("project_id")
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
@@ -7987,6 +9040,11 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
+        if not store.auth_allows_scope(auth, "project", project_id):
+            return _access_problem(start_response, "insufficient_scope")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "uai-edit-claim-acquire", body)
+        if replay:
+            return replay
         result, error, details = store.acquire_uai_edit_claim(
             workspace_id,
             project_id,
@@ -7998,6 +9056,9 @@ def route_protected(environ, start_response, path):
         )
         if error:
             return _uai_error_response(start_response, error, details)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "uai-edit-claim-acquire"
+        )
         claim = result["claim"]
         head = result["head"]
         visible_to_sender = _uai_claim_readback_visible(store, workspace_id, claim, head)
@@ -8021,16 +9082,13 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "uai-edit-claim-acquire", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "uai-edit-claim-acquire", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path in ("/api/matm/uai-memory/edit-claims/heartbeat", "/api/matm/uai-memory/edit-claims/complete", "/api/matm/uai-memory/edit-claims/release") and method == "POST":
         if not idem:
             return problem(start_response, "422 Unprocessable Entity", "Idempotency key required", "Local .uai edit-claim changes require Idempotency-Key.", "idempotency_key_required")
         operation = path.rsplit("/", 1)[-1]
         idem_operation = "uai-edit-claim-%s" % operation
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, idem_operation, body)
-        if replay:
-            return replay
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -8040,6 +9098,25 @@ def route_protected(environ, start_response, path):
         if binding_problem:
             return binding_problem
         claim_id = body.get("claimId") or body.get("claim_id")
+        claim_candidate = next(
+            (
+                item
+                for item in store.uai_edit_claims(workspace_id, "", "", "", "")
+                if item.get("claimId") == claim_id
+            ),
+            None,
+        )
+        if (
+            not claim_candidate
+            or claim_candidate.get("agentId") != agent_id
+            or not store.auth_allows_scope(
+                auth, "project", claim_candidate.get("projectId")
+            )
+        ):
+            return _uai_error_response(start_response, "uai_edit_claim_not_found")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, idem_operation, body)
+        if replay:
+            return replay
         if operation == "heartbeat":
             result, error, details = store.heartbeat_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("leaseSeconds") or body.get("lease_seconds"))
         elif operation == "complete":
@@ -8048,6 +9125,9 @@ def route_protected(environ, start_response, path):
             result, error, details = store.release_uai_edit_claim(workspace_id, agent_id, claim_id, body.get("releaseSummary") or body.get("release_summary"))
         if error:
             return _uai_error_response(start_response, error, details)
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, idem_operation
+        )
         claim = result["claim"]
         head = result["head"]
         visible_to_sender = _uai_claim_readback_visible(store, workspace_id, claim, head)
@@ -8071,16 +9151,13 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, idem_operation, body, payload, "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, idem_operation, body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/memory-events/submit" and method == "POST":
         requested_scope = (body.get("scope") or "workspace").strip().lower()
         requested_scope_id = body.get("scopeId") or body.get("scope_id") or workspace_id
         if not store.auth_allows_scope(auth, requested_scope, requested_scope_id):
             return _access_problem(start_response, "insufficient_scope")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "memory-submit", body)
-        if replay:
-            return replay
         summary = body.get("summary") or ""
         title = body.get("title") or "Untitled memory"
         actor_agent_id, binding_problem = _bound_agent_id_or_problem(
@@ -8097,6 +9174,9 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Summary too long", "Memory event summaries must be at most 4000 characters.", "summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this memory event.", "quota_exceeded")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "memory-submit", body)
+        if replay:
+            return replay
         event = store.submit_memory(
             workspace_id,
             actor_agent_id,
@@ -8109,6 +9189,9 @@ def route_protected(environ, start_response, path):
             body.get("subject"),
             body.get("confidence"),
             requested_scope_id,
+        )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "memory-submit"
         )
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
@@ -8131,7 +9214,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "memory-submit", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "memory-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/review-queue" and method == "GET":
         status_filter = query.get("status") or ""
@@ -8210,9 +9293,6 @@ def route_protected(environ, start_response, path):
         )
         if review_candidate and review_candidate.get("memoryEventId") not in visible_memory_by_id:
             return problem(start_response, "404 Not Found", "Review item not found", "No matching review queue item exists for the authenticated scope.", "review_item_not_found")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "review-decide", body)
-        if replay:
-            return replay
         reviewer_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -8224,11 +9304,17 @@ def route_protected(environ, start_response, path):
         decision = body.get("decision")
         if not review_id:
             return problem(start_response, "422 Unprocessable Entity", "Review id required", "Review decisions require reviewId.", "review_id_required")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "review-decide", body)
+        if replay:
+            return replay
         review, error = store.decide_review(workspace_id, review_id, reviewer_agent_id, decision, redact_text(body.get("reviewNote") or body.get("review_note") or ""))
         if error == "invalid_decision":
             return problem(start_response, "422 Unprocessable Entity", "Invalid review decision", "Decision must be promote, approve, reject, or quarantine.", "invalid_review_decision")
         if error == "not_found":
             return problem(start_response, "404 Not Found", "Review item not found", "No matching review queue item exists for this workspace.", "review_item_not_found")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "review-decide"
+        )
         payload = {
             "ok": True,
             "review": review,
@@ -8237,7 +9323,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "review-decide", body, payload, "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, "review-decide", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path in ("/api/matm/memory-events", "/api/matm/search") and method == "GET":
         filters = {
@@ -8305,6 +9391,19 @@ def route_protected(environ, start_response, path):
         if query.get("limit"):
             active_filters["limit"] = requested_limit
         items = store.routing_decisions(workspace_id, routing_filters, requested_limit)
+        routing_rooms = {
+            room.get("roomId"): room
+            for room in store.meeting_rooms(
+                workspace_id, auth.get("agentId") or _auth_actor_id(auth)
+            )
+        }
+        items = [
+            item
+            for item in items
+            if _routing_decision_visible_to_auth(
+                store, workspace_id, auth, item, routing_rooms
+            )
+        ]
         operator_summary = _routing_decisions_operator_summary(items, active_filters)
         _audit_read(
             store,
@@ -8333,9 +9432,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/routing-decisions" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "routing-decision-submit", body)
-        if replay:
-            return replay
         source_room_id = str(body.get("sourceRoomId") or body.get("source_room_id") or body.get("roomId") or body.get("room_id") or "").strip()
         destination_room_id = str(body.get("destinationRoomId") or body.get("destination_room_id") or "").strip()
         destination_scope = str(body.get("destinationScope") or body.get("destination_scope") or "").strip().lower()
@@ -8380,6 +9476,8 @@ def route_protected(environ, start_response, path):
         source_room = next((room for room in rooms if room.get("roomId") == source_room_id), None)
         if not source_room:
             return problem(start_response, "404 Not Found", "Source room not found", "No active source meeting room exists for this workspace.", "source_room_not_found")
+        if not store.auth_allows_scope(auth, source_room.get("scope"), source_room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
         destination_room = None
         if destination_room_id:
             destination_room = next((room for room in rooms if room.get("roomId") == destination_room_id), None)
@@ -8390,6 +9488,32 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Destination room required", "Routing decisions require destinationRoomId or destinationScope plus destinationScopeId.", "destination_room_required")
         if not destination_room:
             return problem(start_response, "404 Not Found", "Destination room not found", "No active destination meeting room exists for this workspace.", "destination_room_not_found")
+        if not store.auth_allows_scope(auth, destination_room.get("scope"), destination_room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
+        if not store.agent_has_scope(
+            workspace_id,
+            routed_agent_id,
+            destination_room.get("scope"),
+            destination_room.get("scopeId"),
+        ):
+            return problem(
+                start_response,
+                "422 Unprocessable Entity",
+                "Routed agent unavailable",
+                "The routed agent must have one active identity, credential, and grant that reaches the destination scope.",
+                "routed_agent_destination_unavailable",
+            )
+        replay = _idempotency_replay_or_conflict(
+            store,
+            environ,
+            start_response,
+            workspace_id,
+            idem,
+            "routing-decision-submit",
+            body,
+        )
+        if replay:
+            return replay
         safe_summary = _routing_decision_summary(
             {
                 "routedAgentId": routed_agent_id,
@@ -8432,6 +9556,9 @@ def route_protected(environ, start_response, path):
         )
         if not decision:
             return problem(start_response, "404 Not Found", "Routing room not found", "The routing decision could not be saved because the source or destination room was not found.", "routing_room_not_found")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "routing-decision-submit"
+        )
         confirmation = _routing_decision_confirmation(store, workspace_id, decision, message, source_room)
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "Routing decision was not persisted", "The routing decision could not be confirmed in decision readback and room transcript after write.", "routing_decision_not_persisted")
@@ -8456,12 +9583,9 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "routing-decision-submit", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "routing-decision-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-messages/promote" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-promote", body)
-        if replay:
-            return replay
         meeting_message_id = body.get("meetingMessageId") or body.get("meeting_message_id")
         promoted_by_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
@@ -8479,6 +9603,14 @@ def route_protected(environ, start_response, path):
         if not message:
             return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this workspace.", "meeting_message_not_found")
         if not store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId")):
+            return _access_problem(start_response, "insufficient_scope")
+        if not _npc_room_allowed(auth, room):
+            return _access_problem(start_response, "npc_game_scope_required")
+        promotion_scope = body.get("scope") or message.get("scope") or room.get("scope")
+        promotion_scope_id = body.get("scopeId") or body.get("scope_id") or message.get("scopeId") or room.get("scopeId")
+        if not store.auth_allows_scope(
+            auth, promotion_scope, promotion_scope_id
+        ):
             return _access_problem(start_response, "insufficient_scope")
         summary = body.get("summary") or message.get("safeSummary") or ""
         if not summary.strip():
@@ -8502,10 +9634,13 @@ def route_protected(environ, start_response, path):
         source = body.get("source") or "memoryendpoints://matm/meeting-messages/%s" % meeting_message_id
         if not store.has_quota_for(workspace_id, {"meetingMessageId": meeting_message_id, "summary": summary, "tags": promoted_tags, "source": source}):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this promoted memory event.", "quota_exceeded")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "meeting-message-promote", body)
+        if replay:
+            return replay
         event = store.submit_memory(
             workspace_id,
             promoted_by_agent_id,
-            body.get("scope") or message.get("scope") or room.get("scope"),
+            promotion_scope,
             body.get("title") or "Meeting memory: %s" % (room.get("name") or room.get("label") or message.get("roomId") or "room"),
             summary,
             promoted_tags,
@@ -8513,7 +9648,10 @@ def route_protected(environ, start_response, path):
             body.get("memoryType") or body.get("memory_type") or "evidence",
             body.get("subject") or "meeting-message:%s" % meeting_message_id,
             body.get("confidence") or 0.8,
-            body.get("scopeId") or body.get("scope_id") or message.get("scopeId") or room.get("scopeId"),
+            promotion_scope_id,
+        )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "meeting-message-promote"
         )
         submission = _memory_submission_metadata(event)
         confirmation = _memory_submission_confirmation(store, workspace_id, event)
@@ -8538,21 +9676,34 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "meeting-message-promote", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "meeting-message-promote", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-rooms" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-create", body)
-        if replay:
-            return replay
         scope = str(body.get("scope") or "").strip().lower()
         scope_id = str(body.get("scopeId") or body.get("scope_id") or "").strip()
+        parent_scope_type = str(body.get("parentScopeType") or body.get("parent_scope_type") or "").strip().lower()
+        parent_scope_id = str(body.get("parentScopeId") or body.get("parent_scope_id") or "").strip()
         label = str(body.get("label") or "").strip()
         name = str(body.get("name") or "").strip()
         purpose = str(body.get("purpose") or "").strip()
-        if scope not in ("goal", "task"):
-            return problem(start_response, "422 Unprocessable Entity", "Unsupported meeting room scope", "Create custom meeting rooms only for goal or task scope; company, workspace, and project rooms are hierarchy-derived.", "unsupported_meeting_room_scope")
+        parent_rules = {
+            "goal": ("project",),
+            "task": ("project", "goal"),
+            "game": ("project",),
+            "session": ("game", "project"),
+        }
+        if scope not in parent_rules:
+            return problem(start_response, "422 Unprocessable Entity", "Unsupported meeting room scope", "Create custom meeting rooms only for goal, task, game, or session scope; company, workspace, and project rooms are hierarchy-derived.", "unsupported_meeting_room_scope")
+        if parent_scope_type and parent_scope_type not in parent_rules[scope]:
+            return problem(start_response, "422 Unprocessable Entity", "Invalid meeting room parent", "The requested meeting room parent is not valid for this scope.", "scope_parent_invalid")
+        if parent_scope_type and not parent_scope_id:
+            return problem(start_response, "422 Unprocessable Entity", "Parent scope id required", "A parentScopeId is required when parentScopeType is provided.", "scope_parent_invalid")
+        if parent_scope_id and not parent_scope_type:
+            return problem(start_response, "422 Unprocessable Entity", "Parent scope type required", "A parentScopeType is required when parentScopeId is provided.", "scope_parent_invalid")
+        if not _npc_meeting_scope_allowed(auth, scope):
+            return _access_problem(start_response, "npc_game_scope_required")
         if not scope_id:
-            return problem(start_response, "422 Unprocessable Entity", "Scope id required", "Goal and task meeting rooms require scopeId.", "scope_id_required")
+            return problem(start_response, "422 Unprocessable Entity", "Scope id required", "Custom meeting rooms require scopeId.", "scope_id_required")
         if len(scope_id) > 160:
             return problem(start_response, "422 Unprocessable Entity", "Scope id too long", "Meeting room scopeId must be at most 160 characters.", "scope_id_too_long")
         if len(label) > 120 or len(name) > 160:
@@ -8561,8 +9712,13 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Meeting room purpose too long", "Meeting room purpose must be at most 1000 characters.", "meeting_room_purpose_too_long")
         if scope and scope_id:
             scope_allowed = store.auth_allows_scope(auth, scope, scope_id)
-            if not scope_allowed and scope in ("goal", "task"):
-                scope_allowed = store.auth_allows_scope(auth, "workspace", workspace_id)
+            parent_allowed = False
+            if parent_scope_type and parent_scope_id:
+                parent_allowed = store.auth_allows_scope(auth, parent_scope_type, parent_scope_id)
+            if not scope_allowed:
+                if _principal_scope_type(auth) in ("project", "game", "session", "goal", "task") and not parent_allowed:
+                    return _access_problem(start_response, "insufficient_scope")
+                scope_allowed = parent_allowed or store.auth_allows_scope(auth, "workspace", workspace_id)
             if not scope_allowed:
                 return _access_problem(start_response, "insufficient_scope")
         creator_agent_id, binding_problem = _bound_agent_id_or_problem(
@@ -8577,6 +9733,9 @@ def route_protected(environ, start_response, path):
             return binding_problem
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this meeting room.", "quota_exceeded")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "meeting-room-create", body)
+        if replay:
+            return replay
         room, created = store.create_meeting_room(
             workspace_id,
             scope,
@@ -8585,6 +9744,11 @@ def route_protected(environ, start_response, path):
             name=name,
             purpose=purpose,
             creator_agent_id=creator_agent_id,
+            parent_scope_type=parent_scope_type,
+            parent_scope_id=parent_scope_id,
+        )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "meeting-room-create"
         )
         rooms = store.meeting_rooms(workspace_id, creator_agent_id)
         visible = any(item.get("roomId") == room.get("roomId") for item in rooms)
@@ -8623,7 +9787,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "meeting-room-create", body, payload, "201 Created" if created else "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, "meeting-room-create", body, payload, "201 Created" if created else "200 OK")
         return json_response(start_response, payload, "201 Created" if created else "200 OK")
     if path == "/api/matm/meeting-rooms" and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
@@ -8650,6 +9814,7 @@ def route_protected(environ, start_response, path):
             room
             for room in rooms
             if store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId"))
+            and _npc_room_allowed(auth, room)
         ]
         if scope_filter:
             rooms = [room for room in rooms if room.get("scope") == scope_filter]
@@ -8706,11 +9871,14 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
         if not store.auth_allows_scope(auth, room.get("scope"), room.get("scopeId")):
             return _access_problem(start_response, "insufficient_scope")
+        if not _npc_room_allowed(auth, room):
+            return _access_problem(start_response, "npc_game_scope_required")
         rooms = store.meeting_rooms(workspace_id, agent_filter)
         rooms = [
             item
             for item in rooms
             if store.auth_allows_scope(auth, item.get("scope"), item.get("scopeId"))
+            and _npc_room_allowed(auth, item)
         ]
         room_with_counts = next((item for item in rooms if item.get("roomId") == room_id), room)
         filters = {"roomId": room_id}
@@ -8786,11 +9954,12 @@ def route_protected(environ, start_response, path):
             (room for room in store.meeting_rooms(workspace_id) if room.get("roomId") == requested_room_id),
             None,
         )
-        if requested_room and not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
+        if not requested_room:
+            return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        if not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
             return _access_problem(start_response, "insufficient_scope")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-message-submit", body)
-        if replay:
-            return replay
+        if not _npc_room_allowed(auth, requested_room):
+            return _access_problem(start_response, "npc_game_scope_required")
         room_id = body.get("roomId") or body.get("room_id")
         sender_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
@@ -8809,9 +9978,15 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Safe summary too long", "Meeting post safe summaries must be at most 2000 characters.", "safe_summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this meeting message.", "quota_exceeded")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "meeting-message-submit", body)
+        if replay:
+            return replay
         message, room = store.submit_meeting_message(workspace_id, room_id, sender_agent_id, safe_summary)
         if not message:
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "meeting-message-submit"
+        )
         confirmation = _meeting_post_confirmation(store, workspace_id, room, message)
         if not confirmation["persisted"]:
             return problem(start_response, "500 Internal Server Error", "Meeting message was not persisted", "The meeting message could not be confirmed in the room transcript after write.", "meeting_message_not_persisted")
@@ -8830,7 +10005,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "meeting-message-submit", body, payload, "201 Created")
+        _record_request_idempotency(store, environ, workspace_id, idem, "meeting-message-submit", body, payload, "201 Created")
         return json_response(start_response, payload, "201 Created")
     if path == "/api/matm/meeting-rooms/read" and method == "POST":
         requested_room_id = body.get("roomId") or body.get("room_id")
@@ -8838,11 +10013,12 @@ def route_protected(environ, start_response, path):
             (room for room in store.meeting_rooms(workspace_id) if room.get("roomId") == requested_room_id),
             None,
         )
-        if requested_room and not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
+        if not requested_room:
+            return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        if not store.auth_allows_scope(auth, requested_room.get("scope"), requested_room.get("scopeId")):
             return _access_problem(start_response, "insufficient_scope")
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "meeting-room-read", body)
-        if replay:
-            return replay
+        if not _npc_room_allowed(auth, requested_room):
+            return _access_problem(start_response, "npc_game_scope_required")
         room_id = body.get("roomId") or body.get("room_id")
         agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
@@ -8854,11 +10030,17 @@ def route_protected(environ, start_response, path):
             return binding_problem
         if not room_id:
             return problem(start_response, "422 Unprocessable Entity", "Meeting room id required", "Meeting read cursors require roomId.", "meeting_room_id_required")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "meeting-room-read", body)
+        if replay:
+            return replay
         read_state, error = store.mark_meeting_room_read(workspace_id, room_id, agent_id, body.get("lastMeetingMessageId") or body.get("last_meeting_message_id"))
         if error == "message_not_found":
             return problem(start_response, "404 Not Found", "Meeting message not found", "No matching meeting message exists for this room.", "meeting_message_not_found")
         if not read_state:
             return problem(start_response, "404 Not Found", "Meeting room not found", "No matching meeting room exists for this workspace.", "meeting_room_not_found")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "meeting-room-read"
+        )
         rooms = store.meeting_rooms(workspace_id, agent_id)
         room = next((item for item in rooms if item.get("roomId") == room_id), {"roomId": room_id})
         payload = {
@@ -8870,12 +10052,9 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "meeting-room-read", body, payload, "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, "meeting-room-read", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/agent-messages" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "message-submit", body)
-        if replay:
-            return replay
         safe_summary = body.get("safeSummary") or body.get("safe_summary") or ""
         sender_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
@@ -8891,6 +10070,9 @@ def route_protected(environ, start_response, path):
             return problem(start_response, "422 Unprocessable Entity", "Safe summary too long", "Current-message safe summaries must be at most 1000 characters.", "safe_summary_too_long")
         if not store.has_quota_for(workspace_id, body):
             return problem(start_response, "413 Payload Too Large", "Workspace quota exceeded", "The workspace does not have enough remaining storage for this current message.", "quota_exceeded")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "message-submit", body)
+        if replay:
+            return replay
         target_agent_id = body.get("targetAgentId") or body.get("target_agent_id")
         message, notifications = store.submit_message(
             workspace_id,
@@ -8898,6 +10080,9 @@ def route_protected(environ, start_response, path):
             target_agent_id,
             safe_summary,
             body.get("responseRequired") or body.get("response_required"),
+        )
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "message-submit"
         )
         notifications = notifications if isinstance(notifications, list) else ([notifications] if notifications else [])
         primary_notification = notifications[0] if notifications else {}
@@ -8934,7 +10119,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "message-submit", body, payload, "202 Accepted")
+        _record_request_idempotency(store, environ, workspace_id, idem, "message-submit", body, payload, "202 Accepted")
         return json_response(start_response, payload, "202 Accepted")
     if path in ("/api/matm/agent-inbox", "/api/matm/current-message") and method == "GET":
         agent_filter = query.get("agent_id") or query.get("agentId") or ""
@@ -9036,9 +10221,6 @@ def route_protected(environ, start_response, path):
             },
         )
     if path == "/api/matm/notifications/ack" and method == "POST":
-        replay = _idempotency_replay_or_conflict(store, start_response, workspace_id, idem, "notification-ack", body)
-        if replay:
-            return replay
         consumer_agent_id, binding_problem = _bound_agent_id_or_problem(
             auth,
             start_response,
@@ -9047,9 +10229,26 @@ def route_protected(environ, start_response, path):
         )
         if binding_problem:
             return binding_problem
-        receipt = store.ack(workspace_id, body.get("notificationId") or body.get("notification_id"), consumer_agent_id, body.get("status") or "read")
+        notification_id = body.get("notificationId") or body.get("notification_id")
+        visible_notification = store.inbox_page(
+            workspace_id,
+            consumer_agent_id,
+            "",
+            notification_id or "",
+            1,
+            "",
+        )
+        if not notification_id or not (visible_notification.get("items") or []):
+            return problem(start_response, "404 Not Found", "Notification not found", "No matching notification exists for the authenticated agent.", "notification_not_found")
+        replay = _idempotency_replay_or_conflict(store, environ, start_response, workspace_id, idem, "notification-ack", body)
+        if replay:
+            return replay
+        receipt = store.ack(workspace_id, notification_id, consumer_agent_id, body.get("status") or "read")
         if not receipt:
             return problem(start_response, "404 Not Found", "Notification not found", "No matching notification exists for this workspace.", "notification_not_found")
+        _mark_idempotent_mutation_started(
+            environ, store, workspace_id, idem, "notification-ack"
+        )
         payload = {
             "ok": True,
             "receipt": receipt,
@@ -9058,7 +10257,7 @@ def route_protected(environ, start_response, path):
             "rawCredentialExposed": False,
             "rawPayloadExposed": False,
         }
-        store.record_idempotency(workspace_id, idem, "notification-ack", body, payload, "200 OK")
+        _record_request_idempotency(store, environ, workspace_id, idem, "notification-ack", body, payload, "200 OK")
         return json_response(start_response, payload)
     if path == "/api/matm/receipts" and method == "GET":
         consumer_filter = query.get("consumer_agent_id") or query.get("consumerAgentId") or ""
@@ -9103,7 +10302,7 @@ def route_protected(environ, start_response, path):
     return problem(start_response, "404 Not Found", "Route not found", "No protected route matched this request.", "not_found")
 
 
-def application(environ, start_response):
+def _application_dispatch(environ, start_response):
     path = environ.get("PATH_INFO", "/") or "/"
     method = environ.get("REQUEST_METHOD", "GET")
     cors_api_route = path.startswith("/api/") and not path.startswith("/api/matm/human/")
@@ -9154,14 +10353,22 @@ def application(environ, start_response):
         return response(start_response, "200 OK", text_discovery(path.rsplit("/", 1)[-1]), content_type)
     if path == "/sitemap.xml" and method == "GET":
         urls = "\n".join(["<url><loc>%s%s</loc></url>" % (SITE_URL, route) for route in PUBLIC_ROUTES if not route.startswith("/api")])
-        return response(start_response, "200 OK", "<?xml version=\"1.0\"?><!-- MemoryEndpoints.com sitemap --><urlset>%s</urlset>" % urls, "application/xml; charset=utf-8")
+        return response(start_response, "200 OK", "<?xml version=\"1.0\"?><!-- %s sitemap --><urlset>%s</urlset>" % (escape_html(SITE_NAME), urls), "application/xml; charset=utf-8")
     public = route_public_json(path, start_response, environ) if method == "GET" else None
     if public:
         return public
     if path == "/api/admin/mysql-diagnostics":
         return route_admin_mysql_diagnostics(environ, start_response)
     if path == "/api/matm/agent-setup/free-account":
-        return route_setup(environ, start_response)
+        return route_setup(environ, start_response, path)
+    if path == "/api/matm/agent-setup/dogfood-partner-account":
+        return problem(
+            start_response,
+            "404 Not Found",
+            "Commercial setup route not available",
+            "Sponsored partner setup belongs to the private commercial edition and is not exposed by this public intranet build.",
+            "not_found",
+        )
     if path.startswith("/api/matm/"):
         if (
             path.startswith("/api/matm/connector-pairings/")
@@ -9229,3 +10436,18 @@ def application(environ, start_response):
             return access
         return route_protected(environ, start_response, path)
     return problem(start_response, "404 Not Found", "Not found", "The requested route does not exist.", "not_found")
+
+
+def application(environ, start_response):
+    try:
+        return _application_dispatch(environ, start_response)
+    except _IdempotencyFinalizationError:
+        if _preserve_uncertain_request_idempotency_claims(environ):
+            return _idempotency_uncertain_response(start_response)
+        raise
+    except Exception:
+        if _preserve_uncertain_request_idempotency_claims(environ):
+            return _idempotency_uncertain_response(start_response)
+        raise
+    finally:
+        _release_request_idempotency_claims(environ)

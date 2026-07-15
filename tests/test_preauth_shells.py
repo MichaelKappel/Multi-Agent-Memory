@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from app import application
+from memoryendpoints.config import SITE_NAME
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -179,7 +180,7 @@ class PreauthenticationShellContractTests(unittest.TestCase):
             with self.subTest(route=route):
                 status, headers, body = call_get(route)
                 self.assertEqual("200 OK", status)
-                self.assertIn("MemoryEndpoints", body)
+                self.assertTrue("MemoryEndpoints" in body or SITE_NAME in body)
                 self.assertNotIn("data-human-preauth-shell", body)
                 self.assertNotIn("no-store", headers.get("cache-control", "").lower())
 

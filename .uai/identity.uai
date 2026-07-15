@@ -12,9 +12,10 @@ Next action for agents: preserve product separation before writing code, docs, p
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, customer data, or private deployment values.
 
 Current identity:
-- MemoryEndpoints.com is the real MATM endpoint product and API surface.
-- MultiAgentMemory.com is the public GitHub companion documentation site.
+- The public GitHub repository is the free single-organization private-intranet MATM edition.
+- MultiAgentMemory.com is the public GitHub companion documentation site for that public edition.
+- MemoryEndpoints.com is the reserved hosted commercial product and API surface. Its public hosted branding, authenticated customer/business-model flows, pricing, billing, paid storage, paid NPC memory stores, sponsored partner setup, and customer-facing sales operations belong in a separate private commercial repository or deployment.
 - The GitHub repository is `MichaelKappel/Multi-Agent-Memory`.
-- UAIX is the standards and wizard guidance source; it is not the MemoryEndpoints.com update destination.
+- UAIX is the standards and wizard guidance source; it is not the public repository's update destination.
 - NeuralWikis is a learning source and prior-art context only. Do not copy its public wiki content, branding, or site claims.
 - The product must be described by verified local and live evidence, not aspiration.

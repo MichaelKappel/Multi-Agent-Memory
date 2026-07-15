@@ -18,11 +18,13 @@ from urllib.parse import urlsplit
 
 from app import application
 import memoryendpoints.app as app_module
+from memoryendpoints.config import SITE_URL
 from memoryendpoints.connector_pairing import normalize_company_agent_name
 from memoryendpoints.storage import FileStore, SQLiteStore
 
 
 ISSUER = "https://memoryendpoints.com"
+SITE_ORIGIN = SITE_URL.rstrip("/")
 SCHEMA = "memoryendpoints.connector_pairing.v1"
 CLIENT_ID = "localendpoint-connect"
 REDIRECT_URI = "http://127.0.0.1:53682/memoryendpoints/callback"
@@ -284,7 +286,7 @@ class ConnectorPairingApiContract:
         return {
             "HTTP_COOKIE": "__Host-memoryendpoints-human=" + self.human_session_secret,
             "HTTP_X_CSRF_TOKEN": self.human_csrf,
-            "HTTP_ORIGIN": ISSUER,
+            "HTTP_ORIGIN": SITE_ORIGIN,
             "HTTP_SEC_FETCH_SITE": "same-origin",
             "HTTP_SEC_FETCH_MODE": "cors",
             "HTTP_SEC_FETCH_DEST": "empty",
@@ -1991,7 +1993,7 @@ class ConnectorPairingApiContract:
             "HTTP_COOKIE": "__Host-memoryendpoints-human="
             + other_session["sessionSecret"],
             "HTTP_X_CSRF_TOKEN": other_session["csrfToken"],
-            "HTTP_ORIGIN": ISSUER,
+            "HTTP_ORIGIN": SITE_ORIGIN,
             "HTTP_SEC_FETCH_SITE": "same-origin",
             "HTTP_SEC_FETCH_MODE": "cors",
             "HTTP_SEC_FETCH_DEST": "empty",
@@ -2259,7 +2261,10 @@ class ConnectorPairingApiContract:
             "/api/matm/connector-pairings/requests",
             "POST",
             body,
-            extra_headers={"CONTENT_TYPE": "text/plain", "HTTP_IDEMPOTENCY_KEY": "text-plain"},
+            extra_headers={
+                "CONTENT_TYPE": "text/plain",
+                "HTTP_IDEMPOTENCY_KEY": "text-plain-idempotency",
+            },
         )
         self._assert_error(text_plain, 415, "json_content_type_required")
 

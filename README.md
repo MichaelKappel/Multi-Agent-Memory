@@ -1,43 +1,45 @@
 # Multi-Agent Memory
 
-Production-grade, source-available reference implementation for Multi-Agent Transactive Memory (MATM).
+Production-grade, source-available private-intranet reference implementation for Multi-Agent Transactive Memory (MATM).
 
 This repository contains two coordinated surfaces:
 
 | Surface | Role | Status |
 | --- | --- | --- |
-| [MemoryEndpoints.com](https://memoryendpoints.com) | MATM endpoint, public AI-ready discovery, protected workspace memory APIs | Live-verified and deployed from the pushed source SHA |
-| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site, including the complete [API and data reference](https://multiagentmemory.com/docs/api-reference.html) | Live-published companion documentation |
+| Private MATM intranet runtime | Free single-organization endpoint for private-network MATM memory, coordination, and human verification | Public GitHub edition |
+| [MultiAgentMemory.com](https://multiagentmemory.com) | Static GitHub companion documentation site for the public private-intranet edition, including the complete [API and data reference](https://multiagentmemory.com/docs/api-reference.html) | Public companion documentation |
 
 The runtime is deliberately small: Python standard library WSGI, committed browser JavaScript generated from TypeScript source, semantic HTML5, CSS, and no package-managed third-party runtime dependencies.
 
+MemoryEndpoints.com, hosted customer accounts, authenticated business-model surfaces, public SaaS deployment, pricing, billing, subscriptions, overage charging, paid or unlimited storage plans, paid or unlimited NPC memory stores, partner sponsorship flows, and customer-facing sales operations are reserved for a separate private commercial repository or deployment. They are not part of the public GitHub license.
+
 ## What This Is
 
-MemoryEndpoints.com is a deployable MATM endpoint reference. It provides:
+This public repository is a deployable private-intranet MATM endpoint reference. It provides:
 
 - Public AI-ready discovery files and evidence routes.
-- Free agent workspace setup with a 200 MB quota.
+- Free single-organization agent workspace setup with a 200 MB quota.
 - Autonomous setup and normal operation without a required human account. Routine logs are human-only break-glass evidence, never agent-visible, and are physically purged after seven days.
 - Account-company-workspace-project hierarchy with many-to-many account/company memberships.
 - One-time workspace keys with server-side hash storage only.
 - Protected workspace status, agent registration, accountless-browser virtual UAIX active memory, hash-only local `.uai` edit coordination, memory submit/search, lifecycle-aware wiki documents, canonical external links, meeting-room routing, current-message delivery, conflict-safe distributed sync, acknowledgements, and redacted receipts. Routine audit/history routes are human-only and physically expire after seven days.
 - Bounded coordination retention: acknowledged direct messages are deleted seven days after acknowledgement, unacknowledged messages expire after 30 days, and ordinary meeting transcripts are deleted after seven days. Durable routing decisions and explicitly promoted memory/knowledge remain.
 - No anonymous tenant wiki: `/knowledge` is an empty authentication shell, and all company/workspace/project pages, search results, and external-link records require a workspace-bound key. Accounts/users are membership identities, not data scopes.
-- A browser-based human verification console at [MemoryEndpoints.com/console](https://memoryendpoints.com/console).
+- A browser-based human verification console for private-network operation.
 - File-backed local storage, stdlib SQLite relational local storage, and a MySQL/MariaDB production backend selected by environment.
 
 The repository does not vendor, pin, install, or package a MySQL driver. The live cPanel deployment can use a host-provided MySQL Python adapter when the MySQL backend is selected; stdlib SQLite remains the pure-Python relational backend for environments that require zero host-provided database adapters.
 
-MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the architecture, memory boundary, GitHub repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API; MemoryEndpoints.com owns that runtime.
+MultiAgentMemory.com is plain HTML/CSS documentation only. It explains the public GitHub edition, architecture, memory boundary, repository structure, and GitHub-facing handoff model. It does not run the MATM endpoint API.
 
 ## Memory Boundary
 
 | Layer | Location | Purpose |
 | --- | --- | --- |
 | Active startup memory | `.uai/` | Current instructions, constraints, progress state, pointer ledgers, and all files in the startup read order |
-| Accountless-browser active-memory exception | Protected MemoryEndpoints virtual UAIX package | Complete registered-agent startup package only when the browser AI has no durable local filesystem |
-| Concurrent local-agent overlay | Protected MemoryEndpoints file heads and edit claims | Project/path hashes, bounded ownership leases, and public-safe summaries; no local `.uai` body is uploaded |
-| Mid-to-long-term memory | [MemoryEndpoints.com](https://memoryendpoints.com) | Authenticated durable MATM memory plus transient current messages, notifications, and receipts; routine logs remain human-only for seven days |
+| Accountless-browser active-memory exception | Protected intranet virtual UAIX package | Complete registered-agent startup package only when the browser AI has no durable local filesystem |
+| Concurrent local-agent overlay | Protected intranet file heads and edit claims | Project/path hashes, bounded ownership leases, and public-safe summaries; no local `.uai` body is uploaded |
+| Mid-to-long-term memory | Private MATM intranet endpoint | Authenticated durable MATM memory plus transient current messages, notifications, and receipts; routine logs remain human-only for seven days |
 | Public documentation | [MultiAgentMemory.com](https://multiagentmemory.com) and `sites/multiagentmemory.com/` | Companion docs and AI-readable public discovery |
 
 The totem invariant lives in `.uai/totem.uai`: local `.uai` stays active always. Hosted MATM augments durable memory, but it never replaces local startup continuity or offline recovery memory.
@@ -46,7 +48,7 @@ There are two explicit exceptions/augmentations, not a new default. An accountle
 
 No single catch-all `.uai` file is "the" active memory. Every `.uai/*.uai` file in `.uai/startup-packet.uai` read order is active memory, and active `.uai` stays date-free operational memory.
 
-UAIX setup reference: use the [MemoryEndpoints.com MATM setup option](https://uaix.org/en-us/tools/ai-memory-package-wizard/#setup-MATM-MemoryEndpoints) for this repository's `.uai` package pattern. UAIX uses setup-option fragments because the wizard has multiple modes. MemoryEndpoints.com inbound links should use the [home page](https://memoryendpoints.com); it currently has one setup surface, and any future setup-specific MemoryEndpoints URLs should be clean readable routes.
+UAIX setup reference: use the MATM setup option in the [UAIX AI memory package wizard](https://uaix.org/en-us/tools/ai-memory-package-wizard/) for this repository's `.uai` package pattern. UAIX uses setup-option fragments because the wizard has multiple modes.
 
 ## Repository Layout
 
@@ -60,7 +62,7 @@ UAIX setup reference: use the [MemoryEndpoints.com MATM setup option](https://ua
 |-- memoryendpoints/            # Pure Python stdlib WSGI application package
 |-- scripts/                    # Verification, packaging, migration, and deploy helpers
 |-- sites/multiagentmemory.com/ # Companion documentation site
-|-- static/                     # MemoryEndpoints.com CSS, JS, and image assets
+|-- static/                     # Private MATM intranet CSS, JS, and image assets
 |-- tests/                      # stdlib unittest suite
 |-- var/reports/                # Ignored point-in-time verification output
 |-- app.py                      # WSGI app export for local/import use
@@ -73,23 +75,23 @@ See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/d
 
 ## Public Evidence
 
-- [Version](https://memoryendpoints.com/api/version)
-- [Capability matrix](https://memoryendpoints.com/api/matm/live-capability-matrix)
-- [Agent compatibility](https://memoryendpoints.com/api/matm/agent-compatibility)
-- [Sync capabilities](https://memoryendpoints.com/api/matm/sync/capabilities)
-- [UAIX active-memory and local collaboration contract](https://memoryendpoints.com/api/matm/uai-memory/contract)
-- [Bounded OpenAPI contract](https://memoryendpoints.com/api/matm/openapi.json)
-- [Route inventory](https://memoryendpoints.com/api/matm/route-inventory)
-- [Readiness result](https://memoryendpoints.com/api/matm/readiness-result)
-- [Redacted receipt examples](https://memoryendpoints.com/api/matm/redacted-example-receipts)
-- [AI manifest](https://memoryendpoints.com/ai-manifest.json)
+- `/api/version`
+- `/api/matm/live-capability-matrix`
+- `/api/matm/agent-compatibility`
+- `/api/matm/sync/capabilities`
+- `/api/matm/uai-memory/contract`
+- `/api/matm/openapi.json`
+- `/api/matm/route-inventory`
+- `/api/matm/readiness-result`
+- `/api/matm/redacted-example-receipts`
+- `/ai-manifest.json`
 - [Companion API and data reference](https://multiagentmemory.com/docs/api-reference.html)
 
 Current deployed provenance comes from `/api/version`; current bounded capability and readiness claims come from the live evidence routes above. Files under `docs/reports/` are historical point-in-time snapshots and must not be treated as proof of a later commit. Fresh local and live verification output belongs under ignored `var/reports/`.
 
 ## Company Master Credential
 
-MemoryEndpoints creates the company master credential during [Agent Setup](https://memoryendpoints.com/agent-setup) and shows it once after the first company workspace is created. It is not a human account password and it is not the credential an agent should use for normal work. Displaying a default path does not create a file: setup is incomplete until the credential has been persisted and verified at that path.
+The private intranet creates the company master credential during Agent Setup and shows it once after the first company workspace is created. It is not a human account password and it is not the credential an agent should use for normal work. Displaying a default path does not create a file: setup is incomplete until the credential has been persisted and verified at that path.
 
 For browser setup, choose **Save to project secret folder** after creation and select the project root; the page creates `<project-root>/.local-secrets/memoryendpoints-company-master.json`. If folder access is unavailable, it downloads the exact filename and requires the human to move it into `.local-secrets` and verify it exists. Keep `.local-secrets/` in `.gitignore`, restrict the file to the owner and explicitly authorized local agents, and keep the exceptional human-owner recovery secret separately.
 
@@ -115,7 +117,7 @@ $env:MEMORYENDPOINTS_SQLITE_PATH='.\var\matm_store.sqlite3'
 python run_dev.py
 ```
 
-Production MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus an ignored `.local-secrets/mysql.json` file outside Git, `MEMORYENDPOINTS_MYSQL_*` credentials, or `MEMORYENDPOINTS_MYSQL_URL`. When `.local-secrets/mysql.json` exists it is authoritative over environment values so cPanel/stale process variables cannot silently override the deployed database credential file. `/api/version` must report `storeBackend: mysql` or `mariadb` and `storeBackendVerified: true` before the live site is considered to be using real MySQL.
+MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plus an ignored `.local-secrets/mysql.json` file outside Git, `MEMORYENDPOINTS_MYSQL_*` credentials, or `MEMORYENDPOINTS_MYSQL_URL`. When `.local-secrets/mysql.json` exists it is authoritative over environment values so stale process variables cannot silently override the configured database credential file. `/api/version` must report `storeBackend: mysql` or `mariadb` and `storeBackendVerified: true` before a deployment is considered to be using real MySQL.
 
 ## Verification
 
@@ -139,7 +141,7 @@ python scripts\package_memoryendpoints.py
 python scripts\ftp_deploy_memoryendpoints.py --dry-run --filezilla-site-match memoryendpoints --protocol ftps
 ```
 
-The verified deployment path uses the FileZilla MemoryEndpoints profile with explicit FTPS. Plain FTP is not the verified publish route.
+Deployment credentials and public-hosted MemoryEndpoints.com release operations belong outside the public GitHub edition unless a private-network operator has supplied their own explicit target. Plain FTP is not the verified publish route.
 
 ## Security And Claims
 
@@ -150,4 +152,4 @@ The verified deployment path uses the FileZilla MemoryEndpoints profile with exp
 
 ## License
 
-This repository uses the MemoryEndpoints Source-Available License. You may study, run, test, and contribute to the work, but you may not copy the whole project, strip attribution, and present it as your own original product. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+This repository uses the Multi-Agent Memory Private Intranet License. You may study, run, modify, and use the public edition for one organization's private network, but you may not resell it, host it as a competing public service, or reuse the reserved MemoryEndpoints.com business-model features. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [docs/product-boundary.md](docs/product-boundary.md).

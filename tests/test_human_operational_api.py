@@ -15,7 +15,7 @@ from memoryendpoints.human_operational import route_human_operational
 from memoryendpoints.storage import FileStore, SQLiteStore
 
 
-ORIGIN = "https://memoryendpoints.com"
+ORIGIN = SITE_URL.rstrip("/")
 AUDIT_ACTOR_FIELDS = {
     "humanAccountId",
     "humanAccountSessionId",

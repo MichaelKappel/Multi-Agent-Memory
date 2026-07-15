@@ -1,49 +1,112 @@
-MemoryEndpoints Source-Available License 1.0
+Multi-Agent Memory Private Intranet License 1.0
 
 Copyright (c) 2026 Michael Joseph Kappel.
 
-This license is intended for a public portfolio and collaboration repository. It
-allows people and AI agents to inspect, learn from, test, reference, and
-contribute to the project while preventing deceptive wholesale copying.
+This is a source-available license for the public GitHub edition of the
+Multi-Agent Memory / MATM private-intranet hive. It is not an OSI-approved open source license.
+It is intended to let people and organizations freely download,
+study, modify, and run this code on their own private network while preventing
+resale, public hosted competition, deceptive rebranding, and reuse of reserved
+commercial service features.
 
-Permission is granted to:
+No resale: this license does not permit selling, sublicensing, commercially
+hosting, or repackaging this repository or a substantially similar derivative.
 
-1. View, clone, run, and test the source code for personal, educational,
-   evaluation, interoperability, and contribution purposes.
-2. Quote limited excerpts with attribution.
-3. Submit issues, pull requests, patches, documentation, tests, and examples.
-4. Build compatible clients or integrations that communicate with the public
-   MemoryEndpoints.com protocols.
+1. Permitted Free Use
+
+You may, without paying a license fee:
+
+1. View, clone, inspect, test, and evaluate this repository.
+2. Run the software for one company, school, lab, household, or other single
+   internal organization on a private network, local machine, VPN, or intranet.
+3. Modify the software for that same internal private-network use.
+4. Share copies and modifications inside that same organization for internal
+   operation, review, education, interoperability testing, and contribution.
+5. Build clients, adapters, and integrations that communicate with the public
+   MATM protocols, provided those integrations do not sell or host this
+   software as a competing service.
+6. Submit issues, pull requests, patches, documentation, tests, and examples.
+7. Quote limited excerpts with attribution.
+
+2. Conditions
+
+Your permitted use requires that you:
+
+1. Keep copyright, license, NOTICE, attribution, provenance, changelog, and
+   authorship records intact.
+2. Identify this project as the source when publishing screenshots, demos,
+   articles, forks, excerpts, integrations, or derived examples.
+3. Keep private credentials, API keys, database passwords, FTP credentials,
+   raw private memory payloads, raw one-time setup keys, and user secrets out of
+   public repositories, examples, prompts, screenshots, logs, and reports.
+4. Use a materially distinct name and identity for permitted internal forks
+   that are shown outside your organization.
+
+3. Not Permitted Without A Separate Written Commercial License
 
 You may not:
 
-1. Copy, mirror, rebrand, or redistribute substantially all of this repository
+1. Sell, rent, lease, sublicense, resell, repackage, or commercially host this
+   repository or a substantially similar derivative.
+2. Offer this software, a modified copy, or a confusingly similar derivative as
+   a public SaaS, managed service, paid API, customer-hosted product, agency
+   platform, app-store product, marketplace product, or subscription service.
+3. Use this codebase or its documentation to compete with MemoryEndpoints.com,
+   Multi-Agent Memory, or the author's paid MATM hosting, memory-store, agent
+   coordination, or NPC memory-store services.
+4. Copy, mirror, rebrand, or redistribute substantially all of this repository
    as your own original product or service.
-2. Remove or obscure copyright, attribution, provenance, license, NOTICE,
-   changelog, or authorship records.
-3. Use this codebase or its documentation to imply certification, endorsement,
-   partnership, security approval, or official UAIX/MATM authority that has not
-   been explicitly granted in writing.
-4. Publish a hosted derivative that is confusingly similar to MemoryEndpoints,
-   Multi-Agent Memory, or the author's MATM work without prominent attribution
-   and a materially distinct identity.
-5. Store or publish private credentials, API keys, database passwords, FTP
-   credentials, raw private memory payloads, or raw user secrets in this repo.
+5. Remove or obscure attribution, provenance, license, NOTICE, changelog, or
+   authorship records.
+6. Use this codebase or documentation to imply certification, endorsement,
+   partnership, security approval, official UAIX authority, official MATM
+   authority, or hosted-service approval that has not been granted in writing.
+7. Publish a public internet deployment of this repository or a derivative that
+   accepts customers, users from multiple companies, payments, subscriptions,
+   paid memory storage, paid NPC memory storage, or overage billing.
 
-Derivative works:
+4. Reserved Commercial Features
 
-Small excerpts, adapters, examples, tests, and integration clients may be
-licensed by their authors if they include attribution to this project where
-MemoryEndpoints code or documentation is used. Substantial derivatives require
-written permission from the copyright holder.
+The following features and business surfaces are reserved for separate private
+commercial code and may not be reused from this public repository to operate or
+sell a competing service:
 
-No warranty:
+1. MemoryEndpoints.com hosted public service branding, marketing, pricing,
+   signup, customer account, and production business-model surfaces.
+2. Multi-company public-hosted identity, tenant, billing, payment, subscription,
+   overage, credit-card, coupon, or checkout features.
+3. Paid or unlimited storage plans, paid or unlimited NPC memory stores,
+   customer-facing hosted agent-memory plans, and partner-sponsored commercial
+   setup flows.
+4. Public customer administration, customer support, sales analytics, lead
+   capture, CRM, reseller, affiliate, marketplace, and enterprise sales flows.
+5. Any private commercial repository or deployment material explicitly marked as
+   reserved, proprietary, confidential, or not part of the public GitHub edition.
+
+5. Public Companion Site
+
+MultiAgentMemory.com may remain a public companion documentation site for this
+free private-intranet GitHub edition. That public documentation role does not
+grant permission to host, sell, or repackage MemoryEndpoints.com or the
+reserved commercial business-model features.
+
+6. Contributions
+
+Unless a separate written contributor agreement says otherwise, contributions
+submitted to this repository may be used in this public private-intranet edition
+and in separately licensed commercial editions by the copyright holder.
+Contributors keep ownership of their original contributions, subject to the
+rights they grant by submitting them.
+
+7. No Warranty
 
 The software is provided "as is", without warranty of any kind. The authors are
 not liable for claims, damages, data loss, credential exposure, memory
-corruption, deployment failure, or other liability arising from use of the
-software.
+corruption, deployment failure, business interruption, or other liability
+arising from use of the software.
 
-This is not an open-source license approved by the Open Source Initiative. It is
-a source-available license designed for transparent review and protected
-attribution.
+8. Commercial Permission
+
+Public hosted operation, resale, competing commercial use, and reserved
+commercial features require a separate written license from the copyright
+holder.

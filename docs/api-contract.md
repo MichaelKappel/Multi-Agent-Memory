@@ -151,6 +151,46 @@ agents that share the same OS identity and unrestricted filesystem can read the
 same project secret regardless of API authorization, so disposable agents must
 run without that secret mount or under a distinct vault/OS policy.
 
+### GET `/api/matm/access/scope-catalog`
+
+Returns the company-master-only catalog of company, workspace, project, game,
+session, goal, and task scopes that may be selected for a governed agent-access
+request. Scope identifiers are derived from the authenticated company; an
+agent credential is denied and the route never selects a workspace implicitly.
+
+### Governed agent access retry contract
+
+Company-master access mutations separate public-safe replay from one-time
+secret delivery:
+
+| Route | Purpose |
+| --- | --- |
+| `/api/matm/access/agent-name-requests` | List governed requests or create a public-safe, retryable request. |
+| `/api/matm/access/agent-name-requests/{requestId}/decision` | Approve or deny one pending request. |
+| `/api/matm/access/invites` | List redacted invitation metadata or issue one show-once invitation. |
+| `/api/matm/access/invites/redeem` | Consume one invitation and reveal its agent credential once. |
+| `/api/matm/access/invites/{inviteId}/revoke` | Revoke one unredeemed invitation. |
+| `/api/matm/access/agent-tokens` | List redacted governed agent-credential metadata. |
+| `/api/matm/access/agent-tokens/{credentialId}/revoke` | Revoke one governed agent credential. |
+
+| Route | `Idempotency-Key` | Lost-response behavior |
+| --- | --- | --- |
+| `POST /api/matm/access/agent-name-requests` | Required | Retry the exact body and key; the same public request metadata is replayed. |
+| `POST /api/matm/access/agent-name-requests/{requestId}/decision` | Required | Retry the exact decision and key; the final public decision metadata is replayed. |
+| `POST /api/matm/access/invites` | Forbidden | Never retry blindly. `GET /api/matm/access/invites` exposes the current invite ID, request ID, status, scope, and expiry without its secret. Revoke an uncertain issued invite with an idempotency key, then issue a replacement from the same approved request. |
+| `POST /api/matm/access/invites/{inviteId}/revoke` | Required | Retry the exact invite ID and key; the revoked metadata response is replayed. |
+| `POST /api/matm/access/invites/redeem` | Forbidden | The agent credential is returned once and cannot be replayed. Do not resend expecting the credential after an unknown outcome; use company-master credential inventory and the governed replacement flow. |
+| `POST /api/matm/access/agent-tokens/{credentialId}/revoke` | Required | Retry the exact credential ID and key; the revoked metadata response is replayed. A different key after revocation receives `agent_token_already_revoked`. |
+
+Invite issue and redemption reject an `Idempotency-Key` with
+`idempotency_key_not_allowed`; this prevents clients from assuming that raw
+invitation or agent-credential material is stored for replay. The server stores
+only one-way verifiers. Reissue is permitted only after the prior invite is
+revoked or expired, creates a globally new invite ID and secret, and invalidates
+the retired secret. A still-issued or redeemed invitation cannot be reissued.
+Current invitation metadata remains listable for recovery, while the audit
+record retains the retired invite ID and its replacement linkage.
+
 ### GET `/api/matm/connector-contract`
 
 Returns the public `memoryendpoints.connector_pairing.v1` contract used by
@@ -624,13 +664,22 @@ The relationship chain for normal memory use is `project -> workspace -> company
 
 ## Idempotency
 
-Protected mutation routes accept:
+Protected application-plane mutation routes require the header when their
+OpenAPI operation advertises a required `Idempotency-Key` parameter. Governed
+access operations additionally publish an explicit `x-idempotency` policy:
 
 ```http
 Idempotency-Key: <STABLE_UNIQUE_KEY_FOR_THIS_REQUEST_BODY>
 ```
 
 Exact retries return the original public-safe response status and body with `idempotentReplay=true`. Reusing the same key with a different body returns `409 Conflict` and `safeNoOp=true`.
+
+Governed access-plane mutations follow the route-specific table above. In
+particular, one-time invitation issue and redemption forbid the header because
+their raw secret responses are never persisted or replayed. The deprecated
+exact company-master LocalEndpoint registration transition described below
+keeps the header optional for compatibility; connector self-registration still
+requires it.
 
 The compatibility free-account setup route does not support replay because
 replay would require storing or regenerating a one-time raw secret. Connector
@@ -658,7 +707,13 @@ master. They do not accept a broad workspace bearer as a substitute.
 
 ### GET `/api/matm/workspace`
 
-Returns workspace quota, usage, plan, raw-key storage facts, account-company memberships, company metadata, workspace projects, and always-present default meeting rooms.
+Returns workspace quota, usage, plan, raw-key storage facts, and the resources
+visible to the authenticated grant. Company- and workspace-authority callers
+receive the account/company hierarchy plus workspace projects and default rooms.
+Project-, game-, session-, goal-, and task-scoped credentials receive a hierarchy-redacted status:
+no account or membership records, no company metadata, no sibling projects, and
+only meeting rooms reachable from the immutable grant. The operator summary is
+derived from that same filtered status.
 
 Broader governed credentials select an authorized workspace explicitly with this
 query field:
@@ -959,12 +1014,15 @@ A head contains a real workspace project, local logical path, latest observed
 SHA-256 hash, monotonic head revision, active claim id and agent when present,
 lease expiry metadata, and status. Every item states
 `localContentStored=false` and `coordinationMetadataOnly=true`.
+Items are filtered by the caller's project authority; an identifier supplied as
+a query filter never makes a sibling project's head visible.
 
 ### GET `/api/matm/uai-memory/edit-claims`
 
 Reads claim history with optional `project_id`, `agent_id`, `logical_path`, and
 `status` filters. Expired active leases are transitioned to `expired` before
-the response is returned and their heads are released.
+the response is returned and their heads are released. Returned items are also
+filtered by the caller's project authority.
 
 ### POST `/api/matm/uai-memory/edit-claims`
 
@@ -1154,11 +1212,15 @@ for operator UI use.
 
 ### GET `/api/matm/meeting-rooms`
 
-Lists first-class durable meeting rooms for the authenticated workspace. Default company-wide, workspace-wide, and project-wide rooms are created from the account/company/workspace/project hierarchy and remain always available for new agents.
+Lists first-class durable meeting rooms reachable from the authenticated grant.
+Default company-wide, workspace-wide, and project-wide rooms are created from
+the account/company/workspace/project hierarchy, but lower-scoped credentials do
+not receive ancestor or sibling rooms merely because those rooms share a
+workspace.
 
 Company meeting rooms are still protected resources: an agent must present a valid workspace key, and that key must authenticate into a workspace attached to the company. The route does not expose public company chat or unauthenticated company enumeration.
 
-The company room is the highest-level welcome and routing room. A new agent should enter that room first, state who it is, why it is here, and what it is working on, then wait for a coordinator agent to route it into the correct workspace, project, goal, or task room. Workspace rooms coordinate active operating context. Project rooms coordinate assigned implementation work. Goal and task rooms are first-class custom coordination scopes; they do not own durable wiki trees and must not be improvised as hidden side channels.
+The company room is the highest-level welcome and routing room. A new ordinary agent should enter that room first, state who it is, why it is here, and what it is working on, then wait for a coordinator agent to route it into the correct workspace, project, game, session, goal, or task room. Workspace rooms coordinate active operating context. Project rooms coordinate assigned implementation work. Goal, task, game, and session rooms are first-class custom coordination scopes; they do not own durable wiki trees and must not be improvised as hidden side channels. NPC agents are the exception: NPC-to-NPC communication is restricted to game and session meeting rooms and must not use company, workspace, or project meeting rooms.
 
 Query:
 
@@ -1172,9 +1234,14 @@ Response includes:
 
 ### POST `/api/matm/meeting-rooms`
 
-Creates or idempotently resolves a custom `goal` or `task` room. Company, workspace, and project rooms are derived from the tenant hierarchy and cannot be forged through this route.
+Creates or idempotently resolves a custom `goal`, `task`, `game`, or `session` room. Company, workspace, and project rooms are derived from the tenant hierarchy and cannot be forged through this route.
 
-Required fields are `workspaceId`, `creatorAgentId`, `scope`, and `scopeId`. `scope` must be `goal` or `task`. `name` and `purpose` provide the public-safe human and agent description.
+Until the request contract carries an explicit authorized parent, a project-,
+game-, session-, goal-, or task-scoped credential may only resolve an already-existing custom
+scope node beneath its grant. It cannot create an ambiguous custom room whose
+parent would otherwise be inferred from the workspace's first project.
+
+Required fields are `workspaceId`, `creatorAgentId`, `scope`, and `scopeId`. `scope` must be `goal`, `task`, `game`, or `session`; `parentScopeType` and `parentScopeId` anchor new game/session rooms under the intended project or game. `name` and `purpose` provide the public-safe human and agent description.
 
 Successful responses confirm `persisted`, `visibleToAgent`, `created`, `canonicalRoomId`, `roomQueryUrl`, and `transcriptQueryUrl`.
 
@@ -1365,6 +1432,12 @@ Routine audit rows older than seven days are physically deleted in JSON, SQLite,
 [`GET /api/matm/sync/capabilities`](https://memoryendpoints.com/api/matm/sync/capabilities) is the public negotiation contract. It advertises the live route map, supported mutation operations, conflict behavior, checkpoint model, device-authority model, and retention boundary. Clients must negotiate this response instead of assuming a private implementation detail.
 
 Distributed sync is for public-safe memory summaries. It does not sync raw credentials, hidden prompts, private model assets, arbitrary files, or opaque application state. Every mutation uses a workspace key and an `Idempotency-Key`.
+
+Protected sync heads and revisions do not yet carry durable project ownership.
+Therefore every protected sync GET and POST route below requires company or
+workspace authority. Project-, game-, session-, goal-, and task-scoped credentials receive a
+safe `403 insufficient_scope` no-op before any sync read or write; the public
+capabilities route remains available for negotiation.
 
 ### POST `/api/matm/sync/devices`
 

@@ -10,6 +10,7 @@ This folder contains checked-in engineering documentation for the Multi-Agent Me
 - [Storage backends](storage-backends.md)
 - [Database structure](database-structure.md)
 - [Repository structure](repository-structure.md)
+- [Product boundary](product-boundary.md)
 - [Verification](verification.md)
 - [Deployment](deployment.md)
 
@@ -18,8 +19,8 @@ This folder contains checked-in engineering documentation for the Multi-Agent Me
 Use evidence in this order:
 
 1. Checked-in code and tests define what a Git revision implements.
-2. [`/api/version`](https://memoryendpoints.com/api/version) identifies the exact deployed source SHA and production storage backend.
-3. The live [route inventory](https://memoryendpoints.com/api/matm/route-inventory), [capability matrix](https://memoryendpoints.com/api/matm/live-capability-matrix), [UAIX active-memory contract](https://memoryendpoints.com/api/matm/uai-memory/contract), [sync capabilities](https://memoryendpoints.com/api/matm/sync/capabilities), and [readiness result](https://memoryendpoints.com/api/matm/readiness-result) describe the deployed public contract.
+2. `/api/version` identifies the exact deployed source SHA and storage backend for the operator's private deployment.
+3. The route inventory, capability matrix, UAIX active-memory contract, sync capabilities, and readiness result describe the deployed public contract for that private endpoint.
 4. Fresh local and live verifier output under ignored `var/reports/` proves a point-in-time check without making generated artifacts part of the documentation source of truth.
 
 The existing `docs/reports/` files are historical point-in-time snapshots. They can explain earlier decisions but are not current-release proof and must not override code, tests, or exact-SHA live evidence.

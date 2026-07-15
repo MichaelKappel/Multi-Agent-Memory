@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -93,7 +94,14 @@ class CurrentMessageAttentionOrderingTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=sender.auth_headers,
+            headers=dict(
+                sender.auth_headers,
+                HTTP_IDEMPOTENCY_KEY="attention-message-%s-%s"
+                % (
+                    target_agent_id or "broadcast",
+                    hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16],
+                ),
+            ),
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": sender.agent_id,

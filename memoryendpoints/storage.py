@@ -88,7 +88,11 @@ from .uai_memory import (
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
+_SQLITE_SCHEMA_VERSION = 1
 _MYSQL_SCHEMA_READY = set()
+_IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
+_IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
+_IDEMPOTENCY_CLAIM_STALE_SECONDS = 120.0
 
 
 def _id(prefix):
@@ -229,6 +233,74 @@ def _scrypt_password_verifier(password, username):
 def _canonical_hash(value):
     encoded = json.dumps(value or {}, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _idempotency_conflict_response():
+    return {
+        "ok": False,
+        "status": "idempotency_conflict",
+        "safeNoOp": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "idempotencyKeyExposed": False,
+        "error": {
+            "code": "idempotency_conflict",
+            "title": "Idempotency conflict",
+            "detail": "The same idempotency key was reused with a different request body.",
+            "safeNoOp": True,
+            "valuesRedacted": True,
+        },
+    }
+
+
+def _idempotency_in_progress_response():
+    return {
+        "ok": False,
+        "status": "idempotency_in_progress",
+        "safeNoOp": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "idempotencyKeyExposed": False,
+        "_httpStatus": "409 Conflict",
+        "error": {
+            "code": "idempotency_in_progress",
+            "title": "Idempotent mutation still in progress",
+            "detail": "An exact concurrent request is still committing. Retry the same request and key.",
+            "safeNoOp": True,
+            "valuesRedacted": True,
+        },
+    }
+
+
+def _idempotency_pending_payload(claim_id):
+    return {
+        "schemaVersion": _IDEMPOTENCY_PENDING_MARKER,
+        "claimId": claim_id,
+    }
+
+
+def _idempotency_pending_claim(response):
+    if not isinstance(response, dict):
+        return ""
+    if response.get("schemaVersion") != _IDEMPOTENCY_PENDING_MARKER:
+        return ""
+    return str(response.get("claimId") or "")
+
+
+def _idempotency_claim_is_stale(created_at):
+    try:
+        parsed = datetime.datetime.fromisoformat(
+            str(created_at or "").replace("Z", "+00:00")
+        )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        return (
+            datetime.datetime.now(datetime.timezone.utc) - parsed
+        ).total_seconds() >= _IDEMPOTENCY_CLAIM_STALE_SECONDS
+    except (TypeError, ValueError):
+        return True
 
 
 def _json_size(value):
@@ -540,16 +612,7 @@ def _human_memory_material(workspace_id, audit_actor, payload):
         return None
     payload = payload or {}
     memory_type = str(payload.get("memoryType") or "note").strip().lower()
-    if memory_type not in (
-        "fact",
-        "decision",
-        "status",
-        "procedure",
-        "risk",
-        "evidence",
-        "handoff",
-        "note",
-    ):
+    if memory_type not in _MEMORY_EVENT_TYPES:
         memory_type = "note"
     try:
         confidence_value = float(payload.get("confidence"))
@@ -888,6 +951,14 @@ def _slug(value, fallback="item", limit=96):
     if not text:
         text = fallback
     return text[:limit].strip("-") or fallback
+
+
+def normalize_project_id(project_id=None, label=None):
+    """Return the canonical project identifier used by every backend."""
+    normalized = _slug(project_id or label or "Workspace Project", "project", 80)
+    if not normalized.startswith("project-"):
+        normalized = "project-" + normalized
+    return normalized
 
 
 def _parse_limit(value, default=50, maximum=500):
@@ -1471,7 +1542,44 @@ def _knowledge_tree_from_documents(documents):
     }
 
 
-_AGENT_ACCESS_SCOPE_LEVEL = {"company": 0, "workspace": 1, "project": 2, "goal": 3, "task": 4}
+PLAN_FREE_AGENT = "free_agent"
+_MEMORY_EVENT_TYPES = frozenset(
+    (
+        "fact",
+        "decision",
+        "status",
+        "procedure",
+        "risk",
+        "evidence",
+        "handoff",
+        "note",
+        "npc_persona",
+        "npc_world_knowledge",
+        "npc_player_relationship",
+        "npc_game_context",
+        "npc_session_context",
+        "npc_to_npc",
+        "npc_puzzle_state",
+    )
+)
+NPC_AGENT_ID_PREFIX = "npc-"
+NPC_ALLOWED_SCOPE_TYPES = ("project", "game", "session")
+NPC_MEETING_SCOPE_TYPES = ("game", "session")
+_CUSTOM_SCOPE_PARENT_RULES = {
+    "goal": ("project",),
+    "task": ("project", "goal"),
+    "game": ("project",),
+    "session": ("game", "project"),
+}
+_AGENT_ACCESS_SCOPE_LEVEL = {
+    "company": 0,
+    "workspace": 1,
+    "project": 2,
+    "game": 3,
+    "session": 4,
+    "goal": 5,
+    "task": 6,
+}
 _AGENT_GRANT_SCOPE_TYPES = set(_AGENT_ACCESS_SCOPE_LEVEL)
 _MIN_AGENT_INVITE_TTL_SECONDS = 60
 _MAX_AGENT_INVITE_TTL_SECONDS = 24 * 60 * 60
@@ -2299,6 +2407,82 @@ def _bounded_ttl_seconds(value, default, minimum, maximum):
     return max(minimum, min(maximum, seconds))
 
 
+def _storage_limit_value(value):
+    try:
+        if value is None or value == "":
+            return PUBLIC_STORAGE_BYTES
+        return int(value)
+    except (TypeError, ValueError):
+        return PUBLIC_STORAGE_BYTES
+
+
+def _storage_is_unlimited(value):
+    return _storage_limit_value(value) < 0
+
+
+def _workspace_plan_entitlement(plan, storage_limit):
+    normalized_plan = str(plan or PLAN_FREE_AGENT).strip().lower() or PLAN_FREE_AGENT
+    if normalized_plan != PLAN_FREE_AGENT:
+        normalized_plan = PLAN_FREE_AGENT
+    storage_unlimited = _storage_is_unlimited(storage_limit)
+    entitlements = []
+    if storage_unlimited:
+        entitlements.append("unlimited_storage")
+    return {
+        "plan": normalized_plan,
+        "planClass": "free_tier",
+        "billingStatus": "free",
+        "sponsored": False,
+        "checkoutRequired": False,
+        "storageUnlimited": storage_unlimited,
+        "storageQuotaEnforced": not storage_unlimited,
+        "npcMemoryUnlimited": False,
+        "entitlements": entitlements,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+def _workspace_storage_fields(plan, storage_limit, used):
+    limit = _storage_limit_value(storage_limit)
+    used = max(0, int(used or 0))
+    entitlement = _workspace_plan_entitlement(plan, limit)
+    storage_unlimited = bool(entitlement.get("storageUnlimited"))
+    return {
+        "plan": entitlement["plan"],
+        "billingStatus": entitlement["billingStatus"],
+        "checkoutRequired": entitlement["checkoutRequired"],
+        "storageLimitBytes": limit,
+        "storageLimitDisplay": "unlimited" if storage_unlimited else str(limit),
+        "storageUsedBytes": used,
+        "storageRemainingBytes": None if storage_unlimited else max(0, limit - used),
+        "storageRemainingDisplay": "unlimited" if storage_unlimited else str(max(0, limit - used)),
+        "storageUnlimited": storage_unlimited,
+        "storageQuotaEnforced": bool(entitlement.get("storageQuotaEnforced")),
+        "quotaExceeded": False if storage_unlimited else used > limit,
+        "npcMemoryUnlimited": bool(entitlement.get("npcMemoryUnlimited")),
+        "planEntitlement": entitlement,
+    }
+
+
+def _quota_allows(storage_limit, used, candidate):
+    if _storage_is_unlimited(storage_limit):
+        return True
+    return int(used or 0) + _json_size(candidate) <= _storage_limit_value(storage_limit)
+
+
+def _is_npc_agent_name(agent_name):
+    return str(agent_name or "").strip().lower().startswith(NPC_AGENT_ID_PREFIX)
+
+
+def _custom_scope_parent_allowed(scope_type, parent_scope_type):
+    return str(parent_scope_type or "").strip().lower() in _CUSTOM_SCOPE_PARENT_RULES.get(
+        str(scope_type or "").strip().lower(),
+        (),
+    )
+
+
 def _expires_at(seconds):
     return (
         datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
@@ -3019,7 +3203,7 @@ class FileStore(object):
             )
             self._save(data)
         rooms = []
-        scope_order = {"company": 0, "workspace": 1, "project": 2, "goal": 3, "task": 4}
+        scope_order = _AGENT_ACCESS_SCOPE_LEVEL
         for room in data.get("meetingRooms", {}).values():
             if room.get("workspaceId") != workspace_id or room.get("status") != "active":
                 continue
@@ -3035,12 +3219,25 @@ class FileStore(object):
         rooms.sort(key=lambda item: (scope_order.get(item.get("scope"), 99), item.get("name") or "", item.get("roomId") or ""))
         return rooms
 
-    def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
+    def create_meeting_room(
+        self,
+        workspace_id,
+        scope,
+        scope_id,
+        label=None,
+        name=None,
+        purpose=None,
+        creator_agent_id=None,
+        parent_scope_type=None,
+        parent_scope_id=None,
+    ):
         data = self._load()
         self._ensure_default_meeting_rooms(data, workspace_id)
         data.setdefault("meetingRooms", {})
         scope = (scope or "").strip().lower()
         scope_id = str(scope_id or "").strip()
+        parent_scope_type = str(parent_scope_type or "").strip().lower()
+        parent_scope_id = str(parent_scope_id or "").strip()
         room_id = self._meeting_room_id(workspace_id, scope, scope_id)
         now = utc_now()
         default_label = "%s coordination room" % scope.title()
@@ -3069,27 +3266,34 @@ class FileStore(object):
             }
         )
         data["meetingRooms"][room_id] = room
-        if scope in ("goal", "task"):
+        if scope in _CUSTOM_SCOPE_PARENT_RULES:
             workspace = data.get("workspaces", {}).get(workspace_id) or {}
             project = next((item for item in data.get("projects", {}).values() if item.get("workspaceId") == workspace_id), {})
             company_id = workspace.get("companyId") or ""
-            parent_scope_type = "project" if project.get("projectId") else "workspace"
-            parent_scope_id = project.get("projectId") or workspace_id
-            node_key = "%s:%s:%s" % (company_id, scope, scope_id)
-            data.setdefault("scopeNodes", {}).setdefault(
-                node_key,
-                {
-                    "scopeNodeId": _id("scopenode"),
-                    "companyId": company_id,
-                    "scopeType": scope,
-                    "scopeId": scope_id,
-                    "parentScopeType": parent_scope_type,
-                    "parentScopeId": parent_scope_id,
-                    "workspaceId": workspace_id,
-                    "projectId": project.get("projectId"),
-                    "createdAt": now,
-                },
-            )
+            if not parent_scope_type or not parent_scope_id:
+                parent_scope_type = "project" if project.get("projectId") else "workspace"
+                parent_scope_id = project.get("projectId") or workspace_id
+            parent_company_id = self._agent_access_scope_company_data(data, parent_scope_type, parent_scope_id)
+            if _custom_scope_parent_allowed(scope, parent_scope_type) and parent_company_id == company_id:
+                project_id = parent_scope_id if parent_scope_type == "project" else project.get("projectId")
+                if parent_scope_type in _CUSTOM_SCOPE_PARENT_RULES:
+                    parent = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == parent_scope_type and item.get("scopeId") == parent_scope_id), None)
+                    project_id = parent.get("projectId") if parent else project_id
+                node_key = "%s:%s:%s" % (company_id, scope, scope_id)
+                data.setdefault("scopeNodes", {}).setdefault(
+                    node_key,
+                    {
+                        "scopeNodeId": _id("scopenode"),
+                        "companyId": company_id,
+                        "scopeType": scope,
+                        "scopeId": scope_id,
+                        "parentScopeType": parent_scope_type,
+                        "parentScopeId": parent_scope_id,
+                        "workspaceId": workspace_id,
+                        "projectId": project_id,
+                        "createdAt": now,
+                    },
+                )
         self._append_storage_ledger(data, workspace_id, "meeting_room", room_id, room)
         self.audit(
             data,
@@ -3361,7 +3565,11 @@ class FileStore(object):
             data = self._load()
             workspace = data.get("workspaces", {}).get(workspace_id)
         used = self.workspace_usage_bytes(data, workspace_id)
-        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
+        storage_fields = _workspace_storage_fields(
+            workspace.get("plan"),
+            workspace.get("storageLimitBytes"),
+            used,
+        )
         company_id = workspace.get("companyId")
         company = data.get("companies", {}).get(company_id) or {}
         memberships = [
@@ -3399,13 +3607,9 @@ class FileStore(object):
             "accounts": account_items,
             "accountCompanyMemberships": memberships,
             "projects": projects,
-            "plan": workspace.get("plan"),
             "status": workspace.get("status"),
-            "storageLimitBytes": limit,
-            "storageUsedBytes": used,
-            "storageRemainingBytes": max(0, limit - used),
-            "quotaExceeded": used > limit,
             "rawKeyStoredByServer": False,
+            **storage_fields,
         }
 
     def projects(self, workspace_id):
@@ -3426,11 +3630,11 @@ class FileStore(object):
         if not workspace:
             return None, "workspace_not_found"
         safe_label = redact_text(label or project_id or "Workspace Project")
-        project_id = _slug(project_id or safe_label, "project", 80)
-        if not project_id.startswith("project-"):
-            project_id = "project-" + project_id
+        project_id = normalize_project_id(project_id, safe_label)
         now = utc_now()
         project = data.setdefault("projects", {}).get(project_id)
+        if project and project.get("workspaceId") != workspace_id:
+            return None, "project_id_conflict"
         created = project is None
         if not project:
             project = {
@@ -3449,6 +3653,7 @@ class FileStore(object):
                 "valuesRedacted": True,
             }
         )
+        created_rooms = self._ensure_default_meeting_rooms(data, workspace_id)
         self.audit(
             data,
             "project.upsert",
@@ -3457,6 +3662,15 @@ class FileStore(object):
             workspace_id,
             {"created": created, "projectId": project_id},
         )
+        if created_rooms:
+            self.audit(
+                data,
+                "meeting_rooms.ensure_defaults",
+                actor_agent_id or "system",
+                project_id,
+                workspace_id,
+                {"meetingRoomCount": len(created_rooms)},
+            )
         self._save(data)
         return dict(project), None
 
@@ -3793,7 +4007,7 @@ class FileStore(object):
         self._save(data)
         return public_link, None
 
-    def external_links(self, workspace_id, filters=None, limit=50):
+    def external_links(self, workspace_id, filters=None, limit=50, _all=False):
         data = self._load()
         filters = filters or {}
         query = filters.get("q") or filters.get("query") or ""
@@ -3844,62 +4058,133 @@ class FileStore(object):
                 continue
             items.append(public_link)
         items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("siteName") or "", item.get("pageTitle") or "", item.get("externalLinkId") or ""))
-        return items[: _parse_limit(limit, 50, 500)]
+        return items if _all else items[: _parse_limit(limit, 50, 500)]
 
     def has_quota_for(self, workspace_id, candidate):
         data = self._load()
         workspace = data.get("workspaces", {}).get(workspace_id)
         if not workspace:
             return False
-        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
-        return self.workspace_usage_bytes(data, workspace_id) + _json_size(candidate) <= limit
+        return _quota_allows(
+            workspace.get("storageLimitBytes"),
+            self.workspace_usage_bytes(data, workspace_id),
+            candidate,
+        )
 
     def check_idempotency(self, workspace_id, key, operation, body):
         if not key:
             return None
-        data = self._load()
-        record_key = "%s:%s:%s" % (workspace_id, operation, key)
-        record = data.get("idempotency", {}).get(record_key)
+        with _LOCK:
+            data = self._load()
+            record_key = "%s:%s:%s" % (workspace_id, operation, key)
+            record = data.get("idempotency", {}).get(record_key)
         if not record:
             return None
         if record.get("bodyHash") != _canonical_hash(body):
-            return {
-                "ok": False,
-                "status": "idempotency_conflict",
-                "safeNoOp": True,
-                "valuesRedacted": True,
-                "rawCredentialExposed": False,
-                "rawPayloadExposed": False,
-                "idempotencyKeyExposed": False,
-                "error": {
-                    "code": "idempotency_conflict",
-                    "title": "Idempotency conflict",
-                    "detail": "The same idempotency key was reused with a different request body.",
-                    "safeNoOp": True,
-                    "valuesRedacted": True,
-                },
-            }
+            return _idempotency_conflict_response()
+        if _idempotency_pending_claim(record.get("response")):
+            return _idempotency_in_progress_response()
         replay = dict(record.get("response") or {})
         replay["idempotentReplay"] = True
         replay["idempotencyKeyExposed"] = False
         replay["_httpStatus"] = record.get("httpStatus") or "200 OK"
         return replay
 
-    def record_idempotency(self, workspace_id, key, operation, body, response, http_status="200 OK"):
+    def claim_idempotency(self, workspace_id, key, operation, body):
+        """Atomically reserve an exact mutation or return its committed replay."""
         if not key:
-            return
-        data = self._load()
+            return None
+        body_hash = _canonical_hash(body)
         record_key = "%s:%s:%s" % (workspace_id, operation, key)
-        data.setdefault("idempotency", {})[record_key] = {
-            "workspaceId": workspace_id,
-            "operation": operation,
-            "bodyHash": _canonical_hash(body),
-            "response": response,
-            "httpStatus": http_status,
-            "createdAt": utc_now(),
-            "idempotencyKeyExposed": False,
-        }
-        self._save(data)
+        claim_id = _id("idemclaim")
+        deadline = time.monotonic() + _IDEMPOTENCY_CLAIM_WAIT_SECONDS
+        while True:
+            with _LOCK:
+                data = self._load()
+                records = data.setdefault("idempotency", {})
+                record = records.get(record_key)
+                if not record:
+                    records[record_key] = {
+                        "workspaceId": workspace_id,
+                        "operation": operation,
+                        "bodyHash": body_hash,
+                        "response": _idempotency_pending_payload(claim_id),
+                        "httpStatus": "",
+                        "createdAt": utc_now(),
+                        "idempotencyKeyExposed": False,
+                    }
+                    self._save(data)
+                    return {
+                        "_idempotencyClaimed": True,
+                        "_claimId": claim_id,
+                    }
+                if record.get("bodyHash") != body_hash:
+                    return _idempotency_conflict_response()
+                pending_claim = _idempotency_pending_claim(record.get("response"))
+                if not pending_claim:
+                    replay = dict(record.get("response") or {})
+                    replay["idempotentReplay"] = True
+                    replay["idempotencyKeyExposed"] = False
+                    replay["_httpStatus"] = record.get("httpStatus") or "200 OK"
+                    return replay
+            if time.monotonic() >= deadline:
+                return _idempotency_in_progress_response()
+            time.sleep(0.01)
+
+    def release_idempotency_claim(
+        self, workspace_id, key, operation, claim_id
+    ):
+        if not key or not claim_id:
+            return False
+        record_key = "%s:%s:%s" % (workspace_id, operation, key)
+        with _LOCK:
+            data = self._load()
+            records = data.setdefault("idempotency", {})
+            record = records.get(record_key)
+            if not record or not secrets.compare_digest(
+                _idempotency_pending_claim(record.get("response")), str(claim_id)
+            ):
+                return False
+            records.pop(record_key, None)
+            self._save(data)
+            return True
+
+    def record_idempotency(
+        self,
+        workspace_id,
+        key,
+        operation,
+        body,
+        response,
+        http_status="200 OK",
+        claim_id=None,
+    ):
+        if not key:
+            return True
+        with _LOCK:
+            data = self._load()
+            record_key = "%s:%s:%s" % (workspace_id, operation, key)
+            existing = data.setdefault("idempotency", {}).get(record_key)
+            if claim_id and (
+                not existing
+                or existing.get("bodyHash") != _canonical_hash(body)
+                or not secrets.compare_digest(
+                    _idempotency_pending_claim(existing.get("response")),
+                    str(claim_id),
+                )
+            ):
+                return False
+            data.setdefault("idempotency", {})[record_key] = {
+                "workspaceId": workspace_id,
+                "operation": operation,
+                "bodyHash": _canonical_hash(body),
+                "response": response,
+                "httpStatus": http_status,
+                "createdAt": utc_now(),
+                "idempotencyKeyExposed": False,
+            }
+            self._save(data)
+            return True
 
     def _sync_device_key(self, workspace_id, device_id):
         return "%s:%s" % (workspace_id, device_id)
@@ -4190,7 +4475,15 @@ class FileStore(object):
         items.sort(key=lambda item: (item.get("logicalMemoryId") or ""))
         return items
 
-    def create_free_account(self, label, company_label=None, project_label=None):
+    def create_free_account(
+        self,
+        label,
+        company_label=None,
+        project_label=None,
+        plan=PLAN_FREE_AGENT,
+        storage_limit_bytes=PUBLIC_STORAGE_BYTES,
+        audit_action="workspace.create_free_account",
+    ):
         data = self._load()
         created_at = utc_now()
         account_id = _id("account")
@@ -4235,8 +4528,8 @@ class FileStore(object):
             "companyId": company_id,
             "primaryProjectId": project_id,
             "label": redact_text(label or "Free Agent Workspace"),
-            "plan": "free_agent",
-            "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+            "plan": str(plan or PLAN_FREE_AGENT).strip().lower() or PLAN_FREE_AGENT,
+            "storageLimitBytes": _storage_limit_value(storage_limit_bytes),
             "createdAt": created_at,
             "status": "active",
         }
@@ -4273,7 +4566,7 @@ class FileStore(object):
         created_rooms = self._ensure_default_meeting_rooms(data, workspace_id)
         self.audit(
             data,
-            "workspace.create_free_account",
+            audit_action,
             "system",
             workspace_id,
             workspace_id,
@@ -4338,7 +4631,7 @@ class FileStore(object):
             project = data.get("projects", {}).get(scope_id)
             workspace = data.get("workspaces", {}).get(project.get("workspaceId")) if project else None
             return workspace.get("companyId") if workspace else None
-        if scope_type in ("goal", "task"):
+        if scope_type in _CUSTOM_SCOPE_PARENT_RULES:
             node = data.get("scopeNodes", {}).get("%s:%s:%s" % (scope_type, scope_id, "node"))
             if not node:
                 node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
@@ -4351,7 +4644,7 @@ class FileStore(object):
         if scope_type == "project":
             project = data.get("projects", {}).get(scope_id)
             return project.get("workspaceId") if project else None
-        if scope_type in ("goal", "task"):
+        if scope_type in _CUSTOM_SCOPE_PARENT_RULES:
             node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
             return node.get("workspaceId") if node else None
         return None
@@ -5741,8 +6034,11 @@ class FileStore(object):
                 return _agent_access_error("human_audit_actor_invalid")
             event, review, firewall = material
             workspace = data.get("workspaces", {}).get(context["workspaceId"])
-            limit = int((workspace or {}).get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
-            if not workspace or self.workspace_usage_bytes(data, context["workspaceId"]) + _json_size(event) > limit:
+            if not workspace or not _quota_allows(
+                workspace.get("storageLimitBytes"),
+                self.workspace_usage_bytes(data, context["workspaceId"]),
+                event,
+            ):
                 return _agent_access_error("workspace_quota_exceeded")
             data["memoryEvents"].append(event)
             data.setdefault("reviewQueue", []).append(review)
@@ -6137,6 +6433,12 @@ class FileStore(object):
             return _agent_access_error("display_name_invalid")
         if scope_type not in _AGENT_GRANT_SCOPE_TYPES:
             return _agent_access_error("scope_invalid")
+        if _is_npc_agent_name(canonical_name) and scope_type not in NPC_ALLOWED_SCOPE_TYPES:
+            return _agent_access_error(
+                "npc_scope_forbidden",
+                allowedScopeTypes=list(NPC_ALLOWED_SCOPE_TYPES),
+                communicationScopeTypes=list(NPC_MEETING_SCOPE_TYPES),
+            )
         with _LOCK:
             data = self._load()
             if self._agent_access_scope_company_data(data, scope_type, scope_id) != company_id:
@@ -6272,7 +6574,23 @@ class FileStore(object):
                 return _agent_access_error("access_request_not_found")
             if request.get("status") != "approved" or not request.get("agentIdentityId"):
                 return _agent_access_error("access_request_not_approved")
-            if request.get("inviteId"):
+            prior_invite_id = request.get("inviteId")
+            prior_invite = (
+                data.get("agentInvites", {}).get(prior_invite_id)
+                if prior_invite_id
+                else None
+            )
+            if prior_invite:
+                if (
+                    prior_invite.get("status") == "issued"
+                    and _timestamp_expired(prior_invite.get("expiresAt"))
+                ):
+                    prior_invite["status"] = "expired"
+                if prior_invite.get("status") not in ("revoked", "expired"):
+                    return _agent_access_error("invite_already_issued")
+            elif prior_invite_id:
+                # A request must never silently shed an invite reference. Fail
+                # closed if the referenced lifecycle record is unavailable.
                 return _agent_access_error("invite_already_issued")
             identity = data.get("agentIdentities", {}).get(request.get("agentIdentityId"))
             if not identity or identity.get("status") != "active":
@@ -6298,10 +6616,27 @@ class FileStore(object):
                 "agentTokenId": None,
                 "assignmentContext": _public_value(assignment_context or request.get("assignmentContext") or {}),
             }
+            if prior_invite_id:
+                # One request owns one current invitation. The immutable audit
+                # record retains the retired invite id and reissue linkage,
+                # while the one-way verifier is replaced and never replayed.
+                data.setdefault("agentInvites", {}).pop(prior_invite_id, None)
             data.setdefault("agentInvites", {})[invite_id] = invite
             request["inviteId"] = invite_id
             workspace_id = self._agent_access_scope_workspace_data(data, invite["scopeType"], invite["scopeId"])
-            self.audit(data, "agent_invite.issue", principal["masterKeyId"], invite_id, workspace_id, {"requestId": request_id, "scopeType": invite["scopeType"], "scopeId": invite["scopeId"]})
+            self.audit(
+                data,
+                "agent_invite.issue",
+                principal["masterKeyId"],
+                invite_id,
+                workspace_id,
+                {
+                    "requestId": request_id,
+                    "scopeType": invite["scopeType"],
+                    "scopeId": invite["scopeId"],
+                    "reissuedFromInviteId": prior_invite_id,
+                },
+            )
             self._save(data)
             return {
                 "ok": True,
@@ -6952,6 +7287,43 @@ class FileStore(object):
             self._save(data)
         return {"ok": True, "replacement": _public_agent_token_replacement(record, data.get("agentIdentities", {}).get(record.get("agentIdentityId")), successor_grant), "idempotentReplay": False, "valuesRedacted": True}
 
+    def agent_has_scope(self, workspace_id, agent_id, scope_type, scope_id):
+        """Return whether one active routed-agent credential reaches a scope."""
+        agent_id = str(agent_id or "").strip().lower()
+        if not agent_id:
+            return False
+        with _LOCK:
+            data = self._load()
+            workspace = data.get("workspaces", {}).get(workspace_id) or {}
+            company_id = workspace.get("companyId")
+            identities = [
+                item
+                for item in data.get("agentIdentities", {}).values()
+                if item.get("companyId") == company_id
+                and item.get("agentId") == agent_id
+                and item.get("status") == "active"
+            ]
+            identity_ids = {item.get("agentIdentityId") for item in identities}
+            active_grant_ids = {
+                token.get("grantId")
+                for token in data.get("agentTokens", {}).values()
+                if token.get("agentIdentityId") in identity_ids
+                and not token.get("revokedAt")
+            }
+            for grant in data.get("agentAccessGrants", {}).values():
+                if (
+                    grant.get("grantId") in active_grant_ids
+                    and grant.get("agentIdentityId") in identity_ids
+                    and grant.get("companyId") == company_id
+                    and grant.get("status") == "active"
+                    and not grant.get("revokedAt")
+                    and self._agent_grant_allows_data(
+                        data, grant, scope_type, scope_id
+                    )
+                ):
+                    return True
+            return False
+
     def auth_allows_scope(self, principal, scope_type, scope_id):
         if not principal:
             return False
@@ -6971,7 +7343,7 @@ class FileStore(object):
                 if scope_type == "project":
                     project = data.get("projects", {}).get(scope_id)
                     return bool(project and project.get("workspaceId") == principal.get("workspaceId"))
-                if scope_type in ("goal", "task"):
+                if scope_type in _CUSTOM_SCOPE_PARENT_RULES:
                     node = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == scope_type and item.get("scopeId") == scope_id), None)
                     return bool(node and node.get("workspaceId") == principal.get("workspaceId"))
                 return False
@@ -7051,11 +7423,9 @@ class FileStore(object):
         parent_scope_type = str(parent_scope_type or "").strip().lower()
         scope_id = str(scope_id or "").strip()
         parent_scope_id = str(parent_scope_id or "").strip()
-        if scope_type not in ("goal", "task") or not scope_id:
+        if scope_type not in _CUSTOM_SCOPE_PARENT_RULES or not scope_id:
             return _agent_access_error("scope_invalid")
-        if scope_type == "goal" and parent_scope_type != "project":
-            return _agent_access_error("scope_parent_invalid")
-        if scope_type == "task" and parent_scope_type not in ("project", "goal"):
+        if not _custom_scope_parent_allowed(scope_type, parent_scope_type):
             return _agent_access_error("scope_parent_invalid")
         with _LOCK:
             data = self._load()
@@ -7068,8 +7438,8 @@ class FileStore(object):
                 return _agent_access_error("scope_parent_immutable")
             workspace_id = self._agent_access_scope_workspace_data(data, parent_scope_type, parent_scope_id)
             project_id = parent_scope_id if parent_scope_type == "project" else None
-            if parent_scope_type == "goal":
-                parent = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == "goal" and item.get("scopeId") == parent_scope_id), None)
+            if parent_scope_type in _CUSTOM_SCOPE_PARENT_RULES:
+                parent = next((item for item in data.get("scopeNodes", {}).values() if item.get("scopeType") == parent_scope_type and item.get("scopeId") == parent_scope_id), None)
                 project_id = parent.get("projectId") if parent else None
             node = existing or {
                 "scopeNodeId": _id("scopenode"), "companyId": company_id, "scopeType": scope_type,
@@ -9224,8 +9594,11 @@ class FileStore(object):
             "rawPayloadExposed": False,
         }
         workspace = data["workspaces"][workspace_id]
-        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
-        if self.workspace_usage_bytes(data, workspace_id) + _json_size(package) > limit:
+        if not _quota_allows(
+            workspace.get("storageLimitBytes"),
+            self.workspace_usage_bytes(data, workspace_id),
+            package,
+        ):
             return None, False, "quota_exceeded", {},
         data["uaiMemoryPackages"][package_id] = package
         self._append_outbox(data, workspace_id, "uai_package.created", "uai_package", package_id, package)
@@ -9356,10 +9729,13 @@ class FileStore(object):
             "rawPayloadExposed": False,
         }
         workspace = data.get("workspaces", {}).get(workspace_id) or {}
-        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
         previous_size = _json_size(existing) if existing else 0
         added_size = max(0, _json_size(record) - previous_size) + _json_size(revision)
-        if self.workspace_usage_bytes(data, workspace_id) + added_size > limit:
+        if (
+            not _storage_is_unlimited(workspace.get("storageLimitBytes"))
+            and self.workspace_usage_bytes(data, workspace_id) + added_size
+            > _storage_limit_value(workspace.get("storageLimitBytes"))
+        ):
             return None, "quota_exceeded", {}
         data["uaiMemoryRecords"][record_id] = record
         data.setdefault("uaiMemoryRevisions", []).append(revision)
@@ -9560,8 +9936,11 @@ class FileStore(object):
         head["leaseExpiresAt"] = claim["leaseExpiresAt"]
         head["updatedAt"] = now
         workspace = data.get("workspaces", {}).get(workspace_id) or {}
-        limit = int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES)
-        if self.workspace_usage_bytes(data, workspace_id) + _json_size(claim) > limit:
+        if not _quota_allows(
+            workspace.get("storageLimitBytes"),
+            self.workspace_usage_bytes(data, workspace_id),
+            claim,
+        ):
             return None, "quota_exceeded", {}
         data.setdefault("uaiEditClaims", {})[claim_id] = claim
         self._append_outbox(data, workspace_id, "uai_edit_claim.acquired", "uai_edit_claim", claim_id, claim)
@@ -9693,7 +10072,7 @@ class FileStore(object):
     def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None, scope_id=None):
         data = self._load()
         memory_type = (memory_type or "decision").strip().lower()
-        if memory_type not in ("fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"):
+        if memory_type not in _MEMORY_EVENT_TYPES:
             memory_type = "note"
         try:
             confidence_value = float(confidence)
@@ -10078,12 +10457,61 @@ class SQLiteStore(FileStore):
         if not parent.exists():
             parent.mkdir(parents=True)
         connection = sqlite3.connect(str(self.path), timeout=20)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=TRUNCATE")
-        connection.execute("PRAGMA busy_timeout=20000")
-        self._ensure_schema(connection)
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA journal_mode=TRUNCATE")
+            connection.execute("PRAGMA busy_timeout=20000")
+            self._ensure_sqlite_schema_current(connection)
+            return connection
+        except Exception:
+            connection.close()
+            raise
+
+    @staticmethod
+    def _sqlite_user_version(connection):
+        row = connection.execute("PRAGMA user_version").fetchone()
+        return int(row[0] if row else 0)
+
+    @staticmethod
+    def _execute_sqlite_schema_script(connection, script):
+        statement_lines = []
+        for line in script.splitlines(True):
+            statement_lines.append(line)
+            statement = "".join(statement_lines).strip()
+            if statement and sqlite3.complete_statement(statement):
+                connection.execute(statement)
+                statement_lines = []
+        if "".join(statement_lines).strip():
+            raise RuntimeError("SQLite schema script contains an incomplete statement.")
+
+    def _ensure_sqlite_schema_current(self, connection):
+        version = self._sqlite_user_version(connection)
+        if version == _SQLITE_SCHEMA_VERSION:
+            return
+        if version > _SQLITE_SCHEMA_VERSION:
+            raise RuntimeError(
+                "SQLite schema version %d is newer than supported version %d."
+                % (version, _SQLITE_SCHEMA_VERSION)
+            )
+        with _LOCK:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                version = self._sqlite_user_version(connection)
+                if version > _SQLITE_SCHEMA_VERSION:
+                    raise RuntimeError(
+                        "SQLite schema version %d is newer than supported version %d."
+                        % (version, _SQLITE_SCHEMA_VERSION)
+                    )
+                if version < _SQLITE_SCHEMA_VERSION:
+                    self._ensure_schema(connection)
+                    connection.execute(
+                        "PRAGMA user_version = %d" % _SQLITE_SCHEMA_VERSION
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
 
     def _open_connection(self):
         return _ClosingConnection(self._connect())
@@ -10225,7 +10653,8 @@ class SQLiteStore(FileStore):
         )
 
     def _ensure_schema(self, connection):
-        connection.executescript(
+        self._execute_sqlite_schema_script(
+            connection,
             """
             CREATE TABLE IF NOT EXISTS matm_accounts (
               account_id TEXT PRIMARY KEY,
@@ -11357,7 +11786,6 @@ class SQLiteStore(FileStore):
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
-        connection.commit()
 
     def _ensure_company_master_schema_columns(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
@@ -12082,7 +12510,11 @@ class SQLiteStore(FileStore):
                         (workspace_id,),
                     ).fetchone()
                     used = self._workspace_usage_bytes_sql(connection, workspace_id)
-                    limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
+                    storage_fields = _workspace_storage_fields(
+                        workspace["plan"],
+                        workspace["storage_limit_bytes"],
+                        used,
+                    )
                     company_id = workspace["company_id"]
                     company = connection.execute(
                         "SELECT * FROM matm_companies WHERE company_id = ?",
@@ -12161,13 +12593,9 @@ class SQLiteStore(FileStore):
                         "accounts": account_items,
                         "accountCompanyMemberships": memberships,
                         "projects": projects,
-                        "plan": workspace["plan"],
                         "status": workspace["status"],
-                        "storageLimitBytes": limit,
-                        "storageUsedBytes": used,
-                        "storageRemainingBytes": max(0, limit - used),
-                        "quotaExceeded": used > limit,
                         "rawKeyStoredByServer": False,
+                        **storage_fields,
                     }
 
     def projects(self, workspace_id):
@@ -12200,9 +12628,7 @@ class SQLiteStore(FileStore):
 
     def upsert_project(self, workspace_id, project_id=None, label=None, actor_agent_id=None):
         project_label = redact_text(label or project_id or "Workspace Project")
-        project_id = _slug(project_id or project_label, "project", 80)
-        if not project_id.startswith("project-"):
-            project_id = "project-" + project_id
+        project_id = normalize_project_id(project_id, project_label)
         now = utc_now()
         with _LOCK:
             with self._open_connection() as connection:
@@ -12213,6 +12639,12 @@ class SQLiteStore(FileStore):
                     ).fetchone()
                     if not workspace:
                         return None, "workspace_not_found"
+                    collision = connection.execute(
+                        "SELECT workspace_id FROM matm_projects WHERE project_id = ?",
+                        (project_id,),
+                    ).fetchone()
+                    if collision and collision["workspace_id"] != workspace_id:
+                        return None, "project_id_conflict"
                     existing = connection.execute(
                         "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ?",
                         (workspace_id, project_id),
@@ -12235,6 +12667,9 @@ class SQLiteStore(FileStore):
                             """,
                             (project_id, workspace_id, project_label, "active", now, None),
                         )
+                    created_rooms = self._ensure_default_meeting_rooms_sql(
+                        connection, workspace_id
+                    )
                     self._record_audit_sql(
                         connection,
                         workspace_id,
@@ -12243,6 +12678,15 @@ class SQLiteStore(FileStore):
                         project_id,
                         {"created": created, "projectId": project_id},
                     )
+                    if created_rooms:
+                        self._record_audit_sql(
+                            connection,
+                            workspace_id,
+                            "meeting_rooms.ensure_defaults",
+                            actor_agent_id or "system",
+                            project_id,
+                            {"meetingRoomCount": len(created_rooms)},
+                        )
                     row = connection.execute(
                         "SELECT * FROM matm_projects WHERE workspace_id = ? AND project_id = ?",
                         (workspace_id, project_id),
@@ -12859,7 +13303,7 @@ class SQLiteStore(FileStore):
                     )
         return public_link, None
 
-    def external_links(self, workspace_id, filters=None, limit=50):
+    def external_links(self, workspace_id, filters=None, limit=50, _all=False):
         filters = filters or {}
         query = filters.get("q") or filters.get("query") or ""
         clauses = ["workspace_id = ?"]
@@ -12921,7 +13365,7 @@ class SQLiteStore(FileStore):
                 continue
             items.append(public_link)
         items.sort(key=lambda item: (-int(item.get("matchScore") or 0), item.get("siteName") or "", item.get("pageTitle") or "", item.get("externalLinkId") or ""))
-        return items[: _parse_limit(limit, 50, 500)]
+        return items if _all else items[: _parse_limit(limit, 50, 500)]
 
     def workspace_usage_bytes(self, data, workspace_id=None):
         workspace_id = workspace_id or data
@@ -12944,13 +13388,24 @@ class SQLiteStore(FileStore):
                         (workspace_id,),
                     ).fetchone()
                     if workspace:
-                        limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
-                        return self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(candidate) <= limit
+                        return _quota_allows(
+                            workspace["storage_limit_bytes"],
+                            self._workspace_usage_bytes_sql(connection, workspace_id),
+                            candidate,
+                        )
             if attempt < len(SQL_READ_AFTER_WRITE_RETRY_DELAYS):
                 time.sleep(SQL_READ_AFTER_WRITE_RETRY_DELAYS[attempt])
         return False
 
-    def create_free_account(self, label, company_label=None, project_label=None):
+    def create_free_account(
+        self,
+        label,
+        company_label=None,
+        project_label=None,
+        plan=PLAN_FREE_AGENT,
+        storage_limit_bytes=PUBLIC_STORAGE_BYTES,
+        audit_action="workspace.create_free_account",
+    ):
         created_at = utc_now()
         account_id = _id("account")
         company_id = _id("company")
@@ -12998,7 +13453,16 @@ class SQLiteStore(FileStore):
                           workspace_id, company_id, label, plan, storage_limit_bytes, status, created_at, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (workspace_id, company_id, workspace_label, "free_agent", PUBLIC_STORAGE_BYTES, "active", created_at, None),
+                        (
+                            workspace_id,
+                            company_id,
+                            workspace_label,
+                            str(plan or PLAN_FREE_AGENT).strip().lower() or PLAN_FREE_AGENT,
+                            _storage_limit_value(storage_limit_bytes),
+                            "active",
+                            created_at,
+                            None,
+                        ),
                     )
                     connection.execute(
                         """
@@ -13029,7 +13493,7 @@ class SQLiteStore(FileStore):
                     self._record_audit_sql(
                         connection,
                         workspace_id,
-                        "workspace.create_free_account",
+                        audit_action,
                         "system",
                         workspace_id,
                         {
@@ -13254,8 +13718,11 @@ class SQLiteStore(FileStore):
                         "rawCredentialExposed": False,
                         "rawPayloadExposed": False,
                     }
-                    limit = int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES)
-                    if self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(package) > limit:
+                    if not _quota_allows(
+                        workspace["storage_limit_bytes"],
+                        self._workspace_usage_bytes_sql(connection, workspace_id),
+                        package,
+                    ):
                         return None, False, "quota_exceeded", {}
                     connection.execute(
                         """
@@ -13443,7 +13910,11 @@ class SQLiteStore(FileStore):
                     ).fetchone()
                     previous_size = _json_size(existing) if existing else 0
                     added_size = max(0, _json_size(record) - previous_size) + _json_size(revision)
-                    if self._workspace_usage_bytes_sql(connection, workspace_id) + added_size > int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES):
+                    if (
+                        not _storage_is_unlimited(workspace["storage_limit_bytes"])
+                        and self._workspace_usage_bytes_sql(connection, workspace_id) + added_size
+                        > _storage_limit_value(workspace["storage_limit_bytes"])
+                    ):
                         return None, "quota_exceeded", {}
                     if created:
                         connection.execute(
@@ -13795,7 +14266,11 @@ class SQLiteStore(FileStore):
                         "SELECT storage_limit_bytes FROM matm_workspaces WHERE workspace_id = ?",
                         (workspace_id,),
                     ).fetchone()
-                    if self._workspace_usage_bytes_sql(connection, workspace_id) + _json_size(claim) > int(workspace["storage_limit_bytes"] or PUBLIC_STORAGE_BYTES):
+                    if not _quota_allows(
+                        workspace["storage_limit_bytes"],
+                        self._workspace_usage_bytes_sql(connection, workspace_id),
+                        claim,
+                    ):
                         return None, "quota_exceeded", {}
                     connection.execute(
                         """
@@ -14077,7 +14552,7 @@ class SQLiteStore(FileStore):
                 (scope_id,),
             ).fetchone()
             return {"companyId": row["company_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"]} if row else None
-        if scope_type in ("goal", "task"):
+        if scope_type in _CUSTOM_SCOPE_PARENT_RULES:
             row = connection.execute(
                 "SELECT company_id, workspace_id, project_id FROM matm_scope_nodes WHERE scope_type = ? AND scope_id = ?",
                 (scope_type, scope_id),
@@ -14822,35 +15297,143 @@ class SQLiteStore(FileStore):
         if not isinstance(row, dict) and hasattr(row, "keys"):
             row = {key: row[key] for key in row.keys()}
         if row.get("body_hash") != _canonical_hash(body):
-            return {
-                "ok": False,
-                "status": "idempotency_conflict",
-                "safeNoOp": True,
-                "valuesRedacted": True,
-                "rawCredentialExposed": False,
-                "rawPayloadExposed": False,
-                "idempotencyKeyExposed": False,
-                "error": {
-                    "code": "idempotency_conflict",
-                    "title": "Idempotency conflict",
-                    "detail": "The same idempotency key was reused with a different request body.",
-                    "safeNoOp": True,
-                    "valuesRedacted": True,
-                },
-            }
-        replay = dict(self._json_load(row.get("response_json"), {}) or {})
+            return _idempotency_conflict_response()
+        stored_response = self._json_load(row.get("response_json"), {}) or {}
+        if _idempotency_pending_claim(stored_response):
+            return _idempotency_in_progress_response()
+        replay = dict(stored_response)
         replay["idempotentReplay"] = True
         replay["idempotencyKeyExposed"] = False
         replay["_httpStatus"] = row.get("http_status") or "200 OK"
         return replay
 
-    def record_idempotency(self, workspace_id, key, operation, body, response, http_status="200 OK"):
+    def claim_idempotency(self, workspace_id, key, operation, body):
+        """Atomically reserve an exact SQL mutation or return its replay."""
         if not key:
-            return
+            return None
+        record_key = "%s:%s:%s" % (workspace_id, operation, key)
+        body_hash = _canonical_hash(body)
+        claim_id = _id("idemclaim")
+        pending_json = self._json_dump(_idempotency_pending_payload(claim_id))
+        deadline = time.monotonic() + _IDEMPOTENCY_CLAIM_WAIT_SECONDS
+        while True:
+            with _LOCK:
+                with self._open_connection() as connection:
+                    with connection:
+                        acquired = connection.execute(
+                            """
+                            INSERT OR IGNORE INTO matm_idempotency (
+                              record_key, workspace_id, operation, body_hash,
+                              response_json, http_status, created_at,
+                              idempotency_key_exposed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record_key,
+                                workspace_id,
+                                operation,
+                                body_hash,
+                                pending_json,
+                                "",
+                                utc_now(),
+                                self._int_bool(False),
+                            ),
+                        )
+                        if acquired.rowcount == 1:
+                            return {
+                                "_idempotencyClaimed": True,
+                                "_claimId": claim_id,
+                            }
+                        row = connection.execute(
+                            "SELECT * FROM matm_idempotency WHERE record_key = ?",
+                            (record_key,),
+                        ).fetchone()
+                        row = self._row_dict(row)
+                        if not row:
+                            continue
+                        if row.get("body_hash") != body_hash:
+                            return _idempotency_conflict_response()
+                        stored_response = self._json_load(
+                            row.get("response_json"), {}
+                        ) or {}
+                        pending_claim = _idempotency_pending_claim(stored_response)
+                        if not pending_claim:
+                            replay = dict(stored_response)
+                            replay["idempotentReplay"] = True
+                            replay["idempotencyKeyExposed"] = False
+                            replay["_httpStatus"] = (
+                                row.get("http_status") or "200 OK"
+                            )
+                            return replay
+            if time.monotonic() >= deadline:
+                return _idempotency_in_progress_response()
+            time.sleep(0.01)
+
+    def release_idempotency_claim(
+        self, workspace_id, key, operation, claim_id
+    ):
+        if not key or not claim_id:
+            return False
         record_key = "%s:%s:%s" % (workspace_id, operation, key)
         with _LOCK:
             with self._open_connection() as connection:
                 with connection:
+                    row = connection.execute(
+                        "SELECT response_json FROM matm_idempotency WHERE record_key = ?",
+                        (record_key,),
+                    ).fetchone()
+                    row = self._row_dict(row)
+                    if not row or not secrets.compare_digest(
+                        _idempotency_pending_claim(
+                            self._json_load(row.get("response_json"), {}) or {}
+                        ),
+                        str(claim_id),
+                    ):
+                        return False
+                    removed = connection.execute(
+                        "DELETE FROM matm_idempotency WHERE record_key = ? AND response_json = ?",
+                        (record_key, row.get("response_json")),
+                    )
+                    return removed.rowcount == 1
+
+    def record_idempotency(
+        self,
+        workspace_id,
+        key,
+        operation,
+        body,
+        response,
+        http_status="200 OK",
+        claim_id=None,
+    ):
+        if not key:
+            return True
+        record_key = "%s:%s:%s" % (workspace_id, operation, key)
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    if claim_id:
+                        finalized = connection.execute(
+                            """
+                            UPDATE matm_idempotency
+                            SET response_json = ?, http_status = ?,
+                                created_at = ?, idempotency_key_exposed = ?
+                            WHERE record_key = ? AND body_hash = ?
+                              AND response_json = ?
+                            """,
+                            (
+                                json.dumps(response, sort_keys=True, separators=(",", ":")),
+                                http_status,
+                                utc_now(),
+                                self._int_bool(False),
+                                record_key,
+                                _canonical_hash(body),
+                                self._json_dump(
+                                    _idempotency_pending_payload(claim_id)
+                                ),
+                            ),
+                        )
+                        return finalized.rowcount == 1
                     connection.execute(
                         """
                         INSERT OR REPLACE INTO matm_idempotency (
@@ -14869,10 +15452,11 @@ class SQLiteStore(FileStore):
                             self._int_bool(False),
                         ),
                     )
+                    return True
 
     def submit_memory(self, workspace_id, actor_agent_id, scope, title, summary, tags, source, memory_type=None, subject=None, confidence=None, scope_id=None):
         memory_type = (memory_type or "decision").strip().lower()
-        if memory_type not in ("fact", "decision", "status", "procedure", "risk", "evidence", "handoff", "note"):
+        if memory_type not in _MEMORY_EVENT_TYPES:
             memory_type = "note"
         try:
             confidence_value = float(confidence)
@@ -15302,7 +15886,7 @@ class SQLiteStore(FileStore):
                 SELECT * FROM matm_meeting_rooms
                 WHERE workspace_id = ? AND status = 'active'
                 ORDER BY
-                  CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 WHEN 'goal' THEN 3 WHEN 'task' THEN 4 ELSE 99 END,
+                  CASE scope_type WHEN 'company' THEN 0 WHEN 'workspace' THEN 1 WHEN 'project' THEN 2 WHEN 'game' THEN 3 WHEN 'session' THEN 4 WHEN 'goal' THEN 5 WHEN 'task' THEN 6 ELSE 99 END,
                   name, room_id
                 """,
                 (workspace_id,),
@@ -15355,11 +15939,38 @@ class SQLiteStore(FileStore):
             with self._open_connection() as connection:
                 with connection:
                     self._prune_coordination_sql(connection)
-                return self._meeting_rooms_sql(connection, workspace_id, agent_id)
+                    created_rooms = self._ensure_default_meeting_rooms_sql(
+                        connection, workspace_id
+                    )
+                    if created_rooms:
+                        self._record_audit_sql(
+                            connection,
+                            workspace_id,
+                            "meeting_rooms.ensure_defaults",
+                            "system",
+                            workspace_id,
+                            {"meetingRoomCount": len(created_rooms)},
+                        )
+                    return self._meeting_rooms_sql(
+                        connection, workspace_id, agent_id
+                    )
 
-    def create_meeting_room(self, workspace_id, scope, scope_id, label=None, name=None, purpose=None, creator_agent_id=None):
+    def create_meeting_room(
+        self,
+        workspace_id,
+        scope,
+        scope_id,
+        label=None,
+        name=None,
+        purpose=None,
+        creator_agent_id=None,
+        parent_scope_type=None,
+        parent_scope_id=None,
+    ):
         scope = (scope or "").strip().lower()
         scope_id = str(scope_id or "").strip()
+        parent_scope_type = str(parent_scope_type or "").strip().lower()
+        parent_scope_id = str(parent_scope_id or "").strip()
         room_id = self._meeting_room_id(workspace_id, scope, scope_id)
         now = utc_now()
         default_label = "%s coordination room" % scope.title()
@@ -15394,7 +16005,7 @@ class SQLiteStore(FileStore):
                         "rawPayloadExposed": False,
                     }
                     if created:
-                        if scope in ("goal", "task"):
+                        if scope in _CUSTOM_SCOPE_PARENT_RULES:
                             workspace = connection.execute(
                                 "SELECT company_id FROM matm_workspaces WHERE workspace_id = ?",
                                 (workspace_id,),
@@ -15405,27 +16016,31 @@ class SQLiteStore(FileStore):
                             ).fetchone()
                             company_id = workspace["company_id"] if workspace else ""
                             project_id = project["project_id"] if project else None
-                            parent_scope_type = "project" if project_id else "workspace"
-                            parent_scope_id = project_id or workspace_id
-                            connection.execute(
-                                """
-                                INSERT OR IGNORE INTO matm_scope_nodes (
-                                  scope_node_id, company_id, scope_type, scope_id,
-                                  parent_scope_type, parent_scope_id, workspace_id, project_id, created_at
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (
-                                    _id("scopenode"),
-                                    company_id,
-                                    scope,
-                                    scope_id,
-                                    parent_scope_type,
-                                    parent_scope_id,
-                                    workspace_id,
-                                    project_id,
-                                    now,
-                                ),
-                            )
+                            if not parent_scope_type or not parent_scope_id:
+                                parent_scope_type = "project" if project_id else "workspace"
+                                parent_scope_id = project_id or workspace_id
+                            parent = self._agent_scope_details_sql(connection, parent_scope_type, parent_scope_id)
+                            if parent and parent["companyId"] == company_id and _custom_scope_parent_allowed(scope, parent_scope_type):
+                                node_project_id = parent_scope_id if parent_scope_type == "project" else parent.get("projectId") or project_id
+                                connection.execute(
+                                    """
+                                    INSERT OR IGNORE INTO matm_scope_nodes (
+                                      scope_node_id, company_id, scope_type, scope_id,
+                                      parent_scope_type, parent_scope_id, workspace_id, project_id, created_at
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        _id("scopenode"),
+                                        company_id,
+                                        scope,
+                                        scope_id,
+                                        parent_scope_type,
+                                        parent_scope_id,
+                                        workspace_id,
+                                        node_project_id,
+                                        now,
+                                    ),
+                                )
                         connection.execute(
                             """
                             INSERT INTO matm_meeting_rooms (
@@ -16884,6 +17499,25 @@ class SQLiteStore(FileStore):
                     if workspace and not workspace.get("primaryProjectId"):
                         workspace["primaryProjectId"] = row["project_id"]
 
+                for row in connection.execute("SELECT * FROM matm_scope_nodes ORDER BY created_at, scope_node_id"):
+                    key = "%s:%s:%s" % (
+                        row["company_id"],
+                        row["scope_type"],
+                        row["scope_id"],
+                    )
+                    data["scopeNodes"][key] = {
+                        "scopeNodeId": row["scope_node_id"],
+                        "companyId": row["company_id"],
+                        "scopeType": row["scope_type"],
+                        "scopeId": row["scope_id"],
+                        "parentScopeType": row["parent_scope_type"],
+                        "parentScopeId": row["parent_scope_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "createdAt": row["created_at"],
+                        "valuesRedacted": True,
+                    }
+
                 for row in connection.execute("SELECT * FROM matm_api_keys ORDER BY created_at, key_id"):
                     data["apiKeys"][row["key_id"]] = {
                         "keyId": row["key_id"],
@@ -17343,7 +17977,7 @@ class SQLiteStore(FileStore):
                                 workspace.get("companyId"),
                                 workspace.get("label") or "Free Agent Workspace",
                                 workspace.get("plan") or "free_agent",
-                                int(workspace.get("storageLimitBytes") or PUBLIC_STORAGE_BYTES),
+                                _storage_limit_value(workspace.get("storageLimitBytes")),
                                 workspace.get("status") or "active",
                                 workspace.get("createdAt") or utc_now(),
                                 workspace.get("updatedAt"),
@@ -17364,6 +17998,28 @@ class SQLiteStore(FileStore):
                                 project.get("status") or "active",
                                 project.get("createdAt") or utc_now(),
                                 project.get("updatedAt"),
+                            ),
+                        )
+
+                    for scope_node in data.get("scopeNodes", {}).values():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_scope_nodes (
+                              scope_node_id, company_id, scope_type, scope_id,
+                              parent_scope_type, parent_scope_id, workspace_id,
+                              project_id, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                scope_node.get("scopeNodeId") or _id("scopenode"),
+                                scope_node.get("companyId"),
+                                scope_node.get("scopeType"),
+                                scope_node.get("scopeId"),
+                                scope_node.get("parentScopeType"),
+                                scope_node.get("parentScopeId"),
+                                scope_node.get("workspaceId"),
+                                scope_node.get("projectId"),
+                                scope_node.get("createdAt") or utc_now(),
                             ),
                         )
 
@@ -18114,6 +18770,12 @@ class SQLiteStore(FileStore):
             return _agent_access_error("agent_name_invalid", namePolicy="3-64 lowercase ASCII characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$")
         if scope_type not in _AGENT_GRANT_SCOPE_TYPES:
             return _agent_access_error("scope_invalid")
+        if _is_npc_agent_name(canonical_name) and scope_type not in NPC_ALLOWED_SCOPE_TYPES:
+            return _agent_access_error(
+                "npc_scope_forbidden",
+                allowedScopeTypes=list(NPC_ALLOWED_SCOPE_TYPES),
+                communicationScopeTypes=list(NPC_MEETING_SCOPE_TYPES),
+            )
         normalized_display_name = _normalize_agent_display_name(display_name, canonical_name)
         if not normalized_display_name:
             return _agent_access_error("display_name_invalid")
@@ -18236,29 +18898,101 @@ class SQLiteStore(FileStore):
                         return _agent_access_error("access_request_not_found")
                     if request["status"] != "approved" or not request["agent_identity_id"]:
                         return _agent_access_error("access_request_not_approved")
-                    if request["invite_id"]:
-                        return _agent_access_error("invite_already_issued")
+                    prior_invite_id = request["invite_id"]
+                    prior_invite = None
+                    if prior_invite_id:
+                        prior_invite = connection.execute(
+                            "SELECT * FROM matm_agent_invites WHERE invite_id = ?",
+                            (prior_invite_id,),
+                        ).fetchone()
+                        if not prior_invite:
+                            # A request must never silently shed an invite
+                            # reference. Preserve the fail-closed lifecycle.
+                            return _agent_access_error("invite_already_issued")
+                        prior_status = prior_invite["status"]
+                        if (
+                            prior_status == "issued"
+                            and _timestamp_expired(prior_invite["expires_at"])
+                        ):
+                            connection.execute(
+                                "UPDATE matm_agent_invites SET status = 'expired' WHERE invite_id = ? AND status = 'issued'",
+                                (prior_invite_id,),
+                            )
+                            prior_status = "expired"
+                        if prior_status not in ("revoked", "expired"):
+                            return _agent_access_error("invite_already_issued")
                     identity = connection.execute("SELECT * FROM matm_agent_identities WHERE agent_identity_id = ? AND status = 'active'", (request["agent_identity_id"],)).fetchone()
                     if not identity:
                         return _agent_access_error("agent_identity_inactive")
                     invite_secret, invite_digest = _governed_credential("invite", request["company_id"], invite_id)
                     context = _public_value(assignment_context or self._json_load(request["assignment_context_json"], {}) or {})
-                    connection.execute(
-                        """
-                        INSERT INTO matm_agent_invites (
-                          invite_id, request_id, company_id, agent_identity_id, token_hash,
-                          scope_type, scope_id, status, created_at, expires_at, redeemed_at,
-                          approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
-                          grant_id, agent_token_id, assignment_context_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (invite_id, request_id, request["company_id"], identity["agent_identity_id"], invite_digest, request["scope_type"], request["scope_id"], "issued", now, expires_at, None, principal["masterKeyId"], None, None, None, None, self._json_dump(context)),
-                    )
-                    changed = connection.execute("UPDATE matm_agent_access_requests SET invite_id = ? WHERE request_id = ? AND invite_id IS NULL", (invite_id, request_id))
+                    if prior_invite_id:
+                        replaced = connection.execute(
+                            """
+                            UPDATE matm_agent_invites
+                            SET invite_id = ?, agent_identity_id = ?, token_hash = ?,
+                                scope_type = ?, scope_id = ?, status = 'issued',
+                                created_at = ?, expires_at = ?, redeemed_at = NULL,
+                                approved_by_master_key_id = ?, revoked_at = NULL,
+                                revoked_by_master_key_id = NULL, grant_id = NULL,
+                                agent_token_id = NULL, assignment_context_json = ?
+                            WHERE invite_id = ? AND request_id = ?
+                              AND status IN ('revoked', 'expired')
+                            """,
+                            (
+                                invite_id,
+                                identity["agent_identity_id"],
+                                invite_digest,
+                                request["scope_type"],
+                                request["scope_id"],
+                                now,
+                                expires_at,
+                                principal["masterKeyId"],
+                                self._json_dump(context),
+                                prior_invite_id,
+                                request_id,
+                            ),
+                        )
+                        if replaced.rowcount != 1:
+                            raise RuntimeError("Concurrent invite reissuance was denied.")
+                    else:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_agent_invites (
+                              invite_id, request_id, company_id, agent_identity_id, token_hash,
+                              scope_type, scope_id, status, created_at, expires_at, redeemed_at,
+                              approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
+                              grant_id, agent_token_id, assignment_context_json
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (invite_id, request_id, request["company_id"], identity["agent_identity_id"], invite_digest, request["scope_type"], request["scope_id"], "issued", now, expires_at, None, principal["masterKeyId"], None, None, None, None, self._json_dump(context)),
+                        )
+                    if prior_invite_id:
+                        changed = connection.execute(
+                            "UPDATE matm_agent_access_requests SET invite_id = ? WHERE request_id = ? AND invite_id = ?",
+                            (invite_id, request_id, prior_invite_id),
+                        )
+                    else:
+                        changed = connection.execute(
+                            "UPDATE matm_agent_access_requests SET invite_id = ? WHERE request_id = ? AND invite_id IS NULL",
+                            (invite_id, request_id),
+                        )
                     if changed.rowcount != 1:
                         raise RuntimeError("Concurrent invite issuance was denied.")
                     target = self._agent_scope_details_sql(connection, request["scope_type"], request["scope_id"])
-                    self._record_audit_sql(connection, target.get("workspaceId") if target else None, "agent_invite.issue", principal["masterKeyId"], invite_id, {"requestId": request_id, "scopeType": request["scope_type"], "scopeId": request["scope_id"]})
+                    self._record_audit_sql(
+                        connection,
+                        target.get("workspaceId") if target else None,
+                        "agent_invite.issue",
+                        principal["masterKeyId"],
+                        invite_id,
+                        {
+                            "requestId": request_id,
+                            "scopeType": request["scope_type"],
+                            "scopeId": request["scope_id"],
+                            "reissuedFromInviteId": prior_invite_id,
+                        },
+                    )
                     invite = {
                         "inviteId": invite_id, "requestId": request_id, "companyId": request["company_id"],
                         "agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"],
@@ -18471,6 +19205,39 @@ class SQLiteStore(FileStore):
         }
         return _public_agent_principal(identity, grant, {"agentTokenId": row["agent_token_id"], "grantId": row["grant_id"]})
 
+    def agent_has_scope(self, workspace_id, agent_id, scope_type, scope_id):
+        """Return whether one active routed-agent credential reaches a scope."""
+        agent_id = str(agent_id or "").strip().lower()
+        if not agent_id:
+            return False
+        with _LOCK:
+            with self._open_connection() as connection:
+                target = self._agent_scope_details_sql(
+                    connection, scope_type, scope_id
+                )
+                if not target or target.get("workspaceId") != workspace_id:
+                    return False
+                rows = connection.execute(
+                    """
+                    SELECT g.*
+                    FROM matm_agent_identities i
+                    JOIN matm_agent_tokens t
+                      ON t.agent_identity_id = i.agent_identity_id
+                    JOIN matm_agent_access_grants g
+                      ON g.grant_id = t.grant_id
+                    WHERE i.company_id = ? AND i.agent_id = ?
+                      AND i.status = 'active' AND t.revoked_at IS NULL
+                      AND g.status = 'active' AND g.revoked_at IS NULL
+                    """,
+                    (target.get("companyId"), agent_id),
+                )
+                return any(
+                    self._agent_grant_allows_sql(
+                        connection, row, scope_type, scope_id
+                    )
+                    for row in rows
+                )
+
     def auth_allows_scope(self, principal, scope_type, scope_id):
         if not principal:
             return False
@@ -18491,7 +19258,7 @@ class SQLiteStore(FileStore):
                     if scope_type == "project":
                         project = connection.execute("SELECT workspace_id FROM matm_projects WHERE project_id = ?", (scope_id,)).fetchone()
                         return bool(project and project["workspace_id"] == principal.get("workspaceId"))
-                    if scope_type in ("goal", "task"):
+                    if scope_type in _CUSTOM_SCOPE_PARENT_RULES:
                         node = connection.execute("SELECT workspace_id FROM matm_scope_nodes WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id)).fetchone()
                         return bool(node and node["workspace_id"] == principal.get("workspaceId"))
                     return False
@@ -18591,11 +19358,9 @@ class SQLiteStore(FileStore):
         parent_scope_type = str(parent_scope_type or "").strip().lower()
         scope_id = str(scope_id or "").strip()
         parent_scope_id = str(parent_scope_id or "").strip()
-        if scope_type not in ("goal", "task") or not scope_id:
+        if scope_type not in _CUSTOM_SCOPE_PARENT_RULES or not scope_id:
             return _agent_access_error("scope_invalid")
-        if scope_type == "goal" and parent_scope_type != "project":
-            return _agent_access_error("scope_parent_invalid")
-        if scope_type == "task" and parent_scope_type not in ("project", "goal"):
+        if not _custom_scope_parent_allowed(scope_type, parent_scope_type):
             return _agent_access_error("scope_parent_invalid")
         with _LOCK:
             with self._open_connection() as connection:

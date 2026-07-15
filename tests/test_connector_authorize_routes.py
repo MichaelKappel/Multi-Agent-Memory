@@ -12,6 +12,7 @@ from tests.test_connector_pairing_api import (
     REDIRECT_URI,
     REQUEST_BODY_LIMIT,
     REQUESTED_SCOPES,
+    SITE_ORIGIN,
     SCOPE_DIGEST,
     ConnectorPairingApiContract,
     _header,
@@ -433,7 +434,7 @@ class ConnectorAuthorizeRouteContract(ConnectorPairingApiContract):
                 "HTTP_COOKIE": "__Host-memoryendpoints-human="
                 + session["sessionSecret"],
                 "HTTP_X_CSRF_TOKEN": session["csrfToken"],
-                "HTTP_ORIGIN": "https://memoryendpoints.com",
+                "HTTP_ORIGIN": SITE_ORIGIN,
                 "HTTP_SEC_FETCH_SITE": "same-origin",
                 "HTTP_SEC_FETCH_MODE": "cors",
                 "HTTP_SEC_FETCH_DEST": "empty",

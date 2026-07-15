@@ -6,14 +6,22 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 import unittest
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
-from memoryendpoints.app import _audit_log_operator_summary, _store
+from memoryendpoints.config import SITE_NAME
+from memoryendpoints.app import (
+    _IDEMPOTENCY_OPTIONAL_PROTECTED_POST_MUTATIONS,
+    _IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS,
+    _ROUTE_PROTECTED_POST_MUTATIONS,
+    _audit_log_operator_summary,
+    _store,
+)
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
 
 
@@ -92,16 +100,30 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertEqual(code, payload["error"]["code"])
         return payload
 
-    def provision_agent_via_invite(self, token, workspace_id, agent_id, display_name=None):
+    def provision_agent_via_invite(
+        self,
+        token,
+        workspace_id,
+        agent_id,
+        display_name=None,
+        scope_type="workspace",
+        scope_id=None,
+    ):
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
         status, _headers, text = call_app(
             "/api/matm/access/agent-name-requests",
             method="POST",
-            headers=auth,
+            headers=dict(
+                auth,
+                HTTP_IDEMPOTENCY_KEY="test-access-request-" + agent_id,
+            ),
             body={
                 "requestedName": agent_id,
                 "displayName": display_name or agent_id,
-                "requestedGrant": {"scopeType": "workspace", "scopeId": workspace_id},
+                "requestedGrant": {
+                    "scopeType": scope_type,
+                    "scopeId": scope_id or workspace_id,
+                },
                 "assignmentContext": {"testFixture": self._testMethodName},
                 "justification": "Test fixture needs a governed workspace-scoped agent.",
             },
@@ -111,7 +133,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/access/agent-name-requests/%s/decision" % requested["request"]["requestId"],
             method="POST",
-            headers=auth,
+            headers=dict(
+                auth,
+                HTTP_IDEMPOTENCY_KEY="test-access-decision-"
+                + requested["request"]["requestId"],
+            ),
             body={"decision": "approve", "decisionReason": "Approved by test fixture."},
         )
         self.assertEqual("200 OK", status, text)
@@ -136,12 +162,21 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(agent_id.lower(), redeemed["principal"]["agentId"])
         return redeemed
 
-    def agent_auth_via_invite(self, setup, agent_id, display_name=None):
+    def agent_auth_via_invite(
+        self,
+        setup,
+        agent_id,
+        display_name=None,
+        scope_type="workspace",
+        scope_id=None,
+    ):
         redeemed = self.provision_agent_via_invite(
             setup["companyMasterTokenSecret"],
             setup["workspaceId"],
             agent_id,
             display_name,
+            scope_type,
+            scope_id,
         )
         return {"HTTP_AUTHORIZATION": "Bearer " + redeemed["agentTokenSecret"]}, redeemed["principal"]["agentId"], redeemed
 
@@ -200,7 +235,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         ]:
             status, _headers, text = call_app(route)
             self.assertTrue(status.startswith("200"), route)
-            self.assertIn("MemoryEndpoints", text)
+            self.assertTrue(
+                "MemoryEndpoints" in text or SITE_NAME in text,
+                route,
+            )
 
     def test_live_capability_matrix_advertises_goal_task_room_creation(self):
         status, _headers, text = call_app("/api/matm/live-capability-matrix")
@@ -213,7 +251,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("/api/matm/meeting-rooms", meeting_rooms["roomCreateRoute"])
         self.assertEqual("/api/matm/meeting-messages/promote", meeting_rooms["promoteMessageRoute"])
         self.assertEqual(["company", "workspace", "project"], meeting_rooms["defaultScopes"])
-        self.assertEqual(["goal", "task"], meeting_rooms["customScopes"])
+        self.assertEqual(["goal", "task", "game", "session"], meeting_rooms["customScopes"])
         browser_cors = payload["data"]["connectorContract"]["browserCors"]
         self.assertEqual("live", browser_cors["status"])
         self.assertTrue(browser_cors["preflightWithoutWorkspaceKey"])
@@ -583,6 +621,197 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Idempotency-Key", text)
         self.assertNotIn("apiKeySecret", text)
         self.assertNotIn("Bearer me_", text)
+
+    def test_route_protected_idempotency_policy_matches_openapi(self):
+        status, _headers, text = call_app("/api/matm/openapi.json")
+        self.assertEqual("200 OK", status)
+        paths = json.loads(text)["paths"]
+        required_paths = set()
+        non_route_protected_paths = {
+            "/api/matm/access/company-master-credentials",
+        }
+
+        for path, path_item in paths.items():
+            operation = path_item.get("post") or {}
+            security_schemes = {
+                scheme
+                for alternative in operation.get("security") or []
+                for scheme in alternative
+            }
+            if (
+                "{" in path
+                or path in non_route_protected_paths
+                or not security_schemes.intersection(
+                    {"workspaceBearer", "workspaceHeader"}
+                )
+            ):
+                continue
+            if any(
+                item.get("name") == "Idempotency-Key"
+                and item.get("required") is True
+                for item in operation.get("parameters") or []
+            ):
+                required_paths.add(path)
+                parameter = next(
+                    item
+                    for item in operation.get("parameters") or []
+                    if item.get("name") == "Idempotency-Key"
+                )
+                self.assertEqual(16, parameter["schema"]["minLength"], path)
+                self.assertEqual(200, parameter["schema"]["maxLength"], path)
+
+        self.assertEqual(
+            set(_IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS),
+            required_paths,
+        )
+        self.assertEqual(
+            set(_ROUTE_PROTECTED_POST_MUTATIONS),
+            required_paths | set(_IDEMPOTENCY_OPTIONAL_PROTECTED_POST_MUTATIONS),
+        )
+        self.assertEqual(
+            {"/api/matm/agents/register"},
+            set(_IDEMPOTENCY_OPTIONAL_PROTECTED_POST_MUTATIONS),
+        )
+        registration_parameter = next(
+            item
+            for item in paths["/api/matm/agents/register"]["post"]["parameters"]
+            if item.get("name") == "Idempotency-Key"
+        )
+        self.assertFalse(registration_parameter["required"])
+        self.assertIn("deprecated exact company-master", registration_parameter["description"])
+
+    def test_openapi_required_protected_mutations_reject_short_key_before_write(self):
+        store = Mock()
+        store.authenticate_connector_token.return_value = None
+        auth = {
+            "workspaceId": "workspace-idempotency-minimum",
+            "companyId": "company-idempotency-minimum",
+            "credentialType": "company_master",
+            "publicCredentialType": "company_master",
+            "principalName": "account-owner",
+        }
+        headers = {
+            "HTTP_AUTHORIZATION": "Bearer me_live_" + ("x" * 64),
+            "HTTP_IDEMPOTENCY_KEY": "x" * 15,
+        }
+
+        with patch("memoryendpoints.app._store", return_value=store), patch(
+            "memoryendpoints.app._require_auth", return_value=auth
+        ):
+            for path in sorted(_IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS):
+                with self.subTest(path=path):
+                    status, _headers, text = call_app(
+                        path,
+                        method="POST",
+                        headers=headers,
+                        body={"workspaceId": auth["workspaceId"]},
+                    )
+                    self.assertEqual("422 Unprocessable Entity", status, text)
+                    self.assert_safe_noop_response(text, "idempotency_key_invalid")
+
+        self.assertEqual(
+            {"authenticate_connector_token"},
+            {item[0] for item in store.method_calls},
+        )
+
+    def test_openapi_required_protected_mutations_reject_missing_key_before_write(self):
+        store = Mock()
+        store.authenticate_connector_token.return_value = None
+        auth = {
+            "workspaceId": "workspace-idempotency-contract",
+            "companyId": "company-idempotency-contract",
+            "credentialType": "company_master",
+            "publicCredentialType": "company_master",
+            "principalName": "account-owner",
+        }
+        headers = {"HTTP_AUTHORIZATION": "Bearer me_live_" + ("x" * 64)}
+
+        with patch("memoryendpoints.app._store", return_value=store), patch(
+            "memoryendpoints.app._require_auth", return_value=auth
+        ):
+            for path in sorted(_IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS):
+                with self.subTest(path=path):
+                    status, _headers, text = call_app(
+                        path,
+                        method="POST",
+                        headers=headers,
+                        body={"workspaceId": auth["workspaceId"]},
+                    )
+                    self.assertEqual("422 Unprocessable Entity", status, text)
+                    self.assert_safe_noop_response(text, "idempotency_key_required")
+
+        self.assertEqual(
+            2 * len(_IDEMPOTENCY_REQUIRED_PROTECTED_POST_MUTATIONS),
+            len(store.method_calls),
+        )
+        self.assertEqual(
+            {"authenticate_connector_token"},
+            {item[0] for item in store.method_calls},
+        )
+
+    def test_routing_decision_rejects_inaccessible_rooms_before_write(self):
+        auth = {
+            "workspaceId": "workspace-routing-scope",
+            "companyId": "company-routing-scope",
+            "agentId": "coordinator-agent",
+            "credentialType": "agent",
+            "publicCredentialType": "agent_token",
+            "principalName": "coordinator-agent",
+        }
+        headers = {
+            "HTTP_AUTHORIZATION": "Bearer me_live_" + ("x" * 64),
+            "HTTP_IDEMPOTENCY_KEY": "routing-scope-denial",
+        }
+        body = {
+            "workspaceId": auth["workspaceId"],
+            "sourceRoomId": "room-source",
+            "destinationRoomId": "room-destination",
+            "coordinatorAgentId": auth["agentId"],
+            "routedAgentId": "routed-agent",
+            "lane": "scope-check",
+            "specificGoal": "Prove routing scope checks happen before mutation.",
+            "expectedEvidence": ["403 response", "no write"],
+            "nextAction": "Stop safely.",
+            "supportPlan": "The coordinator will request the correct grant.",
+        }
+        rooms = [
+            {
+                "roomId": "room-source",
+                "scope": "company",
+                "scopeId": auth["companyId"],
+            },
+            {
+                "roomId": "room-destination",
+                "scope": "goal",
+                "scopeId": "goal-routing-scope",
+            },
+        ]
+
+        for denied_room, scope_results in (
+            ("source", [False]),
+            ("destination", [True, False]),
+        ):
+            with self.subTest(denied_room=denied_room):
+                store = Mock()
+                store.authenticate_connector_token.return_value = None
+                store.check_idempotency.return_value = None
+                store.meeting_rooms.return_value = rooms
+                store.auth_allows_scope.side_effect = scope_results
+                with patch("memoryendpoints.app._store", return_value=store), patch(
+                    "memoryendpoints.app._require_auth", return_value=auth
+                ):
+                    status, _headers, text = call_app(
+                        "/api/matm/routing-decisions",
+                        method="POST",
+                        headers=headers,
+                        body=body,
+                    )
+
+                self.assertEqual("403 Forbidden", status, text)
+                self.assert_safe_noop_response(text, "insufficient_scope")
+                store.submit_routing_decision.assert_not_called()
+                store.record_idempotency.assert_not_called()
+                store.has_quota_for.assert_not_called()
 
     def test_api_cors_preflight_allows_browser_connectors_without_workspace_key(self):
         status, headers, text = call_app(
@@ -1833,7 +2062,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/meeting-messages",
             method="POST",
-            headers=agent_a_auth,
+            headers=dict(
+                agent_a_auth,
+                HTTP_IDEMPOTENCY_KEY="free-flow-meeting-message-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "roomId": project_room["roomId"],
@@ -1887,7 +2119,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/meeting-rooms/read",
             method="POST",
-            headers=agent_b_auth,
+            headers=dict(
+                agent_b_auth,
+                HTTP_IDEMPOTENCY_KEY="free-flow-meeting-read-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "roomId": project_room["roomId"],
@@ -1929,7 +2164,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/memory-events/submit",
             method="POST",
-            headers=agent_a_auth,
+            headers=dict(
+                agent_a_auth,
+                HTTP_IDEMPOTENCY_KEY="free-flow-memory-submit-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "actorAgentId": "agent-a",
@@ -1968,6 +2206,38 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual(submit_payload["memoryQueryUrl"], confirmation["memoryQueryUrl"])
         self.assertEqual(submit_payload["reviewQueueUrl"], confirmation["reviewQueueUrl"])
         self.assertNotIn("auditLogUrl", confirmation)
+        memory_readback_url = urlsplit(submit_payload["memoryQueryUrl"])
+        memory_readback_query = parse_qs(memory_readback_url.query)
+        self.assertEqual([workspace_id], memory_readback_query["workspace_id"])
+        self.assertEqual([event["eventId"]], memory_readback_query["event_id"])
+        status, _headers, text = call_app(
+            memory_readback_url.path,
+            headers=auth,
+            query=memory_readback_url.query,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertTrue(
+            any(
+                item["eventId"] == event["eventId"]
+                for item in json.loads(text)["items"]
+            )
+        )
+        review_readback_url = urlsplit(submit_payload["reviewQueueUrl"])
+        self.assertEqual(
+            [workspace_id], parse_qs(review_readback_url.query)["workspace_id"]
+        )
+        status, _headers, text = call_app(
+            review_readback_url.path,
+            headers=auth,
+            query=review_readback_url.query,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertTrue(
+            any(
+                item["reviewId"] == event["reviewId"]
+                for item in json.loads(text)["items"]
+            )
+        )
         self.assertEqual("decision", event["memoryType"])
         self.assertEqual("project", event["scope"])
         self.assertEqual(project_id, event["scopeId"])
@@ -2032,7 +2302,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=agent_a_auth,
+            headers=dict(
+                agent_a_auth,
+                HTTP_IDEMPOTENCY_KEY="free-flow-current-message-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": "agent-a",
@@ -2110,7 +2383,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/notifications/ack",
             method="POST",
-            headers=agent_b_auth,
+            headers=dict(
+                agent_b_auth,
+                HTTP_IDEMPOTENCY_KEY="free-flow-notification-ack-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "notificationId": note["notificationId"],
@@ -2353,7 +2629,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                     "senderAgentId": burst_agent_id,
                     "safeSummary": "Burst meeting message %d" % index,
                 },
-                headers=burst_auth,
+                headers=dict(
+                    burst_auth,
+                    HTTP_IDEMPOTENCY_KEY="meeting-burst-message-%d" % index,
+                ),
             )
             self.assertEqual("201 Created", status)
             payload = json.loads(text)
@@ -2419,7 +2698,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                         "senderAgentId": tinyrust_agent_id,
                         "safeSummary": "TinyRustLM evidence: hosted memory connector saved and searched public-safe summaries.",
                     },
-                    headers=tinyrust_auth,
+                    headers=dict(
+                        tinyrust_auth,
+                        HTTP_IDEMPOTENCY_KEY="promotion-source-message-%s" % backend,
+                    ),
                 )
                 self.assertEqual("201 Created", status)
                 meeting_post = json.loads(text)
@@ -2519,7 +2801,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 status, _headers, text = call_app(
                     "/api/matm/meeting-messages/promote",
                     method="POST",
-                    headers=coordinator_auth,
+                    headers=dict(
+                        coordinator_auth,
+                        HTTP_IDEMPOTENCY_KEY="promotion-missing-message-%s" % backend,
+                    ),
                     body={
                         "workspaceId": workspace_id,
                         "meetingMessageId": "meetmsg-missing",
@@ -2553,7 +2838,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 status, _headers, text = call_app(
                     "/api/matm/meeting-rooms",
                     method="POST",
-                    headers=coordinator_auth,
+                    headers=dict(
+                        coordinator_auth,
+                        HTTP_IDEMPOTENCY_KEY="goal-room-create-%s" % backend,
+                    ),
                     body={
                         "workspaceId": workspace_id,
                         "creatorAgentId": coordinator_agent_id,
@@ -2608,7 +2896,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 status, _headers, text = call_app(
                     "/api/matm/meeting-messages",
                     method="POST",
-                    headers=coordinator_auth,
+                    headers=dict(
+                        coordinator_auth,
+                        HTTP_IDEMPOTENCY_KEY="goal-room-message-%s" % backend,
+                    ),
                     body={
                         "workspaceId": workspace_id,
                         "roomId": room["roomId"],
@@ -2635,7 +2926,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 status, _headers, text = call_app(
                     "/api/matm/meeting-rooms",
                     method="POST",
-                    headers=coordinator_auth,
+                    headers=dict(
+                        coordinator_auth,
+                        HTTP_IDEMPOTENCY_KEY="goal-room-invalid-scope-%s" % backend,
+                    ),
                     body={
                         "workspaceId": workspace_id,
                         "creatorAgentId": coordinator_agent_id,
@@ -2666,7 +2960,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 workspace_id = setup["workspaceId"]
                 token = setup["companyMasterTokenSecret"]
                 auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
-                coordinator_auth, coordinator_agent_id, _coordinator = self.agent_auth_via_invite(setup, "codex-coordinator")
+                coordinator_auth, coordinator_agent_id, _coordinator = self.agent_auth_via_invite(
+                    setup,
+                    "codex-coordinator",
+                    scope_type="company",
+                    scope_id=setup["companyId"],
+                )
                 tinyrust_auth, tinyrust_agent_id, _tinyrust = self.agent_auth_via_invite(setup, "tinyrustlm-agent")
 
                 status, _headers, text = call_app(
@@ -2676,7 +2975,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 )
                 self.assertEqual("200 OK", status)
                 default_rooms = json.loads(text)["items"]
-                company_room = [room for room in default_rooms if room["scope"] == "company"][0]
+                company_room = [
+                    room for room in default_rooms if room["scope"] == "company"
+                ][0]
 
                 status, _headers, text = call_app(
                     "/api/matm/meeting-rooms",
@@ -2733,6 +3034,60 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 self.assertIn("/api/matm/routing-decisions?", payload["routingDecisionQueryUrl"])
                 self.assertIn("/api/matm/meeting-messages?", payload["transcriptQueryUrl"])
                 self.assertIn("/api/matm/meeting-messages?", payload["destinationTranscriptQueryUrl"])
+                routing_readback_url = urlsplit(payload["routingDecisionQueryUrl"])
+                routing_readback_query = parse_qs(routing_readback_url.query)
+                self.assertEqual([workspace_id], routing_readback_query["workspace_id"])
+                self.assertEqual([tinyrust_agent_id], routing_readback_query["routed_agent_id"])
+                status, _headers, text = call_app(
+                    routing_readback_url.path,
+                    headers=tinyrust_auth,
+                    query=routing_readback_url.query,
+                )
+                self.assertEqual("200 OK", status)
+                self.assertTrue(
+                    any(
+                        item["routingDecisionId"] == decision["routingDecisionId"]
+                        for item in json.loads(text)["items"]
+                    )
+                )
+                transcript_readback_url = urlsplit(payload["transcriptQueryUrl"])
+                transcript_readback_query = parse_qs(transcript_readback_url.query)
+                self.assertEqual([workspace_id], transcript_readback_query["workspace_id"])
+                self.assertEqual([coordinator_agent_id], transcript_readback_query["agent_id"])
+                status, _headers, text = call_app(
+                    transcript_readback_url.path,
+                    headers=coordinator_auth,
+                    query=transcript_readback_url.query,
+                )
+                self.assertEqual("200 OK", status)
+                self.assertTrue(
+                    any(
+                        item["meetingMessageId"] == message["meetingMessageId"]
+                        for item in json.loads(text)["items"]
+                    )
+                )
+                destination_readback_url = urlsplit(
+                    payload["destinationTranscriptQueryUrl"]
+                )
+                destination_readback_query = parse_qs(
+                    destination_readback_url.query
+                )
+                self.assertEqual(
+                    [workspace_id], destination_readback_query["workspace_id"]
+                )
+                self.assertEqual(
+                    [tinyrust_agent_id], destination_readback_query["agent_id"]
+                )
+                status, _headers, text = call_app(
+                    destination_readback_url.path,
+                    headers=tinyrust_auth,
+                    query=destination_readback_url.query,
+                )
+                self.assertEqual("200 OK", status)
+                self.assertEqual(
+                    decision["destinationRoomId"],
+                    json.loads(text)["room"]["roomId"],
+                )
                 self.assertIn("Routing decision for tinyrustlm-agent", message["safeSummary"])
                 self.assertIn("expectedEvidence=routes exercised", message["safeSummary"])
                 self.assertTrue(payload["valuesRedacted"])
@@ -2780,8 +3135,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
 
                 status, _headers, text = call_app(
                     "/api/matm/meeting-messages",
-                    headers=auth,
-                    query="workspace_id=%s&room_id=%s&agent_id=%s" % (workspace_id, company_room["roomId"], tinyrust_agent_id),
+                    headers=coordinator_auth,
+                    query="workspace_id=%s&room_id=%s&agent_id=%s" % (workspace_id, company_room["roomId"], coordinator_agent_id),
                 )
                 self.assertEqual("200 OK", status)
                 transcript = json.loads(text)
@@ -2797,6 +3152,956 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 replay = json.loads(text)
                 self.assertTrue(replay["idempotentReplay"])
                 self.assertEqual(decision["routingDecisionId"], replay["routingDecision"]["routingDecisionId"])
+
+    def test_project_scope_isolation_and_default_room_readback(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-isolation.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-isolation.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Project Isolation Company",
+                        "label": "Project Isolation Workspace",
+                        "projectLabel": "Primary Isolated Project",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                workspace_id = setup["workspaceId"]
+                primary_project_id = setup["projectId"]
+                master_auth = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setup["companyMasterTokenSecret"]
+                }
+                sibling_project_id = "project-sibling-isolation-%s" % backend
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        master_auth,
+                        HTTP_IDEMPOTENCY_KEY="project-sibling-create-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": sibling_project_id,
+                        "label": "Sibling Isolated Project",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                sibling_payload = json.loads(text)
+                sibling_room_id = sibling_payload["canonicalRoomId"]
+                self.assertEqual(
+                    sibling_project_id, sibling_payload["project"]["projectId"]
+                )
+                self.assertIn(
+                    "scope=project",
+                    sibling_payload["projectMeetingRoomQueryUrl"],
+                )
+
+                if backend == "file":
+                    store = _store()
+                    snapshot = store._load()
+                    snapshot["meetingRooms"].pop(sibling_room_id, None)
+                    store._save(snapshot)
+                else:
+                    with closing(
+                        sqlite3.connect(os.environ["MEMORYENDPOINTS_SQLITE_PATH"])
+                    ) as connection:
+                        connection.execute(
+                            "DELETE FROM matm_meeting_rooms WHERE room_id = ?",
+                            (sibling_room_id,),
+                        )
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    headers=master_auth,
+                    query=(
+                        "workspace_id=%s&scope=project&scope_id=%s"
+                        % (workspace_id, sibling_project_id)
+                    ),
+                )
+                self.assertEqual("200 OK", status, text)
+                healed_rooms = json.loads(text)["items"]
+                self.assertEqual([sibling_room_id], [item["roomId"] for item in healed_rooms])
+
+                project_auth, project_agent_id, _principal = self.agent_auth_via_invite(
+                    setup,
+                    "project-isolated-agent-%s" % backend,
+                    scope_type="project",
+                    scope_id=primary_project_id,
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    headers=project_auth,
+                    query="workspace_id=%s" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                visible_projects = json.loads(text)["items"]
+                self.assertEqual(
+                    [primary_project_id],
+                    [item["projectId"] for item in visible_projects],
+                )
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        project_auth,
+                        HTTP_IDEMPOTENCY_KEY="project-sibling-denied-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": sibling_project_id,
+                        "label": "Unauthorized Sibling Rewrite",
+                    },
+                )
+                self.assertEqual("403 Forbidden", status, text)
+                self.assert_safe_noop_response(text, "insufficient_scope")
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        project_auth,
+                        HTTP_IDEMPOTENCY_KEY="project-create-denied-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": "project-ungranted-create-%s" % backend,
+                        "label": "Unauthorized New Project",
+                    },
+                )
+                self.assertEqual("403 Forbidden", status, text)
+                self.assert_safe_noop_response(text, "insufficient_scope")
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        project_auth,
+                        HTTP_IDEMPOTENCY_KEY="project-own-update-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": primary_project_id,
+                        "actorAgentId": project_agent_id,
+                        "label": "Authorized Primary Project Update",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                own_update = json.loads(text)
+                self.assertEqual(primary_project_id, own_update["project"]["projectId"])
+                self.assertTrue(own_update["canonicalRoomId"])
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    headers=master_auth,
+                    query="workspace_id=%s" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                project_labels = {
+                    item["projectId"]: item["label"]
+                    for item in json.loads(text)["items"]
+                }
+                self.assertEqual(
+                    "Sibling Isolated Project", project_labels[sibling_project_id]
+                )
+
+    def test_cross_workspace_project_id_collision_is_safe(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-collision.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-collision.sqlite3" % backend
+                )
+                setups = []
+                for index in (1, 2):
+                    status, _headers, text = call_app(
+                        "/api/matm/agent-setup/free-account",
+                        method="POST",
+                        body={
+                            "companyLabel": "Collision Company %s" % index,
+                            "label": "Collision Workspace %s" % index,
+                            "projectLabel": "Collision Primary %s" % index,
+                        },
+                    )
+                    self.assertEqual("201 Created", status, text)
+                    setups.append(json.loads(text))
+
+                collision_id = "project-shared-collision-%s" % backend
+                first_auth = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setups[0]["companyMasterTokenSecret"]
+                }
+                second_auth = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setups[1]["companyMasterTokenSecret"]
+                }
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        first_auth,
+                        HTTP_IDEMPOTENCY_KEY="collision-first-create-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": setups[0]["workspaceId"],
+                        "projectId": collision_id,
+                        "label": "Original Collision Owner",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        second_auth,
+                        HTTP_IDEMPOTENCY_KEY="collision-second-denied-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": setups[1]["workspaceId"],
+                        "projectId": collision_id,
+                        "label": "Cross Workspace Takeover",
+                    },
+                )
+                self.assertEqual("409 Conflict", status, text)
+                self.assert_safe_noop_response(text, "project_id_conflict")
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    headers=first_auth,
+                    query="workspace_id=%s" % setups[0]["workspaceId"],
+                )
+                self.assertEqual("200 OK", status, text)
+                owned = {
+                    item["projectId"]: item["label"]
+                    for item in json.loads(text)["items"]
+                }
+                self.assertEqual("Original Collision Owner", owned[collision_id])
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    headers=second_auth,
+                    query="workspace_id=%s" % setups[1]["workspaceId"],
+                )
+                self.assertEqual("200 OK", status, text)
+                self.assertNotIn(
+                    collision_id,
+                    {item["projectId"] for item in json.loads(text)["items"]},
+                )
+
+    def test_routing_decisions_are_scope_filtered_and_replay_authorized(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-routing-isolation.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-routing-isolation.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Routing Isolation Company",
+                        "label": "Routing Isolation Workspace",
+                        "projectLabel": "Routing Project One",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                workspace_id = setup["workspaceId"]
+                project_one_id = setup["projectId"]
+                master_auth = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setup["companyMasterTokenSecret"]
+                }
+                project_two_id = "project-routing-two-%s" % backend
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        master_auth,
+                        HTTP_IDEMPOTENCY_KEY="routing-project-two-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": project_two_id,
+                        "label": "Routing Project Two",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+
+                coordinator_auth, coordinator_id, _coordinator = self.agent_auth_via_invite(
+                    setup,
+                    "routing-coordinator-%s" % backend,
+                )
+                first_auth, first_agent_id, _first = self.agent_auth_via_invite(
+                    setup,
+                    "routing-project-one-agent-%s" % backend,
+                    scope_type="project",
+                    scope_id=project_one_id,
+                )
+                second_auth, second_agent_id, _second = self.agent_auth_via_invite(
+                    setup,
+                    "routing-project-two-agent-%s" % backend,
+                    scope_type="project",
+                    scope_id=project_two_id,
+                )
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    headers=master_auth,
+                    query="workspace_id=%s&scope=project" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                project_rooms = {
+                    item["scopeId"]: item
+                    for item in json.loads(text)["items"]
+                }
+
+                def routing_body(project_id, routed_agent_id):
+                    room_id = project_rooms[project_id]["roomId"]
+                    return {
+                        "workspaceId": workspace_id,
+                        "sourceRoomId": room_id,
+                        "destinationRoomId": room_id,
+                        "routedAgentId": routed_agent_id,
+                        "lane": "project-isolation-proof",
+                        "specificGoal": "Prove routing decisions remain inside one project authority.",
+                        "expectedEvidence": ["scope-filtered GET", "authorized replay"],
+                        "nextAction": "Read only the assigned project decision.",
+                        "supportPlan": "The workspace coordinator will review redacted evidence.",
+                    }
+
+                first_body = routing_body(project_one_id, first_agent_id)
+                first_key = "routing-isolation-first-%s" % backend
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    method="POST",
+                    headers=dict(
+                        coordinator_auth, HTTP_IDEMPOTENCY_KEY=first_key
+                    ),
+                    body=first_body,
+                )
+                self.assertEqual("201 Created", status, text)
+                first_decision_id = json.loads(text)["canonicalRoutingDecisionId"]
+
+                second_body = routing_body(project_two_id, second_agent_id)
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    method="POST",
+                    headers=dict(
+                        coordinator_auth,
+                        HTTP_IDEMPOTENCY_KEY="routing-isolation-second-%s" % backend,
+                    ),
+                    body=second_body,
+                )
+                self.assertEqual("201 Created", status, text)
+                second_decision_id = json.loads(text)["canonicalRoutingDecisionId"]
+
+                for agent_auth, expected_id, hidden_id in (
+                    (first_auth, first_decision_id, second_decision_id),
+                    (second_auth, second_decision_id, first_decision_id),
+                ):
+                    status, _headers, text = call_app(
+                        "/api/matm/routing-decisions",
+                        headers=agent_auth,
+                        query="workspace_id=%s" % workspace_id,
+                    )
+                    self.assertEqual("200 OK", status, text)
+                    visible_ids = {
+                        item["routingDecisionId"]
+                        for item in json.loads(text)["items"]
+                    }
+                    self.assertEqual({expected_id}, visible_ids)
+                    self.assertNotIn(hidden_id, visible_ids)
+
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    method="POST",
+                    headers=dict(
+                        second_auth, HTTP_IDEMPOTENCY_KEY=first_key
+                    ),
+                    body=first_body,
+                )
+                self.assertEqual("403 Forbidden", status, text)
+                denied_replay = self.assert_safe_noop_response(
+                    text, "insufficient_scope"
+                )
+                self.assertNotIn(first_decision_id, json.dumps(denied_replay))
+
+                for unavailable_agent_id in (
+                    "missing-routing-agent-%s" % backend,
+                    second_agent_id,
+                ):
+                    unavailable_body = routing_body(
+                        project_one_id, unavailable_agent_id
+                    )
+                    status, _headers, text = call_app(
+                        "/api/matm/routing-decisions",
+                        method="POST",
+                        headers=dict(
+                            coordinator_auth,
+                            HTTP_IDEMPOTENCY_KEY=(
+                                "routing-unavailable-%s-%s"
+                                % (backend, unavailable_agent_id)
+                            ),
+                        ),
+                        body=unavailable_body,
+                    )
+                    self.assertEqual("422 Unprocessable Entity", status, text)
+                    self.assert_safe_noop_response(
+                        text, "routed_agent_destination_unavailable"
+                    )
+
+                status, _headers, text = call_app(
+                    "/api/matm/routing-decisions",
+                    headers=master_auth,
+                    query="workspace_id=%s" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                self.assertEqual(2, json.loads(text)["count"])
+
+    def test_project_agents_cannot_read_sibling_knowledge_links_or_promote_into_sibling(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-knowledge-scope.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-knowledge-scope.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Knowledge Scope Company",
+                        "label": "Knowledge Scope Workspace",
+                        "projectLabel": "Knowledge Project One",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                workspace_id = setup["workspaceId"]
+                project_one_id = setup["projectId"]
+                master_auth = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setup["companyMasterTokenSecret"]
+                }
+                project_two_id = "project-knowledge-two-%s" % backend
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    method="POST",
+                    headers=dict(
+                        master_auth,
+                        HTTP_IDEMPOTENCY_KEY="knowledge-project-two-%s" % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "projectId": project_two_id,
+                        "label": "Knowledge Project Two",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                project_one_auth, project_one_agent_id, _principal = self.agent_auth_via_invite(
+                    setup,
+                    "knowledge-project-one-agent-%s" % backend,
+                    scope_type="project",
+                    scope_id=project_one_id,
+                )
+
+                document_ids = {}
+                for project_id, marker in (
+                    (project_one_id, "PROJECT_ONE_PRIVATE_MARKER"),
+                    (project_two_id, "PROJECT_TWO_PRIVATE_MARKER"),
+                ):
+                    body = {
+                        "workspaceId": workspace_id,
+                        "scope": "project",
+                        "scopeId": project_id,
+                        "projectId": project_id,
+                        "title": "%s knowledge" % marker,
+                        "description": "Scoped knowledge visibility regression.",
+                        "keywords": ["scope-isolation", marker.lower()],
+                        "taxonomyPaths": [["Security", "Project isolation"]],
+                        "category": "security",
+                        "documentType": "test-evidence",
+                        "sourceUri": "memoryendpoints://tests/%s" % marker.lower(),
+                        "routeOrPath": "/knowledge/project/security/%s"
+                        % marker.lower().replace("_", "-"),
+                        "searchableText": "%s full protected document body"
+                        % marker,
+                    }
+                    status, _headers, text = call_app(
+                        "/api/matm/knowledge-documents/upsert",
+                        method="POST",
+                        headers=dict(
+                            master_auth,
+                            HTTP_IDEMPOTENCY_KEY=(
+                                "knowledge-scope-doc-%s-%s"
+                                % (backend, marker.lower())
+                            ),
+                        ),
+                        body=body,
+                    )
+                    self.assertEqual("201 Created", status, text)
+                    document_ids[project_id] = json.loads(text)[
+                        "canonicalSearchDocumentId"
+                    ]
+
+                    status, _headers, text = call_app(
+                        "/api/matm/external-links/upsert",
+                        method="POST",
+                        headers=dict(
+                            master_auth,
+                            HTTP_IDEMPOTENCY_KEY=(
+                                "knowledge-scope-link-%s-%s"
+                                % (backend, marker.lower())
+                            ),
+                        ),
+                        body={
+                            "workspaceId": workspace_id,
+                            "url": "https://example.com/%s/%s"
+                            % (backend, marker.lower()),
+                            "siteName": "Example Scope Evidence",
+                            "pageTitle": "%s external link" % marker,
+                            "description": "External citation for one project only.",
+                            "keywords": ["scope-isolation", marker.lower()],
+                            "knowledgeDocumentId": document_ids[project_id],
+                            "contextDescription": "Citation belongs to %s."
+                            % project_id,
+                        },
+                    )
+                    self.assertEqual("201 Created", status, text)
+
+                status, _headers, text = call_app(
+                    "/api/matm/knowledge-documents",
+                    headers=project_one_auth,
+                    query="workspace_id=%s&include_text=1" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                documents_text = json.dumps(json.loads(text))
+                self.assertIn("PROJECT_ONE_PRIVATE_MARKER", documents_text)
+                self.assertNotIn("PROJECT_TWO_PRIVATE_MARKER", documents_text)
+                self.assertNotIn(document_ids[project_two_id], documents_text)
+
+                status, _headers, text = call_app(
+                    "/api/matm/knowledge-tree",
+                    headers=project_one_auth,
+                    query="workspace_id=%s" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                tree_text = json.dumps(json.loads(text))
+                self.assertIn("PROJECT_ONE_PRIVATE_MARKER", tree_text)
+                self.assertNotIn("PROJECT_TWO_PRIVATE_MARKER", tree_text)
+                self.assertNotIn(project_two_id, tree_text)
+
+                status, _headers, text = call_app(
+                    "/api/matm/external-links",
+                    headers=project_one_auth,
+                    query="workspace_id=%s" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                links_text = json.dumps(json.loads(text))
+                self.assertIn("PROJECT_ONE_PRIVATE_MARKER", links_text)
+                self.assertNotIn("PROJECT_TWO_PRIVATE_MARKER", links_text)
+                self.assertNotIn(document_ids[project_two_id], links_text)
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-rooms",
+                    headers=master_auth,
+                    query="workspace_id=%s&scope=project" % workspace_id,
+                )
+                self.assertEqual("200 OK", status, text)
+                rooms = {
+                    item["scopeId"]: item
+                    for item in json.loads(text)["items"]
+                }
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-messages",
+                    method="POST",
+                    headers=dict(
+                        project_one_auth,
+                        HTTP_IDEMPOTENCY_KEY="knowledge-source-message-%s"
+                        % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "roomId": rooms[project_one_id]["roomId"],
+                        "senderAgentId": project_one_agent_id,
+                        "safeSummary": "Project one source message for promotion isolation.",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                meeting_message_id = json.loads(text)["messageId"]
+
+                status, _headers, text = call_app(
+                    "/api/matm/meeting-messages/promote",
+                    method="POST",
+                    headers=dict(
+                        project_one_auth,
+                        HTTP_IDEMPOTENCY_KEY="knowledge-sibling-promote-%s"
+                        % backend,
+                    ),
+                    body={
+                        "workspaceId": workspace_id,
+                        "meetingMessageId": meeting_message_id,
+                        "promotedByAgentId": project_one_agent_id,
+                        "scope": "project",
+                        "scopeId": project_two_id,
+                        "title": "SIBLING_PROMOTION_MUST_NOT_EXIST",
+                        "summary": "A project-one agent must not write project-two memory.",
+                    },
+                )
+                self.assertEqual("403 Forbidden", status, text)
+                self.assert_safe_noop_response(text, "insufficient_scope")
+
+                status, _headers, text = call_app(
+                    "/api/matm/search",
+                    headers=master_auth,
+                    query=(
+                        "workspace_id=%s&q=SIBLING_PROMOTION_MUST_NOT_EXIST"
+                        % workspace_id
+                    ),
+                )
+                self.assertEqual("200 OK", status, text)
+                self.assertEqual(0, json.loads(text)["count"])
+
+    def test_generic_idempotency_namespace_isolated_between_agent_principals(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-principal-idempotency.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-principal-idempotency.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={"label": "Principal Idempotency Workspace"},
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                first_auth, first_agent_id, _first = self.agent_auth_via_invite(
+                    setup, "principal-idempotency-first-%s" % backend
+                )
+                second_auth, second_agent_id, _second = self.agent_auth_via_invite(
+                    setup, "principal-idempotency-second-%s" % backend
+                )
+                shared_key = "same-raw-key-different-principal-%s" % backend
+                exact_body = {
+                    "workspaceId": setup["workspaceId"],
+                    "safeSummary": "Each principal owns a separate exact-retry namespace.",
+                    "responseRequired": False,
+                }
+                payloads = []
+                for agent_auth in (first_auth, second_auth):
+                    status, _headers, text = call_app(
+                        "/api/matm/agent-messages",
+                        method="POST",
+                        headers=dict(
+                            agent_auth, HTTP_IDEMPOTENCY_KEY=shared_key
+                        ),
+                        body=exact_body,
+                    )
+                    self.assertEqual("202 Accepted", status, text)
+                    payloads.append(json.loads(text))
+                self.assertEqual(
+                    {first_agent_id, second_agent_id},
+                    {item["message"]["senderAgentId"] for item in payloads},
+                )
+                self.assertEqual(
+                    2, len({item["messageId"] for item in payloads})
+                )
+                self.assertTrue(
+                    all(not item.get("idempotentReplay") for item in payloads)
+                )
+
+    def test_concurrent_protected_project_retry_has_one_effect(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-concurrent.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-project-concurrent.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Concurrent Project Company",
+                        "label": "Concurrent Project Workspace",
+                        "projectLabel": "Concurrent Primary Project",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                project_id = "project-concurrent-effect-%s" % backend
+                body = {
+                    "workspaceId": setup["workspaceId"],
+                    "projectId": project_id,
+                    "label": "One Concurrent Project Effect",
+                }
+                headers = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setup["companyMasterTokenSecret"],
+                    "HTTP_IDEMPOTENCY_KEY": "project-concurrent-key-%s" % backend,
+                }
+                barrier = threading.Barrier(8)
+                results = []
+                result_lock = threading.Lock()
+
+                def submit():
+                    barrier.wait()
+                    result = call_app(
+                        "/api/matm/projects",
+                        method="POST",
+                        headers=headers,
+                        body=body,
+                    )
+                    with result_lock:
+                        results.append(result)
+
+                workers = [threading.Thread(target=submit) for _index in range(8)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(20)
+                self.assertTrue(all(not worker.is_alive() for worker in workers))
+                self.assertEqual(8, len(results))
+                self.assertEqual(
+                    ["201 Created"] * 8,
+                    sorted(item[0] for item in results),
+                )
+                payloads = [json.loads(item[2]) for item in results]
+                self.assertEqual(
+                    7,
+                    sum(bool(item.get("idempotentReplay")) for item in payloads),
+                )
+                self.assertEqual(
+                    {project_id},
+                    {item["project"]["projectId"] for item in payloads},
+                )
+
+                status, _headers, text = call_app(
+                    "/api/matm/projects",
+                    headers={"HTTP_AUTHORIZATION": headers["HTTP_AUTHORIZATION"]},
+                    query="workspace_id=%s" % setup["workspaceId"],
+                )
+                self.assertEqual("200 OK", status, text)
+                matching = [
+                    item
+                    for item in json.loads(text)["items"]
+                    if item["projectId"] == project_id
+                ]
+                self.assertEqual(1, len(matching))
+
+    def test_failed_protected_mutation_releases_idempotency_claim_for_retry(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-idempotency-failure.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-idempotency-failure.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Retry Company",
+                        "label": "Retry Workspace",
+                        "projectLabel": "Retry Project",
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                headers = {
+                    "HTTP_AUTHORIZATION": "Bearer "
+                    + setup["companyMasterTokenSecret"],
+                    "HTTP_IDEMPOTENCY_KEY": "failed-claim-retry-%s" % backend,
+                }
+                failed_body = {
+                    "workspaceId": setup["workspaceId"],
+                    "scope": "workspace",
+                    "scopeId": setup["workspaceId"],
+                    "title": "Retry after validation failure",
+                    "summary": "",
+                }
+                status, _headers, text = call_app(
+                    "/api/matm/memory-events/submit",
+                    method="POST",
+                    headers=headers,
+                    body=failed_body,
+                )
+                self.assertEqual("422 Unprocessable Entity", status, text)
+                self.assert_safe_noop_response(text, "summary_required")
+
+                retry_body = dict(
+                    failed_body,
+                    summary="The failed reservation was released before this retry.",
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/memory-events/submit",
+                    method="POST",
+                    headers=headers,
+                    body=retry_body,
+                )
+                self.assertEqual("201 Created", status, text)
+                self.assertFalse(json.loads(text).get("idempotentReplay", False))
+
+    def test_commit_then_raise_keeps_generic_idempotency_claim_uncertain(self):
+        for backend in ("file", "sqlite"):
+            with self.subTest(backend=backend):
+                os.environ["MEMORYENDPOINTS_STORE_BACKEND"] = backend
+                os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(
+                    self.tempdir, "%s-idempotency-uncertain.json" % backend
+                )
+                os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(
+                    self.tempdir, "%s-idempotency-uncertain.sqlite3" % backend
+                )
+                status, _headers, text = call_app(
+                    "/api/matm/agent-setup/free-account",
+                    method="POST",
+                    body={
+                        "companyLabel": "Uncertain Company " + backend,
+                        "label": "Uncertain Workspace " + backend,
+                        "projectLabel": "Uncertain Project " + backend,
+                    },
+                )
+                self.assertEqual("201 Created", status, text)
+                setup = json.loads(text)
+                agent_auth, agent_id, _redeemed = self.agent_auth_via_invite(
+                    setup,
+                    "uncertain-commit-agent-" + backend,
+                )
+                store = _store()
+                original_submit_memory = store.submit_memory
+                source = "idempotency-regression://commit-then-raise/" + backend
+                body = {
+                    "workspaceId": setup["workspaceId"],
+                    "actorAgentId": agent_id,
+                    "scope": "workspace",
+                    "scopeId": setup["workspaceId"],
+                    "title": "Commit acknowledgement uncertainty " + backend,
+                    "summary": "The durable effect commits before the store raises.",
+                    "tags": ["idempotency", "uncertain-outcome"],
+                    "source": source,
+                    "memoryType": "evidence",
+                    "subject": "commit-then-raise",
+                    "confidence": 1.0,
+                }
+                headers = dict(
+                    agent_auth,
+                    HTTP_IDEMPOTENCY_KEY="commit-then-raise-key-" + backend,
+                )
+
+                def commit_then_raise(*args, **kwargs):
+                    original_submit_memory(*args, **kwargs)
+                    raise RuntimeError("lost commit acknowledgement: private detail")
+
+                with patch("memoryendpoints.app._store", return_value=store), patch.object(
+                    store, "submit_memory", side_effect=commit_then_raise
+                ):
+                    status, first_headers, text = call_app(
+                        "/api/matm/memory-events/submit",
+                        method="POST",
+                        headers=headers,
+                        body=body,
+                    )
+
+                self.assertEqual("503 Service Unavailable", status, text)
+                uncertain = json.loads(text)
+                self.assertEqual(
+                    "idempotency_finalization_uncertain",
+                    uncertain["error"]["code"],
+                )
+                self.assertTrue(uncertain["outcomeUncertain"])
+                self.assertTrue(uncertain["idempotencyKeyReserved"])
+                self.assertFalse(uncertain["safeNoOp"])
+                self.assertEqual("5", first_headers["Retry-After"])
+                self.assertNotIn("lost commit acknowledgement", text)
+
+                with patch("memoryendpoints.app._store", return_value=store), patch(
+                    "memoryendpoints.storage._IDEMPOTENCY_CLAIM_WAIT_SECONDS", 0.0
+                ):
+                    status, retry_headers, text = call_app(
+                        "/api/matm/memory-events/submit",
+                        method="POST",
+                        headers=headers,
+                        body=body,
+                    )
+                self.assertEqual("409 Conflict", status, text)
+                pending = json.loads(text)
+                self.assertEqual("idempotency_in_progress", pending["status"])
+                self.assertFalse(pending.get("idempotentReplay", False))
+                self.assertNotIn("Idempotency-Replayed", retry_headers)
+
+                changed_body = dict(
+                    body,
+                    summary="A changed body must still conflict with the reserved key.",
+                )
+                with patch("memoryendpoints.app._store", return_value=store):
+                    status, _headers, text = call_app(
+                        "/api/matm/memory-events/submit",
+                        method="POST",
+                        headers=headers,
+                        body=changed_body,
+                    )
+                self.assertEqual("409 Conflict", status, text)
+                self.assert_safe_noop_response(text, "idempotency_conflict")
+
+                effects = [
+                    item
+                    for item in store.search_memory(
+                        setup["workspaceId"], "", {"sourcePrefix": source}
+                    )
+                    if item.get("source") == source
+                ]
+                self.assertEqual(1, len(effects), effects)
+
+    def test_unclaimed_unexpected_exception_still_propagates(self):
+        from memoryendpoints.app import _IdempotencyFinalizationError
+
+        for error in (
+            RuntimeError("unclaimed failure"),
+            _IdempotencyFinalizationError("unclaimed finalization failure"),
+        ):
+            with self.subTest(error=type(error).__name__), patch(
+                "memoryendpoints.app._application_dispatch",
+                side_effect=error,
+            ):
+                with self.assertRaisesRegex(type(error), str(error)):
+                    call_app("/api/version")
+
+    def test_mysql_inherits_relational_idempotency_claim_contract(self):
+        from memoryendpoints.storage import SQLiteStore
+
+        self.assertIs(MySQLStore.claim_idempotency, SQLiteStore.claim_idempotency)
+        self.assertIs(
+            MySQLStore.release_idempotency_claim,
+            SQLiteStore.release_idempotency_claim,
+        )
+        self.assertIs(MySQLStore.record_idempotency, SQLiteStore.record_idempotency)
 
     def test_broadcast_and_targeted_messages_route_to_expected_agents(self):
         status, _headers, text = call_app(
@@ -2833,7 +4138,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=backend_auth,
+            headers=dict(
+                backend_auth,
+                HTTP_IDEMPOTENCY_KEY="message-broadcast-swarm-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": backend_agent,
@@ -2874,7 +4182,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=human_auth,
+            headers=dict(
+                human_auth,
+                HTTP_IDEMPOTENCY_KEY="message-targeted-backend-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": human_agent,
@@ -2979,7 +4290,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/notifications/ack",
             method="POST",
-            headers=backend_auth,
+            headers=dict(
+                backend_auth,
+                HTTP_IDEMPOTENCY_KEY="message-broadcast-ack-backend-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "notificationId": backend_broadcast["notification"]["notificationId"],
@@ -3040,11 +4354,16 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         backend_auth = {"HTTP_AUTHORIZATION": "Bearer " + backend_principal["agentTokenSecret"]}
         human_auth = {"HTTP_AUTHORIZATION": "Bearer " + human_principal["agentTokenSecret"]}
 
-        for summary in ("Older coordination message.", "Newest coordination message."):
+        for index, summary in enumerate(
+            ("Older coordination message.", "Newest coordination message.")
+        ):
             status, _headers, _text = call_app(
                 "/api/matm/agent-messages",
                 method="POST",
-                headers=human_auth,
+                headers=dict(
+                    human_auth,
+                    HTTP_IDEMPOTENCY_KEY="message-inbox-order-%d" % index,
+                ),
                 body={
                     "workspaceId": workspace_id,
                     "senderAgentId": human_agent,
@@ -3125,7 +4444,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/memory-events/submit",
             method="POST",
-            headers=firewall_auth,
+            headers=dict(
+                firewall_auth,
+                HTTP_IDEMPOTENCY_KEY="memory-firewall-submit-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "actorAgentId": firewall_agent_id,
@@ -3287,7 +4609,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/memory-events/submit",
             method="POST",
-            headers=review_auth,
+            headers=dict(
+                review_auth,
+                HTTP_IDEMPOTENCY_KEY="review-pending-memory-submit-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "actorAgentId": review_agent_id,
@@ -3390,7 +4715,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             status, _headers, _text = call_app(
                 "/api/matm/memory-events/submit",
                 method="POST",
-                headers=submit_auth,
+                headers=dict(
+                    submit_auth,
+                    HTTP_IDEMPOTENCY_KEY="sqlite-review-memory-%d" % index,
+                ),
                 body={
                     "workspaceId": workspace_id,
                     "actorAgentId": submit_agent_id,
@@ -3490,7 +4818,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 status, _headers, text = call_app(
                     "/api/matm/memory-events/submit",
                     method="POST",
-                    headers=submit_auth,
+                    headers=dict(
+                        submit_auth,
+                        HTTP_IDEMPOTENCY_KEY="review-source-memory-%s" % backend,
+                    ),
                     body={
                         "workspaceId": workspace_id,
                         "actorAgentId": actor_agent_id,
@@ -3577,7 +4908,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         agent_b_auth, agent_b_id, _agent_b = self.agent_auth_via_invite(setup, "agent-filter-b")
         submit_headers_by_agent = {agent_a_id: agent_a_auth, agent_b_id: agent_b_auth}
 
-        for body in [
+        for index, body in enumerate([
             {
                 "workspaceId": workspace_id,
                 "actorAgentId": agent_a_id,
@@ -3600,11 +4931,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "tags": ["filter-demo", "workspace-lane"],
                 "source": "api/workspace-status",
             },
-        ]:
+        ]):
             status, _headers, _text = call_app(
                 "/api/matm/memory-events/submit",
                 method="POST",
-                headers=submit_headers_by_agent[body["actorAgentId"]],
+                headers=dict(
+                    submit_headers_by_agent[body["actorAgentId"]],
+                    HTTP_IDEMPOTENCY_KEY="memory-search-filter-%d" % index,
+                ),
                 body=body,
             )
             self.assertEqual("201 Created", status)
@@ -3681,7 +5015,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
         backend_auth, backend_agent_id, _backend = self.agent_auth_via_invite(setup, "MemoryEndpoints-Backend-Agent")
 
-        for body in [
+        for index, body in enumerate([
             {
                 "workspaceId": workspace_id,
                 "actorAgentId": backend_agent_id,
@@ -3737,11 +5071,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "tags": ["long-term-memory-migration", "coordination"],
                 "source": "Backend live verification",
             },
-        ]:
+        ]):
             status, _headers, _text = call_app(
                 "/api/matm/memory-events/submit",
                 method="POST",
-                headers=backend_auth,
+                headers=dict(
+                    backend_auth,
+                    HTTP_IDEMPOTENCY_KEY="long-term-migration-memory-%d" % index,
+                ),
                 body=body,
             )
             self.assertEqual("201 Created", status)
@@ -3796,7 +5133,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["companyMasterTokenSecret"]}
         backend_auth, backend_agent_id, _backend = self.agent_auth_via_invite(setup, "MemoryEndpoints-Backend-Agent")
 
-        for body in [
+        for index, body in enumerate([
             {
                 "workspaceId": workspace_id,
                 "actorAgentId": backend_agent_id,
@@ -3830,11 +5167,14 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "tags": ["coordination"],
                 "source": "api",
             },
-        ]:
+        ]):
             status, _headers, _text = call_app(
                 "/api/matm/memory-events/submit",
                 method="POST",
-                headers=backend_auth,
+                headers=dict(
+                    backend_auth,
+                    HTTP_IDEMPOTENCY_KEY="long-term-review-memory-%d" % index,
+                ),
                 body=body,
             )
             self.assertEqual("201 Created", status)
@@ -3968,12 +5308,12 @@ class MemoryEndpointsAppTests(unittest.TestCase):
                 "operation": "upsert",
                 "title": "Offline sync memory",
                 "summary": "Public-safe sync mutation body.",
-                "scope": "goal",
-                "scopeId": "goal-tinyrustlm-hosted-memory",
+                "scope": "project",
+                "scopeId": setup["projectId"],
                 "memoryType": "handoff",
                 "sourceRef": "tinyrustlm://offline-sync/test",
             }
-            mutation_headers = dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mut-1-" + backend)
+            mutation_headers = dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-1-" + backend)
             status, _headers, text = call_app(
                 "/api/matm/sync/mutations",
                 method="POST",
@@ -3987,7 +5327,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             self.assertEqual("applied", applied["receipt"]["status"])
             self.assertEqual(1, applied["serverSequence"])
             self.assertEqual("active", applied["head"]["status"])
-            self.assertNotIn("sync-mut-1-" + backend, text)
+            self.assertNotIn("sync-mutation-1-" + backend, text)
             first_revision_id = applied["revision"]["syncRevisionId"]
 
             status, _headers, text = call_app(
@@ -4010,7 +5350,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             receipt = json.loads(text)["receipt"]
             self.assertEqual("applied", receipt["status"])
             self.assertFalse(receipt["idempotencyKeyExposed"])
-            self.assertNotIn("sync-mut-1-" + backend, text)
+            self.assertNotIn("sync-mutation-1-" + backend, text)
 
             status, _headers, text = call_app(
                 "/api/matm/sync/changes",
@@ -4234,7 +5574,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/review-queue/decide",
             method="POST",
-            headers=reviewer_auth,
+            headers=dict(
+                reviewer_auth,
+                HTTP_IDEMPOTENCY_KEY="review-invalid-decision-1",
+            ),
             body={
                 "workspaceId": setup["workspaceId"],
                 "reviewId": "review-missing",
@@ -4359,7 +5702,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/sync/mutations",
             method="POST",
-            headers=dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-1"),
+            headers=dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-0001"),
             body=mutation_body,
         )
         self.assertEqual("202 Accepted", status)
@@ -4375,7 +5718,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/sync/mutations",
             method="POST",
-            headers=dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-1"),
+            headers=dict(sync_auth, HTTP_IDEMPOTENCY_KEY="sync-mutation-0001"),
             body=mutation_body,
         )
         self.assertEqual("202 Accepted", status)
@@ -4517,7 +5860,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/memory-events/submit",
             method="POST",
-            headers=sqlite_auth,
+            headers=dict(
+                sqlite_auth,
+                HTTP_IDEMPOTENCY_KEY="sqlite-core-memory-submit-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "actorAgentId": sqlite_agent_id,
@@ -4622,7 +5968,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/meeting-rooms/read",
             method="POST",
-            headers=sqlite_auth,
+            headers=dict(
+                sqlite_auth,
+                HTTP_IDEMPOTENCY_KEY="sqlite-core-meeting-read-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "roomId": sqlite_project_room["roomId"],
@@ -4638,7 +5987,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/agent-messages",
             method="POST",
-            headers=sqlite_auth,
+            headers=dict(
+                sqlite_auth,
+                HTTP_IDEMPOTENCY_KEY="sqlite-core-broadcast-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "senderAgentId": sqlite_agent_id,
@@ -4690,7 +6042,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         status, _headers, _text = call_app(
             "/api/matm/notifications/ack",
             method="POST",
-            headers=sqlite_auth,
+            headers=dict(
+                sqlite_auth,
+                HTTP_IDEMPOTENCY_KEY="sqlite-core-ack-1",
+            ),
             body={
                 "workspaceId": workspace_id,
                 "notificationId": sqlite_sender_inbox["items"][0]["notification"]["notificationId"],
@@ -4832,7 +6187,10 @@ class MemoryEndpointsAppTests(unittest.TestCase):
             status, _headers, text = call_app(
                 "/api/matm/agent-messages",
                 method="POST",
-                headers=agent_auth,
+                headers=dict(
+                    agent_auth,
+                    HTTP_IDEMPOTENCY_KEY="workspace-broadcast-%s" % workspace_id,
+                ),
                 body={
                     "workspaceId": workspace_id,
                     "senderAgentId": agent_id,

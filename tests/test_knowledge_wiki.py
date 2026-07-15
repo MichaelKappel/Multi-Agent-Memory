@@ -5,7 +5,7 @@ import shutil
 import sqlite3
 import unittest
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
 from memoryendpoints.storage import SQLiteStore
@@ -67,7 +67,11 @@ class KnowledgeWikiTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/access/agent-name-requests",
             method="POST",
-            headers=auth,
+            headers=dict(
+                auth,
+                HTTP_IDEMPOTENCY_KEY="knowledge-access-request-"
+                + agent_id.lower(),
+            ),
             body={
                 "requestedName": agent_id,
                 "displayName": display_name or agent_id,
@@ -81,7 +85,11 @@ class KnowledgeWikiTests(unittest.TestCase):
         status, _headers, text = call_app(
             "/api/matm/access/agent-name-requests/%s/decision" % requested["request"]["requestId"],
             method="POST",
-            headers=auth,
+            headers=dict(
+                auth,
+                HTTP_IDEMPOTENCY_KEY="knowledge-access-decision-"
+                + requested["request"]["requestId"],
+            ),
             body={"decision": "approve", "decisionReason": "Approved by knowledge wiki test fixture."},
         )
         self.assertEqual("200 OK", status, text)
@@ -215,6 +223,24 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertTrue(payload["visibleInSearch"])
         self.assertTrue(payload["visibleInWikiTree"])
         self.assertIn("/api/matm/knowledge-documents", payload["documentQueryUrl"])
+        for key in ("documentQueryUrl", "searchQueryUrl", "treeQueryUrl"):
+            self.assertEqual(
+                [workspace_id],
+                parse_qs(urlsplit(payload[key]).query)["workspace_id"],
+            )
+        document_readback_url = urlsplit(payload["documentQueryUrl"])
+        status, _headers, text = call_app(
+            document_readback_url.path,
+            headers=headers,
+            query=document_readback_url.query,
+        )
+        self.assertEqual("200 OK", status)
+        self.assertTrue(
+            any(
+                item["searchDocumentId"] == payload["canonicalSearchDocumentId"]
+                for item in json.loads(text)["items"]
+            )
+        )
 
         status, _headers, text = call_app(
             "/api/matm/knowledge-tree",
