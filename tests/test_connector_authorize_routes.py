@@ -371,20 +371,65 @@ class ConnectorAuthorizeRouteContract(ConnectorPairingApiContract):
         self.assertNotIn(REDIRECT_URI, missing_body)
 
     def test_post_claim_get_never_republishes_the_wake_url(self):
-        request, _verifier, _state = self._start_request()
+        request, verifier, _state = self._start_request()
         self._approve_for_route_render(request, "authorize-route-post-claim")
         claim = self._claim_response(request, "authorize-route-code-claim")
         self._assert_json(claim[0], claim[1], claim[3], 200)
         self.assertEqual("authorization_code_issued", claim[2]["status"])
+        authorization_code = claim[2]["authorizationCode"]
         status, headers, body = call_html(
             "/connect/authorize/" + request["publicRequestRef"],
             "__Host-memoryendpoints-human=" + self.human_session_secret,
         )
         self.assertEqual("200 OK", status)
         self.assert_authorize_security_headers(headers)
-        self.assertIn('data-connector-state="error"', body)
+        self.assertIn('data-connector-state="authorization-issued"', body)
+        self.assertIn("Authorization issued for LocalEndpoint", body)
+        self.assertIn("No token needs to be copied", body)
+        self.assertIn("does not claim that the desktop has received", body)
         self.assertNotIn("data-connector-return-action", body)
         self.assertNotIn(REDIRECT_URI, body)
+        self.assertNotIn(authorization_code, body)
+        self.assert_request_neutral_html(body, request["publicRequestRef"])
+
+        exchange, connector_secret = self._exchange(
+            authorization_code,
+            verifier,
+            key="authorize-route-token-exchange",
+        )
+        status, headers, body = call_html(
+            "/connect/authorize/" + request["publicRequestRef"],
+            "__Host-memoryendpoints-human=" + self.human_session_secret,
+        )
+        self.assertEqual("200 OK", status)
+        self.assert_authorize_security_headers(headers)
+        self.assertIn('data-connector-state="credential-prepared"', body)
+        self.assertIn("Credential prepared for LocalEndpoint recovery", body)
+        self.assertIn("does not verify secure storage or activation", body)
+        self.assertNotIn("data-connector-return-action", body)
+        self.assertNotIn(REDIRECT_URI, body)
+        self.assertNotIn(authorization_code, body)
+        self.assertNotIn(connector_secret, body)
+        self.assert_request_neutral_html(body, request["publicRequestRef"])
+
+        self._activate(
+            exchange["pairing"]["pairingId"],
+            connector_secret,
+            key="authorize-route-activation",
+        )
+        status, headers, body = call_html(
+            "/connect/authorize/" + request["publicRequestRef"],
+            "__Host-memoryendpoints-human=" + self.human_session_secret,
+        )
+        self.assertEqual("200 OK", status)
+        self.assert_authorize_security_headers(headers)
+        self.assertIn('data-connector-state="activated"', body)
+        self.assertIn("Connection activated by MemoryEndpoints", body)
+        self.assertIn("only the desktop app may report Connected", body)
+        self.assertNotIn("data-connector-return-action", body)
+        self.assertNotIn(REDIRECT_URI, body)
+        self.assertNotIn(authorization_code, body)
+        self.assertNotIn(connector_secret, body)
         self.assert_request_neutral_html(body, request["publicRequestRef"])
 
     def test_company_selection_uses_only_short_lived_session_bound_company_refs(self):
@@ -497,10 +542,15 @@ class ConnectorAuthorizeRouteContract(ConnectorPairingApiContract):
     def test_explicit_demo_states_use_mock_authority_and_no_protected_urls(self):
         states = (
             "signed_out",
+            "login_failed",
             "company_selection",
             "reauth_required",
+            "reauthentication_failed",
             "pending",
             "approved",
+            "authorization_issued",
+            "credential_prepared",
+            "activated",
             "error",
             "expired",
             "canceled",
@@ -522,6 +572,26 @@ class ConnectorAuthorizeRouteContract(ConnectorPairingApiContract):
                 for scope in REQUESTED_SCOPES:
                     self.assertNotIn(scope, body)
                 self.assertIn("data-connector-authorize-renderer", body)
+                self.assert_authorize_security_headers(headers)
+
+    def test_legacy_post_approval_demo_urls_normalize_to_canonical_states(self):
+        aliases = {
+            "authorization_received": "authorization_issued",
+            "credential_delivered": "credential_prepared",
+            "connected": "activated",
+        }
+        for legacy, canonical in aliases.items():
+            with self.subTest(legacy=legacy):
+                status, headers, body = call_html(
+                    "/tour/connect/authorize/" + legacy
+                )
+                self.assertEqual("200 OK", status)
+                self.assertIn(
+                    'data-connector-view-state="%s"' % canonical,
+                    body,
+                )
+                self.assertIn('"protectedNetworkAllowed":false', body)
+                self.assertNotIn("/api/matm/", body)
                 self.assert_authorize_security_headers(headers)
 
     def test_same_session_csrf_rotation_invalidates_the_previous_value(self):

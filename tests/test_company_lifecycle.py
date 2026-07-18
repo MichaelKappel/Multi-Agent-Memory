@@ -528,6 +528,23 @@ class HumanAccountCompanyLifecycleContract:
         with closing(sqlite3.connect(self.sqlite_path)) as connection:
             return connection.execute("SELECT COUNT(*) FROM matm_human_accounts").fetchone()[0]
 
+    def _set_human_account_status(self, human_account_id, status):
+        if self.backend == "file":
+            data = json.loads(self.store_path.read_text(encoding="utf-8"))
+            self.assertIn(human_account_id, data.get("humanAccounts", {}))
+            data["humanAccounts"][human_account_id]["status"] = status
+            self.store_path.write_text(
+                json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            return
+        with closing(sqlite3.connect(self.sqlite_path)) as connection:
+            cursor = connection.execute(
+                "UPDATE matm_human_accounts SET status = ? WHERE human_account_id = ?",
+                (status, human_account_id),
+            )
+            self.assertEqual(1, cursor.rowcount)
+            connection.commit()
+
     def _replacement_count(self):
         if self.backend == "file":
             data = json.loads(self.store_path.read_text(encoding="utf-8"))
@@ -772,6 +789,96 @@ class HumanAccountCompanyLifecycleContract:
         )
         self._assert_error(status, recovery_as_login, 400, "username_password_required")
         self._assert_not_persisted(self.password)
+
+    def test_login_failure_is_helpful_but_does_not_reveal_account_existence(self):
+        account, _session, _membership = self._create_human_account(self.primary)
+        rejected_password = "Rejected-password-%s" % secrets.token_urlsafe(24)
+        unknown_username = "missing-%s" % secrets.token_hex(8)
+
+        wrong_status, wrong_headers, wrong_password = call_api(
+            "/api/matm/human/session",
+            "POST",
+            {"username": self.username, "password": rejected_password},
+            extra_headers=self._public_mutation_headers(),
+        )
+        unknown_status, unknown_headers, unknown_account = call_api(
+            "/api/matm/human/session",
+            "POST",
+            {"username": unknown_username, "password": rejected_password},
+            extra_headers=self._public_mutation_headers(),
+        )
+        self._set_human_account_status(account["humanAccountId"], "inactive")
+        inactive_status, inactive_headers, inactive_account = call_api(
+            "/api/matm/human/session",
+            "POST",
+            {"username": self.username, "password": self.password},
+            extra_headers=self._public_mutation_headers(),
+        )
+
+        self._assert_error(wrong_status, wrong_password, 401, "human_login_failed")
+        self._assert_error(unknown_status, unknown_account, 401, "human_login_failed")
+        self._assert_error(
+            inactive_status, inactive_account, 401, "human_login_failed"
+        )
+        self.assertEqual(wrong_password, unknown_account)
+        self.assertEqual(wrong_password, inactive_account)
+        self.assertEqual(wrong_headers, unknown_headers)
+        self.assertEqual(wrong_headers, inactive_headers)
+        self.assertEqual("Sign-in not completed", wrong_password["error"]["title"])
+        self.assertEqual(
+            "Sign-in failed. The username or password was not accepted, or the account is "
+            "unavailable. Check both and try again. For security, MemoryEndpoints does not "
+            "reveal which condition occurred.",
+            wrong_password["error"]["detail"],
+        )
+        self.assertIsNone(_header(wrong_headers, "Set-Cookie"))
+        self.assertIsNone(_header(unknown_headers, "Set-Cookie"))
+        self.assertIsNone(_header(inactive_headers, "Set-Cookie"))
+        self.assertIn("no-store", _header(wrong_headers, "Cache-Control", ""))
+        self.assertIn("no-store", _header(unknown_headers, "Cache-Control", ""))
+        self.assertIn("no-store", _header(inactive_headers, "Cache-Control", ""))
+        serialized = json.dumps(
+            {
+                "wrongPassword": wrong_password,
+                "unknownAccount": unknown_account,
+                "inactiveAccount": inactive_account,
+            },
+            sort_keys=True,
+        )
+        for value in (
+            self.username,
+            unknown_username,
+            rejected_password,
+            self.password,
+        ):
+            self.assertNotIn(value, serialized)
+
+    def test_reauthentication_failure_has_fixed_non_reflective_guidance(self):
+        _account, session, membership = self._create_human_account(self.primary)
+        session = self._select_company(
+            session,
+            membership["authorityId"],
+            self.primary["companyId"],
+        )
+        rejected_password = "Rejected-reauth-%s" % secrets.token_urlsafe(24)
+
+        status, headers, payload = self._human_call(
+            session,
+            "/api/matm/human/session/reauth",
+            "POST",
+            {"password": rejected_password},
+        )
+
+        self._assert_error(status, payload, 403, "human_reauthentication_failed")
+        self.assertEqual("Password confirmation failed", payload["error"]["title"])
+        self.assertEqual(
+            "The password was not accepted for the signed-in account. "
+            "Enter the current account password and try again.",
+            payload["error"]["detail"],
+        )
+        self.assertNotIn(rejected_password, json.dumps(payload, sort_keys=True))
+        self.assertIsNone(_header(headers, "Set-Cookie"))
+        self.assertIn("no-store", _header(headers, "Cache-Control", ""))
 
     def test_master_and_agent_bearers_cannot_use_human_management_history_or_export(self):
         agent = self._provision_agent()

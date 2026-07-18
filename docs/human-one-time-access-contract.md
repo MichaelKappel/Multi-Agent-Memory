@@ -42,7 +42,7 @@ Response `201` uses one-time-secret headers and returns:
 }
 ```
 
-The browser clears the raw master input before awaiting the response. The proof secret is held only in an in-memory closure and is consumed by exactly one account-create or company-link operation.
+The browser clears the raw master input before awaiting the response. The proof secret is held only in an in-memory closure and is consumed by exactly one account-create or company-link operation. This company master token is separate from connector pairing: the LocalEndpoint authorization link already carries its public request reference, and the human must never paste that reference into the company-master field. A rejected master returns fixed guidance in the enrollment panel without reloading or erasing the page.
 
 ### `POST /api/matm/human/accounts`
 
@@ -70,13 +70,15 @@ Account, first owner membership, proof consumption, and session issuance are one
 
 Username/password login rotates to a fresh host-only cookie and CSRF token. Its response includes `account`, `memberships`, nested `humanSession`, and top-level `selectedCompanyId` for adapter compatibility. No company is implicitly selected after login.
 
+An unknown username, inactive account, and wrong password deliberately return the same `401` problem code, title, and fixed detail: `human_login_failed`. The detail says that the username or password was not accepted or the account is unavailable, without identifying which condition occurred or reflecting either submitted value. The UI preserves the username, clears the password synchronously, focuses the password control, keeps an attached connector request in place, and displays the fixed error without reloading. Throttling, network/service failure, and invalid-response failures use separate fixed inline guidance while still ignoring untrusted server detail. One guarded request may be in flight; the form is marked busy and its action controls are disabled until it settles.
+
 ### `GET /api/matm/human/session`
 
 This is a same-origin cookie-bound revalidation operation. When invoked with browser same-origin Fetch Metadata it rotates the CSRF verifier and returns the new `csrfToken` with one-time/no-store headers. It includes `account`, `memberships`, nested `humanSession`, and top-level `selectedCompanyId`. It never returns tenant collections or agent roster data.
 
 ### `POST /api/matm/human/session/reauth`
 
-Requires cookie, current CSRF, strict Origin, and same-origin Fetch Metadata. A correct password rotates the session cookie and CSRF token while preserving selected membership and records `passwordReauthenticatedAt`. Sensitive authority lasts no more than five minutes. The response is the complete session envelope (`account`, `memberships`, nested `humanSession`, top-level `selectedCompanyId`, and the rotated top-level `csrfToken`), and the frontend must establish it before the next protected mutation.
+Requires cookie, current CSRF, strict Origin, and same-origin Fetch Metadata. A correct password rotates the session cookie and CSRF token while preserving selected membership and records `passwordReauthenticatedAt`. Sensitive authority lasts no more than five minutes. The response is the complete session envelope (`account`, `memberships`, nested `humanSession`, top-level `selectedCompanyId`, and the rotated top-level `csrfToken`), and the frontend must establish it before the next protected mutation. A rejected password returns `403 human_reauthentication_failed` with fixed non-reflective guidance; the UI clears and focuses the password while retaining the request and current human session. A server-rendered rejected-reauthentication state must first inspect the authenticated session and hydrate a fresh in-memory CSRF token while preserving the visible error. Reauthentication and all other authenticated mutation controls remain disabled until that hydration succeeds.
 
 ### `POST /api/matm/human/session/company`
 

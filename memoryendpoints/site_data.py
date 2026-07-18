@@ -111,8 +111,8 @@ ROUTE_TABLE = [
     {"route": "/api/matm/sync/capabilities", "access": "public", "methods": ["GET"], "purpose": "Public distributed-sync v1 capability negotiation."},
     {"route": "/api/matm/connector-contract", "access": "public", "methods": ["GET"], "purpose": "Public-safe optional connector integration contract for external agents and apps."},
     {"route": "/.well-known/memoryendpoints-connector", "access": "public", "methods": ["GET"], "purpose": "Public same-origin discovery for memoryendpoints.connector_pairing.v1."},
-    {"route": "/connect/authorize/{publicRequestRef}", "access": "public", "methods": ["GET"], "purpose": "Human approval surface addressed only by a short-lived public, non-authorizing request reference."},
-    {"route": "/tour/connect/authorize/{demoState}", "access": "public", "methods": ["GET"], "purpose": "Explicit mock signed-out/company-selection/reauth/pending/success/error/expired/cancelled/permission states through the production renderer with zero protected network."},
+    {"route": "/connect/authorize/{publicRequestRef}", "access": "public", "methods": ["GET"], "purpose": "Human approval surface whose link already carries the short-lived public request reference; no pairing token is entered or prefilled."},
+    {"route": "/tour/connect/authorize/{demoState}", "access": "public", "methods": ["GET"], "purpose": "Explicit mock sign-in, rejected-credential, approval, desktop-handoff, activation, and terminal states through the production renderer with zero protected network."},
     {"route": "/api/matm/connector-pairings/requests", "access": "public", "methods": ["POST"], "purpose": "Create an idempotent PKCE-bound connector pairing request."},
     {"route": "/api/matm/connector-pairings/authorization-code-claims", "access": "public", "methods": ["POST"], "purpose": "Claim a body-only, one-use authorization code after human approval using request proof, state, and an exact idempotency binding."},
     {"route": "/api/matm/connector-pairings/token", "access": "public", "methods": ["POST"], "purpose": "Exchange a one-use authorization code for a pending connector credential."},
@@ -1648,9 +1648,9 @@ def openapi_spec():
         "/tour/connect/authorize/{demoState}": {
             "get": {
                 "summary": "Exercise connector approval Demo state",
-                "description": "Uses the production approval renderer with a labeled, resettable, browser-session mock authority and no protected network.",
+                "description": "Uses the production approval renderer with a labeled, resettable, browser-session mock authority and no protected network. Includes deterministic rejected-sign-in and rejected-reauthentication states for accessible error-message testing.",
                 "security": [],
-                "parameters": [{"name": "demoState", "in": "path", "required": True, "schema": {"type": "string", "enum": ["signed_out", "company_selection", "reauth_required", "pending", "success", "error", "expired", "cancelled", "permission_denied"]}}],
+                "parameters": [{"name": "demoState", "in": "path", "required": True, "schema": {"type": "string", "enum": ["signed_out", "login_failed", "company_selection", "reauth_required", "reauthentication_failed", "pending", "approved", "authorization_issued", "credential_prepared", "activated", "error", "expired", "canceled", "replay", "permission_denied"]}}],
                 "responses": {"200": {"description": "Secret-free mock approval HTML.", "content": {"text/html": {"schema": {"type": "string"}}}}, "404": connector_error_responses["404"]},
                 "x-protectedNetworkAllowed": False,
             },

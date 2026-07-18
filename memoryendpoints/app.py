@@ -135,7 +135,7 @@ _CONNECTOR_REQUEST_HANDLE_ROUTE = re.compile(
     r"^/connect/authorize/(pairref_[A-Za-z0-9_-]{43})$"
 )
 _CONNECTOR_DEMO_AUTHORIZE_ROUTE = re.compile(
-    r"^/tour/connect/authorize/(signed_out|company_selection|reauth_required|pending|approved|error|expired|canceled|replay|permission_denied)$"
+    r"^/tour/connect/authorize/(signed_out|login_failed|company_selection|reauth_required|reauthentication_failed|pending|approved|authorization_issued|credential_prepared|activated|authorization_received|credential_delivered|connected|error|expired|canceled|replay|permission_denied)$"
 )
 _CONNECTOR_PAIRING_ROUTE = re.compile(r"^/api/matm/connector-pairings/([^/]+)$")
 _CONNECTOR_CREDENTIALS_ROUTE = re.compile(
@@ -2024,18 +2024,31 @@ def _human_problem(start_response, code, detail=None):
     }
     defaults = {
         "human_session_required": "A valid short-lived human-owner session is required.",
+        "human_login_failed": (
+            "Sign-in failed. The username or password was not accepted, or the account is "
+            "unavailable. Check both and try again. For security, MemoryEndpoints does not "
+            "reveal which condition occurred."
+        ),
         "human_owner_required": "Agent and company-master credentials cannot use the human-owner control plane.",
         "trusted_origin_required": "Human account actions require the trusted same-origin browser context and Fetch Metadata.",
         "csrf_required": "The human session requires its in-memory CSRF token.",
         "csrf_invalid": "The CSRF token does not match the human session.",
+        "human_reauthentication_failed": (
+            "The password was not accepted for the signed-in account. "
+            "Enter the current account password and try again."
+        ),
         "recent_reauthentication_required": "Re-enter the account password before this sensitive action.",
         "top_level_agent_master_credential_setting_invalid": "The setting payload must contain exactly one boolean enabled value.",
         "export_opportunity_acknowledgement_required": "Review the company export opportunity before continuing.",
     }
+    titles = {
+        "human_login_failed": "Sign-in not completed",
+        "human_reauthentication_failed": "Password confirmation failed",
+    }
     return problem(
         start_response,
         statuses.get(code, "422 Unprocessable Entity"),
-        "Human-owner operation rejected",
+        titles.get(code, "Human-owner operation rejected"),
         detail or defaults.get(code, "The human-owner operation was safely rejected."),
         code,
         headers=list(_CONNECTOR_JSON_HEADERS),
@@ -3259,7 +3272,12 @@ def route_connector_authorize(
     if environ.get("QUERY_STRING"):
         return _connector_problem(start_response, "invalid_request")
     if demo_state:
-        view = demo_authorization_view(demo_state)
+        legacy_demo_states = {
+            "authorization_received": "authorization_issued",
+            "credential_delivered": "credential_prepared",
+            "connected": "activated",
+        }
+        view = demo_authorization_view(legacy_demo_states.get(demo_state, demo_state))
     else:
         canonical_scope_digest = connector_scope_digest(CONNECTOR_V1_REQUESTED_SCOPES)
 
@@ -3358,8 +3376,8 @@ def route_connector_authorize(
                             "pending_human_approval": "Pending approval",
                             "approved": "Approved - awaiting LocalEndpoint",
                             "authorization_code_issued": "Authorization code issued",
-                            "exchanged": "Credential delivered - awaiting activation",
-                            "active": "Connected",
+                            "exchanged": "Credential prepared - awaiting activation",
+                            "active": "Activated - verify in LocalEndpoint",
                             "canceled": "Canceled",
                             "expired": "Expired",
                             "authorization_code_expired": "Expired",
@@ -3453,10 +3471,14 @@ def route_connector_authorize(
                             "exchanged",
                             "active",
                         ):
+                            post_approval_states = {
+                                "authorization_code_issued": "authorization_issued",
+                                "exchanged": "credential_prepared",
+                                "active": "activated",
+                            }
                             view = production_authorization_view(
                                 authenticated=True,
-                                state="error",
-                                error_code="request_conflict",
+                                state=post_approval_states[request_status],
                             )
                         else:
                             view = production_authorization_view(

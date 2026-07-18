@@ -41,6 +41,7 @@
   var STATES = Object.freeze({
     SIGNED_OUT: "signed_out",
     LOCKED: "signed_out",
+    LOGIN_FAILED: "login_failed",
     REVALIDATING: "revalidating",
     PENDING: "pending",
     READY: "pending",
@@ -52,9 +53,16 @@
     SWITCHING_COMPANY: "switching_company",
     REAUTH_REQUIRED: "reauth_required",
     REAUTHENTICATING: "reauthenticating",
+    REAUTHENTICATION_FAILED: "reauthentication_failed",
     VALIDATION_ERROR: "validation_error",
     APPROVING: "approving",
     APPROVED: "approved",
+    AUTHORIZATION_ISSUED: "authorization_issued",
+    AUTHORIZATION_RECEIVED: "authorization_issued",
+    CREDENTIAL_PREPARED: "credential_prepared",
+    CREDENTIAL_DELIVERED: "credential_prepared",
+    ACTIVATED: "activated",
+    CONNECTED: "activated",
     CANCELLING: "cancelling",
     CANCELED: "canceled",
     EXPIRED: "expired",
@@ -66,6 +74,7 @@
 
   var SAFE_MESSAGES = Object.freeze({
     signed_out: "Sign in to review this connection request.",
+    login_failed: "Sign-in failed. The username or password was not accepted, or the account is unavailable. Check both and try again. For security, MemoryEndpoints does not reveal which condition occurred.",
     revalidating: "Revalidating your account session…",
     pending: "Review the four exact capabilities and workspace before approving.",
     proving_master: "Verifying company ownership…",
@@ -76,9 +85,13 @@
     switching_company: "Switching the selected company…",
     reauth_required: "Confirm your password before approving this connection.",
     reauthenticating: "Confirming your password…",
+    reauthentication_failed: "That password was not accepted. Check it and try again.",
     validation_error: "Check the highlighted values and try again.",
     approving: "Approving the reviewed connection…",
     approved: "Connection approved. Open LocalEndpoint when you are ready.",
+    authorization_issued: "MemoryEndpoints issued the one-time authorization. Return to LocalEndpoint while it finishes setup.",
+    credential_prepared: "MemoryEndpoints prepared the connector credential for desktop recovery. Secure storage and activation are not yet verified here.",
+    activated: "MemoryEndpoints activated the connector grant. Return to LocalEndpoint for its final Connected verification.",
     cancelling: "Cancelling this connection request…",
     canceled: "Connection request canceled. Nothing was activated.",
     expired: "This connection request expired. Start a new request from LocalEndpoint Connect.",
@@ -86,6 +99,41 @@
     permission_denied: "Your selected company membership cannot approve this connection.",
     error: "The request could not be completed safely.",
     scrubbed: "Protected page state was cleared."
+  });
+
+  var CREDENTIAL_ERROR_MESSAGES = Object.freeze({
+    login_input_invalid: "Enter a valid MemoryEndpoints username and your password.",
+    human_login_failed: SAFE_MESSAGES.login_failed,
+    username_password_required: "Enter your MemoryEndpoints username and password.",
+    reauthentication_input_invalid: "Enter your current password.",
+    human_reauthentication_failed: SAFE_MESSAGES.reauthentication_failed,
+    rate_limited: "Too many sign-in attempts were made. Wait a few minutes, then try again.",
+    transport_unavailable: "MemoryEndpoints could not be reached. Check your connection and try again.",
+    connector_service_unavailable: "Sign-in is temporarily unavailable. Wait a moment and try again.",
+    credential_system_not_configured: "Sign-in is temporarily unavailable. Contact the MemoryEndpoints operator if this continues.",
+    service_unavailable: "Sign-in is temporarily unavailable. Wait a moment and try again.",
+    invalid_response: "MemoryEndpoints returned an unexpected sign-in response, so sign-in could not be confirmed. Reload this page or try again.",
+    response_too_large: "MemoryEndpoints returned an unexpected sign-in response, so sign-in could not be confirmed. Reload this page or try again."
+  });
+
+  var ENROLLMENT_ERROR_MESSAGES = Object.freeze({
+    company_master_input_invalid: "Enter the separately issued company master token. Do not paste the LocalEndpoint pairing reference.",
+    company_master_proof_invalid: "That company master token was not accepted. Check the token and try again; do not use the LocalEndpoint pairing reference.",
+    company_master_proof_required: "Verify the company master token again before creating the account.",
+    company_master_proof_expired: "The company-master verification expired. Verify the token again, then create the account.",
+    company_master_proof_used: "That company-master verification has already been used. Verify the token again.",
+    account_username_invalid: "Use 3 to 64 lowercase letters or numbers, with single dots, underscores, or hyphens between them.",
+    account_password_invalid: "Use a password of at least 15 characters that is not the same as the username.",
+    account_password_mismatch: "The two new-password values do not match. Enter them again.",
+    human_username_invalid: "The new username is not valid. Choose a different username, then verify the company master token again.",
+    human_username_unavailable: "That username is already in use. Choose another username, then verify the company master token again.",
+    human_password_invalid: "The new password did not meet the account password rules. Update it, then verify the company master token again.",
+    account_input_invalid: "Check the new username and matching password, then try again.",
+    rate_limited: "Too many account-setup attempts were made. Wait a few minutes, then verify the company master token again.",
+    transport_unavailable: "MemoryEndpoints could not be reached. Check the connection and try account setup again.",
+    connector_service_unavailable: "Account setup is temporarily unavailable. Wait a moment and try again.",
+    credential_system_not_configured: "Account setup is temporarily unavailable. Contact the MemoryEndpoints operator if this continues.",
+    invalid_response: "MemoryEndpoints returned an unexpected account-setup response, so the result could not be confirmed. Reload this page before trying again."
   });
 
   function ConnectorAuthorizationError(code, status) {
@@ -349,11 +397,15 @@
     return text.length >= 3 && text.length <= 64 && /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(text) ? text : "";
   }
 
-  function validPassword(value, username) {
-    if (typeof value !== "string" || value.length < 15 || value.indexOf("\u0000") >= 0) return false;
+  function validAuthenticationPassword(value) {
+    if (typeof value !== "string" || !value || value.indexOf("\u0000") >= 0) return false;
     var byteLength;
     try { byteLength = new TextEncoder().encode(value).length; } catch (_) { return false; }
-    if (byteLength > 1024) return false;
+    return byteLength <= 1024;
+  }
+
+  function validNewPassword(value, username) {
+    if (!validAuthenticationPassword(value) || value.length < 15) return false;
     var folded = value.toLowerCase();
     if (["correcthorsebatterystaple", "letmeinletmeinletmein", "passwordpasswordpassword", "qwertyuiopqwertyuiop", "thisisaverybadpassword"].indexOf(folded) >= 0) return false;
     return !username || folded !== String(username).toLowerCase();
@@ -362,6 +414,7 @@
   function validateCompanySelection(values) {
     values = values || {};
     var value = String(values.companyRef || "");
+    if (!value) throw new ConnectorAuthorizationError("company_selection_required", 422);
     if (!COMPANY_REF_PATTERN.test(value)) throw new ConnectorAuthorizationError("company_ref_invalid", 401);
     return {schemaVersion: PAIRING_SCHEMA, companyRef: value};
   }
@@ -425,6 +478,15 @@
     }
     if (own(config.transport, "resettable") && config.transport.resettable !== (config.transport.kind === "mock_browser_session")) throw new ConnectorAuthorizationError("client_authority_invalid", 0);
     if (own(config.transport, "labelledMock") && config.transport.labelledMock !== (config.transport.kind === "mock_browser_session")) throw new ConnectorAuthorizationError("client_authority_invalid", 0);
+    var legacyDemoState = {
+      authorization_received: "authorization_issued",
+      credential_delivered: "credential_prepared",
+      connected: "activated"
+    }[String(config.viewState || "")];
+    if (legacyDemoState) {
+      if (config.transport.kind !== "mock_browser_session") throw new ConnectorAuthorizationError("view_state_invalid", 0);
+      config = Object.assign({}, config, {viewState: legacyDemoState});
+    }
     if (own(config, "clientMethods")) {
       var expectedMethods = {
         login: "connectorAuthorization.login",
@@ -445,7 +507,10 @@
         if (!own(expectedMethods, key) || config.clientMethods[key] !== expectedMethods[key]) throw new ConnectorAuthorizationError("client_config_invalid", 0);
       });
     }
-    var neutralTerminal = ["error", "expired", "canceled", "permission_denied"].indexOf(String(config.viewState || "")) >= 0;
+    var neutralTerminal = [
+      "error", "expired", "canceled", "permission_denied",
+      "authorization_issued", "credential_prepared", "activated"
+    ].indexOf(String(config.viewState || "")) >= 0;
     if (config.authenticated && !neutralTerminal) {
       validatePublicRef(config.publicRequestRef);
       if (config.scopeDigest !== SCOPE_DIGEST) throw new ConnectorAuthorizationError("scope_digest_invalid", 0);
@@ -455,7 +520,7 @@
       throw new ConnectorAuthorizationError("config_field_invalid", 0);
     }
     if (own(config, "viewState") && [
-      "signed_out", "company_selection", "reauth_required", "pending", "approved", "error", "expired", "canceled", "replay", "permission_denied"
+      "signed_out", "login_failed", "company_selection", "reauth_required", "reauthentication_failed", "pending", "approved", "authorization_issued", "credential_prepared", "activated", "error", "expired", "canceled", "replay", "permission_denied"
     ].indexOf(String(config.viewState)) < 0) throw new ConnectorAuthorizationError("view_state_invalid", 0);
     return config;
   }
@@ -512,21 +577,32 @@
     var statusElement = root.querySelector("[data-connector-status]");
     var configElement = root.querySelector("[data-connector-authorization-config]");
     var approvalForm = root.querySelector("[data-connector-approval-form]");
+    var accountCreate = root.querySelector("[data-connector-account-create]");
     var returnAction = root.querySelector("[data-connector-return-action]");
     var mounted = false;
-    var state = config.authenticated ? STATES.REVALIDATING : STATES.SIGNED_OUT;
+    var state = config.authenticated
+      ? STATES.REVALIDATING
+      : config.viewState === "login_failed" ? STATES.LOGIN_FAILED : STATES.SIGNED_OUT;
     var proofSecret = "";
     var publicRef = config.authenticated ? config.publicRequestRef : "";
     var wakeTarget = "";
     var lastApproval = false;
     var operationKeys = {};
     var activeOperation = 0;
+    var busyAction = "";
+    var sessionHydrating = false;
+    var sessionReady = !config.authenticated;
+    var accountCreationAvailable = false;
     var listeners = [];
 
     function setState(next, message) {
       state = next;
       if (root.dataset) root.dataset.connectorClientState = next;
-      if (statusElement) statusElement.textContent = message || SAFE_MESSAGES[next] || SAFE_MESSAGES.error;
+      if (statusElement) {
+        statusElement.textContent = arguments.length > 1
+          ? String(message || "")
+          : SAFE_MESSAGES[next] || SAFE_MESSAGES.error;
+      }
     }
     function beginOperation(next) { activeOperation += 1; setState(next); return activeOperation; }
     function current(epoch) { return epoch === activeOperation && state !== STATES.SCRUBBED; }
@@ -541,6 +617,249 @@
     }
     function operationCompleted(operation) { delete operationKeys[operation]; }
 
+    function focusControl(item) {
+      if (!item || typeof item.focus !== "function") return;
+      try { item.focus(); } catch (_) {}
+    }
+
+    function actionContainer(action) {
+      var selectors = {
+        login: "[data-connector-login]",
+        beginEnrollment: "[data-connector-master-proof]",
+        completeEnrollment: "[data-connector-account-create]",
+        selectCompany: "[data-connector-company-selection]",
+        reauthenticate: "[data-connector-reauth]",
+        approve: "[data-connector-approval-form]",
+        cancel: "[data-connector-approval-form]"
+      };
+      return selectors[action] ? root.querySelector(selectors[action]) : root;
+    }
+
+    function setControlDisabled(item, disabled) {
+      if (!item) return;
+      item.disabled = Boolean(disabled);
+      if (!item.setAttribute || !item.removeAttribute) return;
+      if (disabled) {
+        item.setAttribute("disabled", "");
+        item.setAttribute("aria-disabled", "true");
+      } else {
+        item.removeAttribute("disabled");
+        item.removeAttribute("aria-disabled");
+      }
+    }
+
+    function refreshMutationActions() {
+      if (!root.querySelectorAll) return;
+      var items = root.querySelectorAll("[data-connector-mutation-action]");
+      for (var index = 0; index < items.length; index += 1) {
+        var item = items[index];
+        var requiresSession = item.hasAttribute && item.hasAttribute("data-connector-auth-action");
+        var requiresAccountProof = item.hasAttribute && item.hasAttribute("data-connector-account-action");
+        setControlDisabled(
+          item,
+          Boolean(busyAction)
+            || (requiresSession && (!sessionReady || sessionHydrating))
+            || (requiresAccountProof && !accountCreationAvailable)
+        );
+      }
+    }
+
+    function setSessionHydrating(value) {
+      sessionHydrating = Boolean(value);
+      if (root.setAttribute && root.removeAttribute) {
+        if (sessionHydrating) root.setAttribute("aria-busy", "true");
+        else root.removeAttribute("aria-busy");
+      }
+      refreshMutationActions();
+    }
+
+    function beginUiAction(action, requiresSession) {
+      if (busyAction) return {ok: false, state: state, code: "operation_in_progress"};
+      if (requiresSession && (!sessionReady || sessionHydrating)) {
+        setState(STATES.REVALIDATING, "Your account session is still being checked. Wait a moment and try again.");
+        return {ok: false, state: STATES.REVALIDATING, code: "session_revalidating"};
+      }
+      busyAction = action;
+      var container = actionContainer(action);
+      if (container && container.setAttribute) container.setAttribute("aria-busy", "true");
+      refreshMutationActions();
+      return null;
+    }
+
+    function endUiAction(action) {
+      if (busyAction !== action) return;
+      var container = actionContainer(action);
+      if (container && container.removeAttribute) container.removeAttribute("aria-busy");
+      busyAction = "";
+      refreshMutationActions();
+    }
+
+    function credentialElements(kind) {
+      var login = kind === "login";
+      var container = login
+        ? root.querySelector("[data-connector-login]")
+        : root.querySelector("[data-connector-reauthentication]") || root.querySelector("[data-connector-reauth]");
+      return {
+        container: container,
+        username: login ? control(container, "username") : null,
+        password: control(container, "password"),
+        error: root.querySelector(login ? "[data-connector-login-error]" : "[data-connector-reauth-error]")
+      };
+    }
+
+    function clearCredentialError(kind) {
+      var elements = credentialElements(kind);
+      if (elements.error) elements.error.textContent = "";
+      if (elements.username && elements.username.removeAttribute) elements.username.removeAttribute("aria-invalid");
+      if (elements.password && elements.password.removeAttribute) elements.password.removeAttribute("aria-invalid");
+    }
+
+    function credentialErrorMessage(kind, code, status) {
+      if (kind !== "login") {
+        if (code === "rate_limited" || status === 429) return "Too many password-confirmation attempts were made. Wait a few minutes, then try again.";
+        if (code === "transport_unavailable") return "MemoryEndpoints could not be reached. Check your connection and try confirming the password again.";
+        if (["connector_service_unavailable", "service_unavailable"].indexOf(code) >= 0) return "Password confirmation is temporarily unavailable. Wait a moment and try again.";
+        if (code === "credential_system_not_configured") return "Password confirmation is temporarily unavailable. Contact the MemoryEndpoints operator if this continues.";
+        if (["invalid_response", "response_too_large"].indexOf(code) >= 0) return "MemoryEndpoints returned an unexpected password-confirmation response, so the result could not be confirmed. Reload this page or try again.";
+      }
+      if (CREDENTIAL_ERROR_MESSAGES[code]) return CREDENTIAL_ERROR_MESSAGES[code];
+      if (status === 429) return "Too many account checks were made. Wait a few minutes, then try again.";
+      if (status >= 500) return kind === "login"
+        ? "Sign-in is temporarily unavailable. Wait a moment and try again."
+        : "Password confirmation is temporarily unavailable. Wait a moment and try again.";
+      return kind === "login"
+        ? "Sign-in could not be completed. Check your username and password, then try again."
+        : "Password confirmation could not be completed. Enter the current account password and try again.";
+    }
+
+    function recoverableCredentialFailure(operation, error) {
+      if (operation !== "login" && operation !== "reauthenticate") return false;
+      var code = String(error && error.code || "request_failed");
+      var status = Number(error && error.status || 0);
+      var operationCodes = operation === "login"
+        ? ["login_input_invalid", "human_login_failed", "username_password_required"]
+        : ["reauthentication_input_invalid", "human_reauthentication_failed"];
+      var transientCodes = [
+        "rate_limited", "transport_unavailable", "connector_service_unavailable",
+        "credential_system_not_configured", "service_unavailable", "invalid_response",
+        "response_too_large", "request_failed"
+      ];
+      return operationCodes.indexOf(code) >= 0
+        || transientCodes.indexOf(code) >= 0
+        || status === 429
+        || status >= 500;
+    }
+
+    function showCredentialError(kind, code, status) {
+      var elements = credentialElements(kind);
+      var message = credentialErrorMessage(kind, code, Number(status || 0));
+      if (elements.error) elements.error.textContent = message;
+      var invalidUsername = kind === "login" && code === "login_input_invalid"
+        && !canonicalUsername(elements.username && elements.username.value);
+      var rejectedCredentials = code === "human_login_failed" || code === "human_reauthentication_failed";
+      var invalidPassword = rejectedCredentials
+        || code === "login_input_invalid"
+        || code === "username_password_required"
+        || code === "reauthentication_input_invalid";
+      if (elements.username && elements.username.setAttribute) {
+        if (invalidUsername || code === "human_login_failed") elements.username.setAttribute("aria-invalid", "true");
+        else elements.username.removeAttribute("aria-invalid");
+      }
+      if (elements.password && elements.password.setAttribute && elements.password.removeAttribute) {
+        if (invalidPassword) elements.password.setAttribute("aria-invalid", "true");
+        else elements.password.removeAttribute("aria-invalid");
+      }
+      if (invalidUsername || invalidPassword) focusControl(invalidUsername ? elements.username : elements.password);
+      return message;
+    }
+
+    function enrollmentElements() {
+      var masterContainer = root.querySelector("[data-connector-master-proof]");
+      return {
+        master: control(masterContainer, "companyMasterTokenSecret"),
+        username: accountCreate && control(accountCreate, "username"),
+        password: accountCreate && control(accountCreate, "password"),
+        confirmation: accountCreate && control(accountCreate, "passwordConfirmation"),
+        error: root.querySelector("[data-connector-enrollment-error]")
+      };
+    }
+
+    function clearEnrollmentError() {
+      var elements = enrollmentElements();
+      if (elements.error) elements.error.textContent = "";
+      [elements.master, elements.username, elements.password, elements.confirmation].forEach(function (item) {
+        if (item && item.removeAttribute) item.removeAttribute("aria-invalid");
+      });
+    }
+
+    function showEnrollmentError(code, requiresNewProof) {
+      var elements = enrollmentElements();
+      var message = ENROLLMENT_ERROR_MESSAGES[code]
+        || "Account setup could not be confirmed. Reload this page to check the account session before trying again.";
+      if (elements.error) elements.error.textContent = message;
+      var focusTarget = elements.master;
+      if (!requiresNewProof) {
+        if (/username/.test(code)) focusTarget = elements.username;
+        else if (/mismatch/.test(code)) focusTarget = elements.confirmation;
+        else focusTarget = elements.password;
+      }
+      if (focusTarget && focusTarget.setAttribute) focusTarget.setAttribute("aria-invalid", "true");
+      focusControl(focusTarget);
+      return message;
+    }
+
+    function handleEnrollmentFailure(error, requiresNewProof) {
+      var code = String(error && error.code || "request_failed");
+      if (requiresNewProof) {
+        proofSecret = "";
+        setAccountCreationAvailable(false);
+      }
+      setState(STATES.VALIDATION_ERROR, "");
+      showEnrollmentError(code, requiresNewProof);
+      return {ok: false, state: STATES.VALIDATION_ERROR, code: code};
+    }
+
+    function setAccountCreationAvailable(available) {
+      accountCreationAvailable = Boolean(available);
+      if (!accountCreate) {
+        refreshMutationActions();
+        return;
+      }
+      if (!available) {
+        clearControl(control(accountCreate, "password"));
+        clearControl(control(accountCreate, "passwordConfirmation"));
+      }
+      accountCreate.hidden = !available;
+      if (accountCreate.setAttribute && accountCreate.removeAttribute) {
+        if (available) accountCreate.removeAttribute("hidden");
+        else accountCreate.setAttribute("hidden", "");
+      }
+      var controls = accountCreate.querySelectorAll
+        ? accountCreate.querySelectorAll("input,button,select,textarea")
+        : [];
+      for (var index = 0; index < controls.length; index += 1) {
+        controls[index].disabled = !available;
+        if (controls[index].setAttribute && controls[index].removeAttribute) {
+          if (available) controls[index].removeAttribute("disabled");
+          else controls[index].setAttribute("disabled", "");
+        }
+      }
+      if (available) focusControl(control(accountCreate, "username"));
+      refreshMutationActions();
+    }
+
+    function clearFieldErrors() {
+      if (!root.querySelectorAll) return;
+      var messages = root.querySelectorAll("[data-error-for]");
+      for (var index = 0; index < messages.length; index += 1) messages[index].textContent = "";
+      var controls = root.querySelectorAll('[aria-invalid="true"]');
+      for (var controlIndex = 0; controlIndex < controls.length; controlIndex += 1) {
+        if (controls[controlIndex].removeAttribute) controls[controlIndex].removeAttribute("aria-invalid");
+      }
+      var summary = root.querySelector("[data-validation-summary]");
+      if (summary) summary.textContent = "";
+    }
+
     function showFieldError(code) {
       var messages = {
         workspace_required: "Choose an existing workspace or create a new one.",
@@ -548,17 +867,40 @@
         project_name_invalid: "Use 3 to 120 visible characters for the project name.",
         canonical_agent_approval_required: "Confirm the fixed LocalEndpoint Agent identity.",
         scope_impact_approval_required: "Confirm the four listed capability impacts.",
-        company_selection_required: "Choose one linked company.",
-        login_input_invalid: "Enter a valid username and password.",
+        company_selection_required: "Choose one linked company before continuing.",
         account_input_invalid: "Use a valid username and a matching password of at least 15 characters.",
-        reauthentication_input_invalid: "Enter your current password."
+        company_master_input_invalid: "Enter the separately issued company master token."
       };
-      var field = /workspace|project|canonical|scope/.test(code) ? "workspace" : /company/.test(code) ? "companyRef" : /reauth/.test(code) ? "password" : "";
+      var field = /workspace|project/.test(code)
+        ? "workspace"
+        : /canonical/.test(code)
+          ? "canonicalAgentApproved"
+          : /scope/.test(code)
+            ? "scopeImpactApproved"
+            : /company/.test(code)
+              ? "companyRef"
+              : /reauth/.test(code)
+                ? "password"
+                : "";
       var target = field ? root.querySelector('[data-error-for="' + field + '"]') : null;
       if (target) target.textContent = messages[code] || SAFE_MESSAGES.validation_error;
       var summary = root.querySelector("[data-validation-summary]");
-      if (summary) target ? target.textContent = messages[code] || SAFE_MESSAGES.validation_error : null;
       if (summary) summary.textContent = messages[code] || SAFE_MESSAGES.validation_error;
+      var focusTarget = null;
+      if (field === "workspace") {
+        var mode = checkedValue(approvalForm, "workspaceMode");
+        focusTarget = mode === "new"
+          ? control(approvalForm, "workspaceLabel")
+          : control(approvalForm, "workspaceRef");
+      } else if (field === "companyRef") {
+        focusTarget = control(root.querySelector("[data-connector-company-selection]"), "companyRef");
+      } else if (field) {
+        focusTarget = control(approvalForm, field)
+          || control(root.querySelector("[data-connector-reauth]"), field);
+      }
+      if (focusTarget && focusTarget.setAttribute) focusTarget.setAttribute("aria-invalid", "true");
+      if (focusTarget) focusControl(focusTarget);
+      else if (summary) focusControl(summary);
     }
 
     function clearEphemeralControls() {
@@ -567,15 +909,29 @@
       for (var index = 0; index < items.length; index += 1) clearControl(items[index]);
     }
 
-    function handleFailure(error) {
+    function handleFailure(error, operation) {
       proofSecret = "";
       var code = String(error && error.code || "request_failed");
+      var status = Number(error && error.status || 0);
+      var credentialFailure = operation === "login" && recoverableCredentialFailure(operation, error);
+      var reauthenticationFailure = operation === "reauthenticate" && recoverableCredentialFailure(operation, error);
+      if (credentialFailure || reauthenticationFailure) {
+        var kind = credentialFailure ? "login" : "reauthenticate";
+        var recoverableState = credentialFailure ? STATES.LOGIN_FAILED : STATES.REAUTHENTICATION_FAILED;
+        setAccountCreationAvailable(false);
+        setState(recoverableState, "");
+        showCredentialError(kind, code, status);
+        return {ok: false, state: recoverableState, code: code};
+      }
+      setAccountCreationAvailable(false);
       var next = safeStateForError(error);
       var referenceRefresh = /^company_ref_/.test(code) || /^workspace_ref_/.test(code);
+      var rendererTransition = next === STATES.REAUTH_REQUIRED;
       var terminal = [STATES.SIGNED_OUT, STATES.PERMISSION_DENIED, STATES.EXPIRED, STATES.CANCELED, STATES.REPLAY].indexOf(next) >= 0;
       var unrecoverableError = next === STATES.ERROR && code !== "transport_unavailable";
-      if (referenceRefresh || terminal || unrecoverableError) {
+      if (referenceRefresh || rendererTransition || terminal || unrecoverableError) {
         var routeState = /^company_ref_/.test(code) ? STATES.COMPANY_SELECTION : /^workspace_ref_/.test(code) ? STATES.PENDING : next;
+        if (routeState === STATES.SIGNED_OUT) sessionReady = false;
         scrubProtectedState();
         setState(routeState);
         if (demoMode) demoStateNavigate(routeState); else reload();
@@ -597,28 +953,52 @@
       return STATES.REAUTH_REQUIRED;
     }
 
-    async function revalidateSession() {
+    async function revalidateSession(options) {
+      options = options || {};
+      if (sessionHydrating) return {ok: false, state: state, code: "session_revalidating"};
+      setSessionHydrating(true);
       var epoch = beginOperation(STATES.REVALIDATING);
       try {
         var payload = await transport.request("sessionInspect", {});
         if (!current(epoch)) return {ok: false, stale: true};
         sessionAuthority.establish(payload);
         if (!sessionAuthority.csrf()) throw new ConnectorAuthorizationError("csrf_required", 403);
-        setState(stateAfterSession(payload));
+        sessionReady = true;
+        var resolvedState = stateAfterSession(payload);
+        if (options.preserveCredentialState === STATES.REAUTHENTICATION_FAILED
+            && resolvedState === STATES.REAUTH_REQUIRED) {
+          setState(STATES.REAUTHENTICATION_FAILED, "");
+          showCredentialError("reauthenticate", "human_reauthentication_failed", 403);
+          return {ok: true, state: state, failurePreserved: true};
+        }
+        if (options.preserveCredentialState && resolvedState !== options.preserveCredentialState) {
+          scrubProtectedState();
+          setState(resolvedState);
+          if (demoMode) demoStateNavigate(resolvedState); else reload();
+          return {ok: true, state: resolvedState, rendererTransition: true};
+        }
+        setState(resolvedState);
         return {ok: true, state: state};
       } catch (error) {
         if (!current(epoch)) return {ok: false, stale: true};
+        sessionReady = false;
         return handleFailure(error);
+      } finally {
+        setSessionHydrating(false);
       }
     }
 
     async function login(values) {
+      var blocked = beginUiAction("login", false);
+      if (blocked) return blocked;
+      try {
       var container = root.querySelector("[data-connector-login]");
       var passwordControl = control(container, "password");
       var username = canonicalUsername(values && values.username !== undefined ? values.username : controlValue(container, "username"));
       var password = String(values && values.password !== undefined ? values.password : passwordControl && passwordControl.value || "");
+      clearCredentialError("login");
       clearControl(passwordControl);
-      if (!username || !validPassword(password)) { password = ""; return handleFailure(new ConnectorAuthorizationError("login_input_invalid", 422)); }
+      if (!username || !validAuthenticationPassword(password)) { password = ""; return handleFailure(new ConnectorAuthorizationError("login_input_invalid", 422), "login"); }
       var epoch = beginOperation(STATES.SIGNING_IN);
       try {
         var payload = await transport.request("sessionLogin", {idempotencyKey: idempotencyFor("sessionLogin"), body: {username: username, password: password}});
@@ -641,16 +1021,25 @@
       } catch (error) {
         password = "";
         if (!current(epoch)) return {ok: false, stale: true};
-        return handleFailure(error);
+        return handleFailure(error, "login");
+      }
+      } finally {
+        endUiAction("login");
       }
     }
 
     async function beginEnrollment(values) {
+      var blocked = beginUiAction("beginEnrollment", false);
+      if (blocked) return blocked;
+      try {
       var container = root.querySelector("[data-connector-master-proof]");
       var masterControl = control(container, "companyMasterTokenSecret");
       var master = String(values && values.companyMasterTokenSecret !== undefined ? values.companyMasterTokenSecret : masterControl && masterControl.value || "");
+      proofSecret = "";
+      setAccountCreationAvailable(false);
+      clearEnrollmentError();
       clearControl(masterControl);
-      if (master.length < 20 || master.length > 1024) { master = ""; return handleFailure(new ConnectorAuthorizationError("company_master_input_invalid", 422)); }
+      if (master.length < 20 || master.length > 1024) { master = ""; return handleEnrollmentFailure(new ConnectorAuthorizationError("company_master_input_invalid", 422), true); }
       var epoch = beginOperation(STATES.PROVING_MASTER);
       try {
         var payload = await transport.request("masterProof", {idempotencyKey: idempotencyFor("masterProof"), body: {companyMasterTokenSecret: master}});
@@ -659,16 +1048,23 @@
         operationCompleted("masterProof");
         proofSecret = takeSecret(payload, "companyMasterProofSecret");
         if (!proofSecret) throw new ConnectorAuthorizationError("company_master_proof_invalid", 401);
+        setAccountCreationAvailable(true);
         setState(STATES.PROOF_READY);
         return {ok: true, proofReady: true};
       } catch (error) {
         master = "";
         if (!current(epoch)) return {ok: false, stale: true};
-        return handleFailure(error);
+        return handleEnrollmentFailure(error, true);
+      }
+      } finally {
+        endUiAction("beginEnrollment");
       }
     }
 
     async function completeEnrollment(values) {
+      var blocked = beginUiAction("completeEnrollment", false);
+      if (blocked) return blocked;
+      try {
       values = values || {};
       var usernameControl = root.querySelector('[data-connector-account-create] [name="username"]');
       var passwordControl = root.querySelector('[data-connector-account-create] [name="password"]');
@@ -676,10 +1072,23 @@
       var username = canonicalUsername(values.username !== undefined ? values.username : usernameControl && usernameControl.value || "");
       var password = String(values.password !== undefined ? values.password : passwordControl && passwordControl.value || "");
       var confirmation = String(values.passwordConfirmation !== undefined ? values.passwordConfirmation : confirmationControl && confirmationControl.value || "");
+      clearEnrollmentError();
       clearControl(passwordControl); clearControl(confirmationControl);
-      if (!proofSecret || !username || !validPassword(password, username) || password !== confirmation) {
+      if (!proofSecret) {
         password = ""; confirmation = "";
-        return handleFailure(new ConnectorAuthorizationError("account_input_invalid", 422));
+        return handleEnrollmentFailure(new ConnectorAuthorizationError("company_master_proof_required", 422), true);
+      }
+      if (!username) {
+        password = ""; confirmation = "";
+        return handleEnrollmentFailure(new ConnectorAuthorizationError("account_username_invalid", 422), false);
+      }
+      if (!validNewPassword(password, username)) {
+        password = ""; confirmation = "";
+        return handleEnrollmentFailure(new ConnectorAuthorizationError("account_password_invalid", 422), false);
+      }
+      if (password !== confirmation) {
+        password = ""; confirmation = "";
+        return handleEnrollmentFailure(new ConnectorAuthorizationError("account_password_mismatch", 422), false);
       }
       var oneTimeProof = proofSecret;
       proofSecret = "";
@@ -705,12 +1114,19 @@
       } catch (error) {
         password = ""; confirmation = ""; oneTimeProof = "";
         if (!current(epoch)) return {ok: false, stale: true};
-        return handleFailure(error);
+        return handleEnrollmentFailure(error, true);
+      }
+      } finally {
+        endUiAction("completeEnrollment");
       }
     }
 
     async function selectCompany(values) {
+      var blocked = beginUiAction("selectCompany", true);
+      if (blocked) return blocked;
+      try {
       var container = root.querySelector("[data-connector-company-selection]");
+      clearFieldErrors();
       var body;
       try { body = validateCompanySelection({companyRef: values && values.companyRef !== undefined ? values.companyRef : controlValue(container, "companyRef")}); }
       catch (error) { return handleFailure(error); }
@@ -729,14 +1145,21 @@
         if (!current(epoch)) return {ok: false, stale: true};
         return handleFailure(error);
       }
+      } finally {
+        endUiAction("selectCompany");
+      }
     }
 
     async function reauthenticate(values) {
+      var blocked = beginUiAction("reauthenticate", true);
+      if (blocked) return blocked;
+      try {
       var container = root.querySelector("[data-connector-reauthentication]") || root.querySelector("[data-connector-reauth]");
       var passwordControl = control(container, "password");
       var password = String(values && values.password !== undefined ? values.password : passwordControl && passwordControl.value || "");
+      clearCredentialError("reauthenticate");
       clearControl(passwordControl);
-      if (!validPassword(password)) { password = ""; return handleFailure(new ConnectorAuthorizationError("reauthentication_input_invalid", 422)); }
+      if (!validAuthenticationPassword(password)) { password = ""; return handleFailure(new ConnectorAuthorizationError("reauthentication_input_invalid", 422), "reauthenticate"); }
       var epoch = beginOperation(STATES.REAUTHENTICATING);
       try {
         var payload = await transport.request("sessionReauth", {idempotencyKey: idempotencyFor("sessionReauth"), csrfToken: csrfForMutation(), body: {password: password}});
@@ -752,7 +1175,10 @@
       } catch (error) {
         password = "";
         if (!current(epoch)) return {ok: false, stale: true};
-        return handleFailure(error);
+        return handleFailure(error, "reauthenticate");
+      }
+      } finally {
+        endUiAction("reauthenticate");
       }
     }
 
@@ -776,6 +1202,10 @@
     }
 
     async function approve(values) {
+      var blocked = beginUiAction("approve", true);
+      if (blocked) return blocked;
+      try {
+      clearFieldErrors();
       var body;
       try { body = validateApproval(approvalValues(values)); }
       catch (error) { return handleFailure(error); }
@@ -794,6 +1224,9 @@
         if (!current(epoch)) return {ok: false, stale: true};
         return handleFailure(error);
       }
+      } finally {
+        endUiAction("approve");
+      }
     }
 
     function returnToDesktop() {
@@ -805,6 +1238,9 @@
     }
 
     async function cancel() {
+      var blocked = beginUiAction("cancel", true);
+      if (blocked) return blocked;
+      try {
       var epoch = beginOperation(STATES.CANCELLING);
       try {
         await transport.request("cancel", {publicRequestRef: publicRef, idempotencyKey: idempotencyFor("cancel"), csrfToken: csrfForMutation(), body: {schemaVersion: PAIRING_SCHEMA, reason: "human_cancelled"}});
@@ -817,6 +1253,9 @@
       } catch (error) {
         if (!current(epoch)) return {ok: false, stale: true};
         return handleFailure(error);
+      }
+      } finally {
+        endUiAction("cancel");
       }
     }
 
@@ -840,6 +1279,8 @@
     function scrubProtectedState() {
       activeOperation += 1;
       proofSecret = ""; publicRef = ""; wakeTarget = ""; lastApproval = false; operationKeys = {};
+      sessionReady = false;
+      accountCreationAvailable = false;
       sessionAuthority.clear();
       if (transport && typeof transport.scrub === "function") transport.scrub();
       clearEphemeralControls();
@@ -871,10 +1312,23 @@
       var node = event.target;
       while (node && node !== root && !(node.getAttribute && node.getAttribute("data-client-method"))) node = node.parentNode;
       var method = node && node.getAttribute && node.getAttribute("data-client-method");
-      if (method) { event.preventDefault(); invoke(method); }
+      if (method) {
+        event.preventDefault();
+        if (node.disabled || node.getAttribute("aria-disabled") === "true") return;
+        invoke(method);
+      }
     }
     function keyHandler(event) {
-      if (event.key !== "Enter") return;
+      if (event.key !== "Enter" || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return;
+      var interactive = event.target;
+      while (interactive && interactive !== root) {
+        var tag = String(interactive.tagName || "").toUpperCase();
+        var type = String(interactive.type || "").toLowerCase();
+        if (interactive.getAttribute && interactive.getAttribute("data-client-method")) return;
+        if (["BUTTON", "A", "SUMMARY", "SELECT", "TEXTAREA"].indexOf(tag) >= 0) return;
+        if (tag === "INPUT" && ["button", "submit", "reset", "checkbox", "radio", "file"].indexOf(type) >= 0) return;
+        interactive = interactive.parentNode;
+      }
       var node = event.target;
       while (node && node !== root && !(node.getAttribute && node.getAttribute("data-enter-action"))) node = node.parentNode;
       var method = node && node.getAttribute && node.getAttribute("data-enter-action");
@@ -884,6 +1338,8 @@
     function pageShowHandler(event) {
       if (!event.persisted) return;
       sessionAuthority.clear();
+      sessionReady = !config.authenticated;
+      refreshMutationActions();
       if (demoMode) {
         if (typeof transport.reset === "function") transport.reset();
         setState(config.authenticated ? STATES.REVALIDATING : STATES.SIGNED_OUT);
@@ -899,7 +1355,25 @@
     }
 
     function terminalViewState() {
-      var map = {approved: STATES.APPROVED, error: STATES.ERROR, expired: STATES.EXPIRED, canceled: STATES.CANCELED, replay: STATES.REPLAY, permission_denied: STATES.PERMISSION_DENIED};
+      var map = {
+        approved: STATES.APPROVED,
+        authorization_issued: STATES.AUTHORIZATION_ISSUED,
+        credential_prepared: STATES.CREDENTIAL_PREPARED,
+        activated: STATES.ACTIVATED,
+        error: STATES.ERROR,
+        expired: STATES.EXPIRED,
+        canceled: STATES.CANCELED,
+        replay: STATES.REPLAY,
+        permission_denied: STATES.PERMISSION_DENIED
+      };
+      return map[String(config.viewState || "")] || "";
+    }
+
+    function recoverableViewState() {
+      var map = {
+        login_failed: STATES.LOGIN_FAILED,
+        reauthentication_failed: STATES.REAUTHENTICATION_FAILED
+      };
       return map[String(config.viewState || "")] || "";
     }
 
@@ -926,9 +1400,21 @@
       listen(windowRef, "pagehide", pageHideHandler);
       listen(windowRef, "pageshow", pageShowHandler);
       var terminal = terminalViewState();
-      setState(config.authenticated ? terminal || STATES.REVALIDATING : STATES.SIGNED_OUT);
+      var recoverable = recoverableViewState();
+      setAccountCreationAvailable(false);
+      if (recoverable) {
+        setState(recoverable, "");
+        if (recoverable === STATES.LOGIN_FAILED) {
+          showCredentialError("login", "human_login_failed", 401);
+        } else {
+          showCredentialError("reauthenticate", "human_reauthentication_failed", 403);
+        }
+      }
+      else setState(config.authenticated ? terminal || STATES.REVALIDATING : STATES.SIGNED_OUT);
       if (terminal && !hydrateTerminalWake(terminal)) return controller;
-      if (config.authenticated && !terminal) revalidateSession();
+      if (config.authenticated && !terminal) {
+        revalidateSession(recoverable ? {preserveCredentialState: recoverable} : {});
+      }
       return controller;
     }
 
@@ -944,6 +1430,8 @@
         schema: CLIENT_SCHEMA,
         state: state,
         demoMode: demoMode,
+        sessionReady: sessionReady,
+        busyAction: busyAction,
         csrfAvailable: sessionAuthority.inspect().csrfAvailable,
         proofReady: Boolean(proofSecret),
         approvalAwaitingClaim: lastApproval,

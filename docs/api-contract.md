@@ -258,7 +258,12 @@ The discovery endpoint map is:
    the canonical agent. Approval returns status
    `approved_awaiting_connector_claim` and `wakeUpUrl`, which is the registered
    URI byte-for-byte with no parameters. Opening it requires an explicit human
-   action and grants no authority; v1 never auto-navigates.
+   action and grants no authority; v1 never auto-navigates. The authorization
+   link already carries the public request reference, so the human never enters,
+   pastes, or copies a pairing token. The signed-out page may state that the
+   request is attached without reflecting the reference or disclosing whether
+   it exists. A company master token is only for one-time owner enrollment; it
+   is not a pairing token and is never prefilled.
 4. The desktop POSTs `pairingRequestProof`, state, client id, and redirect URI to
    `/api/matm/connector-pairings/authorization-code-claims`. Pending approval is
    `202` with `Retry-After`, `stateVerified=true`, the exact
@@ -278,6 +283,9 @@ The discovery endpoint map is:
    attestations, while `credentialDelivery` carries credential-specific
    exact-retry and scope-binding facts. The server stores only constant-time verifiers and bounded
    derivation inputs, never the raw code, proof, state, verifier, or credential.
+   The desktop performs the claim, exchange, and operating-system secure-store
+   handoff. The browser never displays the connector credential or asks the
+   human to copy it.
 6. The desktop stores the pending credential in the operating-system credential
    vault before activation. If storage fails it cancels when possible or lets
    the pending grant expire. Activation within 600 seconds atomically registers
@@ -285,6 +293,17 @@ The discovery endpoint map is:
 7. The desktop reads the exact pairing, credential inventory, `/api/matm/me`,
    and `/api/matm/workspace` before showing **Connected**. Every identifier,
    exact scope, scope digest, active state, and non-revocation fact must match.
+
+The browser's post-approval progress text is deliberately limited to what the
+server can prove. `authorization_code_issued` means an authorization was issued
+and remains recoverable by an exact claim retry; it does not prove that the
+desktop received the response. `exchanged` means the pending credential was
+prepared and can be recovered by the exact exchange retry; it does not prove
+that the desktop stored or activated it. `active` lets the browser report that
+activation completed, but only the desktop may show **Connected** after every
+required exact readback succeeds. The corresponding canonical browser/demo
+view states are `authorization_issued`, `credential_prepared`, and `activated`.
+The browser never displays the code or credential.
 
 Pairing requests last 600 seconds; claimed authorization codes last 60 seconds;
 pending grants and rotations last 600 seconds. `publicRequestRef` is the sole
@@ -628,6 +647,25 @@ opaque username/password account session, selected linked company membership,
 recent password reauthentication, same-origin and Fetch-Metadata validation,
 and an in-memory CSRF token; the browser does not store or silently reuse a
 company master.
+
+`POST /api/matm/human/session` deliberately returns the same
+`human_login_failed` problem with status `401` for an unknown username, an
+inactive account, or an incorrect password. Its fixed detail says that sign-in
+failed because the username or password was not accepted or the account is
+unavailable; it never reflects either submitted value or reveals which check
+failed. An authenticated `POST /api/matm/human/session/reauth`
+failure returns `human_reauthentication_failed` with status `403` and fixed
+guidance to enter the current account password. Clients must keep these failures
+actionable while preserving that enumeration-safe boundary. After a failed
+sign-in, the UI preserves the entered username, clears the password, keeps the
+attached pairing request, and shows the fixed guidance without reflecting
+either submitted value. Rate limiting, network failure, unavailable service,
+and invalid-response failures also remain on the current sign-in or
+reauthentication form with fixed operation-specific guidance; untrusted server
+detail is never rendered. Authenticated mutation controls remain disabled until
+same-origin session inspection supplies a current CSRF token. While an action
+is in flight, its form is marked busy and its mutation controls are disabled so
+Enter key repeat or a double click cannot start an overlapping request.
 
 Browser-only agents should default to holding the workspace key in memory for
 the current session and asking the user to supply it again later. Persistent

@@ -36,12 +36,17 @@ It is SHA-256 over compact, sorted-key UTF-8 JSON with keys `schemaVersion` and
 3. Open `/connect/authorize/{publicRequestRef}`. The reference is exactly
    `pairref_` plus 43 base64url characters. It is public, tenant-neutral,
    short-lived, non-secret, and non-authorizing. No other value belongs in the
-   URL.
+   URL. The authorization link already carries this request reference; the
+   human never needs to enter, paste, or copy a pairing token. Before sign-in,
+   the page may explain that the request is attached to the link, but it does
+   not reflect the reference or reveal whether the request exists.
 4. The logged-in human selects a company and workspace through short-lived,
    account/session/request-bound opaque `companyRef` and `workspaceRef` values,
    or supplies labels for a provisional workspace/project. The UI displays the
    fixed agent label and all four scope impacts. It renders no tenant or agent
-   identifiers.
+   identifiers. A company master token is needed only to create or link an
+   owner account; it is not the pairing token, is never prefilled, and is
+   cleared immediately after the one-time proof request.
 5. Approval returns `approved_awaiting_connector_claim` and the registered
    `wakeUpUrl` byte-for-byte with no additions. A human may explicitly open it;
    it grants no authority and v1 never auto-navigates.
@@ -58,11 +63,36 @@ It is SHA-256 over compact, sorted-key UTF-8 JSON with keys `schemaVersion` and
    connector credential before activation. Exact lost-response retry recovers
    the same pending secret without persisting it. The response repeats the
    three top-level secure-delivery attestations and includes the
-   purpose-specific `credentialDelivery` recovery and scope-binding facts.
+   purpose-specific `credentialDelivery` recovery and scope-binding facts. The
+   desktop performs this claim, exchange, and secure-store handoff; the browser
+   never displays or asks the human to copy the connector credential.
 8. Activate within 600 seconds. Activation atomically confirms the canonical
    agent and commits a provisional hierarchy. Then verify exact pairing,
    credential inventory, `/api/matm/me`, and `/api/matm/workspace` before
    showing Connected.
+
+Sign-in failures are enumeration-safe: an unknown username, inactive account,
+or wrong password returns the same `human_login_failed` status and fixed detail.
+The UI preserves the entered username, clears the password, keeps the request
+attached, and shows that actionable guidance without reflecting either input or
+claiming which condition failed. Fixed inline guidance also covers throttling,
+network/service failure, and an invalid response without rendering backend
+detail. Authenticated controls stay disabled until the session and in-memory
+CSRF authority have been revalidated; one in-flight guard prevents repeated
+Enter presses or double clicks from submitting an overlapping mutation.
+
+Company selection starts with a disabled “Choose a company” placeholder. The
+browser does not silently preselect the first membership. An empty selection is
+a recoverable `company_selection_required` validation failure; a malformed or
+expired opaque reference requires a fresh server-rendered selection.
+
+Post-approval progress uses server-observable wording. An issued authorization
+or prepared credential may still be awaiting an exact lost-response retry, so
+the browser does not claim desktop receipt or secure storage. It may report
+server-side activation, but only LocalEndpoint shows Connected after the
+connector's exact readback checks verify the connected state. The canonical
+browser/demo states are `authorization_issued`, `credential_prepared`, and
+`activated`; none of those names asserts desktop receipt or local storage.
 
 Requests expire after 600 seconds, authorization codes after 60 seconds, and
 pending grants/rotations after 600 seconds. Connector JSON request bodies are

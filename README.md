@@ -71,7 +71,7 @@ UAIX setup reference: use the MATM setup option in the [UAIX AI memory package w
 
 See [docs/repository-structure.md](docs/repository-structure.md) for ownership and publishing boundaries.
 See [docs/system-architecture.md](docs/system-architecture.md) for the request lifecycle, tenancy model, relational ownership, memory/wiki/coordination/sync flows, and evidence boundaries.
-See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/deployment.md) for rerunnable operating checks.
+See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/deployment.md) for rerunnable operating checks. Human owner enrollment, enumeration-safe sign-in failures, reauthentication, and one-time credential handling are documented in the [human one-time access contract](docs/human-one-time-access-contract.md).
 
 ## Public Evidence
 

@@ -32,8 +32,8 @@ never exposed by the public `/knowledge` shell.
 | `/api/matm/sync/capabilities` | GET | Public distributed-sync v1 capability negotiation. |
 | `/api/matm/connector-contract` | GET | Public-safe optional connector integration contract for external agents and apps. |
 | `/.well-known/memoryendpoints-connector` | GET | Public same-origin discovery for memoryendpoints.connector_pairing.v1. |
-| `/connect/authorize/{publicRequestRef}` | GET | Human approval surface addressed only by a short-lived public, non-authorizing request reference. |
-| `/tour/connect/authorize/{demoState}` | GET | Explicit mock signed-out/company-selection/reauth/pending/success/error/expired/cancelled/permission states through the production renderer with zero protected network. |
+| `/connect/authorize/{publicRequestRef}` | GET | Human approval surface whose link already carries the short-lived public request reference; no pairing token is entered or prefilled. |
+| `/tour/connect/authorize/{demoState}` | GET | Explicit mock sign-in, rejected-credential, approval, desktop-handoff, activation, and terminal states through the production renderer with zero protected network. |
 | `/api/matm/connector-pairings/requests` | POST | Create an idempotent PKCE-bound connector pairing request. |
 | `/api/matm/connector-pairings/authorization-code-claims` | POST | Claim a body-only, one-use authorization code after human approval using request proof, state, and an exact idempotency binding. |
 | `/api/matm/connector-pairings/token` | POST | Exchange a one-use authorization code for a pending connector credential. |
@@ -65,9 +65,18 @@ provisional workspace and pending grant so cancellation, expiry, or a secure
 store failure before activation leaves no durable hierarchy.
 
 Connector v1 approval URLs contain only `publicRequestRef` (`pairref_` plus 43
-base64url characters). Approval returns a registered `wakeUpUrl` byte-for-byte
+base64url characters). The link already carries that reference: the human does
+not enter, paste, or copy a pairing token, and the signed-out page never
+reflects the reference. Approval returns a registered `wakeUpUrl` byte-for-byte
 with no parameters; opening it is an explicit human action and grants no
 authority. The desktop claims the code through JSON POST before PKCE exchange.
+Browser progress remains conservative: an issued authorization does not prove
+desktop receipt, and a prepared credential does not prove secure storage. The
+browser may report activation, but only LocalEndpoint shows Connected after its
+exact readbacks pass. Its canonical progress states are
+`authorization_issued`, `credential_prepared`, and `activated`. Authenticated
+browser actions remain disabled until same-origin session inspection hydrates a
+fresh CSRF token.
 While approval is pending, `202` includes `Retry-After`, `stateVerified=true`,
 the exact `requestedScopes`, `scopeDigest`, `idempotencyKeyReserved=false`, and
 a redacted receipt without reserving the idempotency key.

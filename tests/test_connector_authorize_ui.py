@@ -32,10 +32,15 @@ SCOPE_IMPACT_LABELS = (
 )
 REQUIRED_VIEW_STATES = (
     "signed_out",
+    "login_failed",
     "company_selection",
     "reauth_required",
+    "reauthentication_failed",
     "pending",
     "approved",
+    "authorization_issued",
+    "credential_prepared",
+    "activated",
     "error",
     "expired",
     "canceled",
@@ -203,6 +208,10 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         self.assertIn('name="username"', body)
         self.assertIn('name="password"', body)
         self.assertIn('name="companyMasterTokenSecret"', body)
+        self.assertIn("connection request is already attached", body)
+        self.assertIn("There is no pairing token or code to paste", body)
+        self.assertIn("claims the authorization and stores its connector credential", body)
+        self.assertIn("not an email address", body)
         self.assertNotIn("data-connector-approval-form", body)
         self.assertNotIn('name="workspaceRef"', body)
         self.assertNotIn('name="canonicalAgentApproved"', body)
@@ -229,6 +238,12 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         body = render_connector_authorization(production_authorization_view(authenticated=False))
         self.assertIn("data-connector-master-proof", body)
         self.assertIn("data-connector-account-create", body)
+        self.assertIn("data-connector-enrollment-error", body)
+        self.assertIn(
+            'data-enter-action="connectorAuthorization.completeEnrollment" hidden',
+            body,
+        )
+        self.assertIn("This is not the LocalEndpoint pairing reference", body)
         self.assertIn('data-client-method="connectorAuthorization.beginEnrollment"', body)
         self.assertIn('data-client-method="connectorAuthorization.completeEnrollment"', body)
         self.assertNotRegex(body, r"(?i)<form\b")
@@ -244,6 +259,32 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
             "connectorAuthorization.completeEnrollment",
             config["clientMethods"]["completeEnrollment"],
         )
+
+    def test_forms_are_named_and_authenticated_mutations_start_disabled(self):
+        signed_out = render_connector_authorization(
+            production_authorization_view(authenticated=False)
+        )
+        self.assertIn('role="form" aria-labelledby="connector-login-title"', signed_out)
+        self.assertIn('role="form" aria-labelledby="connector-enroll-title"', signed_out)
+
+        selection = render_connector_authorization(demo_authorization_view("company_selection"))
+        self.assertIn('role="form" aria-labelledby="connector-company-title"', selection)
+        self.assertIn('<option value="" disabled selected>Choose a company</option>', selection)
+        self.assertIn("data-connector-auth-action", selection)
+        self.assertIn("disabled>Use selected company", selection)
+
+        reauth = render_connector_authorization(demo_authorization_view("reauth_required"))
+        self.assertIn('role="form" aria-labelledby="connector-reauth-title"', reauth)
+        self.assertIn("disabled>Confirm password", reauth)
+
+        pending = render_connector_authorization(demo_authorization_view("pending"))
+        self.assertIn('role="form" aria-label="Approve LocalEndpoint connection"', pending)
+        self.assertIn('aria-describedby="connector-agent-consent-error"', pending)
+        self.assertIn('data-error-for="canonicalAgentApproved"', pending)
+        self.assertIn('aria-describedby="connector-scope-consent-error"', pending)
+        self.assertIn('data-error-for="scopeImpactApproved"', pending)
+        self.assertIn("disabled>Approve connection", pending)
+        self.assertIn("disabled>Cancel request", pending)
 
     def test_authenticated_pending_uses_opaque_refs_exact_consent_and_fixed_scope_labels(self):
         body = render_connector_authorization(_production_view())
@@ -307,6 +348,9 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         self.assertIn("connector-auth-grid", signed_out)
         self.assertIn("connector-panel", signed_out)
         self.assertIn("connector-form-stack", signed_out)
+        self.assertIn("connector-flow-steps", signed_out)
+        self.assertIn("connector-request-attached", signed_out)
+        self.assertIn("connector-form-error", signed_out)
 
         stylesheet = (
             Path(__file__).resolve().parents[1]
@@ -320,6 +364,8 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         self.assertIn("@media (max-width: 720px)", stylesheet)
         self.assertIn("@media (max-width: 360px)", stylesheet)
         self.assertIn("@media (prefers-reduced-motion: reduce)", stylesheet)
+        self.assertIn('[aria-invalid="true"]', stylesheet)
+        self.assertIn(".connector-form-error", stylesheet)
         self.assertNotIn("@import", stylesheet)
         self.assertNotRegex(stylesheet, r"(?i)url\s*\(")
 
@@ -383,9 +429,14 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
 
     def test_demo_states_have_accessible_fixed_messages(self):
         expected = {
+            "login_failed": "Sign-in failed. The username or password was not accepted",
             "company_selection": "Choose the company to approve for",
             "reauth_required": "Confirm your password",
+            "reauthentication_failed": "That password was not accepted",
             "approved": "Connection approved",
+            "authorization_issued": "Authorization issued for LocalEndpoint",
+            "credential_prepared": "Credential prepared for LocalEndpoint recovery",
+            "activated": "Connection activated by MemoryEndpoints",
             "error": "Approval could not be completed",
             "expired": "This connection request expired",
             "canceled": "Connection request canceled",
@@ -396,7 +447,38 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
             with self.subTest(state=state):
                 body = render_connector_authorization(demo_authorization_view(state))
                 self.assertIn(heading, body)
-                self.assertIn('data-connector-state="%s"' % state.replace("_", "-"), body)
+                if state == "login_failed":
+                    self.assertIn('data-connector-view-state="login_failed"', body)
+                else:
+                    rendered_state = (
+                        "reauth-required"
+                        if state == "reauthentication_failed"
+                        else state.replace("_", "-")
+                    )
+                    self.assertIn('data-connector-state="%s"' % rendered_state, body)
+
+        aliases = {
+            "authorization_received": "authorization_issued",
+            "credential_delivered": "credential_prepared",
+            "connected": "activated",
+        }
+        for legacy_state, canonical_state in aliases.items():
+            with self.subTest(legacy_state=legacy_state):
+                legacy = render_connector_authorization(
+                    demo_authorization_view(legacy_state)
+                )
+                self.assertIn(
+                    'data-connector-view-state="%s"' % canonical_state,
+                    legacy,
+                )
+                self.assertIn(
+                    'data-connector-state="%s"' % canonical_state.replace("_", "-"),
+                    legacy,
+                )
+                self.assertNotIn(
+                    'data-connector-view-state="%s"' % legacy_state,
+                    legacy,
+                )
 
     def test_approved_result_has_explicit_safe_return_and_never_auto_navigates(self):
         body = render_connector_authorization(_production_view("approved"))
@@ -410,7 +492,10 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         self.assertNotRegex(body, r"(?i)<meta[^>]+http-equiv=[\"']?refresh")
         self.assertNotIn("location.assign", body)
         self.assertNotIn("location.replace", body)
-        self.assertIn("No credential or private workspace payload", body)
+        self.assertIn("No token needs to be copied", body)
+        self.assertIn("will claim the one-time authorization", body)
+        self.assertIn("store that credential without showing it", body)
+        self.assertIn("Return to LocalEndpoint Connect", body)
         for forbidden in (WORKSPACE_REF, "localendpoint-agent", *REQUESTED_SCOPES):
             self.assertNotIn(forbidden, body)
 
@@ -426,7 +511,15 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
         self.assertNotIn("Selected company", body)
 
     def test_neutral_terminal_states_are_scrubbed_before_render_and_config(self):
-        for state in ("error", "expired", "canceled", "permission_denied"):
+        for state in (
+            "authorization_issued",
+            "credential_prepared",
+            "activated",
+            "error",
+            "expired",
+            "canceled",
+            "permission_denied",
+        ):
             with self.subTest(state=state):
                 view = demo_authorization_view(state)
                 self.assertIsNone(view.request)
@@ -455,6 +548,37 @@ class ConnectorAuthorizationUiTests(unittest.TestCase):
                     request=_request(),
                 )
             )
+
+    def test_post_approval_progress_is_helpful_without_republishing_a_reference(self):
+        expected = {
+            "authorization_issued": (
+                "No token needs to be copied",
+                "does not claim that the desktop has received or stored a credential",
+                "keep it open while setup continues",
+            ),
+            "credential_prepared": (
+                "exact lost-response recovery",
+                "does not verify secure storage or activation",
+            ),
+            "activated": (
+                "accepted activation",
+                "only the desktop app may report Connected",
+                "exact pairing",
+                "close this browser tab",
+            ),
+        }
+        for state, messages in expected.items():
+            with self.subTest(state=state):
+                body = render_connector_authorization(
+                    production_authorization_view(authenticated=True, state=state)
+                )
+                for message in messages:
+                    self.assertIn(message, body)
+                self.assertNotIn("pairref_", body)
+                self.assertNotIn("data-connector-return-action", body)
+                config = json.loads(_audit(body).configs[0])
+                self.assertNotIn("publicRequestRef", config)
+                self.assertNotIn("scopeDigest", config)
 
     def test_pending_validation_error_is_fixed_and_not_reflected(self):
         body = render_connector_authorization(
