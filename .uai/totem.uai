@@ -28,6 +28,14 @@ Totem rule:
 - This project is still in first-build quality mode: no legacy compromise, no compatibility debt, no shortcut architecture, and no jimmy-rigged one-off implementation is acceptable. A clean rewrite of a subsystem is better than preserving sloppy code or hiding a product concept behind ad hoc patches.
 - Escape.gamesfor.me NPC invariant: NPC agents are game characters, not company operators. NPC credentials must never be company-scoped or workspace-scoped, must never receive company, billing, admin, audit, document, settings, or operational-history access, and NPC-to-NPC communication must occur only inside game or session meeting rooms. Durable NPC memory may be project/game/session scoped for persona, player, game, and session continuity, but it must not expose company data or company rooms.
 
+## Hosted Swarm Identity and Writer Authority
+
+- Every simultaneously active agent has a unique normalized name within its tenant and workspace scope.
+- Every writable `.uai` memory instance has an immutable identity with exactly one current writer lease, independent of path, host, credential, and display name.
+- True branches receive distinct immutable identities and record parent identity, parent digest, and complete lineage. Distinct branches may run concurrently.
+- Agent-name ownership and memory-writer ownership are independent renewable leases with monotonic fencing tokens. Every memory mutation validates both current fences.
+- Expiry, takeover, reconnect, credential rotation, delayed commits, and restart reject stale fences without imposing a global singleton or diminishing multi-agent swarm breadth.
+
 Demo UI invariant:
 - Every interactive user-interface capability must be fully exercisable and verifiable through the explicit Demo routes, including authenticated human and agent workflows and their success, empty, validation, error, permission, expiry, cancellation, and recovery states.
 - Demo is a data, transport, and session-authority overload of the production authenticated UI, never a parallel UI. It must reuse the same templates, renderers, controls, validation, state transitions, accessibility behavior, and client methods; fake demo pages, duplicate renderers, and disconnected lookalike workflows are forbidden.

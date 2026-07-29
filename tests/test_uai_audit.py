@@ -79,6 +79,26 @@ class UaiAuditContractTests(unittest.TestCase):
             self.assertIn("migration", memory)
             self.assertIn("ordinary current-router 404", memory)
 
+    def test_hosted_swarm_identity_and_writer_exclusivity_are_explicit(self):
+        taboo = " ".join(
+            (ROOT / ".uai" / "taboo.uai").read_text(encoding="utf-8").split()
+        )
+        totem = " ".join(
+            (ROOT / ".uai" / "totem.uai").read_text(encoding="utf-8").split()
+        )
+        combined = f"{taboo} {totem}".lower()
+
+        for required in (
+            "unique normalized name",
+            "immutable `.uai` memory identity",
+            "exactly one current writer lease",
+            "true branches receive distinct immutable identities",
+            "parent identity, parent digest, and complete lineage",
+            "monotonic fencing tokens",
+            "without imposing a global singleton",
+        ):
+            self.assertIn(required, combined)
+
 
 if __name__ == "__main__":
     unittest.main()

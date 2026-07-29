@@ -36,3 +36,11 @@ Policy ID: `pre-publication-clean-slate-v1`.
 - Do not ship a dual read, dual write, migration-on-startup, migration-on-request, or compatibility database path. Build and verify the one current schema and contract, then remove every superseded path before deployment.
 - Do not deploy from a dirty, partially validated, or ambiguous release closure. A reachable dogfood or development surface is not evidence of a public release.
 - Do not call work complete while known in-scope correctness, security, accessibility, test, documentation, or cleanup defects remain.
+
+## Hosted Agent and Memory Exclusivity
+
+- Do not allow two simultaneously active agents to use the same normalized name within one tenant and workspace scope.
+- Do not allow two processes to hold write authority for the same immutable `.uai` memory identity at the same time, even if a path, computer, credential, or display name changes.
+- Do not collapse swarms into one global agent or writer lock. Parallel agents use distinct active names and distinct memory identities.
+- Do not treat a copied, moved, or renamed `.uai` path as a branch. A true branch has a new immutable identity and records its parent identity, parent digest, and full lineage.
+- Do not accept a mutation unless both the independent agent-name lease fence and memory-writer lease fence are current. Expired, superseded, delayed, reconnected, restarted, or rotated stale writers fail closed.
