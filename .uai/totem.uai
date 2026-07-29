@@ -56,3 +56,12 @@ Truth boundary:
 - MemoryEndpoints.com is the durable MATM system of record when reachable and authenticated.
 - The two layers are additive. Neither layer silently deletes, retires, or invalidates the other.
 - The virtual package is a continuity substitute only when local filesystem continuity is impossible. The collaboration overlay is coordination metadata only and never substitutes for the local startup suite.
+
+## Pre-Publication Clean-Slate Authority
+
+Policy ID: `pre-publication-clean-slate-v1`.
+
+- Treat this site and all systems that consume it as pre-publication dogfood, even when a development URL is publicly reachable.
+- Until the human explicitly removes this authority, choose the best current architecture. Full rewrites and clean contract replacements are authorized when they improve correctness, security, maintainability, performance, accessibility, or product quality.
+- Verify replacements end to end, migrate every dogfood caller to one current contract, remove superseded implementation in the same completed change, and finish tests, documentation, security review, and cleanup before deployment.
+- Preserve immutable receipts and historical failure evidence as audit truth, never as a promise to support obsolete product behavior.
