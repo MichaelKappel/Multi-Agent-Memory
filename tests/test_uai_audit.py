@@ -65,6 +65,20 @@ class UaiAuditContractTests(unittest.TestCase):
         self.assertTrue(items)
         self.assertTrue(all(item["ok"] for item in items), items)
 
+    def test_pre_publication_clean_slate_policy_is_explicit_in_taboo_and_totem(self):
+        taboo = (ROOT / ".uai" / "taboo.uai").read_text(encoding="utf-8")
+        totem = (ROOT / ".uai" / "totem.uai").read_text(encoding="utf-8")
+
+        for memory in (taboo, totem):
+            self.assertIn("pre-publication-clean-slate-v1", memory)
+            self.assertIn("HTTP 410 tombstones", memory)
+            self.assertIn("obsolete-route recognizers", memory)
+            self.assertIn("aliases", memory)
+            self.assertIn("translators", memory)
+            self.assertIn("inert handlers", memory)
+            self.assertIn("migration", memory)
+            self.assertIn("ordinary current-router 404", memory)
+
 
 if __name__ == "__main__":
     unittest.main()

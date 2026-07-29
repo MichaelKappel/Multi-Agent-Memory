@@ -32,5 +32,7 @@ Policy ID: `pre-publication-clean-slate-v1`.
 
 - Until the human explicitly removes this prohibition, do not add or retain technical debt, legacy or backward-compatibility support, compatibility shims, deprecated aliases, dual contracts, migration branches, fallback paths for superseded code, low-quality patches, knowingly temporary architecture, or deferred cleanup.
 - Do not preserve obsolete routes, schemas, behavior, or code merely because a dogfood client used them. Update every dogfood client to the verified current design and remove the obsolete path.
+- Do not retain redirects, HTTP 410 tombstones, obsolete-route recognizers, request or response translators, renamed-field aliases, inert handlers, compatibility constructors, schema-convergence routines, or read fallbacks for removed storage designs. A removed URL receives the ordinary current-router 404.
+- Do not ship a dual read, dual write, migration-on-startup, migration-on-request, or compatibility database path. Build and verify the one current schema and contract, then remove every superseded path before deployment.
 - Do not deploy from a dirty, partially validated, or ambiguous release closure. A reachable dogfood or development surface is not evidence of a public release.
 - Do not call work complete while known in-scope correctness, security, accessibility, test, documentation, or cleanup defects remain.
