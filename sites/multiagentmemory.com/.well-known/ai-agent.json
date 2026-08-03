@@ -5,6 +5,8 @@
   "manifest": "https://multiagentmemory.com/ai-manifest.json",
   "howItWorks": "https://multiagentmemory.com/docs/how-it-works.html",
   "apiReference": "https://multiagentmemory.com/docs/api-reference.html",
+  "releaseHistory": "https://multiagentmemory.com/releases/",
+  "releaseLedger": "https://multiagentmemory.com/releases.json",
   "sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory",
   "primaryEndpointSite": "https://memoryendpoints.com",
   "capabilities": [
@@ -13,6 +15,7 @@
     "repository_handoff_explanation",
     "complete_route_reference",
     "database_boundary_reference",
+    "production_release_history",
     "ai_ready_discovery"
   ],
   "protectedActions": "Use MemoryEndpoints.com protected MATM routes with a workspace key.",

@@ -8,8 +8,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
-from ftp_deploy_memoryendpoints import connect_ftp, fingerprint, pick_port, transport_security
-from ftp_deploy_static_site import DEFAULT_FILEZILLA_SITEMANAGER, load_filezilla_site
+from ftp_deploy_memoryendpoints import (  # noqa: E402
+    connect_ftp,
+    fingerprint,
+    pick_port,
+    transport_security,
+)
+from ftp_deploy_static_site import (  # noqa: E402
+    DEFAULT_FILEZILLA_SITEMANAGER,
+    load_filezilla_site,
+)
 
 
 def load_secret(path):
@@ -30,15 +38,24 @@ def load_secret(path):
 
 def emit(report, json_out=None):
     if json_out:
-        Path(json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        Path(json_out).write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
 def safe_remote_path(value):
     path = (value or ".local-secrets/mysql.json").replace("\\", "/").strip("/")
     parts = [part for part in path.split("/") if part]
-    if not parts or ".." in parts or parts[0] != ".local-secrets" or not path.endswith(".json"):
-        raise RuntimeError("Remote secret path must stay under .local-secrets/ and end with .json.")
+    if (
+        not parts
+        or ".." in parts
+        or parts[0] != ".local-secrets"
+        or not path.endswith(".json")
+    ):
+        raise RuntimeError(
+            "Remote secret path must stay under .local-secrets/ and end with .json."
+        )
     return path
 
 
@@ -54,7 +71,9 @@ def ensure_remote_dirs(ftp, remote_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--secret-json", default=str(ROOT / ".local-secrets" / "mysql.json"))
+    parser.add_argument(
+        "--secret-json", default=str(ROOT / ".local-secrets" / "mysql.json")
+    )
     parser.add_argument("--remote-path", default=".local-secrets/mysql.json")
     parser.add_argument("--remote-dir")
     parser.add_argument("--filezilla-site-match", default="memoryendpoints")
@@ -82,7 +101,9 @@ def main(argv=None):
             raise RuntimeError("MySQL secret config file does not exist.")
         load_secret(secret_path)
         report["secretJsonValid"] = True
-        fields, filezilla = load_filezilla_site(args.filezilla_path, args.filezilla_site_match)
+        fields, filezilla = load_filezilla_site(
+            args.filezilla_path, args.filezilla_site_match, "memoryendpoints.com"
+        )
         report["filezilla"] = filezilla
         if not fields:
             raise RuntimeError("FileZilla site profile was not found.")

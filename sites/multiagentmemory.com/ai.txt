@@ -3,6 +3,8 @@ MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.c
 Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
 Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
 API and data reference: https://multiagentmemory.com/docs/api-reference.html
+Production release history: https://multiagentmemory.com/releases/
+Machine release ledger: https://multiagentmemory.com/releases.json
 Live route inventory: https://memoryendpoints.com/api/matm/route-inventory
 
 Agents should use the full repository `.uai/` suite as active startup memory and MemoryEndpoints.com for mid-to-long-term MATM memory after authentication. An accountless browser AI with no durable local filesystem may use the protected registered-agent virtual UAIX package. Normal filesystem agents keep `.uai` bodies local and use hash-only project edit claims to coordinate simultaneous work.
@@ -14,3 +16,14 @@ Company master guidance: Agent Setup creates and shows the credential once. The 
 Retention boundary: routine operational/audit logs are human-only, are never returned to agents, and are physically deleted after seven days. Acknowledged direct messages expire seven days after acknowledgement, unacknowledged direct messages after 30 days, and ordinary meeting transcripts after seven days. Durable routing decisions and explicitly promoted memory or knowledge remain.
 
 Unsupported actions should no-op safely and route back to human review.
+
+Production release history:
+Current production website version: 1.0.0.
+Verified production release count: 1.
+Human history: https://multiagentmemory.com/releases/
+Machine ledger: https://multiagentmemory.com/releases.json
+Latest production activation: 2026-08-03 (UTC).
+Latest release status: deployed.
+Latest release: Public release history and verification foundation.
+Public source evidence: https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0
+Policy: deployed-only records; source candidates, plans, and package attempts stay out; version scopes remain separate.

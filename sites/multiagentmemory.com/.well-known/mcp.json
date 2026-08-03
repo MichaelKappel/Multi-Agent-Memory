@@ -22,6 +22,20 @@
       "route": "/docs/api-reference.html"
     },
     {
+      "uri": "multiagentmemory://docs/releases",
+      "name": "Production Release History",
+      "mimeType": "text/html",
+      "route": "/releases/",
+      "url": "https://multiagentmemory.com/releases/"
+    },
+    {
+      "uri": "multiagentmemory://data/releases",
+      "name": "Machine-readable Production Release Ledger",
+      "mimeType": "application/json",
+      "route": "/releases.json",
+      "url": "https://multiagentmemory.com/releases.json"
+    },
+    {
       "uri": "multiagentmemory://docs/llms",
       "name": "LLM-readable Documentation Summary",
       "mimeType": "text/plain",

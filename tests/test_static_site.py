@@ -48,18 +48,35 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
         self.assertIn("content: attr(data-label)", css)
         self.assertIn("@media (max-width: 760px)", css)
         self.assertNotIn("font-size: clamp", css)
-        self.assertIn('/static/site.css?v=ui3', home)
+        self.assertIn("/static/site.css?v=ui4", home)
         self.assertIn('data-label="Surface"', home)
         self.assertIn('data-label="Layer"', guide)
 
     def test_ai_manifest_exposes_repo_and_endpoint(self):
-        manifest = json.loads((SITE_ROOT / "ai-manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (SITE_ROOT / "ai-manifest.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(GITHUB_REPO, manifest["sourceRepository"])
         self.assertEqual(ENDPOINT_SITE, manifest["primaryEndpointSite"])
-        self.assertEqual("sites/multiagentmemory.com/", manifest["repositoryMap"]["companionSite"])
+        self.assertEqual(
+            "sites/multiagentmemory.com/", manifest["repositoryMap"]["companionSite"]
+        )
         self.assertEqual(
             "https://memoryendpoints.com/api/matm/uai-memory/contract",
             manifest["evidence"]["uaiMemoryContract"],
+        )
+        self.assertEqual(
+            "https://multiagentmemory.com/releases/",
+            manifest["humanRoutes"]["releaseHistory"],
+        )
+        self.assertEqual(1, manifest["releaseHistory"]["releaseCount"])
+        self.assertEqual(
+            "1.0.0", manifest["releaseHistory"]["currentProductionWebsiteVersion"]
+        )
+        self.assertEqual("deployed", manifest["releaseHistory"]["latestReleaseStatus"])
+        self.assertEqual(
+            "https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0",
+            manifest["releaseHistory"]["sourceTag"],
         )
 
 

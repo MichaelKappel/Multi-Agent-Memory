@@ -1,0 +1,79 @@
+{
+  "schema": "multiagentmemory.public-release-history.v1",
+  "schemaVersion": "1.0",
+  "site": "MultiAgentMemory.com",
+  "canonicalUrl": "https://multiagentmemory.com/releases/",
+  "machineUrl": "https://multiagentmemory.com/releases.json",
+  "recordPolicy": {
+    "productionActivatedOnly": true,
+    "exactWebsiteSemanticVersionRequired": true,
+    "revisionBoundActivationDateRequired": true,
+    "activationDateMustEqualSuccessfulUploadUtcDate": true,
+    "sourceTagRevisionBindingRequired": true,
+    "explicitReleaseStatusRequired": true,
+    "sourceCandidatesPublished": false,
+    "plannedWorkPublished": false,
+    "publicEvidenceRequired": true
+  },
+  "versionScopes": {
+    "website": {
+      "currentProductionVersion": "1.0.0",
+      "meaning": "The semantic version assigned to an activated MultiAgentMemory.com static-site release."
+    },
+    "endpointApi": {
+      "currentProductionVersion": null,
+      "meaning": "MemoryEndpoints.com API versions belong to the separately deployed endpoint and are never inherited by this companion site."
+    },
+    "releaseHistorySchema": {
+      "version": "1.0",
+      "meaning": "The releases.json document contract version; it is not a website release version."
+    },
+    "packageSource": {
+      "currentProductionVersion": null,
+      "meaning": "Repository commits, source candidates, and deployment packages are evidence inputs, not website versions unless a release record explicitly binds them."
+    }
+  },
+  "currentProductionWebsiteVersion": "1.0.0",
+  "releaseCount": 1,
+  "releases": [
+    {
+      "version": "1.0.0",
+      "activationDate": "2026-08-03",
+      "activationTimezone": "UTC",
+      "status": "deployed",
+      "title": "Public release history and verification foundation",
+      "summary": "Established the first versioned MultiAgentMemory.com website release with a human-readable production history and a deterministic machine ledger.",
+      "changes": [
+        {
+          "area": "Release history",
+          "summary": "Added the canonical no-JavaScript release-history page and releases.json ledger with exact version-scope separation and evidence-bound publication rules."
+        },
+        {
+          "area": "Discovery and SEO",
+          "summary": "Published canonical metadata, structured release data, human sitemap coverage, and matching release pointers across the public AI discovery surfaces."
+        },
+        {
+          "area": "Responsive accessibility",
+          "summary": "Qualified keyboard focus, semantic navigation, forced colors, reduced motion, narrow mobile reflow, and 200-percent text without clipped or lost content."
+        },
+        {
+          "area": "Public verification",
+          "summary": "Added deterministic source projections plus static, browser, accessibility, geometry, privacy, and regression checks for the public artifact."
+        }
+      ],
+      "milestones": [
+        {
+          "name": "First evidence-bound website version",
+          "summary": "Separated the MultiAgentMemory.com website version from MemoryEndpoints.com API, release-ledger schema, repository, and package identities."
+        }
+      ],
+      "evidence": [
+        {
+          "type": "source_tag",
+          "label": "Source tag multiagentmemory-site-v1.0.0",
+          "url": "https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0"
+        }
+      ]
+    }
+  ]
+}

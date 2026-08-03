@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "dist" / "MemoryEndpoints.com-Production.zip"
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
-from package_memoryendpoints import (
+from package_memoryendpoints import (  # noqa: E402
     SourceRevisionError,
     capture_files,
     captured_source_content_hash,
@@ -21,12 +21,17 @@ from package_memoryendpoints import (
     iter_files,
     write_current_build_info,
 )
-from ftp_deploy_static_site import DEFAULT_FILEZILLA_SITEMANAGER, load_filezilla_site
+from ftp_deploy_static_site import (  # noqa: E402
+    DEFAULT_FILEZILLA_SITEMANAGER,
+    load_filezilla_site,
+)
 
 
 def emit_report(report, args):
     if getattr(args, "json_out", None):
-        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        Path(args.json_out).write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     print(json.dumps(report, indent=2, sort_keys=True))
 
 
@@ -68,7 +73,11 @@ def parse_handoff(path):
         if re.search(r"host|server", section_text, re.I):
             score += 3
         parsed_sections.append({"fields": fields, "score": score})
-    best = max(parsed_sections, key=lambda item: item["score"]) if parsed_sections else {"fields": {}, "score": 0}
+    best = (
+        max(parsed_sections, key=lambda item: item["score"])
+        if parsed_sections
+        else {"fields": {}, "score": 0}
+    )
     joined = " ".join(text.split())
     return {
         "raw": best["fields"],
@@ -101,7 +110,17 @@ def pick_port(fields):
 
 
 def candidate_remote_dirs(fields):
-    explicit = pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])
+    explicit = pick(
+        fields,
+        [
+            "remote_dir",
+            "remote dir",
+            "path",
+            "directory",
+            "application root",
+            "app root",
+        ],
+    )
     candidates = []
     if explicit:
         candidates.append(("handoff_field", explicit))
@@ -231,7 +250,9 @@ def main(argv=None):
     filezilla_report = None
     credential_source = "handoff"
     if args.filezilla_site_match:
-        filezilla_fields, filezilla_report = load_filezilla_site(args.filezilla_path, args.filezilla_site_match)
+        filezilla_fields, filezilla_report = load_filezilla_site(
+            args.filezilla_path, args.filezilla_site_match, "memoryendpoints.com"
+        )
         credential_source = "filezilla_site_manager"
         if filezilla_fields:
             match = args.filezilla_site_match.lower()
@@ -244,7 +265,8 @@ def main(argv=None):
                     "hasPassword": bool(filezilla_fields.get("password")),
                     "mentionsMemoryEndpoints": "memoryendpoints" in match,
                     "sectionCount": None,
-                    "selectedSectionMentionsMemoryEndpoints": "memoryendpoints" in match,
+                    "selectedSectionMentionsMemoryEndpoints": "memoryendpoints"
+                    in match,
                     "valuesRedacted": True,
                 },
             }
@@ -256,7 +278,8 @@ def main(argv=None):
                     "hasHost": False,
                     "hasUser": False,
                     "hasPassword": False,
-                    "mentionsMemoryEndpoints": "memoryendpoints" in args.filezilla_site_match.lower(),
+                    "mentionsMemoryEndpoints": "memoryendpoints"
+                    in args.filezilla_site_match.lower(),
                     "sectionCount": None,
                     "selectedSectionMentionsMemoryEndpoints": False,
                     "valuesRedacted": True,
@@ -267,13 +290,25 @@ def main(argv=None):
     user = pick(fields, ["ftp username", "ftp user", "username", "user"])
     password = pick(fields, ["ftp password", "ftp pass", "password", "pass"])
     port = pick_port(fields)
-    remote_dir = args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])
+    remote_dir = args.remote_dir or pick(
+        fields,
+        [
+            "remote_dir",
+            "remote dir",
+            "path",
+            "directory",
+            "application root",
+            "app root",
+        ],
+    )
     if args.filezilla_site_match and not remote_dir and host and user and password:
         remote_dir = "."
     discovered_dir = None
     discovery_report = None
     if args.discover_remote_dir and not remote_dir:
-        discovered_dir, discovery_report = discover_remote_dir(host, user, password, port, fields, args.protocol)
+        discovered_dir, discovery_report = discover_remote_dir(
+            host, user, password, port, fields, args.protocol
+        )
         if args.dry_run or args.allow_discovered_live_upload:
             remote_dir = discovered_dir
 
@@ -304,7 +339,26 @@ def main(argv=None):
         "transportSecurity": transport_security(args.protocol),
         "remoteDirResolved": bool(remote_dir),
         "credentialSource": credential_source,
-        "remoteDirSource": "argument_or_handoff" if (args.remote_dir or pick(fields, ["remote_dir", "remote dir", "path", "directory", "application root", "app root"])) else ("filezilla_login_root" if (args.filezilla_site_match and remote_dir == ".") else ("discovery" if remote_dir else None)),
+        "remoteDirSource": "argument_or_handoff"
+        if (
+            args.remote_dir
+            or pick(
+                fields,
+                [
+                    "remote_dir",
+                    "remote dir",
+                    "path",
+                    "directory",
+                    "application root",
+                    "app root",
+                ],
+            )
+        )
+        else (
+            "filezilla_login_root"
+            if (args.filezilla_site_match and remote_dir == ".")
+            else ("discovery" if remote_dir else None)
+        ),
         "passengerRestartPlanned": bool(remote_dir),
         "valuesRedacted": True,
         "build": {
@@ -420,11 +474,18 @@ def main(argv=None):
                 ftp.mkd("tmp")
             except Exception:
                 pass
-            restart_body = ("MemoryEndpoints Passenger restart requested %s\n" % datetime.now(timezone.utc).replace(microsecond=0).isoformat()).encode("utf-8")
+            restart_body = (
+                "MemoryEndpoints Passenger restart requested %s\n"
+                % datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            ).encode("utf-8")
             phase = "upload:tmp/restart.txt"
             ftp.storbinary("STOR tmp/restart.txt", io.BytesIO(restart_body))
     except Exception as exc:
-        report["status"] = "upload_failed_partial_possible" if uploaded_count else "connection_or_upload_failed"
+        report["status"] = (
+            "upload_failed_partial_possible"
+            if uploaded_count
+            else "connection_or_upload_failed"
+        )
         report["uploadedCount"] = uploaded_count
         report["errorType"] = exc.__class__.__name__
         report["failedPhase"] = phase
