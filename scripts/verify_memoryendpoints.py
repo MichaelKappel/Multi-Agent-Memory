@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from memoryendpoints.config import SITE_NAME
+
 
 ROUTES = [
     "/",
@@ -105,6 +107,14 @@ CONNECTOR_PUBLIC_PROBES = {
         "contentType": "application/json",
         "kind": "safe_no_op",
     },
+}
+
+SITE_IDENTITY_OPTIONAL_ROUTES = {
+    "/api/matm/openapi.json",
+    "/api/matm/sync/capabilities",
+    "/api/matm/uai-memory/contract",
+    "/mcp/resources",
+    "/robots.txt",
 }
 
 SECRET_PATTERNS = [
@@ -284,6 +294,23 @@ def pattern_hits(patterns, text):
     return [name for name, pattern in patterns if pattern.search(text)]
 
 
+def configured_site_identity_missing(route, body, canonical_redirect_accepted=False, site_name=SITE_NAME):
+    if route in CONNECTOR_PUBLIC_PROBES:
+        return []
+    if canonical_redirect_accepted or route in SITE_IDENTITY_OPTIONAL_ROUTES:
+        return []
+    return [] if site_name in body else ["configured site identity"]
+
+
+def expected_site_identity(wsgi=False, explicit=None):
+    if explicit is not None:
+        value = explicit.strip()
+        if not value:
+            raise ValueError("expected site name must not be empty")
+        return value
+    return SITE_NAME if wsgi else "MemoryEndpoints"
+
+
 def apply_build_expectations(item, build, expected_source_sha, require_clean_build=False, git_head_available=True):
     missing = item.setdefault("missing", [])
     observed_source_sha = build.get("sourceSha")
@@ -321,7 +348,12 @@ def main(argv=None):
     parser.add_argument("--wsgi", action="store_true")
     parser.add_argument("--expect-source-sha")
     parser.add_argument("--expect-git-head", action="store_true")
+    parser.add_argument("--expect-site-name")
     args = parser.parse_args(argv)
+    try:
+        expected_site_name = expected_site_identity(args.wsgi, args.expect_site_name)
+    except ValueError as exc:
+        parser.error(str(exc))
     expected_source_sha = args.expect_source_sha
     expected_source_sha_source = "argument" if expected_source_sha else None
     git_head_at_verification = git_head_sha()
@@ -348,14 +380,12 @@ def main(argv=None):
                 url, probe["method"], probe.get("body")
             )
         canonical_redirect_accepted = canonical_redirect_check(route, status, headers)
-        missing = []
-        if (
-            route not in CONNECTOR_PUBLIC_PROBES
-            and not canonical_redirect_accepted
-            and "MemoryEndpoints" not in body
-            and route not in ("/robots.txt", "/api/matm/sync/capabilities")
-        ):
-            missing.append("MemoryEndpoints")
+        missing = configured_site_identity_missing(
+            route,
+            body,
+            canonical_redirect_accepted=canonical_redirect_accepted,
+            site_name=expected_site_name,
+        )
         secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(body)]
         leak_hits = pattern_hits(PUBLIC_LEAK_PATTERNS, body)
         item = {
@@ -416,6 +446,7 @@ def main(argv=None):
         "failures": failures,
         "expectedSourceSha": expected_source_sha,
         "expectedSourceShaSource": expected_source_sha_source,
+        "expectedSiteName": expected_site_name,
         "gitHeadAtVerification": git_head_at_verification,
         "observedSourceSha": observed_source_sha,
         "sourceShaValueMatchesExpected": version_item.get("sourceShaValueMatchesExpected") if expected_source_sha else None,

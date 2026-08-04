@@ -97,6 +97,53 @@ class PublicVerifierLeakContractTests(unittest.TestCase):
             )
         )
 
+    def test_memoryendpoints_verifier_uses_the_configured_public_site_identity(self):
+        self.assertEqual("Private MATM Intranet", verify_memoryendpoints.expected_site_identity(wsgi=True))
+        self.assertEqual("MemoryEndpoints", verify_memoryendpoints.expected_site_identity(wsgi=False))
+        self.assertEqual(
+            "Custom Public Name",
+            verify_memoryendpoints.expected_site_identity(
+                wsgi=False,
+                explicit=" Custom Public Name ",
+            ),
+        )
+        with self.assertRaises(ValueError):
+            verify_memoryendpoints.expected_site_identity(wsgi=False, explicit="  ")
+        self.assertEqual(
+            [],
+            verify_memoryendpoints.configured_site_identity_missing(
+                "/",
+                "Welcome to Private MATM Intranet",
+                site_name="Private MATM Intranet",
+            ),
+        )
+        self.assertEqual(
+            ["configured site identity"],
+            verify_memoryendpoints.configured_site_identity_missing(
+                "/",
+                "MemoryEndpoints",
+                site_name="Private MATM Intranet",
+            ),
+        )
+        self.assertEqual(
+            [],
+            verify_memoryendpoints.configured_site_identity_missing(
+                "/robots.txt",
+                "User-agent: *",
+                site_name="Private MATM Intranet",
+            ),
+        )
+        self.assertEqual(
+            {
+                "/api/matm/openapi.json",
+                "/api/matm/sync/capabilities",
+                "/api/matm/uai-memory/contract",
+                "/mcp/resources",
+                "/robots.txt",
+            },
+            verify_memoryendpoints.SITE_IDENTITY_OPTIONAL_ROUTES,
+        )
+
     def test_connector_safe_no_op_probe_requires_exact_problem_envelope(self):
         payload = {
             "ok": False,

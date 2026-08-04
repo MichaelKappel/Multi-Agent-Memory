@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "multiagentmemory.public_releases.v1",
+  "currentVersion": "0.2.0",
+  "currentReleaseDate": "2026-08-04",
+  "sourceRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory",
+  "runtimeVersionEvidence": "https://memoryendpoints.com/api/version",
+  "releases": [
+    {
+      "version": "0.2.0",
+      "releaseDate": "2026-08-04",
+      "status": "current",
+      "summary": "Public release tracking, current-contract policy, hosted swarm writer fencing, and clearer connector pairing failures.",
+      "changes": [
+        "Added human-readable and machine-readable public release catalogs.",
+        "Added hosted swarm agent-name and memory-writer fencing policy.",
+        "Made the pre-publication current-contract-only policy test-enforced.",
+        "Clarified connector-pairing sign-in failures without weakening credential or tenant boundaries."
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "releaseDate": "2026-07-09",
+      "status": "historical",
+      "summary": "Initial pure-stdlib MATM reference scaffold, public discovery, file-backed workflows, and .uai startup memory.",
+      "changes": [
+        "Added the initial pure-Python MATM reference runtime.",
+        "Added public discovery, file-backed workflows, and the active .uai startup-memory suite."
+      ]
+    }
+  ],
+  "valuesRedacted": true
+}

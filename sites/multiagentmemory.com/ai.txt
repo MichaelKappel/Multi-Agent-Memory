@@ -1,5 +1,10 @@
 MultiAgentMemory.com is the public documentation companion for MemoryEndpoints.com.
 
+Public edition: 0.2.0
+Release date: 2026-08-04
+Release notes: https://multiagentmemory.com/releases.html
+Release catalog: https://multiagentmemory.com/releases.json
+
 Source repository: https://github.com/MichaelKappel/Multi-Agent-Memory
 Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
 API and data reference: https://multiagentmemory.com/docs/api-reference.html

@@ -2,6 +2,11 @@
 
 Production-grade, source-available private-intranet reference implementation for Multi-Agent Transactive Memory (MATM).
 
+Current public edition: **0.2.0**, released **2026-08-04**. See the
+[repository changelog](CHANGELOG.md), the
+[human release log](https://multiagentmemory.com/releases.html), or the
+[machine-readable release catalog](https://multiagentmemory.com/releases.json).
+
 This repository contains two coordinated surfaces:
 
 | Surface | Role | Status |

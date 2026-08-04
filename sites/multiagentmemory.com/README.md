@@ -10,6 +10,13 @@ Primary links:
 - Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
 - API and data reference: https://multiagentmemory.com/docs/api-reference.html
 - Memory boundary: https://multiagentmemory.com/docs/memory-boundary.html
+- Release log: https://multiagentmemory.com/releases.html
+- Machine-readable release catalog: https://multiagentmemory.com/releases.json
+
+Current public edition: **0.2.0**, released **2026-08-04**. The repository
+[`CHANGELOG.md`](../../CHANGELOG.md) is the canonical prose history; deployed
+runtime identity is independently proven by `/api/version` and its matching
+Git commit.
 
 Memory boundary:
 

@@ -16,3 +16,10 @@ Archive policy:
 - Put chronological public release notes in `CHANGELOG.md` or durable reports.
 - Keep this file as a stable pointer that the UAIX package can discover.
 - Active startup recovery should use `.uai/context.uai`, `.uai/progress.uai`, `.uai/next-actions.uai`, `.uai/decisions.uai`, `.uai/constraints.uai`, and `.uai/test-plan.uai`.
+
+Public release pointers:
+- Canonical repository changelog: `CHANGELOG.md`.
+- Companion human release log: `https://multiagentmemory.com/releases.html`.
+- Companion machine-readable catalog: `https://multiagentmemory.com/releases.json`.
+- Current public edition release: `0.2.0`; its publication date is recorded in the canonical release catalog rather than active or archive startup memory.
+- Exact deployed runtime identity remains authoritative only through `/api/version` and the matching Git commit.
