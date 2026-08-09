@@ -78,6 +78,12 @@ class MultiAgentMemoryStaticSiteTests(unittest.TestCase):
             "https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0",
             manifest["releaseHistory"]["sourceTag"],
         )
+        self.assertEqual("0.2.0", manifest["publicEdition"]["currentVersion"])
+        self.assertEqual(2, manifest["publicEdition"]["releaseCount"])
+        self.assertEqual(
+            "9f53a3cf0ab96e64ad3827e688c1dba52bd7059a",
+            manifest["publicEdition"]["exactSourceCommit"],
+        )
 
 
 if __name__ == "__main__":

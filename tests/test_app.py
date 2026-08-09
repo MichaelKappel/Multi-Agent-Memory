@@ -4116,8 +4116,6 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         setup = json.loads(text)
         workspace_id = setup["workspaceId"]
-        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["companyMasterTokenSecret"]}
-
         backend_principal = self.provision_agent_via_invite(
             setup["companyMasterTokenSecret"], workspace_id, "MemoryEndpoints-Backend-Agent"
         )
@@ -4341,8 +4339,6 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         setup = json.loads(text)
         workspace_id = setup["workspaceId"]
-        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["companyMasterTokenSecret"]}
-
         backend_principal = self.provision_agent_via_invite(
             setup["companyMasterTokenSecret"], workspace_id, "MemoryEndpoints-Backend-Agent"
         )
@@ -5423,7 +5419,6 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertEqual("201 Created", status)
         setup = json.loads(text)
         workspace_id = setup["workspaceId"]
-        auth = {"HTTP_AUTHORIZATION": "Bearer " + setup["companyMasterTokenSecret"]}
         sync_auth, sync_agent_id, _sync_agent = self.agent_auth_via_invite(setup, "tinyrustlm-agent")
 
         status, _headers, _text = call_app(
@@ -5473,7 +5468,6 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         )
         self.assertEqual("201 Created", status)
         setup = json.loads(text)
-        token = setup["companyMasterTokenSecret"]
         workspace_id = setup["workspaceId"]
         agent_auth, agent_id, _agent = self.agent_auth_via_invite(setup, "agent-a")
         auth = {

@@ -538,7 +538,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
                 }
 
             def current_gate(identity, utc_date=None):
-                return activation_gate(identity, "2026-08-03")
+                return activation_gate(identity, "2026-08-09")
 
             base = [
                 "--base-url",
@@ -660,7 +660,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
             activation_gate = verify_static_site.live_activation_gate
 
             def current_gate(identity, utc_date=None):
-                return activation_gate(identity, "2026-08-03")
+                return activation_gate(identity, "2026-08-09")
 
             cases = (
                 ("same-origin-redirect", 302, False, None),

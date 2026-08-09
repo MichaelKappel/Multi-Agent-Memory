@@ -1,7 +1,20 @@
 # Changelog
 
+This changelog records public releases of the free, single-organization
+Multi-Agent Memory reference implementation and its MultiAgentMemory.com
+companion documentation. Runtime deployment identity remains independently
+verifiable through `/api/version` and the exact Git commit.
+
 ## Unreleased
 
+- No unreleased changes are currently recorded.
+
+## 0.2.0 — 2026-08-04
+
+- Added a public, machine-readable release catalog and a human release page.
+- Added explicit hosted-swarm agent-name and memory-writer fencing policy.
+- Made the pre-publication current-contract-only policy test-enforced.
+- Clarified connector-pairing sign-in failures without weakening credential or tenant boundaries.
 - Added the account/company many-to-many membership model and company/workspace/project data hierarchy.
 - Added protected database wiki trees, lifecycle-aware knowledge documents, multi-hierarchy taxonomy placement, canonical external links, contextual citation mentions, and curated internet search.
 - Added first-class company, workspace, project, goal, and task meeting rooms, paginated transcripts, structured routing decisions, explicit meeting-to-memory promotion, current-message fanout, per-recipient acknowledgement, receipts, and redacted audit readback.
@@ -17,9 +30,9 @@
 - Added a protected, registered-agent virtual UAIX package for accountless browser AI without durable local filesystem access, including date-free structured records, immutable revisions, optimistic concurrency, deterministic startup readiness, and public integration discovery.
 - Added hash-only project `.uai` file heads and bounded edit claims so simultaneous local agents can coordinate intent and detect stale or overlapping edits without uploading active-memory file bodies or claiming automatic merges.
 
-## 0.1.0 - 2026-07-09
+## 0.1.0 — 2026-07-09
 
-- Added initial pure stdlib Python WSGI MATM endpoint scaffold.
+- Added the initial pure stdlib Python WSGI MATM endpoint scaffold.
 - Added public AI-ready discovery routes.
 - Added file-backed workspace, memory, current-message, acknowledgement, and receipt storage.
 - Added UAIX-style `.uai` startup memory and Agent File Handoff buckets.

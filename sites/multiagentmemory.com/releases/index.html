@@ -54,10 +54,10 @@
             "@type": "CreativeWork",
             "@id": "https://multiagentmemory.com/releases/#v1.0.0",
             "url": "https://multiagentmemory.com/releases/#v1.0.0",
-            "name": "MultiAgentMemory.com 1.0.0: Public release history and verification foundation",
+            "name": "MultiAgentMemory.com 1.0.0: Evidence-bound release history and public edition catalog",
             "version": "1.0.0",
-            "datePublished": "2026-08-03",
-            "description": "Established the first versioned MultiAgentMemory.com website release with a human-readable production history and a deterministic machine ledger.",
+            "datePublished": "2026-08-09",
+            "description": "Established the first versioned MultiAgentMemory.com website release with one clean human route, a deterministic machine ledger, separate public-edition chronology, and exact source provenance.",
             "additionalProperty": {
               "@type": "PropertyValue",
               "name": "Production status",
@@ -87,6 +87,26 @@
           "item": "https://multiagentmemory.com/releases/"
         }
       ]
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://multiagentmemory.com/releases/#public-edition-v0.2.0",
+      "url": "https://multiagentmemory.com/releases/#public-edition-v0.2.0",
+      "name": "Multi-Agent Memory public edition 0.2.0",
+      "version": "0.2.0",
+      "datePublished": "2026-08-04",
+      "description": "Expanded the public reference implementation with hosted-swarm fencing, stronger connector pairing, relational storage, protected knowledge and coordination, deterministic verification, and explicit release provenance.",
+      "codeRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/9f53a3cf0ab96e64ad3827e688c1dba52bd7059a"
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://multiagentmemory.com/releases/#public-edition-v0.1.0",
+      "url": "https://multiagentmemory.com/releases/#public-edition-v0.1.0",
+      "name": "Multi-Agent Memory public edition 0.1.0",
+      "version": "0.1.0",
+      "datePublished": "2026-07-09",
+      "description": "Introduced the pure-standard-library MATM endpoint scaffold, public discovery, file-backed collaboration workflows, and UAIX-style local startup memory.",
+      "codeRepository": "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/a97443b00915d64d1342107ee243dda4dce5da9a"
     }
   ]
 }
@@ -126,8 +146,8 @@
     <section class="release-hero" aria-labelledby="release-title">
       <div class="release-hero-copy">
         <p class="eyebrow">Production release history</p>
-        <h1 id="release-title">What shipped, when, and under which version.</h1>
-        <p class="release-lede">This ledger publishes only production-activated MultiAgentMemory.com website releases that have an exact semantic version, a revision-bound activation date, and public evidence. Plans and source candidates stay out.</p>
+        <h1 id="release-title">What shipped, when, and from which exact source.</h1>
+        <p class="release-lede">This page separates public-edition source releases from production-activated MultiAgentMemory.com website deployments. Each has its own version scope and exact public provenance, so one version can never impersonate the other.</p>
         <div class="actions" aria-label="Release history actions">
           <a class="button primary" href="/releases.json">Read the machine ledger</a>
           <a class="button" href="https://github.com/MichaelKappel/Multi-Agent-Memory">Inspect the source repository</a>
@@ -136,8 +156,12 @@
       </div>
       <aside class="release-status" aria-labelledby="ledger-status-title">
         <p class="release-status-label" id="ledger-status-title">Ledger status</p>
-        <p class="release-status-value"><span class="status-dot" aria-hidden="true"></span>Website version 1.0.0</p>
+        <p class="release-status-value"><span class="status-dot" aria-hidden="true"></span>Public edition 0.2.0</p>
         <dl class="release-facts">
+          <div>
+            <dt>Current public edition</dt>
+            <dd>0.2.0</dd>
+          </div>
           <div>
             <dt>Current website version</dt>
             <dd>1.0.0</dd>
@@ -148,32 +172,99 @@
           </div>
           <div>
             <dt>Latest activation</dt>
-            <dd>August 3, 2026 (UTC)</dd>
+            <dd>August 9, 2026 (UTC)</dd>
           </div>
         </dl>
       </aside>
     </section>
 
+    <section class="release-ledger" aria-labelledby="public-edition-heading" data-public-edition-ledger>
+      <div class="section-heading">
+        <p class="eyebrow">Free reference implementation</p>
+        <h2 id="public-edition-heading">Public edition releases</h2>
+        <p>These records version the free, single-organization source edition. Each entry links to the immutable Git commit that establishes that release identity.</p>
+      </div>
+      <article class="release-record" id="public-edition-v0-2-0" data-public-edition-record data-version="0.2.0" data-release-status="current" aria-labelledby="public-edition-v0-2-0-title">
+        <header class="release-record-header">
+          <div>
+            <p class="release-version">Public edition 0.2.0 <span class="release-deployment-status">Current</span></p>
+            <h3 id="public-edition-v0-2-0-title">Protected collaboration and production evidence</h3>
+          </div>
+          <p class="release-activation"><span>Published</span><time datetime="2026-08-04">August 4, 2026 (UTC)</time></p>
+        </header>
+        <p class="release-summary">Expanded the public reference implementation with hosted-swarm fencing, stronger connector pairing, relational storage, protected knowledge and coordination, deterministic verification, and explicit release provenance.</p>
+        <section aria-labelledby="public-edition-v0-2-0-changes">
+          <h4 id="public-edition-v0-2-0-changes" class="release-subheading">What changed</h4>
+          <ul>
+            <li>Added hosted-swarm agent-name and memory-writer fencing policy.</li>
+            <li>Added protected knowledge, memory, meeting-room, current-message, distributed-sync, and virtual UAIX workflows.</li>
+            <li>Added relational SQLite plus live-verified MySQL or MariaDB operation, exact-build packaging, FTPS deployment, and source-SHA verification.</li>
+            <li>Made the current-contract-only pre-publication policy test-enforced and clarified connector pairing failures without weakening security boundaries.</li>
+          </ul>
+        </section>
+        <section class="release-milestones" aria-labelledby="public-edition-v0-2-0-milestones">
+          <h4 id="public-edition-v0-2-0-milestones" class="release-subheading">Milestones</h4>
+          <ul>
+            <li>Established the first source-commit-bound public edition release catalog.</li>
+            <li>Established explicit unique-agent and exclusive-memory-writer fencing for protected swarms.</li>
+          </ul>
+        </section>
+        <section class="release-evidence" aria-labelledby="public-edition-v0-2-0-evidence">
+          <h4 id="public-edition-v0-2-0-evidence" class="release-subheading">Exact source provenance</h4>
+          <ul><li><a href="https://github.com/MichaelKappel/Multi-Agent-Memory/commit/9f53a3cf0ab96e64ad3827e688c1dba52bd7059a">Source commit 9f53a3cf0ab96e64ad3827e688c1dba52bd7059a</a></li></ul>
+        </section>
+      </article>
+      <article class="release-record" id="public-edition-v0-1-0" data-public-edition-record data-version="0.1.0" data-release-status="historical" aria-labelledby="public-edition-v0-1-0-title">
+        <header class="release-record-header">
+          <div>
+            <p class="release-version">Public edition 0.1.0 <span class="release-deployment-status">Historical</span></p>
+            <h3 id="public-edition-v0-1-0-title">Initial public reference implementation</h3>
+          </div>
+          <p class="release-activation"><span>Published</span><time datetime="2026-07-09">July 9, 2026 (UTC)</time></p>
+        </header>
+        <p class="release-summary">Introduced the pure-standard-library MATM endpoint scaffold, public discovery, file-backed collaboration workflows, and UAIX-style local startup memory.</p>
+        <section aria-labelledby="public-edition-v0-1-0-changes">
+          <h4 id="public-edition-v0-1-0-changes" class="release-subheading">What changed</h4>
+          <ul>
+            <li>Added the initial pure-Python WSGI MATM reference runtime.</li>
+            <li>Added public AI-ready discovery routes and companion documentation.</li>
+            <li>Added file-backed workspace, memory, current-message, acknowledgement, receipt, and local .uai startup workflows.</li>
+          </ul>
+        </section>
+        <section class="release-milestones" aria-labelledby="public-edition-v0-1-0-milestones">
+          <h4 id="public-edition-v0-1-0-milestones" class="release-subheading">Milestones</h4>
+          <ul>
+            <li>Published the first free, single-organization Multi-Agent Memory reference edition.</li>
+          </ul>
+        </section>
+        <section class="release-evidence" aria-labelledby="public-edition-v0-1-0-evidence">
+          <h4 id="public-edition-v0-1-0-evidence" class="release-subheading">Exact source provenance</h4>
+          <ul><li><a href="https://github.com/MichaelKappel/Multi-Agent-Memory/commit/a97443b00915d64d1342107ee243dda4dce5da9a">Source commit a97443b00915d64d1342107ee243dda4dce5da9a</a></li></ul>
+        </section>
+      </article>
+    </section>
+
     <section class="release-ledger" aria-labelledby="release-ledger-heading" data-release-ledger>
       <div class="section-heading">
-        <p class="eyebrow">Verified chronology</p>
-        <h2 id="release-ledger-heading">Production releases</h2>
+        <p class="eyebrow">Verified deployment chronology</p>
+        <h2 id="release-ledger-heading">Website deployments</h2>
+        <p>These records version the static MultiAgentMemory.com website itself. They appear only after an exact package, source tag, activation date, readback, and live-byte verification succeed.</p>
       </div>
       <article class="release-record" id="release-v1-0-0" data-release-record data-version="1.0.0" data-release-status="deployed" aria-labelledby="release-v1-0-0-title">
         <header class="release-record-header">
           <div>
             <p class="release-version">Website version 1.0.0 <span class="release-deployment-status">Deployed</span></p>
-            <h3 id="release-v1-0-0-title">Public release history and verification foundation</h3>
+            <h3 id="release-v1-0-0-title">Evidence-bound release history and public edition catalog</h3>
           </div>
-          <p class="release-activation"><span>Production activation</span><time datetime="2026-08-03">August 3, 2026 (UTC)</time></p>
+          <p class="release-activation"><span>Production activation</span><time datetime="2026-08-09">August 9, 2026 (UTC)</time></p>
         </header>
-        <p class="release-summary">Established the first versioned MultiAgentMemory.com website release with a human-readable production history and a deterministic machine ledger.</p>
+        <p class="release-summary">Established the first versioned MultiAgentMemory.com website release with one clean human route, a deterministic machine ledger, separate public-edition chronology, and exact source provenance.</p>
         <section aria-labelledby="release-v1-0-0-changes">
           <h4 id="release-v1-0-0-changes" class="release-subheading">What changed</h4>
           <ul class="release-change-grid">
             <li>
               <h4>Release history</h4>
-              <p>Added the canonical no-JavaScript release-history page and releases.json ledger with exact version-scope separation and evidence-bound publication rules.</p>
+              <p>Added the canonical no-JavaScript release-history page and releases.json ledger with separate website, public-edition, endpoint, schema, and package version scopes.</p>
             </li>
             <li>
               <h4>Discovery and SEO</h4>
@@ -185,7 +276,7 @@
             </li>
             <li>
               <h4>Public verification</h4>
-              <p>Added deterministic source projections plus static, browser, accessibility, geometry, privacy, and regression checks for the public artifact.</p>
+              <p>Added deterministic source projections plus static, browser, accessibility, geometry, privacy, provenance, package, and live-byte checks for the public artifact.</p>
             </li>
           </ul>
         </section>
@@ -193,8 +284,8 @@
           <h4 id="release-v1-0-0-milestones" class="release-subheading">Milestones</h4>
           <ul>
             <li>
-              <strong>First evidence-bound website version</strong>
-              <span>Separated the MultiAgentMemory.com website version from MemoryEndpoints.com API, release-ledger schema, repository, and package identities.</span>
+              <strong>First evidence-bound website deployment</strong>
+              <span>Separated the MultiAgentMemory.com website version from the public edition, MemoryEndpoints.com API, release-ledger schema, repository, and package identities.</span>
             </li>
           </ul>
         </section>

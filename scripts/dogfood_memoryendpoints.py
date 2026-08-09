@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app import application
-from memoryendpoints.config import utc_now
+from app import application  # noqa: E402
+from memoryendpoints.config import utc_now  # noqa: E402
 
 
 REPORT_PATH = ROOT / "docs" / "reports" / "dogfood-memory-run.json"

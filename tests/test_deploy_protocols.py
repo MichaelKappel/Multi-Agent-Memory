@@ -201,6 +201,11 @@ class DeployProtocolTests(unittest.TestCase):
                 Path(".vs") / "solution" / "index.vsidx"
             )
         )
+        self.assertFalse(
+            package_memoryendpoints.should_include_rel(
+                Path(".ruff_cache") / "0.14.14" / "cache-entry"
+            )
+        )
 
     def test_package_dirty_paths_include_ignored_extra_and_missing_tracked_files(self):
         files = [
@@ -1355,10 +1360,10 @@ Password: multi-secret
             "activationDate": ledger["releases"][0]["activationDate"],
         }
         ready = ftp_deploy_static_site.release_activation_gate(
-            release_identity, "2026-08-03"
+            release_identity, "2026-08-09"
         )
         stale = ftp_deploy_static_site.release_activation_gate(
-            release_identity, "2026-08-04"
+            release_identity, "2026-08-10"
         )
 
         self.assertTrue(ready["checked"])
@@ -1366,7 +1371,7 @@ Password: multi-secret
         self.assertEqual("1.0.0", ready["releaseVersion"])
         self.assertTrue(stale["checked"])
         self.assertFalse(stale["ok"])
-        self.assertEqual("2026-08-03", stale["releaseActivationDate"])
+        self.assertEqual("2026-08-09", stale["releaseActivationDate"])
 
     def test_static_live_upload_rejects_stale_deployed_claim_before_connection(self):
         site_root = ROOT / "sites" / "multiagentmemory.com"
@@ -1374,8 +1379,8 @@ Password: multi-secret
             site_root, require_complete=True
         )
         stale_gate = ftp_deploy_static_site.release_activation_gate(
-            {"websiteVersion": "1.0.0", "activationDate": "2026-08-03"},
-            "2026-08-04",
+            {"websiteVersion": "1.0.0", "activationDate": "2026-08-09"},
+            "2026-08-10",
         )
         with tempfile.TemporaryDirectory() as tmp:
             package_path = Path(tmp) / "multiagentmemory-site-v1.0.0.zip"
@@ -1440,7 +1445,7 @@ Password: multi-secret
         gate = ftp_deploy_static_site.release_activation_gate
 
         def stale_gate(identity, utc_date=None):
-            return gate(identity, "2026-08-04")
+            return gate(identity, "2026-08-10")
 
         ftp = TruthOrderedFtp()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1459,7 +1464,7 @@ Password: multi-secret
 
     def test_static_release_dry_run_rechecks_utc_at_completion(self):
         gate = ftp_deploy_static_site.release_activation_gate
-        utc_dates = iter(("2026-08-03", "2026-08-04"))
+        utc_dates = iter(("2026-08-09", "2026-08-10"))
 
         def changing_gate(identity, utc_date=None):
             return gate(identity, next(utc_dates))
@@ -1486,7 +1491,7 @@ Password: multi-secret
         ftp = TruthOrderedFtp()
 
         def current_gate(identity, utc_date=None):
-            return gate(identity, "2026-08-03")
+            return gate(identity, "2026-08-09")
 
         with tempfile.TemporaryDirectory() as tmp:
             temporary = Path(tmp)
@@ -1606,7 +1611,7 @@ Password: multi-secret
                     ftp_deploy_static_site,
                     "release_activation_gate",
                     side_effect=lambda ledger, utc_date=None: activation_gate(
-                        ledger, "2026-08-03"
+                        ledger, "2026-08-09"
                     ),
                 ),
                 patch.object(
@@ -1648,7 +1653,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-03"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
                 "preactivation",
             )
 
@@ -1675,7 +1680,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-04" if gate_calls == 3 else "2026-08-03"
+            date = "2026-08-10" if gate_calls == 3 else "2026-08-09"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1694,7 +1699,7 @@ Password: multi-secret
         gate = ftp_deploy_static_site.release_activation_gate
 
         def current_gate(identity, utc_date=None):
-            return gate(identity, "2026-08-03")
+            return gate(identity, "2026-08-09")
 
         with tempfile.TemporaryDirectory() as tmp:
             temporary = Path(tmp)
@@ -1723,7 +1728,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-04" if gate_calls == 6 else "2026-08-03"
+            date = "2026-08-10" if gate_calls == 6 else "2026-08-09"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1746,7 +1751,7 @@ Password: multi-secret
                     exit_code, report = self.stage_then_activate(
                         Path(tmp),
                         ftp,
-                        lambda identity, utc_date=None: gate(identity, "2026-08-03"),
+                        lambda identity, utc_date=None: gate(identity, "2026-08-09"),
                     )
 
                 self.assertEqual(1, exit_code)
@@ -1769,7 +1774,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-04" if gate_calls == 7 else "2026-08-03"
+            date = "2026-08-10" if gate_calls == 7 else "2026-08-09"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:

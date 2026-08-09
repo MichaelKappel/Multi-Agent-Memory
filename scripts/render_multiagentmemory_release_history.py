@@ -29,9 +29,21 @@ TOP_LEVEL_FIELDS = (
     "machineUrl",
     "recordPolicy",
     "versionScopes",
+    "publicEditionHistory",
     "currentProductionWebsiteVersion",
     "releaseCount",
     "releases",
+)
+PUBLIC_EDITION_HISTORY_FIELDS = ("currentVersion", "releaseCount", "releases")
+PUBLIC_EDITION_RELEASE_FIELDS = (
+    "version",
+    "releaseDate",
+    "status",
+    "title",
+    "summary",
+    "changes",
+    "milestones",
+    "evidence",
 )
 RELEASE_FIELDS = (
     "version",
@@ -93,6 +105,31 @@ def _public_evidence_url(value, version):
     return value
 
 
+def _public_source_commit(item, version):
+    _require(
+        isinstance(item, dict)
+        and tuple(item) == ("type", "label", "url", "commitSha"),
+        f"public edition {version} evidence fields changed",
+    )
+    _require(item["type"] == "source_commit", "unsupported public edition evidence")
+    commit_sha = _plain_text(
+        item["commitSha"], f"public edition {version} evidence commitSha"
+    )
+    _require(
+        re.fullmatch(r"[0-9a-f]{40}", commit_sha) is not None,
+        f"public edition {version} evidence commitSha is invalid",
+    )
+    expected_url = (
+        "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/" + commit_sha
+    )
+    _require(item["url"] == expected_url, "public edition commit URL is not exact")
+    _require(
+        item["label"] == "Source commit " + commit_sha,
+        "public edition evidence label is not exact",
+    )
+    return commit_sha
+
+
 def load_ledger(site_root=DEFAULT_SITE_ROOT):
     path = Path(site_root) / "releases.json"
     try:
@@ -136,7 +173,13 @@ def validate_ledger(payload):
     _require(
         isinstance(scopes, dict)
         and tuple(scopes)
-        == ("website", "endpointApi", "releaseHistorySchema", "packageSource"),
+        == (
+            "website",
+            "publicEdition",
+            "endpointApi",
+            "releaseHistorySchema",
+            "packageSource",
+        ),
         "release version scopes changed",
     )
     _require(
@@ -150,6 +193,92 @@ def validate_ledger(payload):
     _require(
         scopes["releaseHistorySchema"].get("version") == "1.0",
         "release schema scope changed",
+    )
+
+    edition_history = payload["publicEditionHistory"]
+    _require(
+        isinstance(edition_history, dict)
+        and tuple(edition_history) == PUBLIC_EDITION_HISTORY_FIELDS,
+        "public edition history fields changed",
+    )
+    edition_releases = edition_history["releases"]
+    _require(
+        isinstance(edition_releases, list) and edition_releases,
+        "public edition history must not be empty",
+    )
+    _require(
+        edition_history["releaseCount"] == len(edition_releases),
+        "public edition releaseCount does not match releases",
+    )
+    edition_versions = []
+    edition_dates = []
+    edition_current = []
+    for index, release in enumerate(edition_releases):
+        _require(
+            isinstance(release, dict)
+            and tuple(release) == PUBLIC_EDITION_RELEASE_FIELDS,
+            f"public edition release {index} fields changed",
+        )
+        version = _plain_text(
+            release["version"], f"publicEditionHistory.releases[{index}].version"
+        )
+        edition_versions.append((_semver_key(version), version))
+        try:
+            release_date = date.fromisoformat(release["releaseDate"])
+        except (TypeError, ValueError) as exc:
+            raise ReleaseProjectionError(
+                f"public edition {version} releaseDate is invalid"
+            ) from exc
+        _require(
+            release["releaseDate"] == release_date.isoformat(),
+            f"public edition {version} releaseDate is not canonical",
+        )
+        edition_dates.append(release_date)
+        _require(
+            release["status"] in {"current", "historical"},
+            f"public edition {version} status is invalid",
+        )
+        if release["status"] == "current":
+            edition_current.append(version)
+        _plain_text(release["title"], f"public edition {version} title")
+        _plain_text(release["summary"], f"public edition {version} summary")
+        for field in ("changes", "milestones"):
+            values = release[field]
+            _require(
+                isinstance(values, list) and values,
+                f"public edition {version} has no {field}",
+            )
+            for item in values:
+                _plain_text(item, f"public edition {version} {field}")
+        evidence = release["evidence"]
+        _require(
+            isinstance(evidence, list) and len(evidence) == 1,
+            f"public edition {version} must have one source commit",
+        )
+        _public_source_commit(evidence[0], version)
+    _require(
+        edition_versions
+        == sorted(edition_versions, key=lambda item: item[0], reverse=True),
+        "public edition releases must be newest version first",
+    )
+    _require(
+        edition_dates == sorted(edition_dates, reverse=True),
+        "public edition releases must be newest date first",
+    )
+    _require(
+        len({version for _key, version in edition_versions})
+        == len(edition_versions),
+        "public edition release versions must be unique",
+    )
+    _require(len(edition_current) == 1, "public edition must have one current release")
+    _require(
+        edition_history["currentVersion"] == edition_current[0],
+        "current public edition version does not match its release",
+    )
+    _require(
+        scopes["publicEdition"].get("currentProductionVersion")
+        == edition_current[0],
+        "public edition version scope drifted",
     )
 
     releases = payload["releases"]
@@ -294,6 +423,20 @@ def _json_ld(payload):
                 },
             }
         )
+    public_editions = []
+    for release in payload["publicEditionHistory"]["releases"]:
+        public_editions.append(
+            {
+                "@type": "SoftwareSourceCode",
+                "@id": f"{CANONICAL_URL}#public-edition-v{release['version']}",
+                "url": f"{CANONICAL_URL}#public-edition-v{release['version']}",
+                "name": f"Multi-Agent Memory public edition {release['version']}",
+                "version": release["version"],
+                "datePublished": release["releaseDate"],
+                "description": release["summary"],
+                "codeRepository": release["evidence"][0]["url"],
+            }
+        )
     graph = {
         "@context": "https://schema.org",
         "@graph": [
@@ -337,6 +480,7 @@ def _json_ld(payload):
                     },
                 ],
             },
+            *public_editions,
         ],
     }
     text = json.dumps(graph, indent=2, ensure_ascii=False)
@@ -435,14 +579,67 @@ def _release_markup(payload):
     return "\n".join(records)
 
 
+def _public_edition_markup(payload):
+    records = []
+    for release in payload["publicEditionHistory"]["releases"]:
+        version = html.escape(release["version"])
+        record_id = "public-edition-v" + release["version"].replace(".", "-")
+        changes = "\n".join(
+            f"            <li>{html.escape(item)}</li>" for item in release["changes"]
+        )
+        milestones = "\n".join(
+            f"            <li>{html.escape(item)}</li>"
+            for item in release["milestones"]
+        )
+        evidence = release["evidence"][0]
+        status_label = "Current" if release["status"] == "current" else "Historical"
+        records.append(
+            """      <article class="release-record" id="{record_id}" data-public-edition-record data-version="{version}" data-release-status="{release_status}" aria-labelledby="{record_id}-title">
+        <header class="release-record-header">
+          <div>
+            <p class="release-version">Public edition {version} <span class="release-deployment-status">{status_label}</span></p>
+            <h3 id="{record_id}-title">{title}</h3>
+          </div>
+          <p class="release-activation"><span>Published</span><time datetime="{release_date}">{display_date} (UTC)</time></p>
+        </header>
+        <p class="release-summary">{summary}</p>
+        <section aria-labelledby="{record_id}-changes">
+          <h4 id="{record_id}-changes" class="release-subheading">What changed</h4>
+          <ul>
+{changes}
+          </ul>
+        </section>
+        <section class="release-milestones" aria-labelledby="{record_id}-milestones">
+          <h4 id="{record_id}-milestones" class="release-subheading">Milestones</h4>
+          <ul>
+{milestones}
+          </ul>
+        </section>
+        <section class="release-evidence" aria-labelledby="{record_id}-evidence">
+          <h4 id="{record_id}-evidence" class="release-subheading">Exact source provenance</h4>
+          <ul><li><a href="{evidence_url}">{evidence_label}</a></li></ul>
+        </section>
+      </article>""".format(
+                record_id=record_id,
+                version=version,
+                release_status=html.escape(release["status"], quote=True),
+                status_label=status_label,
+                title=html.escape(release["title"]),
+                release_date=release["releaseDate"],
+                display_date=_display_date(release["releaseDate"]),
+                summary=html.escape(release["summary"]),
+                changes=changes,
+                milestones=milestones,
+                evidence_url=html.escape(evidence["url"], quote=True),
+                evidence_label=html.escape(evidence["label"]),
+            )
+        )
+    return "\n".join(records)
+
+
 def render_release_html(payload):
     current = payload["currentProductionWebsiteVersion"]
     latest = payload["releases"][0] if payload["releases"] else None
-    status = (
-        f"Website version {html.escape(current)}"
-        if current
-        else "No qualifying record yet"
-    )
     current_display = html.escape(current) if current else "Not established"
     latest_display = (
         f"{_display_date(latest['activationDate'])} (UTC)"
@@ -451,6 +648,9 @@ def render_release_html(payload):
     )
     json_ld = _json_ld(payload)
     records = _release_markup(payload)
+    public_edition_records = _public_edition_markup(payload)
+    public_edition = payload["publicEditionHistory"]
+    current_public_edition = html.escape(public_edition["currentVersion"])
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -509,8 +709,8 @@ def render_release_html(payload):
     <section class="release-hero" aria-labelledby="release-title">
       <div class="release-hero-copy">
         <p class="eyebrow">Production release history</p>
-        <h1 id="release-title">What shipped, when, and under which version.</h1>
-        <p class="release-lede">This ledger publishes only production-activated MultiAgentMemory.com website releases that have an exact semantic version, a revision-bound activation date, and public evidence. Plans and source candidates stay out.</p>
+        <h1 id="release-title">What shipped, when, and from which exact source.</h1>
+        <p class="release-lede">This page separates public-edition source releases from production-activated MultiAgentMemory.com website deployments. Each has its own version scope and exact public provenance, so one version can never impersonate the other.</p>
         <div class="actions" aria-label="Release history actions">
           <a class="button primary" href="/releases.json">Read the machine ledger</a>
           <a class="button" href="https://github.com/MichaelKappel/Multi-Agent-Memory">Inspect the source repository</a>
@@ -519,8 +719,12 @@ def render_release_html(payload):
       </div>
       <aside class="release-status" aria-labelledby="ledger-status-title">
         <p class="release-status-label" id="ledger-status-title">Ledger status</p>
-        <p class="release-status-value"><span class="status-dot" aria-hidden="true"></span>{status}</p>
+        <p class="release-status-value"><span class="status-dot" aria-hidden="true"></span>Public edition {current_public_edition}</p>
         <dl class="release-facts">
+          <div>
+            <dt>Current public edition</dt>
+            <dd>{current_public_edition}</dd>
+          </div>
           <div>
             <dt>Current website version</dt>
             <dd>{current_display}</dd>
@@ -537,10 +741,20 @@ def render_release_html(payload):
       </aside>
     </section>
 
+    <section class="release-ledger" aria-labelledby="public-edition-heading" data-public-edition-ledger>
+      <div class="section-heading">
+        <p class="eyebrow">Free reference implementation</p>
+        <h2 id="public-edition-heading">Public edition releases</h2>
+        <p>These records version the free, single-organization source edition. Each entry links to the immutable Git commit that establishes that release identity.</p>
+      </div>
+{public_edition_records}
+    </section>
+
     <section class="release-ledger" aria-labelledby="release-ledger-heading" data-release-ledger>
       <div class="section-heading">
-        <p class="eyebrow">Verified chronology</p>
-        <h2 id="release-ledger-heading">Production releases</h2>
+        <p class="eyebrow">Verified deployment chronology</p>
+        <h2 id="release-ledger-heading">Website deployments</h2>
+        <p>These records version the static MultiAgentMemory.com website itself. They appear only after an exact package, source tag, activation date, readback, and live-byte verification succeed.</p>
       </div>
 {records}
     </section>
@@ -616,14 +830,38 @@ def _manifest_projection(current, payload):
             }
         )
     projected["releaseHistory"] = release_history
+    edition_history = payload["publicEditionHistory"]
+    current_edition = next(
+        item
+        for item in edition_history["releases"]
+        if item["version"] == edition_history["currentVersion"]
+    )
+    projected["publicEdition"] = {
+        "currentVersion": edition_history["currentVersion"],
+        "latestReleaseDate": current_edition["releaseDate"],
+        "releaseCount": edition_history["releaseCount"],
+        "exactSourceCommit": current_edition["evidence"][0]["commitSha"],
+        "releaseHistory": CANONICAL_URL,
+        "machineLedger": MACHINE_URL,
+    }
     return json.dumps(projected, indent=2, ensure_ascii=False) + "\n"
 
 
 def _llms_projection(payload):
     latest = payload["releases"][0] if payload["releases"] else None
+    edition = payload["publicEditionHistory"]
+    current_edition = next(
+        item
+        for item in edition["releases"]
+        if item["version"] == edition["currentVersion"]
+    )
     lines = [
         "Production release history:",
         "",
+        f"- Current public edition: {edition['currentVersion']}.",
+        f"- Current public edition release date: {current_edition['releaseDate']} (UTC).",
+        f"- Verified public edition release count: {edition['releaseCount']}.",
+        f"- Current public edition exact source: {current_edition['evidence'][0]['url']}",
         f"- Current production website version: {payload['currentProductionWebsiteVersion'] or 'not established'}.",
         f"- Verified production release count: {payload['releaseCount']}.",
         f"- Human history: {CANONICAL_URL}",
@@ -646,6 +884,7 @@ def _llms_projection(payload):
             "- The ledger includes only production-activated website releases with an exact semantic version, revision-bound activation date, and public-safe evidence.",
             "- Source candidates, planned work, and package attempts are excluded.",
             "- Website, MemoryEndpoints.com API, release-ledger schema, and repository/package identities are separate version scopes.",
+            "- Public-edition and website-deployment versions are separate scopes even when one release updates both surfaces.",
         ]
     )
     return "\n".join(lines)
@@ -665,8 +904,18 @@ def _replace_llms_section(current, payload):
 
 def _ai_projection(payload):
     latest = payload["releases"][0] if payload["releases"] else None
+    edition = payload["publicEditionHistory"]
+    current_edition = next(
+        item
+        for item in edition["releases"]
+        if item["version"] == edition["currentVersion"]
+    )
     lines = [
         "Production release history:",
+        f"Current public edition: {edition['currentVersion']}.",
+        f"Current public edition release date: {current_edition['releaseDate']} (UTC).",
+        f"Verified public edition release count: {edition['releaseCount']}.",
+        f"Current public edition exact source: {current_edition['evidence'][0]['url']}",
         f"Current production website version: {payload['currentProductionWebsiteVersion'] or 'not established'}.",
         f"Verified production release count: {payload['releaseCount']}.",
         f"Human history: {CANONICAL_URL}",
@@ -685,7 +934,7 @@ def _ai_projection(payload):
             ]
         )
     lines.append(
-        "Policy: deployed-only records; source candidates, plans, and package attempts stay out; version scopes remain separate."
+        "Policy: website records are deployed-only; public-edition records require exact immutable source commits; source candidates, plans, and package attempts stay out; version scopes remain separate."
     )
     return "\n".join(lines) + "\n"
 

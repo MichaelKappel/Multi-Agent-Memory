@@ -106,8 +106,8 @@ async function assertAccessibilityTree(page) {
   const hasRoleAndName = (role, name) => nodes.some(
     (node) => node.role && node.role.value === role && node.name && node.name.value === name,
   );
-  assert(hasRoleAndName("heading", "What shipped, when, and under which version."), "release H1 missing from accessibility tree");
-  assert(hasRoleAndName("heading", "Public release history and verification foundation"), "release record heading missing from accessibility tree");
+  assert(hasRoleAndName("heading", "What shipped, when, and from which exact source."), "release H1 missing from accessibility tree");
+  assert(hasRoleAndName("heading", "Evidence-bound release history and public edition catalog"), "release record heading missing from accessibility tree");
   assert(hasRoleAndName("link", "Read the machine ledger"), "machine-ledger action missing from accessibility tree");
   assert(hasRoleAndName("link", "Source tag multiagentmemory-site-v1.0.0"), "source-tag evidence missing from accessibility tree");
   const navigationNodes = nodes
@@ -132,14 +132,18 @@ async function assertMachineLedger(context) {
   assert.equal(payload.canonicalUrl, canonicalUrl);
   assert.equal(payload.machineUrl, machineUrl);
   assert.equal(payload.currentProductionWebsiteVersion, "1.0.0");
+  assert.equal(payload.publicEditionHistory.currentVersion, "0.2.0");
+  assert.equal(payload.publicEditionHistory.releaseCount, 2);
+  assert.deepEqual(payload.publicEditionHistory.releases.map((item) => item.version), ["0.2.0", "0.1.0"]);
+  assert.deepEqual(payload.publicEditionHistory.releases.map((item) => item.status), ["current", "historical"]);
   assert.equal(payload.releaseCount, 1);
   assert.equal(payload.releases.length, 1);
   const release = payload.releases[0];
   assert.equal(release.version, "1.0.0");
-  assert.equal(release.activationDate, "2026-08-03");
+  assert.equal(release.activationDate, "2026-08-09");
   assert.equal(release.activationTimezone, "UTC");
   assert.equal(release.status, "deployed");
-  assert.equal(release.title, "Public release history and verification foundation");
+  assert.equal(release.title, "Evidence-bound release history and public edition catalog");
   assert.deepEqual(release.changes.map((item) => item.area), [
     "Release history",
     "Discovery and SEO",
@@ -164,6 +168,7 @@ async function assertReleaseSurface(page, context, scenario) {
   assert.equal(await page.locator("details.release-mobile-navigation").count(), 1);
   assert.equal(await page.locator("footer").count(), 1);
   assert.equal(await page.locator("[data-release-record]").count(), 1);
+  assert.equal(await page.locator("[data-public-edition-record]").count(), 2);
   const record = page.locator('[data-release-record][data-version="1.0.0"][data-release-status="deployed"]');
   assert.equal(await record.count(), 1);
   assert.equal(await page.locator('link[rel="canonical"]').getAttribute("href"), canonicalUrl);
@@ -187,10 +192,10 @@ async function assertReleaseSurface(page, context, scenario) {
   } else {
     assert.equal(await mobileMenuSummary.isVisible(), false);
   }
-  await page.getByRole("heading", { name: "Public release history and verification foundation", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Evidence-bound release history and public edition catalog", exact: true }).waitFor();
   assert.equal((await record.locator(".release-deployment-status").textContent()).trim(), "Deployed");
-  assert.equal(await record.locator("time").getAttribute("datetime"), "2026-08-03");
-  assert.equal((await record.locator("time").textContent()).trim(), "August 3, 2026 (UTC)");
+  assert.equal(await record.locator("time").getAttribute("datetime"), "2026-08-09");
+  assert.equal((await record.locator("time").textContent()).trim(), "August 9, 2026 (UTC)");
   assert.equal(await record.locator(".release-evidence a").getAttribute("href"), sourceTagUrl);
 
   const structuredData = JSON.parse(await page.locator('script[type="application/ld+json"]').textContent());
@@ -199,7 +204,7 @@ async function assertReleaseSurface(page, context, scenario) {
   assert.equal(itemList.numberOfItems, 1);
   assert.equal(itemList.itemListElement.length, 1);
   assert.equal(itemList.itemListElement[0].item.version, "1.0.0");
-  assert.equal(itemList.itemListElement[0].item.datePublished, "2026-08-03");
+  assert.equal(itemList.itemListElement[0].item.datePublished, "2026-08-09");
   assert.equal(itemList.itemListElement[0].item.additionalProperty.value, "deployed");
   assert.deepEqual(itemList.itemListElement[0].item.sameAs, [sourceTagUrl]);
 

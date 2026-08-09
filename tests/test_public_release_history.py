@@ -18,6 +18,8 @@ RELEASE_LEDGER = SITE_ROOT / "releases.json"
 CANONICAL_RELEASE_URL = "https://multiagentmemory.com/releases/"
 MACHINE_RELEASE_URL = "https://multiagentmemory.com/releases.json"
 SOURCE_TAG_URL = "https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0"
+PUBLIC_EDITION_020_SHA = "9f53a3cf0ab96e64ad3827e688c1dba52bd7059a"
+PUBLIC_EDITION_010_SHA = "a97443b00915d64d1342107ee243dda4dce5da9a"
 
 
 class ReleasePageParser(HTMLParser):
@@ -28,6 +30,7 @@ class ReleasePageParser(HTMLParser):
         self.json_ld_parts = []
         self._inside_json_ld = False
         self.release_records = 0
+        self.public_edition_records = 0
 
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
@@ -39,6 +42,8 @@ class ReleasePageParser(HTMLParser):
             self._inside_json_ld = True
         if "data-release-record" in values:
             self.release_records += 1
+        if "data-public-edition-record" in values:
+            self.public_edition_records += 1
 
     def handle_endtag(self, tag):
         if tag == "script" and self._inside_json_ld:
@@ -78,6 +83,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
                 "machineUrl",
                 "recordPolicy",
                 "versionScopes",
+                "publicEditionHistory",
                 "currentProductionWebsiteVersion",
                 "releaseCount",
                 "releases",
@@ -110,7 +116,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
             list(release),
         )
         self.assertEqual("1.0.0", release["version"])
-        self.assertEqual("2026-08-03", release["activationDate"])
+        self.assertEqual("2026-08-09", release["activationDate"])
         self.assertEqual("UTC", release["activationTimezone"])
         self.assertEqual("deployed", release["status"])
         self.assertEqual(
@@ -123,7 +129,8 @@ class PublicReleaseHistoryTests(unittest.TestCase):
             [item["area"] for item in release["changes"]],
         )
         self.assertEqual(
-            "First evidence-bound website version", release["milestones"][0]["name"]
+            "First evidence-bound website deployment",
+            release["milestones"][0]["name"],
         )
         self.assertEqual(
             [
@@ -158,10 +165,19 @@ class PublicReleaseHistoryTests(unittest.TestCase):
     ):
         scopes = self.load_ledger()["versionScopes"]
         self.assertEqual(
-            {"website", "endpointApi", "releaseHistorySchema", "packageSource"},
+            {
+                "website",
+                "publicEdition",
+                "endpointApi",
+                "releaseHistorySchema",
+                "packageSource",
+            },
             set(scopes),
         )
         self.assertEqual("1.0.0", scopes["website"]["currentProductionVersion"])
+        self.assertEqual(
+            "0.2.0", scopes["publicEdition"]["currentProductionVersion"]
+        )
         self.assertIsNone(scopes["endpointApi"]["currentProductionVersion"])
         self.assertIsNone(scopes["packageSource"]["currentProductionVersion"])
         self.assertEqual("1.0", scopes["releaseHistorySchema"]["version"])
@@ -170,14 +186,46 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         )
         self.assertIn("never inherited", scopes["endpointApi"]["meaning"])
 
-    def test_ledger_contains_only_the_exact_website_semver_and_activation_date(self):
-        text = RELEASE_LEDGER.read_text(encoding="utf-8") + RELEASE_PAGE.read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual({"1.0.0"}, set(re.findall(r"\b\d+\.\d+\.\d+\b", text)))
+    def test_website_and_public_edition_versions_are_separate_exact_scopes(self):
+        payload = self.load_ledger()
+        website_versions = {item["version"] for item in payload["releases"]}
+        website_dates = {item["activationDate"] for item in payload["releases"]}
+        edition_versions = {
+            item["version"] for item in payload["publicEditionHistory"]["releases"]
+        }
+        edition_dates = {
+            item["releaseDate"]
+            for item in payload["publicEditionHistory"]["releases"]
+        }
+        self.assertEqual({"1.0.0"}, website_versions)
+        self.assertEqual({"2026-08-09"}, website_dates)
+        self.assertEqual({"0.2.0", "0.1.0"}, edition_versions)
+        self.assertEqual({"2026-08-04", "2026-07-09"}, edition_dates)
+
+    def test_public_edition_history_is_exact_commit_bound(self):
+        history = self.load_ledger()["publicEditionHistory"]
+        self.assertEqual("0.2.0", history["currentVersion"])
+        self.assertEqual(2, history["releaseCount"])
         self.assertEqual(
-            {"2026-08-03"}, set(re.findall(r"\b20\d{2}-\d{2}-\d{2}\b", text))
+            ["0.2.0", "0.1.0"],
+            [r["version"] for r in history["releases"]],
         )
+        self.assertEqual(
+            ["current", "historical"],
+            [r["status"] for r in history["releases"]],
+        )
+        self.assertEqual(
+            [PUBLIC_EDITION_020_SHA, PUBLIC_EDITION_010_SHA],
+            [r["evidence"][0]["commitSha"] for r in history["releases"]],
+        )
+        for release in history["releases"]:
+            evidence = release["evidence"]
+            self.assertEqual(1, len(evidence))
+            self.assertEqual(
+                "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/"
+                + evidence[0]["commitSha"],
+                evidence[0]["url"],
+            )
 
     def test_machine_ledger_is_public_safe(self):
         payload = self.load_ledger()
@@ -199,6 +247,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         self.assertEqual(1, parser.h1_count)
         self.assertEqual([CANONICAL_RELEASE_URL], parser.canonicals)
         self.assertEqual(1, parser.release_records)
+        self.assertEqual(2, parser.public_edition_records)
         graph = json.loads("".join(parser.json_ld_parts))["@graph"]
         by_type = {item["@type"]: item for item in graph}
         self.assertIn("CollectionPage", by_type)
@@ -208,7 +257,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         item = by_type["ItemList"]["itemListElement"][0]
         self.assertEqual(1, item["position"])
         self.assertEqual("1.0.0", item["item"]["version"])
-        self.assertEqual("2026-08-03", item["item"]["datePublished"])
+        self.assertEqual("2026-08-09", item["item"]["datePublished"])
         self.assertEqual("deployed", item["item"]["additionalProperty"]["value"])
         self.assertEqual([SOURCE_TAG_URL], item["item"]["sameAs"])
         self.assertIn('aria-current="page">Releases</a>', text)
@@ -217,7 +266,11 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         self.assertIn('data-release-status="deployed"', text)
         self.assertIn("Website version 1.0.0", text)
         self.assertIn("Deployed", text)
-        self.assertIn("August 3, 2026 (UTC)", text)
+        self.assertIn("August 9, 2026 (UTC)", text)
+        self.assertIn("Public edition 0.2.0", text)
+        self.assertIn("Public edition 0.1.0", text)
+        self.assertIn(PUBLIC_EDITION_020_SHA, text)
+        self.assertIn(PUBLIC_EDITION_010_SHA, text)
         self.assertIn(SOURCE_TAG_URL, text)
 
     def test_renderer_validates_explicit_status_and_supports_historical_withdrawal(
@@ -267,6 +320,10 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         self.assertEqual(1, history["releaseCount"])
         self.assertEqual("deployed", history["latestReleaseStatus"])
         self.assertEqual(SOURCE_TAG_URL, history["sourceTag"])
+        edition = manifest["publicEdition"]
+        self.assertEqual("0.2.0", edition["currentVersion"])
+        self.assertEqual(2, edition["releaseCount"])
+        self.assertEqual(PUBLIC_EDITION_020_SHA, edition["exactSourceCommit"])
         for rel in ("llms.txt", "ai.txt"):
             text = (SITE_ROOT / rel).read_text(encoding="utf-8")
             self.assertIn("1.0.0", text, msg=rel)

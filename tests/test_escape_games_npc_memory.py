@@ -244,7 +244,7 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
                 self.assertEqual(403, status, forbidden)
                 self.assertEqual("npc_scope_forbidden", forbidden["error"]["code"])
 
-                game_room = self._create_room(
+                self._create_room(
                     setup,
                     "game",
                     game_id,

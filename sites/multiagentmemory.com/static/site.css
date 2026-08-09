@@ -447,7 +447,7 @@ footer {
   border-radius: 16px;
   display: block;
   flex: none;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
 }
 
@@ -459,6 +459,7 @@ footer {
   align-items: start;
   background: var(--navy);
   border: 0;
+  border-radius: 15px 15px 0 0;
   color: #ffffff;
   display: grid;
   gap: 24px;
@@ -582,14 +583,19 @@ footer {
 
 .release-evidence {
   background: var(--accent-faint);
+  border-radius: 0 0 15px 15px;
   border-top: 1px solid #c9e4de;
 }
 
 .release-evidence a {
   align-items: center;
-  display: inline-flex;
+  display: flex;
   font-weight: 750;
+  max-width: 100%;
   min-height: 44px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .release-policy-grid {

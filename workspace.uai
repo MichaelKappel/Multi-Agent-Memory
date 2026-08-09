@@ -1,24 +1,123 @@
-MemoryEndpoints.com workspace coordinator
+Multi-Agent Memory platform workspace coordinator
 
 Purpose:
-- Public-safe workspace coordinator for the MemoryEndpoints.com repository and companion documentation site.
+- Give every cold-start agent one public-safe, evidence-bounded account of how RemoteEndpoints.com, LocalEndpoints.com, LocalEndpoints Connect, MemoryEndpoints.com, and MultiAgentMemory.com fit together.
+- Prevent source-qualified work, stale packages, public contract declarations, and deployed behavior from being mistaken for one another.
 
-Verification status: active workspace memory; verify against `AGENTS.md`, `.uai/startup-packet.uai`, and repository layout before relying on it.
-Memory scope: workspace routing, site roles, package boundaries, and authority separation.
-Public-safe status: safe for source control; contains no credential values.
-Update route: update this coordinator when workspace roots, site roles, package authority, or deployment boundaries change.
-Source of truth: repository root, `AGENTS.md`, `.uai/startup-packet.uai`, and `docs/repository-structure.md`.
-Next action for agents: resolve the named target site and then load the local `.uai` suite before edits.
-Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw deployment values.
+Verification status: active workspace memory; the checkpoint below was freshly reconciled against local Git state, independent reports, and public production routes, but every release or deployment claim must be reverified before use.
+Memory scope: cross-product intent, authoritative roots, trust boundaries, current source/package/installed/deployment/live gates, known divergence, and ordered continuation.
+Public-safe status: safe for source control; contains public revisions and route status but no credential values, private identifiers, payloads, or deployment secrets.
+Update route: replace stale checkpoint facts after a fresh multi-system audit; keep dated command evidence and long reports in the shared Improvement handoff or each repository's ignored report area.
+Source of truth: direct human goal, current repository bytes and refs, live public version/release routes, governing `AGENTS.md` and `.uai` files, and independently sealed reports under the shared Improvement handoff.
+Next action for agents: load the full `.uai` startup order, recheck Git and live revisions, then take the highest unblocked item in the ordered continuation below without reviving a stale package.
+Must not expose: raw API keys, bearer tokens, pairing codes, FTP or signing credentials, private prompts, desktop pictures, tenant or device identifiers, private handoff payloads, or hidden deployment values.
 
-Workspace registry:
-- MemoryEndpoints.com: primary MATM product, API, documentation, and deploy package source.
-- MultiAgentMemory.com: static GitHub companion documentation site under `sites/multiagentmemory.com/`.
-- GitHub repository: `MichaelKappel/Multi-Agent-Memory`.
+## Product model and human intent
 
-Authority boundary:
-- `AGENTS.md` is the human/agent front door.
-- `.uai/startup-packet.uai` is the active memory read-order index.
-- `.uai/` remains active local startup memory even when hosted MATM is reachable.
-- README files are human-facing documentation, not active memory-package state.
-- Deployment credentials are external authority material, never memory.
+- RemoteEndpoints.com exists for unattended control of a computer running LocalEndpoints Connect while nobody is physically present at that computer.
+- Installing the independent RemoteEndpoints plugin, explicitly enabling it, and completing one authenticated expiring pairing is intentional standing authorization. After that setup, normal prompts and actions must not wait for target-side human approval.
+- RemoteEndpoints.com transports authenticated prompts, desktop pictures, progress, results, errors, receipts, and control messages. The installed Connect runtime runs the local AI and performs Windows work with the authority available to its signed-in Windows account; the website does not directly invoke Windows APIs.
+- Install, enable, pair, Stop, Pause, Disable, rotate, revoke, and attempt recovery or rollback are distinct operations. Never imply that one performs another or that completed external effects are automatically reversible.
+- The public Demo must be a session-local synthetic-data overload of the exact authenticated production UI and client contracts, not a parallel lookalike. Mock data must be unmistakable, no protected device API may be contacted, deterministic clean scene paths must remain directly testable, and optional translucent instruction overlays must not block controls or accessibility.
+- Each capable Connect instance may run its own local `.uai`, hold its own MemoryEndpoints connection, and participate as an independent swarm agent. Do not reduce this to a single global process or writer.
+- Active normalized agent names must be unique within their tenant/workspace scope. Each writable memory has an immutable identity and exactly one current writer lease. Separate true branches receive new immutable identities and retain parent identity, parent digest, and complete lineage, so distinct memories and legitimate branches may run concurrently.
+- Agent-name ownership and memory-writer ownership are independent renewable leases with monotonic fencing. Every mutation must reject stale name and writer fences after expiry, takeover, reconnect, restart, delayed delivery, or credential rotation.
+- This is pre-publication clean-slate dogfood. Use one best current contract, update every dogfood caller, remove superseded routes and compatibility paths, and do not introduce legacy support, low-quality patches, or deferred cleanup.
+
+## Authority and checkout map
+
+- `E:\Source\GH\Multi-Agent-Memory`: public GitHub edition for the free single-organization private-intranet MATM reference plus the MultiAgentMemory.com companion site under `sites/multiagentmemory.com/`.
+- This public repository is not the authoritative private commercial MemoryEndpoints.com deployment source. Commercial customer, account, billing, hosted-operation, and private production implementation belong to a separately governed private source/deployment boundary.
+- `E:\Source\Python\LocalEndpoint.com`: authoritative LocalEndpoints.com public-site source.
+- `E:\Source\Python\LocalEndpointConnectScaffold-CSharp`: authoritative LocalEndpoints Connect desktop source.
+- `E:\Source\Python\RemoteEndpoints.com`: authoritative RemoteEndpoints.com source.
+- `E:\Source\Python\LocalEndpoint.com\agent-file-handoff\Improvement`: shared public-safe cross-system reports and handoffs. A report is evidence for its pinned bytes and named gate only; it is not automatic authority to package or deploy later bytes.
+- This repository's default public-site and cross-system coordination identity is `MemoryEndpoints-Frontend-Agent`; backend/storage/deployment work uses `MemoryEndpoints-Backend-Agent`. The misspelled historical backend identity is read-only history and must not receive new work. Use either active identity only with its own configured lower-authority credential.
+- Deployment credentials, signing keys, protected tenant credentials, and one-time pairing material are external authority and never workspace memory.
+
+## Gate vocabulary
+
+- SOURCE GO means the named source bytes passed the named source checks. It does not imply an immutable package, signature, clean installation, production deployment, or live behavior.
+- PACKAGE GO means one immutable allowlisted package was independently matched to accepted source. It does not imply installation or deployment.
+- INSTALLED GO requires exact installed-byte identity on a clean target plus the required real runtime checks.
+- DEPLOYMENT GO requires a target-bound, single-use activation with a sanitized receipt and rollback/containment evidence appropriate to that product.
+- LIVE GO requires current production revision/byte proof plus the named behavioral checks. A public OpenAPI or route declaration is not authenticated runtime proof.
+- Never inherit a stronger gate from an older report, a different commit, a synthetic test fixture, a debug artifact, or another product.
+
+## Current verified checkpoint
+
+### RemoteEndpoints.com
+
+- The maintained 224-file source tree is byte-identical to the independently accepted v3 candidate and is SOURCE GO: Ruff and formatting passed, Node passed 21 tests, the release-history selection passed 33 tests, and the complete suite passed 814 tests plus 45 browser subtests with none failed or skipped.
+- The production builder's non-publishing package-source preflight is GO for 55 allowlisted files with zero secret findings. This is source-input closure only: no immutable production package was built and PACKAGE remains NO-GO.
+- `E:\Source\Python\RemoteEndpoints.com` has no Git metadata, configured origin, or owned history. An exhaustive read-only search found no alternate RemoteEndpoints checkout, worktree, or origin under `E:\Source`; commit/push is NO-GO until the owner supplies the authoritative repository origin and history.
+- Production still serves the older surface, not v3. Public `/releases` and `/api/releases.json` remain `404`, while the accepted source continues to model standing unattended authority and distinct Stop, Pause/Resume, local Disable, rotation, and Revoke controls without fabricating a release row.
+- INSTALLED, DEPLOYMENT, and current-candidate LIVE remain NO-GO. Production still selects CPython 3.9 while the candidate requires at least 3.12, and the target dependency/trust-authority closure, immutable package, executor admission, atomic activation receipt, rollback proof, and one signed installed lifecycle are absent.
+- Exact public-safe evidence is `remoteendpoints-v3-source-requalification-and-production-admission-nogo-20260808-v1.md`, SHA-256 `acc38911f4cb4661147b43fe57197466d43425f9dac22cba54a2eef45ddb895b`, in the shared Improvement handoff.
+
+### LocalEndpoints.com
+
+- Host-neutral website v1.5.261 is committed and pushed on `origin/master` at `0609f0dc27e4287585ce0cd081e40a0ff0f0bbbf` (`release: qualify host-neutral LocalEndpoints v1.5.261`) and is SOURCE GO.
+- Exact source gates passed: 111 Python tests, 11 Node tests, Ruff lint and format, 78 in-memory Python compilations, 103 loopback public-contract checks, and seven visual/accessibility scenes including a physical 320px viewport at 200% text.
+- The immutable 77-member package is PACKAGE GO at SHA-256 `55a1a3e49fe37fc2804e9a5b904c8f07fc68efb21c4d6228acf7b6273b15a2b0`, member-closure SHA-256 `acc918069ef33e03b16548858aa9a076cfd21c00790564d8c2b959f1a92a87d6`; package identity grants no deployment authority.
+- DEPLOYMENT and current-candidate LIVE remain NO-GO. Production still selects Python 3.9 with no qualified 3.12-or-newer selector or atomic activation receipt/rollback; live remains v1.5.258 and `/health/`, `/releases/`, and `/api/releases.json` remain `404`.
+- Exact public-safe evidence is `localendpoints-v1.5.261-host-neutral-package-and-accessibility-source-qualification-20260808-v1.md`, SHA-256 `38a1ea49884efbe4c1fb8ee4ae2a380e686caceef9e1374a516e72ba8a8639a4`, in the shared Improvement handoff.
+
+### LocalEndpoints Connect and plugins
+
+- Connect 0.2.274.0 Phase 3.719 remains a pre-publication source candidate whose exact full-source requalification is in progress; it is not yet a frozen SOURCE GO release input.
+- The source has package-source recipes for the independent RemoteEndpoints and MemoryEndpoints plugins, but there are zero current `package-intent.v2`, `package-evidence.v2`, or `release-pins.v2` artifacts, zero current plugin packages, and no 0.2.274.0 main package.
+- No authoritative `production-package-identity.v2` exists; the available identity is a validation example. Enterprise and Store lanes also lack a complete signing/TSA or Store-authority input.
+- PACKAGE, production SIGNING, clean-machine INSTALLED, screenshot qualification, DEPLOYMENT, Remote live compatibility, and MemoryEndpoints live swarm compatibility are NO-GO.
+- Required order is: freeze and requalify exact source; select Enterprise and Store lanes; supply independently hashed identity v2; supply and hash both plugin intents; build, install, and attest both plugin packages and evidence; close main Enterprise signing/TSA or an exact Store bundle; then build immutable package v7, clean-install it, and run the Remote v4 and Memory live gates.
+
+### MultiAgentMemory.com and this Git checkout
+
+- The committed reconciliation is a two-parent merge of local parent `9881cf742b8ec4d024085f570795e78078408c14` and public `origin/main` parent `9f53a3cf0ab96e64ad3827e688c1dba52bd7059a`, which had diverged from common parent `53cbfee7e6f7e88aea0c390e3ddb0c0f685012ad`; neither parent is discarded. Read the containing commit identity from Git or the latest exact handoff because a tracked file cannot truthfully embed its own commit hash.
+- The reconciled source has one forward-only release design: `/releases/` is the sole human release URL, `/releases.json` is the machine ledger, and retired `/releases.html` receives an ordinary `404` with no redirect, shim, tombstone, or dual route.
+- Website deployment version 1.0.0 and public source edition 0.2.0 are separate scopes. The edition ledger preserves exact 0.2.0 provenance at `9f53a3cf0ab96e64ad3827e688c1dba52bd7059a` and historical 0.1.0 provenance at `a97443b00915d64d1342107ee243dda4dce5da9a`; generated release projections are drift-free with ledger SHA-256 `a88243514b2e59409e6d756c674730cc11185de79c597a01da31085042be9eaf`.
+- SOURCE is GO for the reconciled bytes: 749 complete Python tests, 57 deployment-protocol tests, 27 release-identity tests, 20 focused release/static/browser tests, five browser/accessibility scenarios, the 13-check static verifier, release projection, repository-wide Ruff, `.uai` audit, repository-boundary audit, secret scan, compile, and diff checks all pass. Configured-identity WSGI verification passes all 38 routes against exact committed build provenance.
+- Static-package preactivation inspection is GO for 16 exact public files at aggregate SHA-256 `f208ea6122b0038df291da39a44a6eac18e1950c0cbcf3c7c447ca84e6314171`, with the `origin/main` lease still at `9f53a3cf0ab96e64ad3827e688c1dba52bd7059a` and the required tag absent locally and remotely. This is inspection only; no new ZIP was built and PACKAGE remains NO-GO.
+- The current FileZilla target inventory has no target-bound `multiagentmemory` profile. The connection check is a zero-upload safe no-op and returns `filezilla_site_not_found`; target admission, package publication, staging, tagging, deployment, final live verification, and `main` publication therefore remain NO-GO.
+- Production still exposes `/releases.html` and `/releases.json` while `/releases/` is `404`, and the audited full site is mixed rather than one exact deployed revision. The old `dist/multiagentmemory-site-v1.0.0.zip` is stale because its remote-main lease changed, activation date expired, required tag is absent, and target identity is unproved; never deploy, tag, overwrite, or reuse it.
+
+### MemoryEndpoints.com and swarm state
+
+- MemoryEndpoints.com is live as public version v0.2.0 with public source/deployment revision `81e2f2b3c6417cb05d9247414915843663a45300`; its public version evidence reports MySQL connected and verified.
+- That revision is not present in this public checkout or its public `origin/main`, so this repository cannot prove exact-source provenance for the commercial deployment.
+- The live public contract now advertises unique-name lookup, connector-runtime tenure, one writable memory lease, monotonic lease generation, acquire/renew/release, stale-generation rejection, expected revision/ETag commits, branch creation, distinct branch identity, immutable lineage, and independent parent/branch leases.
+- This is meaningful public-contract evidence, not end-to-end behavioral acceptance. Current public readiness points to older virtual-package and hash-only edit-claim tests, and this checkout does not contain the commercial writer-fencing/lineage implementation behind the live routes.
+- Protected runtime proof remains NO-GO until an authorized synthetic tenant demonstrates the exact two-agent/two-memory/branch vectors and binds those results to exact deployed source and package revisions.
+
+## What remains before the platform goal is complete
+
+1. Reconcile the divergent Multi-Agent-Memory branches and establish one exact public release URL, revision, immutable package, target profile, tag policy, deployment receipt, and full-site byte verification.
+2. Qualify LocalEndpoints.com and RemoteEndpoints.com on a supported production runtime with target-bound atomic activation. Publish honest dated/versioned release ledgers only from independently accepted evidence.
+3. Freeze the complete Connect tree, close its package dependency graph, build and production-sign Connect plus both plugins, install exact reviewed bytes on clean Windows systems, and prove installed/source/package identity.
+4. Prove the unattended Remote lifecycle on owned fixtures: install, enable, pair once, outbound reconnect, select computer, receive fresh timestamped pictures, send an arbitrary prompt, execute with real local Windows authority, observe progress/results/errors/receipts, and exercise Stop, Pause, Disable, rotation, Revoke, expiry, duplication, stale state, interruption, locked-session, UAC, and network-recovery boundaries without private leakage.
+5. Prove the Memory swarm on two independently installed Connect instances: two distinct active names and memories work concurrently; duplicate normalized name loses; the same immutable memory cannot gain a second writer across path/computer changes; a true branch gets a new identity and complete lineage; renewal, expiry, takeover, reconnect, restart, and every stale mutation fail with deterministic receipts and no side effects.
+6. Prove authenticated UI and Demo parity through the same renderers, controls, validation, and client methods, with unmistakable session-local mock data, clean scene routes, accessible overlays, screenshots, keyboard/reduced-motion/forced-colors behavior, narrow-screen reflow, privacy containment, and guarded zero-protected-request assertions.
+7. Recheck SEO, canonical URLs, structured data, crawler files, OpenAPI, manifests, route inventory, release logs, package/download trust copy, and public claims across all sites so every surface describes the same verified architecture and every remaining unknown is visibly labeled.
+
+## Cold-start continuation sequence
+
+1. Read `AGENTS.md`, this file, `.uai/startup-packet.uai`, and every file in its declared order; inspect active handoff buckets before broad work.
+2. Run `git status`, resolve the authoritative root and branch, fetch current refs read-only, and compare current bytes with the newest exact independent report. Preserve all other agents' and human changes.
+3. Query the current public version, release, health, Demo, and contract routes. Record SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE independently.
+4. Search the shared Improvement handoff for the newest report for the exact subsystem and gate. Treat older source packages and synthetic/debug artifacts as historical evidence only.
+5. When authenticated MemoryEndpoints coordination is available, check current-message and project rooms, acknowledge handled notifications, use a unique agent identity, and acquire the required project/path or writer lease before shared mutation. If it is unavailable, continue from local `.uai` and public-safe handoff evidence without requesting or exposing a credential.
+6. Prefer implementation and direct verification over another design memo. Stop at the first failed release gate, preserve exact public-safe evidence, remediate the owning source cleanly, and rerun from fresh frozen bytes.
+
+## Required Next Prompt
+
+### Feature/improvement focus
+
+Continue the world-class unattended RemoteEndpoints, LocalEndpoints Connect, and MemoryEndpoints integration from the first unclosed gate above. Preserve one-time standing remote authority, exact authenticated/Demo UI parity, full plugin power, unique swarm names, exclusive immutable-memory writers, and true concurrent branches without legacy support or claim inflation.
+
+### Code/source changes
+
+Reconcile the authoritative source and contract before modifying code. Implement the smallest complete vertical slice in its owning repository, update every dogfood consumer to the one current contract, remove superseded behavior in the same change, and keep credentials, private payloads, pictures, identifiers, packages, and deployment evidence out of public source.
+
+### Automated tests/checks
+
+Run focused tests first, then each owning repository's complete source, lint, build, browser, accessibility, privacy, package, signing, installed-byte, deployment-receipt, and live-revision gates required by the changed slice. Obtain independent SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE verdicts separately and never promote a partial GO into platform completion.

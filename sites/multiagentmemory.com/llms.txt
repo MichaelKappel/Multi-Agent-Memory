@@ -15,17 +15,22 @@ Primary links:
 
 Production release history:
 
+- Current public edition: 0.2.0.
+- Current public edition release date: 2026-08-04 (UTC).
+- Verified public edition release count: 2.
+- Current public edition exact source: https://github.com/MichaelKappel/Multi-Agent-Memory/commit/9f53a3cf0ab96e64ad3827e688c1dba52bd7059a
 - Current production website version: 1.0.0.
 - Verified production release count: 1.
 - Human history: https://multiagentmemory.com/releases/
 - Machine ledger: https://multiagentmemory.com/releases.json
-- Latest production activation: 2026-08-03 (UTC).
+- Latest production activation: 2026-08-09 (UTC).
 - Latest release status: deployed.
-- Latest release: Public release history and verification foundation.
+- Latest release: Evidence-bound release history and public edition catalog.
 - Public source evidence: https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0
 - The ledger includes only production-activated website releases with an exact semantic version, revision-bound activation date, and public-safe evidence.
 - Source candidates, planned work, and package attempts are excluded.
 - Website, MemoryEndpoints.com API, release-ledger schema, and repository/package identities are separate version scopes.
+- Public-edition and website-deployment versions are separate scopes even when one release updates both surfaces.
 
 Memory boundary:
 

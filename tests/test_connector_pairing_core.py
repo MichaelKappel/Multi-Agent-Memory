@@ -2,7 +2,6 @@ import datetime
 import hashlib
 import json
 import pickle
-import re
 import secrets
 import unittest
 from urllib.parse import urlsplit
@@ -33,7 +32,6 @@ from memoryendpoints.connector_pairing import (
     derive_authorization_code,
     derive_pairing_request_proof,
     derive_pending_connector_secret,
-    exact_request_digest,
     expires_at,
     generate_connector_credential_id,
     generate_connector_secret,

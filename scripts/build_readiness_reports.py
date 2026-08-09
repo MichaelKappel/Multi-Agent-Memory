@@ -596,7 +596,6 @@ def build_enterprise_gap_matrix():
     long_term_promotion = load_json("long-term-memory-promotion.json") or {}
     long_term_duplicate_cleanup = load_json("long-term-memory-duplicate-cleanup.json") or {}
     github_ci = load_json("github-ci-status-report.json") or {}
-    github_ci_gate = load_json("github-ci-gate-decision.json") or {}
     live_mysql_backend = load_json("live-mysql-backend-verification.json") or {}
     live_latest_code = load_json("live-latest-code-verification.json") or {}
     deploy = load_json("deploy-attempt-20260709.json") or {}

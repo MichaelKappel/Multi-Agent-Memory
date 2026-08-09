@@ -38,12 +38,10 @@ from .connector_pairing import (
     PENDING_ACTIVATION_TTL_SECONDS,
     PKCE_METHOD as CONNECTOR_PKCE_METHOD,
     PairingPolicyError,
-    V1_REQUESTED_SCOPES,
     authorization_code_verifier,
     build_wake_up_url,
     connector_scope_digest,
     connector_scope_impacts,
-    connector_secret_verifier,
     contextual_hmac_verifier,
     derive_pairing_request_proof,
     derive_pending_connector_secret,
@@ -61,7 +59,6 @@ from .connector_pairing import (
     validate_persisted_connector_scope,
     verify_connector_secret,
     verify_authorization_code_binding,
-    verify_contextual_hmac,
     verify_pairing_request_proof,
     verify_pairing_state,
 )
@@ -73,7 +70,6 @@ from .uai_memory import (
     MIN_UAI_EDIT_LEASE_SECONDS,
     VIRTUAL_UAI_PACKAGE_TYPE,
     VIRTUAL_UAI_PROFILE,
-    VIRTUAL_UAI_RECORD_SPECS,
     VIRTUAL_UAI_REQUIRED_PATHS,
     VIRTUAL_UAI_SPEC_BY_PATH,
     VIRTUAL_UAI_STARTUP_ORDER,
@@ -13077,7 +13073,10 @@ class SQLiteStore(FileStore):
     def _external_link_from_row(self, row):
         if not row:
             return None
-        value = lambda name: row.get(name) if isinstance(row, dict) else row[name]
+
+        def value(name):
+            return row.get(name) if isinstance(row, dict) else row[name]
+
         return {
             "externalLinkId": value("external_link_id"),
             "workspaceId": value("workspace_id"),
@@ -13123,7 +13122,9 @@ class SQLiteStore(FileStore):
         )
         by_link = {}
         for row in rows:
-            value = lambda name: row.get(name) if isinstance(row, dict) else row[name]
+            def value(name):
+                return row.get(name) if isinstance(row, dict) else row[name]
+
             mention = {
                 "externalLinkMentionId": value("external_link_mention_id"),
                 "workspaceId": value("workspace_id"),
@@ -15511,23 +15512,6 @@ class SQLiteStore(FileStore):
             "rawPrivatePayloadStored": False,
             "valuesRedacted": True,
             "reviewId": review_id,
-        }
-        review = {
-            "reviewId": review_id,
-            "workspaceId": workspace_id,
-            "memoryEventId": memory_id,
-            "proposedByAgentId": actor_agent_id,
-            "reviewType": "memory_promotion",
-            "status": review_status,
-            "publicSafeSummary": event["summary"][:1000],
-            "firewallDecision": firewall["decision"],
-            "riskScore": firewall["riskScore"],
-            "detectedThreats": firewall["detectedThreats"],
-            "createdAt": now,
-            "decidedAt": None,
-            "reviewerAgentId": None,
-            "reviewerNoteHash": None,
-            "valuesRedacted": True,
         }
         with _LOCK:
             with self._open_connection() as connection:
@@ -23234,8 +23218,10 @@ class SQLiteStore(FileStore):
                     ):
                         return _connector_pairing_error("connector_scope_denied")
                     replay, key_hash, combined_hash = _connector_action_replay(pairing or {}, "cancellation", idempotency_key, request_digest)
-                    if replay == "invalid": return _connector_pairing_error("idempotency_key_invalid")
-                    if replay == "conflict": return _connector_pairing_error("idempotency_conflict")
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
                     if replay == "exact" and pairing.get("status") == "canceled":
                         return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
                     if pairing.get("status") != "pending_activation" or principal.get("credentialStatus") != "pending_activation":
@@ -23296,8 +23282,10 @@ class SQLiteStore(FileStore):
                     ):
                         return _connector_pairing_error("connector_scope_denied")
                     replay, key_hash, combined_hash = _connector_action_replay(pairing, "revocation", idempotency_key, request_digest)
-                    if replay == "invalid": return _connector_pairing_error("idempotency_key_invalid")
-                    if replay == "conflict": return _connector_pairing_error("idempotency_conflict")
+                    if replay == "invalid":
+                        return _connector_pairing_error("idempotency_key_invalid")
+                    if replay == "conflict":
+                        return _connector_pairing_error("idempotency_conflict")
                     if replay == "exact" and pairing.get("status") == "revoked":
                         return {"ok": True, "pairing": _public_connector_pairing(pairing), "approvedScopes": list(pairing.get("approvedScopes") or ()), "scopeDigest": pairing.get("scopeDigest"), "actorMasterKeyId": pairing.get("revokedByMasterKeyId"), "idempotentReplay": True, "safeNoOpOnRetry": True, "valuesRedacted": True}
                     if pairing.get("status") in ("disconnected", "canceled", "expired"):
@@ -23733,6 +23721,10 @@ def mysql_connection_stage_diagnostics():
         missing = [key for key in ("user", "password", "database") if not config.get(key)]
         if missing:
             raise RuntimeError("MySQL backend is selected but required database settings are missing.")
+
+        def cursor_factory(connection):
+            return connection.cursor()
+
         try:
             import pymysql
 
@@ -23747,7 +23739,6 @@ def mysql_connection_stage_diagnostics():
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
             )
-            cursor_factory = lambda conn: conn.cursor()
         except ImportError:
             import mysql.connector
 
@@ -23759,7 +23750,6 @@ def mysql_connection_stage_diagnostics():
                 password=config["password"],
                 unix_socket=config.get("unix_socket") or None,
             )
-            cursor_factory = lambda conn: conn.cursor()
         try:
             report["credentialConnect"]["ok"] = True
             database = "`%s`" % str(config["database"]).replace("`", "``")

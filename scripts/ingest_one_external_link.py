@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memoryendpoints.external_links import normalize_external_url, stable_external_link_id
-from scripts.ingest_one_knowledge_report import (
+from memoryendpoints.external_links import normalize_external_url, stable_external_link_id  # noqa: E402
+from scripts.ingest_one_knowledge_report import (  # noqa: E402
     DEFAULT_SECRET,
     call_json,
     read_json,

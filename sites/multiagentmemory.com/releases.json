@@ -20,6 +20,10 @@
       "currentProductionVersion": "1.0.0",
       "meaning": "The semantic version assigned to an activated MultiAgentMemory.com static-site release."
     },
+    "publicEdition": {
+      "currentProductionVersion": "0.2.0",
+      "meaning": "The semantic version of the free, single-organization Multi-Agent Memory reference implementation; it is not a website deployment version."
+    },
     "endpointApi": {
       "currentProductionVersion": null,
       "meaning": "MemoryEndpoints.com API versions belong to the separately deployed endpoint and are never inherited by this companion site."
@@ -33,20 +37,74 @@
       "meaning": "Repository commits, source candidates, and deployment packages are evidence inputs, not website versions unless a release record explicitly binds them."
     }
   },
+  "publicEditionHistory": {
+    "currentVersion": "0.2.0",
+    "releaseCount": 2,
+    "releases": [
+      {
+        "version": "0.2.0",
+        "releaseDate": "2026-08-04",
+        "status": "current",
+        "title": "Protected collaboration and production evidence",
+        "summary": "Expanded the public reference implementation with hosted-swarm fencing, stronger connector pairing, relational storage, protected knowledge and coordination, deterministic verification, and explicit release provenance.",
+        "changes": [
+          "Added hosted-swarm agent-name and memory-writer fencing policy.",
+          "Added protected knowledge, memory, meeting-room, current-message, distributed-sync, and virtual UAIX workflows.",
+          "Added relational SQLite plus live-verified MySQL or MariaDB operation, exact-build packaging, FTPS deployment, and source-SHA verification.",
+          "Made the current-contract-only pre-publication policy test-enforced and clarified connector pairing failures without weakening security boundaries."
+        ],
+        "milestones": [
+          "Established the first source-commit-bound public edition release catalog.",
+          "Established explicit unique-agent and exclusive-memory-writer fencing for protected swarms."
+        ],
+        "evidence": [
+          {
+            "type": "source_commit",
+            "label": "Source commit 9f53a3cf0ab96e64ad3827e688c1dba52bd7059a",
+            "url": "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/9f53a3cf0ab96e64ad3827e688c1dba52bd7059a",
+            "commitSha": "9f53a3cf0ab96e64ad3827e688c1dba52bd7059a"
+          }
+        ]
+      },
+      {
+        "version": "0.1.0",
+        "releaseDate": "2026-07-09",
+        "status": "historical",
+        "title": "Initial public reference implementation",
+        "summary": "Introduced the pure-standard-library MATM endpoint scaffold, public discovery, file-backed collaboration workflows, and UAIX-style local startup memory.",
+        "changes": [
+          "Added the initial pure-Python WSGI MATM reference runtime.",
+          "Added public AI-ready discovery routes and companion documentation.",
+          "Added file-backed workspace, memory, current-message, acknowledgement, receipt, and local .uai startup workflows."
+        ],
+        "milestones": [
+          "Published the first free, single-organization Multi-Agent Memory reference edition."
+        ],
+        "evidence": [
+          {
+            "type": "source_commit",
+            "label": "Source commit a97443b00915d64d1342107ee243dda4dce5da9a",
+            "url": "https://github.com/MichaelKappel/Multi-Agent-Memory/commit/a97443b00915d64d1342107ee243dda4dce5da9a",
+            "commitSha": "a97443b00915d64d1342107ee243dda4dce5da9a"
+          }
+        ]
+      }
+    ]
+  },
   "currentProductionWebsiteVersion": "1.0.0",
   "releaseCount": 1,
   "releases": [
     {
       "version": "1.0.0",
-      "activationDate": "2026-08-03",
+      "activationDate": "2026-08-09",
       "activationTimezone": "UTC",
       "status": "deployed",
-      "title": "Public release history and verification foundation",
-      "summary": "Established the first versioned MultiAgentMemory.com website release with a human-readable production history and a deterministic machine ledger.",
+      "title": "Evidence-bound release history and public edition catalog",
+      "summary": "Established the first versioned MultiAgentMemory.com website release with one clean human route, a deterministic machine ledger, separate public-edition chronology, and exact source provenance.",
       "changes": [
         {
           "area": "Release history",
-          "summary": "Added the canonical no-JavaScript release-history page and releases.json ledger with exact version-scope separation and evidence-bound publication rules."
+          "summary": "Added the canonical no-JavaScript release-history page and releases.json ledger with separate website, public-edition, endpoint, schema, and package version scopes."
         },
         {
           "area": "Discovery and SEO",
@@ -58,13 +116,13 @@
         },
         {
           "area": "Public verification",
-          "summary": "Added deterministic source projections plus static, browser, accessibility, geometry, privacy, and regression checks for the public artifact."
+          "summary": "Added deterministic source projections plus static, browser, accessibility, geometry, privacy, provenance, package, and live-byte checks for the public artifact."
         }
       ],
       "milestones": [
         {
-          "name": "First evidence-bound website version",
-          "summary": "Separated the MultiAgentMemory.com website version from MemoryEndpoints.com API, release-ledger schema, repository, and package identities."
+          "name": "First evidence-bound website deployment",
+          "summary": "Separated the MultiAgentMemory.com website version from the public edition, MemoryEndpoints.com API, release-ledger schema, repository, and package identities."
         }
       ],
       "evidence": [

@@ -20,6 +20,7 @@ EXCLUDE_DIRS = {
     ".uai",
     "__pycache__",
     ".pytest_cache",
+    ".ruff_cache",
     "var",
     "dist",
     ".local-secrets",

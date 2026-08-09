@@ -13,6 +13,10 @@ Primary links:
 - Production release history: https://multiagentmemory.com/releases/
 - Machine-readable release ledger: https://multiagentmemory.com/releases.json
 
+Current public edition: **0.2.0**, released **2026-08-04**. The public-edition
+version and the production website version are separate scopes in the release
+ledger, and every edition record links to its exact immutable source commit.
+
 Memory boundary:
 
 - Active startup memory: the full repository `.uai/` suite.
