@@ -12,7 +12,7 @@ Next action for agents: preserve these decisions unless current code, reports, o
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current governing decisions:
-- Keep `E:\MemoryEndpoints.com` as the single source of truth for MemoryEndpoints.com and MultiAgentMemory.com content.
+- Keep `E:\Source\GH\Multi-Agent-Memory` as the authoritative public Multi-Agent Memory edition and MultiAgentMemory.com companion-site source. The private commercial MemoryEndpoints.com implementation and deployment remain a separately governed authority that is not present in this checkout; never substitute a nonexistent `E:\MemoryEndpoints.com` path or infer private production authority from the public edition.
 - Keep local `.uai` active always. Hosted MATM augments `.uai`; it does not replace it.
 - Keep active `.uai` date-free active operational memory only.
 - Do not add actual local `.uai` files named `short-term-memory.uai`, `active-memory.uai`, `current-state.uai`, `project-state.uai`, `working-state.uai`, or equivalent. An accountless-browser virtual package may represent its configuration-specific short-term logical role because it creates no local file.

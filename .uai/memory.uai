@@ -13,7 +13,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Memory layers:
 - Active startup memory: `.uai/` files in the startup-packet read order.
-- Human/agent front door: `AGENTS.md`, `workspace.uai`, and `.uai/readme.human`.
+- Ordered human/agent front door: read `AGENTS.md`, then `.uai/startup-packet.uai` and its complete manifest, then root `workspace.uai`; use `.uai/readme.human` afterward only for optional human-facing clarification.
 - Active dropped-file intake: `agent-file-handoff/Content` and `agent-file-handoff/Improvement`.
 - Transitional local migration and verification evidence: `docs/long-term-memory/` and `docs/reports/`; move knowledge deliberately into hosted MATM and remove the parallel `docs/` hierarchy after migration is complete.
 - Hosted durable MATM: MemoryEndpoints.com protected routes when authenticated.

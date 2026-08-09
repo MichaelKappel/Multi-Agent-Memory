@@ -14,9 +14,9 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Current operations state:
 - Local WSGI verification is the current reliable code-path proof.
 - Package generation excludes `.git`, `.github`, `.uai`, root `workspace.uai`, root `reports/`, local prompts, raw handoff buckets, runtime stores, databases, logs, caches, credential handoff files, and deployment packages.
-- Latest-code MemoryEndpoints.com live deployment is verified through the FileZilla-backed explicit FTPS path; deploy reports remain redacted and credential values stay outside Git.
-- MultiAgentMemory.com static companion docs are published through the FileZilla-backed explicit FTPS path, and live static-site verification passes.
+- Historical MemoryEndpoints.com explicit-FTPS deploy reports remain redacted and credential values stay outside Git, but this public checkout cannot prove current private production bytes or deployment authority.
+- MultiAgentMemory.com uses the `multiagentmemory` explicit-FTPS profile only when that target-bound profile exists and current bytes pass the governed package/activation sequence. The current inventory has no such profile, so current publication is NO-GO.
 - GitHub Actions is not a required completion gate per human direction; keep the workflow but do not keep retrying the billing-locked runner unless re-enabled.
-- Live public route verification plus `/api/version` SHA verification proves the currently deployed public surface and deployed source SHA.
-- Live authenticated dogfood with protected audit-log readback is verified for the deployed route/storage tranche.
-- After every commit and explicit-FTPS publication, run `scripts/verify_uai_memory_live.py` with the ignored TinyRustLM auth file; the verifier resolves the package, acquires and releases a synthetic claim, stores no virtual record body, confirms sender-visible readback, and emits hashed identifiers only. The production MySQL route has passed this gate, but any later commit must repeat it before claiming exact-revision readiness.
+- A deployment claim requires fresh public route verification plus `/api/version` SHA equality to the exact deployed source. No historical route result substitutes for that current proof.
+- Historical authenticated dogfood and protected audit-log readback are workflow evidence only; this checkout does not prove the current private commercial implementation or protected runtime.
+- After every authorized commit and explicit-FTPS publication, run `scripts/verify_uai_memory_live.py` with the ignored TinyRustLM auth file; the verifier resolves the package, acquires and releases a synthetic claim, stores no virtual record body, confirms sender-visible readback, and emits hashed identifiers only. Historical production MySQL passage does not authorize a new upload; current exact-revision gates must all be repeated.

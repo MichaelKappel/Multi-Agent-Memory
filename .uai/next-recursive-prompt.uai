@@ -12,7 +12,7 @@ Next action for agents: use this only for continuation or closely related work; 
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, local credential files, or private runtime state.
 
 Suggested continuation:
-Continue hardening MemoryEndpoints.com as an enterprise-quality pure Python MATM endpoint and MultiAgentMemory.com companion site. First load the full `.uai` startup read order, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Then run the current local verification gate, rerun FileZilla-backed FTPS deploy and live verification after commits, keep prompt drafts untracked, commit source-controlled changes, push to `MichaelKappel/Multi-Agent-Memory`, and report remaining CI and MySQL adapter gates.
+Continue from the first unclosed gate in root `workspace.uai`. First load the full governed `.uai` startup order, then the workspace checkpoint, verify active handoff buckets are empty or blocker-held, and keep README files out of memory-package state. Finish the smallest complete source slice in its owning repository, freeze and independently verify it, and check in only exact accepted bytes. Push, package, sign, install, or deploy only when that specific target's authority and later gates are present; otherwise preserve a safe no-op and report the exact blocker.
 
 Acceptance checks:
 - `.uai` audit passes with the expanded typed suite and no forbidden duration/state filenames.

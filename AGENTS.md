@@ -18,10 +18,11 @@ repository or deployment.
    - `agent-file-handoff/Content`
    - `agent-file-handoff/Improvement`
 5. Use the full `.uai/` suite as active startup memory.
-6. Use the configured MATM endpoint as the live mid-to-long-term memory boundary when reachable and authenticated. Existing project dogfood coordination may still use MemoryEndpoints.com credentials when explicitly configured.
-7. Use MultiAgentMemory.com as the GitHub companion documentation site.
-8. Coordinate active work through protected MATM meeting rooms. Record concise cold-start continuity in typed `.uai` files and point-in-time verifier output under ignored `var/reports/`.
-9. Before editing a local `.uai` path while another agent may share the codebase, read the protected project file head and acquire a bounded edit claim. On conflict or stale hash, stop and coordinate in the project room.
+6. After the complete governed `.uai` manifest is loaded, read root `workspace.uai` for the current public-safe cross-product checkpoint, exact gate matrix, hard stops, and ordered continuation. It is coordinator memory outside the `.uai` manifest, not a substitute for any manifest member.
+7. Use the configured MATM endpoint as the live mid-to-long-term memory boundary when reachable and authenticated. Existing project dogfood coordination may still use MemoryEndpoints.com credentials when explicitly configured.
+8. Use MultiAgentMemory.com as the GitHub companion documentation site.
+9. Coordinate active work through protected MATM meeting rooms. Record concise cold-start continuity in typed `.uai` files and point-in-time verifier output under ignored `var/reports/`.
+10. Before editing a local `.uai` path while another agent may share the codebase, read the protected project file head and acquire a bounded edit claim. On conflict or stale hash, stop and coordinate in the project room.
 
 ## Hard Rules
 

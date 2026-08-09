@@ -77,10 +77,36 @@ FORBIDDEN_REFERENCES = [
     "Update URL: https://uaix.org",
 ]
 SECRET_PATTERNS = [
-    ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)?PRIVATE KEY-----", re.I)),
+    (
+        "private_key",
+        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |)?PRIVATE KEY-----", re.I),
+    ),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}", re.I)),
     ("raw_memoryendpoints_key", re.compile(r"\bme_live_[A-Za-z0-9_-]{20,}\b")),
-    ("credential_assignment", re.compile(r"\b(password|passwd|pwd|secret|api[_ -]?key|token)\b\s*[:=]\s*([^\s,;\"']{8,})", re.I)),
+    (
+        "credential_assignment",
+        re.compile(
+            r"\b(password|passwd|pwd|secret|api[_ -]?key|token)\b\s*[:=]\s*([^\s,;\"']{8,})",
+            re.I,
+        ),
+    ),
+    ("protected_room_id", re.compile(r"\broom-[0-9a-f]{16,}\b", re.I)),
+    (
+        "protected_meeting_message_id",
+        re.compile(r"\bmeetmsg-[A-Za-z0-9-]{16,}\b", re.I),
+    ),
+    ("protected_memory_id", re.compile(r"\bmem-[0-9a-f]{16,}\b", re.I)),
+    ("protected_routing_id", re.compile(r"\broute-[A-Za-z0-9-]{16,}\b", re.I)),
+    ("protected_goal_scope_id", re.compile(r"\bgoal-[a-z0-9][a-z0-9-]{8,}\b", re.I)),
+    (
+        "protected_project_scope_id",
+        re.compile(r"\bproject-[a-z0-9][a-z0-9-]{8,}\b", re.I),
+    ),
+    ("private_intake_path", re.compile(r"\bD:\\DownloadArchive(?:\\|\b)", re.I)),
+    (
+        "private_ftp_credential_handoff_path",
+        re.compile(r"\b[A-Z]:\\ftp_Deploy\.txt\b", re.I),
+    ),
 ]
 DATE_PATTERNS = [
     ("iso_date", re.compile(r"\b\d{4}-\d{2}-\d{2}\b")),
@@ -154,7 +180,9 @@ def manifest_read_order():
 
 def forbidden_active_memory_paths(paths):
     return sorted(
-        path for path in paths if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
+        path
+        for path in paths
+        if Path(path).name.lower() in FORBIDDEN_ACTIVE_MEMORY_FILENAMES
     )
 
 
@@ -180,7 +208,9 @@ def audit_handoff_buckets():
                 continue
             active_payloads.append(str(path.relative_to(ROOT)).replace("\\", "/"))
             if path.name in FORBIDDEN_HANDOFF_GUIDANCE_NAMES:
-                forbidden_guidance.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+                forbidden_guidance.append(
+                    str(path.relative_to(ROOT)).replace("\\", "/")
+                )
         items.append(
             {
                 "bucket": relative_bucket,
@@ -223,15 +253,19 @@ def main(argv=None):
     manifest_order = manifest_read_order()
     read_order_matches = read_order == STARTUP_READ_ORDER
     manifest_read_order_matches = manifest_order == STARTUP_READ_ORDER
-    manifest_forbidden_active_memory_files = forbidden_active_memory_paths(manifest_order)
+    manifest_forbidden_active_memory_files = forbidden_active_memory_paths(
+        manifest_order
+    )
     bootstrap_path = UAI_DIR / "startup-packet.uai"
     bootstrap_text = read(bootstrap_path) if bootstrap_path.exists() else ""
-    bootstrap_points_to_totem = ".uai/totem.uai" in bootstrap_text and "bootstrap" in bootstrap_text.lower()
+    bootstrap_points_to_totem = (
+        ".uai/totem.uai" in bootstrap_text and "bootstrap" in bootstrap_text.lower()
+    )
     handoff_items = audit_handoff_buckets()
     handoff_buckets_ready = all(item["ok"] for item in handoff_items)
-    local_uai_stays_active = (UAI_DIR / "totem.uai").exists() and "Local `.uai` stays active always." in read(
+    local_uai_stays_active = (
         UAI_DIR / "totem.uai"
-    )
+    ).exists() and "Local `.uai` stays active always." in read(UAI_DIR / "totem.uai")
     report = {
         "schemaVersion": "memoryendpoints.uai_memory_audit.v1",
         "ok": all(item["ok"] for item in items)
@@ -264,7 +298,10 @@ def main(argv=None):
         "startupReadOrderBootstrapFirst": bool(
             read_order and read_order[0] == BOOTSTRAP_FILE
         ),
-        "anchorFilesPresent": all((UAI_DIR / name).exists() for name in ("totem.uai", "taboo.uai", "talisman.uai")),
+        "anchorFilesPresent": all(
+            (UAI_DIR / name).exists()
+            for name in ("totem.uai", "taboo.uai", "talisman.uai")
+        ),
         "localUaiStaysActiveAlways": local_uai_stays_active,
         "dateFreeHotMemory": all(item["dateFree"] for item in items),
         "noForbiddenActiveMemoryFilename": not forbidden_active_memory_files,
@@ -275,7 +312,9 @@ def main(argv=None):
         "valuesRedacted": True,
     }
     if args.json_out:
-        Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        Path(args.json_out).write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
 

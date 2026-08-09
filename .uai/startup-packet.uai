@@ -1,7 +1,7 @@
-MemoryEndpoints.com startup packet
+Multi-Agent Memory public-reference startup packet
 
 Purpose:
-- Cold-start packet for agents entering the MemoryEndpoints.com repository.
+- Cold-start packet for agents entering the public Multi-Agent Memory reference repository and its separately governed MemoryEndpoints.com integration boundary.
 
 Verification status: active operational memory; verify with the `.uai` audit before relying on it.
 Memory scope: startup order, product target, and active memory boundary.
@@ -54,8 +54,10 @@ Read order:
 34. .uai/open-questions.uai
 35. .uai/progress.uai
 
+After item 35, read root `workspace.uai` as the public-safe cross-product checkpoint. It is outside this governed manifest and never substitutes for a manifest member.
+
 Target:
-Build MemoryEndpoints.com as the live pure Python, TypeScript, and HTML5 MATM endpoint reference, with MultiAgentMemory.com as the GitHub companion documentation site.
+Build and verify this checkout as the free single-organization private-intranet Multi-Agent Memory MATM reference, with MultiAgentMemory.com as its public GitHub companion documentation site. Treat MemoryEndpoints.com as a separately governed hosted/commercial integration boundary whose private source and deployment are not present here.
 
 Current boundary:
-Use the full `.uai` suite as active startup memory. Every `.uai/*.uai` file in the read order is active memory. Read `.uai/totem.uai` as the invariant: local `.uai` stays active always, even when MemoryEndpoints.com is live. Use MemoryEndpoints.com as the live mid-to-long-term MATM memory endpoint when reachable and authenticated. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation.
+Use the full `.uai` suite as active startup memory. Every `.uai/*.uai` file in the read order is active memory. Read `.uai/totem.uai` as the invariant: local `.uai` stays active always. Use MemoryEndpoints.com as an external mid-to-long-term MATM endpoint only when reachable, authenticated, and accepted by its owning boundary; never infer its private source or deployment authority from this checkout. Use MultiAgentMemory.com for public documentation and GitHub-facing explanation after its own exact release gates pass.

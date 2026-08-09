@@ -12,8 +12,8 @@ Next action for agents: read the startup read order, inspect active intake bucke
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or private deploy files.
 
 Receiver instructions:
-- Start at `AGENTS.md`, then `workspace.uai`, then `.uai/startup-packet.uai`.
-- Load every `.uai/*.uai` file in the startup-packet read order.
+- Start at `AGENTS.md`, then `.uai/startup-packet.uai`.
+- Load every `.uai/*.uai` file in the startup-packet read order, then read root `workspace.uai` as the cross-product coordinator checkpoint outside that manifest.
 - Verify active handoff buckets before broad work.
 - Do not use README files as memory-package state.
 - Keep active `.uai` date-free and concise.

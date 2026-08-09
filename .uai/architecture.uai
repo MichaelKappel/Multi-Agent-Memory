@@ -12,11 +12,11 @@ Next action for agents: preserve the product boundary and verify route/storage b
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, or private deployment values.
 
 Current architecture state:
-- MemoryEndpoints.com is the real MATM product/API surface.
-- MultiAgentMemory.com is the static companion documentation site inside `sites/multiagentmemory.com/`.
-- Runtime code stays pure Python standard library WSGI, with browser-native HTML/CSS/JavaScript assets.
-- Public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`.
-- Protected agent MATM routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, and redacted receipts. Agent audit-log access is denied; routine operational history is human-only and physically deleted after seven days.
+- This checkout implements the free single-organization private-intranet Multi-Agent Memory MATM reference. The hosted/commercial MemoryEndpoints.com product, private source, and deployment remain a separately governed integration boundary.
+- MultiAgentMemory.com is the static public GitHub companion documentation source inside `sites/multiagentmemory.com/`; its current deployment is a separate gate.
+- Reference runtime code stays pure Python standard library WSGI, with browser-native HTML/CSS/JavaScript assets.
+- Reference public discovery and evidence routes are implemented in `memoryendpoints/app.py` and `memoryendpoints/site_data.py`; matching names do not prove the private hosted implementation.
+- Reference protected-agent routes cover workspace status, agent registration, memory submit/search, review queue, current messages, inbox, notification acknowledgement, and redacted receipts. Agent audit-log access is denied; routine operational history is human-only and physically deleted after seven days. These source contracts are not a current hosted-runtime verdict.
 - Protected UAIX active-memory routes support one narrow full-package exception for an `accountless_browser_ai` with no durable local filesystem. Packages bind to a workspace key and registered agent, store date-free structured public-safe virtual records with immutable revisions, and derive startup readiness from required roles.
 - Normal filesystem agents keep local `.uai` bodies local. `matm_uai_collaboration_heads` and `matm_uai_edit_claims` store only real project, logical path, SHA-256 head, bounded owner lease, and public-safe intent/completion metadata so simultaneous agents can detect overlap and stale copies.
 - A virtual `.uai/short-term-memory.uai` logical record creates no local file and does not weaken the actual-local-filename ban. A collaboration claim is not an operating-system lock, content replication, or automatic merge.

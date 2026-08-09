@@ -13,7 +13,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Lane identity:
 - Agent id: `MemoryEndpoints-Frontend-Agent`.
-- Primary room: `room-0148ae1a609c2c282969`, the project-wide MemoryEndpoints expansion meeting room.
+- Primary room: discover the project-wide MemoryEndpoints expansion meeting by its public-safe name through the authenticated room index; do not persist its protected identifier in this lane.
 - Focus rooms: use the black-box remediation goal room for homepage, console, docs, onboarding, trust docs, route-schema explanation, README depth, and golden-path demo work.
 - Current-message use: send targeted current messages only when another agent needs direct attention before editing shared code.
 

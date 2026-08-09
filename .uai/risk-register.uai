@@ -13,9 +13,9 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 
 Current risks:
 - Live deployment risk: latest local code is not proven live until deployment and live route verification pass.
-- Companion drift risk: MultiAgentMemory.com is live, but every release must continue verifying that the companion routes and links match the current MemoryEndpoints boundary.
+- Companion drift risk: public MultiAgentMemory.com production is older than the accepted source and the current target profile is absent; no current release may proceed until routes, links, immutable package, activation, and exact deployed revision are reverified.
 - CI risk: GitHub Actions is not a passing health signal while account or billing state blocks job execution.
-- Database drift risk: production MySQL/MariaDB and local relational SQLite are verified, but every storage change must re-prove migrations, tenant isolation, read-after-write behavior, backup coverage, and restoration; JSON files are never a tenant-data source of truth.
+- Database drift risk: local relational SQLite and historical MySQL/MariaDB integration evidence exist, but every authorized storage deployment must re-prove migrations, tenant isolation, read-after-write behavior, backup coverage, restoration, and exact private-source provenance; JSON files are never a tenant-data source of truth.
 - Memory setup risk: active `.uai` must stay complete, date-free, typed, and free of README/intake substitutes.
 - Secret risk: credentials must stay out of `.uai`, docs, reports, packages, audit logs, and public routes.
 - Multi-agent coordination risk: additional agents can increase cost, latency, duplicated work, shared-state conflicts, cascading errors, premature consensus, and incorrect termination instead of improving results.

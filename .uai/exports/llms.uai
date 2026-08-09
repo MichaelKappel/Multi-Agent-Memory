@@ -1,21 +1,21 @@
-LLMS export
+Multi-Agent Memory LLMS support export
 
 Purpose:
-- Compact AI-readable export pointer for the MemoryEndpoints.com UAIX memory package.
+- Compact AI-readable support pointer for the public Multi-Agent Memory UAIX package.
 
-Verification status: active operational export; verify with `.uai/exports/manifest.json` before relying on it.
+Verification status: generated support export outside the active read order; verify with `.uai/exports/manifest.json` before relying on it.
 Memory scope: package summary, read order pointer, memory routing, and truth boundaries.
 Public-safe status: safe for source control; contains no credential values.
 Update route: refresh this export after active read-order, memory route, or package-profile changes.
 Source of truth: `.uai/exports/manifest.json`, `.uai/index.uai`, and `.uai/memory.uai`.
-Next action for agents: load the manifest and active `.uai` read order before acting.
+Next action for agents: load the manifest and complete active `.uai` read order, then root `workspace.uai`, before acting.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or private deployment values.
 
 Summary:
-- MemoryEndpoints.com is the MATM endpoint product.
-- MultiAgentMemory.com is the companion documentation site.
+- This checkout is the free single-organization private-intranet Multi-Agent Memory MATM reference; MemoryEndpoints.com is a separately governed hosted/commercial integration boundary.
+- MultiAgentMemory.com is the public GitHub companion documentation source, with deployment tracked as a separate gate.
 - Active `.uai` memory remains local, date-free, typed, and always active.
 - Agent-owned `.uai/agents/` lanes identify role ownership; MemoryEndpoints meeting rooms carry working coordination.
 - MemoryEndpoints.com protected routes provide durable MATM updates only when authenticated.
 - Active file handoff uses Content and Improvement buckets only.
-- Completion claims require local and live evidence.
+- Completion claims track SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE independently and require current exact evidence for each claimed gate.

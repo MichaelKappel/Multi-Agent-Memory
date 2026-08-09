@@ -12,8 +12,8 @@ Next action for agents: summarize current truth, constraints, intended touchpoin
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, raw one-time keys, private runtime stores, or private deployment values.
 
 Receiver checklist:
-- Read `AGENTS.md`, `workspace.uai`, `.uai/readme.human`, and `.uai/startup-packet.uai`.
-- Load every active `.uai` file in startup read order.
+- Read `AGENTS.md`, then `.uai/startup-packet.uai`.
+- Load every active `.uai` file in startup read order, then read root `workspace.uai`; use `.uai/readme.human` afterward only when a human-facing clarification is useful.
 - Inspect `agent-file-handoff/Content` and `agent-file-handoff/Improvement`; active buckets should be placeholder-only unless a blocker is recorded.
 - Use `.uai/next-recursive-prompt.uai` only for continuation or directly related work.
 - Run focused tests for small changes and the full local gate for memory, storage, route, package, deployment, or public-doc changes.

@@ -12,7 +12,7 @@ Next action for agents: apply these constraints before code, docs, deploy, or Gi
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, private handoff payloads, or raw one-time keys.
 
 - Do not print or commit raw credentials.
-- Do not commit E:\ftp_Deploy.txt or derived secret values.
+- Do not commit any local FTP credential-handoff file, its machine-local path, or derived secret values.
 - Runtime must remain pure Python stdlib, TypeScript, and HTML5 unless the human explicitly approves a dependency.
 - Do not copy NeuralWikis public wiki surfaces or branding.
 - Reuse MATM concepts and test patterns selectively; write MemoryEndpoints-specific code.

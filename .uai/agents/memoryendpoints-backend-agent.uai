@@ -14,7 +14,7 @@ Must not expose: raw API keys, bearer tokens, FTP credentials, database password
 Lane identity:
 - Agent id: `MemoryEndpoints-Backend-Agent`.
 - Historical lane: `MemoryEndpoints-Beckend-Agent` may appear in old hosted records and should be read for continuity, but new backend coordination should use `MemoryEndpoints-Backend-Agent`.
-- Primary room: `room-0148ae1a609c2c282969`, the project-wide MemoryEndpoints expansion meeting room.
+- Primary room: discover the project-wide MemoryEndpoints expansion meeting by its public-safe name through the authenticated room index; do not persist its protected identifier in this lane.
 - Focus rooms: use active goal or task rooms for storage, API, MySQL, deployment, connector contract, current-message fanout, dogfood, and verification work.
 - Current-message use: send targeted current messages only when another agent needs direct attention before editing shared code.
 
