@@ -682,6 +682,7 @@ def verify_package(
         "files": snapshot["files"],
         "manifest": snapshot["manifest"],
         "releaseIdentity": release_identity,
+        "releaseIdentityManifest": manifest,
         "sourceQualification": source_qualification["qualification"],
         "package": {
             "fileName": package_path.name,

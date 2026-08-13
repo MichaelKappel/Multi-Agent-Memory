@@ -26,6 +26,7 @@ RELEASE_CLAIM_PATHS = (
     "README.md",
     *FINAL_RELEASE_CLAIM_PATHS,
 )
+RETIRED_SITE_PATHS = ("releases.html",)
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 GIT_OBJECT_ID = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -73,6 +74,7 @@ RELEASE_IDENTITY_FIELDS = {
     "packageManifest",
     "packageManifestSha256",
     "cutoverPolicy",
+    "rollbackPolicy",
     "valuesRedacted",
 }
 RELEASE_LEDGER_IDENTITY_FIELDS = {
@@ -94,8 +96,24 @@ CUTOVER_POLICY_FIELDS = {
     "finalClaimActivationPhase",
     "finalClaimUploadOrder",
     "finalClaimReadbackOrder",
+    "finalRetiredPathDeleteOrder",
+    "finalRetiredPathVerificationPaths",
     "finalLiveVerificationPaths",
     "mainPublicationAfterFinalLiveVerificationRequired",
+}
+ROLLBACK_POLICY_FIELDS = {
+    "schemaVersion",
+    "capturePhase",
+    "captureBeforeAnyUploadRequired",
+    "targetBindingRequired",
+    "managedPaths",
+    "preactivationPriorStateExactMatchRequired",
+    "finalKnownStateOnlyRequired",
+    "restoreOrder",
+    "restorePresentBeforeAbsentRequired",
+    "restoreReadbackRequired",
+    "restoreAbsentPathVerificationRequired",
+    "partialFailureReceiptRequired",
 }
 
 
@@ -725,8 +743,15 @@ def build_release_identity(
         path for path in site_paths if path not in RELEASE_CLAIM_PATHS
     )
     final_live_paths = sorted(site_paths)
+    retired_paths = list(RETIRED_SITE_PATHS)
+    _require(
+        not set(retired_paths).intersection(site_paths),
+        "retired_site_path_still_packaged",
+    )
+    rollback_managed_paths = sorted([*site_paths, *retired_paths])
+    restore_order = [*non_claim_paths, *RELEASE_CLAIM_PATHS, *retired_paths]
     identity = {
-        "schemaVersion": "multiagentmemory.static_site_release_identity.v3",
+        "schemaVersion": "multiagentmemory.static_site_release_identity.v4",
         "site": SITE_NAME,
         "websiteVersion": version,
         "activationDate": release["activationDate"],
@@ -743,7 +768,7 @@ def build_release_identity(
         "packageManifest": package_manifest,
         "packageManifestSha256": package_manifest_sha256,
         "cutoverPolicy": {
-            "schemaVersion": "multiagentmemory.truth_ordered_cutover.v2",
+            "schemaVersion": "multiagentmemory.truth_ordered_cutover.v3",
             "packageQualificationPhase": PREACTIVATION_PHASE,
             "preactivationStagePhase": PREACTIVATION_PHASE,
             "preactivationUploadPaths": non_claim_paths,
@@ -755,8 +780,24 @@ def build_release_identity(
             "finalClaimActivationPhase": FINAL_PHASE,
             "finalClaimUploadOrder": list(RELEASE_CLAIM_PATHS),
             "finalClaimReadbackOrder": list(RELEASE_CLAIM_PATHS),
+            "finalRetiredPathDeleteOrder": retired_paths,
+            "finalRetiredPathVerificationPaths": retired_paths,
             "finalLiveVerificationPaths": final_live_paths,
             "mainPublicationAfterFinalLiveVerificationRequired": True,
+        },
+        "rollbackPolicy": {
+            "schemaVersion": "multiagentmemory.target_bound_rollback_policy.v1",
+            "capturePhase": PREACTIVATION_PHASE,
+            "captureBeforeAnyUploadRequired": True,
+            "targetBindingRequired": True,
+            "managedPaths": rollback_managed_paths,
+            "preactivationPriorStateExactMatchRequired": True,
+            "finalKnownStateOnlyRequired": True,
+            "restoreOrder": restore_order,
+            "restorePresentBeforeAbsentRequired": True,
+            "restoreReadbackRequired": True,
+            "restoreAbsentPathVerificationRequired": True,
+            "partialFailureReceiptRequired": True,
         },
         "valuesRedacted": True,
     }
@@ -770,7 +811,7 @@ def validate_release_identity(identity, zip_bytes=None):
     )
     _require(
         identity.get("schemaVersion")
-        == "multiagentmemory.static_site_release_identity.v3",
+        == "multiagentmemory.static_site_release_identity.v4",
         "release_identity_schema_invalid",
     )
     _require(identity.get("site") == SITE_NAME, "release_identity_site_invalid")
@@ -833,7 +874,8 @@ def validate_release_identity(identity, zip_bytes=None):
     )
     _require(
         all(path in site_paths for path in RELEASE_CLAIM_PATHS)
-        and cutover.get("schemaVersion") == "multiagentmemory.truth_ordered_cutover.v2"
+        and not set(RETIRED_SITE_PATHS).intersection(site_paths)
+        and cutover.get("schemaVersion") == "multiagentmemory.truth_ordered_cutover.v3"
         and cutover.get("packageQualificationPhase") == PREACTIVATION_PHASE
         and cutover.get("preactivationStagePhase") == PREACTIVATION_PHASE
         and cutover.get("preactivationUploadPaths") == non_claim_paths
@@ -846,9 +888,37 @@ def validate_release_identity(identity, zip_bytes=None):
         and cutover.get("finalClaimActivationPhase") == FINAL_PHASE
         and cutover.get("finalClaimUploadOrder") == list(RELEASE_CLAIM_PATHS)
         and cutover.get("finalClaimReadbackOrder") == list(RELEASE_CLAIM_PATHS)
+        and cutover.get("finalRetiredPathDeleteOrder") == list(RETIRED_SITE_PATHS)
+        and cutover.get("finalRetiredPathVerificationPaths") == list(RETIRED_SITE_PATHS)
         and cutover.get("finalLiveVerificationPaths") == site_paths
         and cutover.get("mainPublicationAfterFinalLiveVerificationRequired") is True,
         "cutover_policy_invalid",
+    )
+    rollback = identity.get("rollbackPolicy")
+    _require_exact_fields(
+        rollback, ROLLBACK_POLICY_FIELDS, "rollback_policy_fields_changed"
+    )
+    rollback_managed_paths = sorted([*site_paths, *RETIRED_SITE_PATHS])
+    restore_order = [
+        *non_claim_paths,
+        *RELEASE_CLAIM_PATHS,
+        *RETIRED_SITE_PATHS,
+    ]
+    _require(
+        rollback.get("schemaVersion")
+        == "multiagentmemory.target_bound_rollback_policy.v1"
+        and rollback.get("capturePhase") == PREACTIVATION_PHASE
+        and rollback.get("captureBeforeAnyUploadRequired") is True
+        and rollback.get("targetBindingRequired") is True
+        and rollback.get("managedPaths") == rollback_managed_paths
+        and rollback.get("preactivationPriorStateExactMatchRequired") is True
+        and rollback.get("finalKnownStateOnlyRequired") is True
+        and rollback.get("restoreOrder") == restore_order
+        and rollback.get("restorePresentBeforeAbsentRequired") is True
+        and rollback.get("restoreReadbackRequired") is True
+        and rollback.get("restoreAbsentPathVerificationRequired") is True
+        and rollback.get("partialFailureReceiptRequired") is True,
+        "rollback_policy_invalid",
     )
     archive = package_manifest.get("archive")
     _require(isinstance(archive, dict), "archive_manifest_invalid")

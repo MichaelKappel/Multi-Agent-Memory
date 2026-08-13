@@ -450,6 +450,39 @@ def main(argv=None):
             ]
         items.append(item)
 
+    retired_items = []
+    if args.base_url and args.phase == FINAL_PHASE and not package_error:
+        retired_paths = package_verification["releaseIdentityManifest"][
+            "cutoverPolicy"
+        ]["finalRetiredPathVerificationPaths"]
+        for rel in retired_paths:
+            fetched = fetch_live(args.base_url, rel, opener=opener)
+            text = fetched["data"].decode("utf-8", errors="replace")
+            item = {
+                "file": rel,
+                "route": live_route_for(rel),
+                "expectedStatus": 404,
+                "status": fetched["status"],
+                "errorType": fetched["errorType"],
+                "ordinaryNotFound": fetched["status"] == 404,
+                "noRedirectVerified": fetched["status"] == 404,
+                "requestedUrlVerified": fetched["requestedUrl"]
+                == args.base_url + live_route_for(rel),
+                "secretHitCount": 0,
+                "leakHitCount": 0,
+                "leakRules": [],
+            }
+            if text:
+                apply_public_text_checks(item, text)
+            item["verified"] = bool(
+                item["ordinaryNotFound"]
+                and item["noRedirectVerified"]
+                and item["requestedUrlVerified"]
+                and not item["secretHitCount"]
+                and not item["leakHitCount"]
+            )
+            retired_items.append(item)
+
     failures = [
         item
         for item in items
@@ -469,6 +502,8 @@ def main(argv=None):
             )
         )
     ]
+    retired_failures = [item for item in retired_items if not item["verified"]]
+    failures.extend(retired_failures)
     package_rechecked_after_fetch = False
     post_fetch_error = None
     activation_gate_after_fetch = None
@@ -516,7 +551,7 @@ def main(argv=None):
     projection_failed = release_projection["checked"] and not release_projection["ok"]
     live_gate_failed = post_fetch_error is not None
     report = {
-        "schemaVersion": "static_site.verifier.v3",
+        "schemaVersion": "static_site.verifier.v4",
         "site": "MultiAgentMemory.com",
         "mode": "live" if args.base_url else "local",
         "siteRootKind": "selected_static_site",
@@ -528,6 +563,7 @@ def main(argv=None):
             and base_url_accepted
             and items
             and all(item.get("canonicalFinalUrl") for item in items)
+            and all(item.get("noRedirectVerified") for item in retired_items)
         ),
         "redirectsAllowed": False if args.base_url else None,
         "verificationPhase": args.phase,
@@ -553,6 +589,11 @@ def main(argv=None):
         ),
         "mediaTypeMatchCount": sum(1 for item in items if item.get("mediaTypeMatch")),
         "items": items,
+        "retiredRouteCount": len(retired_items),
+        "retiredRouteVerifiedCount": sum(
+            1 for item in retired_items if item["verified"]
+        ),
+        "retiredRouteItems": retired_items,
         "failures": failures,
         "releaseProjection": release_projection,
         "valuesRedacted": True,

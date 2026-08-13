@@ -17,7 +17,14 @@ try:
         PREACTIVATION_PHASE,
         RELEASE_PHASES,
         RELEASE_CLAIM_PATHS,
+        RETIRED_SITE_PATHS,
         ReleaseIdentityError,
+    )
+    from .multiagentmemory_static_site_rollback import (
+        RollbackArtifactError,
+        build_target_binding,
+        verify_rollback_pair,
+        write_rollback_pair,
     )
     from .package_multiagentmemory_static_site import (
         SitePackageError,
@@ -32,7 +39,14 @@ except ImportError:
         PREACTIVATION_PHASE,
         RELEASE_PHASES,
         RELEASE_CLAIM_PATHS,
+        RETIRED_SITE_PATHS,
         ReleaseIdentityError,
+    )
+    from multiagentmemory_static_site_rollback import (
+        RollbackArtifactError,
+        build_target_binding,
+        verify_rollback_pair,
+        write_rollback_pair,
     )
     from package_multiagentmemory_static_site import (
         SitePackageError,
@@ -495,11 +509,76 @@ def split_truth_ordered_files(files):
     return non_claims, claims
 
 
-def readback_exact(ftp, remote_name, expected_bytes):
+def _read_receipt_attempt(receipt):
+    if receipt is not None:
+        receipt["attempted"] += 1
+
+
+def _read_receipt_verified(receipt):
+    if receipt is not None:
+        receipt["verified"] += 1
+
+
+def readback_exact(ftp, remote_name, expected_bytes, receipt=None):
+    _read_receipt_attempt(receipt)
     held = io.BytesIO()
     ftp.retrbinary("RETR " + remote_name, held.write)
     if held.getvalue() != expected_bytes:
         raise StaticSiteReadbackError("remote bytes differ from held package bytes")
+    _read_receipt_verified(receipt)
+
+
+def _confirmed_missing_ftp_error(exc):
+    message = str(exc).strip().lower()
+    if not message.startswith("550"):
+        return False
+    if any(token in message for token in ("denied", "permission", "not allowed")):
+        return False
+    return any(
+        token in message
+        for token in (
+            "not found",
+            "no such file",
+            "cannot find",
+            "does not exist",
+        )
+    )
+
+
+def read_remote_optional(ftp, remote_name, receipt=None):
+    _read_receipt_attempt(receipt)
+    held = io.BytesIO()
+    try:
+        ftp.retrbinary("RETR " + remote_name, held.write)
+    except ftplib.error_perm as exc:
+        if _confirmed_missing_ftp_error(exc):
+            _read_receipt_verified(receipt)
+            return None
+        raise
+    _read_receipt_verified(receipt)
+    return held.getvalue()
+
+
+def read_remote_state(ftp, paths, receipt=None):
+    return {path: read_remote_optional(ftp, path, receipt) for path in paths}
+
+
+def remote_state_matches(left, right):
+    return set(left) == set(right) and all(left[path] == right[path] for path in left)
+
+
+def forward_release_state(packaged_files):
+    state = {
+        entry["relativePath"].as_posix(): entry["bytes"] for entry in packaged_files
+    }
+    state.update({path: None for path in RETIRED_SITE_PATHS})
+    return state
+
+
+def known_release_state(current, prior, forward):
+    if set(current) != set(prior) or set(current) != set(forward):
+        return False
+    return all(current[path] in (prior[path], forward[path]) for path in current)
 
 
 def empty_handoff_parse():
@@ -619,6 +698,10 @@ def build_parser():
     parser.add_argument("--filezilla-path", default=str(DEFAULT_FILEZILLA_SITEMANAGER))
     parser.add_argument("--package")
     parser.add_argument("--package-manifest")
+    parser.add_argument("--rollback-package")
+    parser.add_argument("--rollback-manifest")
+    parser.add_argument("--capture-rollback", action="store_true")
+    parser.add_argument("--restore-rollback", action="store_true")
     parser.add_argument("--phase", choices=sorted(RELEASE_PHASES))
     return parser
 
@@ -628,6 +711,19 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.dry_run and args.connection_check:
         parser.error("--dry-run and --connection-check are mutually exclusive")
+    if args.capture_rollback and args.restore_rollback:
+        parser.error("--capture-rollback and --restore-rollback are mutually exclusive")
+    if args.capture_rollback and args.dry_run:
+        parser.error(
+            "--capture-rollback writes local artifacts and cannot be a dry run"
+        )
+    if (args.connection_check or args.probe_sections) and (
+        args.capture_rollback
+        or args.restore_rollback
+        or args.rollback_package
+        or args.rollback_manifest
+    ):
+        parser.error("target-only checks do not accept rollback arguments")
 
     release_invocation = not args.connection_check and not args.probe_sections
     phase_error = None
@@ -635,9 +731,11 @@ def main(argv=None):
         phase_error = "release_phase_required"
     elif not release_invocation and args.phase is not None:
         phase_error = "release_phase_not_allowed_for_target_only_check"
+    elif args.capture_rollback and args.phase != PREACTIVATION_PHASE:
+        phase_error = "rollback_capture_requires_preactivation"
     if phase_error:
         report = {
-            "schemaVersion": "static_site.ftp_deploy.v3",
+            "schemaVersion": "static_site.ftp_deploy.v4",
             "targetDomain": TARGET_DOMAIN,
             "releasePhase": args.phase,
             "status": phase_error,
@@ -650,7 +748,7 @@ def main(argv=None):
 
     if args.target_domain.strip().lower().rstrip(".") != TARGET_DOMAIN:
         report = {
-            "schemaVersion": "static_site.ftp_deploy.v3",
+            "schemaVersion": "static_site.ftp_deploy.v4",
             "targetDomain": TARGET_DOMAIN,
             "requestedTargetAccepted": False,
             "status": "target_domain_not_allowed",
@@ -775,6 +873,25 @@ def main(argv=None):
             remote_dir = discovered_dir
 
     release_mode = not args.connection_check
+    target_binding = None
+    target_binding_error = None
+    if release_mode and host and user and remote_dir:
+        selector = args.filezilla_site_match or "handoff-section-{}".format(
+            parsed["signals"].get("selectedSectionIndex") or "selected"
+        )
+        try:
+            target_binding = build_target_binding(
+                target_domain=args.target_domain,
+                protocol=args.protocol,
+                credential_source=credential_source,
+                profile_selector=selector,
+                host=host,
+                port=port,
+                user=user,
+                remote_dir=remote_dir,
+            )
+        except RollbackArtifactError as exc:
+            target_binding_error = exc.code
     projection_report = {
         "checked": False,
         "ok": None,
@@ -851,39 +968,121 @@ def main(argv=None):
         if args.phase == FINAL_PHASE
         else []
     )
-    planned_readback_count = (
-        len(non_claim_files)
-        if args.phase == PREACTIVATION_PHASE
-        else len(non_claim_files) + len(claim_files)
-        if args.phase == FINAL_PHASE
-        else 0
-    )
+    planned_readback_count = 0
     release_identity = package_snapshot["releaseIdentity"] if package_snapshot else None
+    release_identity_manifest = (
+        package_snapshot["releaseIdentityManifest"] if package_snapshot else None
+    )
+    rollback_snapshot = None
+    rollback_error = None
+    if release_mode and bool(args.rollback_package) != bool(args.rollback_manifest):
+        rollback_error = "rollback_artifact_arguments_incomplete"
+    elif release_mode and not (args.rollback_package and args.rollback_manifest):
+        rollback_error = "rollback_artifacts_required"
+    elif (
+        release_mode
+        and not args.capture_rollback
+        and package_snapshot is not None
+        and target_binding is not None
+    ):
+        try:
+            rollback_snapshot = verify_rollback_pair(
+                args.rollback_package,
+                args.rollback_manifest,
+                release_identity_manifest,
+                target_binding,
+            )
+        except RollbackArtifactError as exc:
+            rollback_error = exc.code
+        except (OSError, UnicodeError):
+            rollback_error = "rollback_artifact_verification_failed"
+    elif release_mode and args.capture_rollback:
+        if (
+            Path(args.rollback_package).exists()
+            or Path(args.rollback_manifest).exists()
+        ):
+            rollback_error = "rollback_artifact_already_exists"
     activation_gate = release_activation_gate(release_identity)
     qualification = (
         package_snapshot.get("sourceQualification", {}) if package_snapshot else {}
     )
+    operation = (
+        "capture_prior_state"
+        if args.capture_rollback
+        else "restore_prior_state"
+        if args.restore_rollback
+        else operation
+    )
+    if args.restore_rollback and rollback_snapshot:
+        prior_state = rollback_snapshot["priorState"]
+        planned_upload_count = sum(data is not None for data in prior_state.values())
+        planned_delete_count = sum(data is None for data in prior_state.values())
+        planned_readback_count = (
+            2 * len(prior_state) + planned_upload_count + planned_delete_count
+        )
+    elif args.capture_rollback:
+        planned_upload_count = 0
+        planned_delete_count = 0
+        planned_readback_count = (
+            2 * len(release_identity_manifest["rollbackPolicy"]["managedPaths"])
+            if release_identity_manifest
+            else 0
+        )
+    else:
+        planned_upload_count = len(planned_upload_files)
+        planned_delete_count = (
+            len(RETIRED_SITE_PATHS) if args.phase == FINAL_PHASE else 0
+        )
+        managed_path_count = (
+            len(release_identity_manifest["rollbackPolicy"]["managedPaths"])
+            if release_identity_manifest
+            else 0
+        )
+        if args.phase == PREACTIVATION_PHASE:
+            planned_readback_count = managed_path_count + len(non_claim_files)
+        elif args.phase == FINAL_PHASE:
+            planned_readback_count = (
+                managed_path_count
+                + len(non_claim_files)
+                + len(claim_files)
+                + (2 * len(RETIRED_SITE_PATHS))
+            )
+    forward_release_operation = not (args.capture_rollback or args.restore_rollback)
     report = {
-        "schemaVersion": "static_site.ftp_deploy.v3",
+        "schemaVersion": "static_site.ftp_deploy.v4",
         "targetDomain": args.target_domain,
         "dryRun": args.dry_run,
         "releasePhase": args.phase,
         "operation": operation,
         "siteRootKind": "selected_static_site",
         "siteRootExists": site_root.exists(),
-        "plannedUploadCount": len(planned_upload_files),
+        "plannedUploadCount": planned_upload_count,
+        "plannedDeleteCount": planned_delete_count,
         "plannedReadbackCount": planned_readback_count,
         "plannedNonClaimUploadCount": (
-            len(non_claim_files) if args.phase == PREACTIVATION_PHASE else 0
+            len(non_claim_files)
+            if forward_release_operation and args.phase == PREACTIVATION_PHASE
+            else 0
         ),
-        "plannedNonClaimReadbackCount": len(non_claim_files),
+        "plannedNonClaimReadbackCount": (
+            len(non_claim_files) if forward_release_operation else 0
+        ),
         "plannedClaimUploadCount": (
-            len(claim_files) if args.phase == FINAL_PHASE else 0
+            len(claim_files)
+            if forward_release_operation and args.phase == FINAL_PHASE
+            else 0
         ),
         "plannedClaimReadbackCount": (
-            len(claim_files) if args.phase == FINAL_PHASE else 0
+            len(claim_files)
+            if forward_release_operation and args.phase == FINAL_PHASE
+            else 0
         ),
-        "claimUploadOrder": list(RELEASE_CLAIM_PATHS),
+        "claimUploadOrder": (
+            list(RELEASE_CLAIM_PATHS) if forward_release_operation else []
+        ),
+        "retiredPathDeleteOrder": (
+            list(RETIRED_SITE_PATHS) if forward_release_operation else []
+        ),
         "signals": parsed["signals"],
         "hasResolvedHost": bool(host),
         "hasResolvedUser": bool(user),
@@ -928,6 +1127,13 @@ def main(argv=None):
         "mainPublished": False,
         "immutablePackageRequiredForRelease": release_mode,
         "immutablePackageProvided": bool(package_snapshot),
+        "rollbackArtifactsRequiredForRelease": release_mode,
+        "rollbackArtifactsProvided": bool(
+            args.rollback_package and args.rollback_manifest
+        ),
+        "rollbackCaptureRequested": bool(args.capture_rollback),
+        "rollbackRestoreRequested": bool(args.restore_rollback),
+        "targetBindingResolved": bool(target_binding),
         "sourcePackageByteIdentical": bool(
             package_snapshot
             and source_snapshot
@@ -942,6 +1148,10 @@ def main(argv=None):
         report["uploadManifest"] = package_snapshot["manifest"]
         report["releaseIdentity"] = package_snapshot["releaseIdentity"]
         report["sourceQualification"] = package_snapshot["sourceQualification"]
+    if target_binding:
+        report["targetBinding"] = target_binding
+    if rollback_snapshot:
+        report["rollback"] = rollback_snapshot["summary"]
     if filezilla_report:
         report["filezilla"] = filezilla_report
     if remote_dir:
@@ -962,6 +1172,12 @@ def main(argv=None):
         status = package_error
     elif plan_error:
         status = plan_error
+    elif target_binding_error:
+        status = target_binding_error
+    elif release_mode and not args.restore_rollback and not activation_gate["ok"]:
+        status = "activation_date_not_current_utc"
+    elif rollback_error:
+        status = rollback_error
     elif release_mode and (not site_root.exists() or not planned_upload_files):
         status = "missing_site_files"
     elif not (host and user and password):
@@ -970,8 +1186,6 @@ def main(argv=None):
         status = "remote_dir_unresolved"
     elif not parsed["signals"]["selectedSectionMentionsTarget"]:
         status = "target_section_not_confirmed"
-    elif release_mode and not activation_gate["ok"]:
-        status = "activation_date_not_current_utc"
     report["status"] = status
     report["safeNoOp"] = bool(
         args.dry_run or args.connection_check or report["status"] != "ready"
@@ -1004,26 +1218,55 @@ def main(argv=None):
                     current_package["package"] != package_snapshot["package"]
                     or current_package["releaseIdentity"]
                     != package_snapshot["releaseIdentity"]
+                    or current_package["releaseIdentityManifest"]
+                    != package_snapshot["releaseIdentityManifest"]
                     or current_package["sourceQualification"]
                     != package_snapshot["sourceQualification"]
                 ):
                     return False
+            if (
+                not args.capture_rollback
+                and args.rollback_package
+                and args.rollback_manifest
+                and package_snapshot is not None
+                and target_binding is not None
+            ):
+                current_rollback = verify_rollback_pair(
+                    args.rollback_package,
+                    args.rollback_manifest,
+                    release_identity_manifest,
+                    target_binding,
+                )
+                if rollback_snapshot is None or (
+                    current_rollback["manifestSha256"]
+                    != rollback_snapshot["manifestSha256"]
+                    or current_rollback["packageSha256"]
+                    != rollback_snapshot["packageSha256"]
+                ):
+                    return False
             return True
-        except (OSError, UnicodeError, SitePackageError, ReleaseIdentityError):
+        except (
+            OSError,
+            UnicodeError,
+            SitePackageError,
+            ReleaseIdentityError,
+            RollbackArtifactError,
+        ):
             return False
 
     if args.dry_run and report["status"] == "ready":
         report["manifestRecheckedAtDryRun"] = recheck_bound_inputs()
         if not report["manifestRecheckedAtDryRun"]:
             report["status"] = "site_or_package_changed_during_preflight"
-        report["releaseActivationGateAtDryRunCompletion"] = release_activation_gate(
-            release_identity
-        )
-        if (
-            report["status"] == "ready"
-            and not report["releaseActivationGateAtDryRunCompletion"]["ok"]
-        ):
-            report["status"] = "activation_date_changed_during_dry_run"
+        if not args.restore_rollback:
+            report["releaseActivationGateAtDryRunCompletion"] = release_activation_gate(
+                release_identity
+            )
+            if (
+                report["status"] == "ready"
+                and not report["releaseActivationGateAtDryRunCompletion"]["ok"]
+            ):
+                report["status"] = "activation_date_changed_during_dry_run"
     if args.dry_run:
         emit_report(report, args)
         return 0 if report["status"] == "ready" else 1
@@ -1065,24 +1308,235 @@ def main(argv=None):
         report["safeNoOp"] = True
         emit_report(report, args)
         return 1
-    report["releaseActivationGateBeforeOperation"] = release_activation_gate(
-        release_identity
-    )
-    if not report["releaseActivationGateBeforeOperation"]["ok"]:
-        report["status"] = "activation_date_not_current_utc"
+    if not args.restore_rollback:
+        report["releaseActivationGateBeforeOperation"] = release_activation_gate(
+            release_identity
+        )
+        if not report["releaseActivationGateBeforeOperation"]["ok"]:
+            report["status"] = "activation_date_not_current_utc"
+            report["uploadedCount"] = 0
+            report["safeNoOp"] = True
+            emit_report(report, args)
+            return 1
+
+    if args.capture_rollback:
+        managed_paths = release_identity_manifest["rollbackPolicy"]["managedPaths"]
+        phase = "connect"
+        read_receipt = {"attempted": 0, "verified": 0}
+        try:
+            phase = "login"
+            with connect_ftp(host, user, password, port, args.protocol) as ftp:
+                phase = "cwd_remote_dir"
+                ftp.cwd(remote_dir)
+                phase = "capture_prior_state_first_read"
+                first_state = read_remote_state(ftp, managed_paths, read_receipt)
+                phase = "capture_prior_state_stability_read"
+                second_state = read_remote_state(ftp, managed_paths, read_receipt)
+                if not remote_state_matches(first_state, second_state):
+                    raise StaticSiteReadbackError(
+                        "remote prior state changed during rollback capture"
+                    )
+            phase = "write_local_rollback_artifacts"
+            captured = write_rollback_pair(
+                args.rollback_package,
+                args.rollback_manifest,
+                first_state,
+                release_identity_manifest,
+                target_binding,
+            )
+        except Exception as exc:
+            report["status"] = (
+                "rollback_prior_state_changed_during_capture"
+                if phase == "capture_prior_state_stability_read"
+                and isinstance(exc, StaticSiteReadbackError)
+                else "rollback_capture_failed"
+            )
+            report["errorType"] = exc.__class__.__name__
+            report["failedPhase"] = phase
+            report["uploadedCount"] = 0
+            report["deletedCount"] = 0
+            report["remoteMutationAttemptedCount"] = 0
+            report["readbackAttemptedCount"] = read_receipt["attempted"]
+            report["readbackVerifiedCount"] = read_receipt["verified"]
+            report["remoteSafeNoOp"] = True
+            report["localArtifactsPresent"] = bool(
+                Path(args.rollback_package).exists()
+                or Path(args.rollback_manifest).exists()
+            )
+            report["safeNoOp"] = not report["localArtifactsPresent"]
+            emit_report(report, args)
+            return 1
+        report["manifestRecheckedAtCompletion"] = recheck_bound_inputs()
+        report["releaseActivationGateAtCompletion"] = release_activation_gate(
+            release_identity
+        )
+        try:
+            recaptured = verify_rollback_pair(
+                args.rollback_package,
+                args.rollback_manifest,
+                release_identity_manifest,
+                target_binding,
+            )
+            report["rollbackArtifactsRecheckedAtCompletion"] = bool(
+                recaptured["manifestSha256"] == captured["manifestSha256"]
+                and recaptured["packageSha256"] == captured["packageSha256"]
+            )
+        except (OSError, UnicodeError, RollbackArtifactError) as exc:
+            report["rollbackArtifactsRecheckedAtCompletion"] = False
+            report["completionErrorType"] = exc.__class__.__name__
+        report["status"] = "rollback_prior_state_captured"
+        if not report["manifestRecheckedAtCompletion"]:
+            report["status"] = "rollback_captured_identity_changed"
+        elif not report["releaseActivationGateAtCompletion"]["ok"]:
+            report["status"] = "rollback_captured_activation_date_changed"
+        elif not report["rollbackArtifactsRecheckedAtCompletion"]:
+            report["status"] = "rollback_captured_artifacts_changed"
+        report["rollback"] = captured["summary"]
+        report["readbackAttemptedCount"] = read_receipt["attempted"]
+        report["readbackVerifiedCount"] = read_receipt["verified"]
         report["uploadedCount"] = 0
-        report["safeNoOp"] = True
+        report["deletedCount"] = 0
+        report["remoteMutationAttemptedCount"] = 0
+        report["remoteSafeNoOp"] = True
+        report["localArtifactsWritten"] = True
+        report["safeNoOp"] = False
         emit_report(report, args)
-        return 1
+        return 0 if report["status"] == "rollback_prior_state_captured" else 1
+
+    if args.restore_rollback:
+        prior_state = rollback_snapshot["priorState"]
+        forward_state = forward_release_state(packaged_files)
+        restore_order = release_identity_manifest["rollbackPolicy"]["restoreOrder"]
+        phase = "connect"
+        uploaded_count = 0
+        deleted_count = 0
+        directory_create_attempted_count = 0
+        directory_created_count = 0
+        mutation_attempted_count = 0
+        read_receipt = {"attempted": 0, "verified": 0}
+        try:
+            phase = "login"
+            with connect_ftp(host, user, password, port, args.protocol) as ftp:
+                phase = "cwd_remote_dir"
+                ftp.cwd(remote_dir)
+                phase = "rollback_current_state_qualification"
+                current_state = read_remote_state(ftp, restore_order, read_receipt)
+                if not known_release_state(current_state, prior_state, forward_state):
+                    raise StaticSiteReadbackError(
+                        "remote state is neither held prior nor forward release bytes"
+                    )
+                if remote_state_matches(current_state, prior_state):
+                    report["status"] = "rollback_already_restored"
+                else:
+                    made_dirs = {"."}
+                    present_restore_order = [
+                        path for path in restore_order if prior_state[path] is not None
+                    ]
+                    absent_restore_order = [
+                        path for path in restore_order if prior_state[path] is None
+                    ]
+                    for remote_name in present_restore_order:
+                        expected = prior_state[remote_name]
+                        if current_state[remote_name] == expected:
+                            continue
+                        relative = Path(remote_name)
+                        current_dir = ""
+                        for part in relative.parts[:-1]:
+                            current_dir = (
+                                part if not current_dir else current_dir + "/" + part
+                            )
+                            if current_dir in made_dirs:
+                                continue
+                            directory_create_attempted_count += 1
+                            mutation_attempted_count += 1
+                            try:
+                                phase = "rollback_mkdir:" + current_dir
+                                ftp.mkd(current_dir)
+                                directory_created_count += 1
+                            except Exception:
+                                pass
+                            made_dirs.add(current_dir)
+                        phase = "rollback_upload:" + remote_name
+                        mutation_attempted_count += 1
+                        ftp.storbinary("STOR " + remote_name, io.BytesIO(expected))
+                        uploaded_count += 1
+                        phase = "rollback_readback:" + remote_name
+                        readback_exact(ftp, remote_name, expected, read_receipt)
+                        current_state[remote_name] = expected
+                    for remote_name in absent_restore_order:
+                        if current_state[remote_name] is None:
+                            continue
+                        phase = "rollback_delete:" + remote_name
+                        mutation_attempted_count += 1
+                        ftp.delete(remote_name)
+                        deleted_count += 1
+                        phase = "rollback_verify_absent:" + remote_name
+                        if (
+                            read_remote_optional(ftp, remote_name, read_receipt)
+                            is not None
+                        ):
+                            raise StaticSiteReadbackError(
+                                "rollback path remained present after delete"
+                            )
+                        current_state[remote_name] = None
+                    phase = "rollback_final_state_readback"
+                    final_state = read_remote_state(ftp, restore_order, read_receipt)
+                    if not remote_state_matches(final_state, prior_state):
+                        raise StaticSiteReadbackError(
+                            "restored remote state differs from held prior state"
+                        )
+                    report["status"] = "rollback_restored"
+        except Exception as exc:
+            report["status"] = (
+                "rollback_current_state_unrecognized_no_mutation"
+                if phase == "rollback_current_state_qualification"
+                else "rollback_restore_failed_partial_possible"
+            )
+            report["errorType"] = exc.__class__.__name__
+            report["failedPhase"] = phase
+            report["uploadedCount"] = uploaded_count
+            report["deletedCount"] = deleted_count
+            report["directoryCreateAttemptedCount"] = directory_create_attempted_count
+            report["directoryCreatedCount"] = directory_created_count
+            report["remoteMutationAttemptedCount"] = mutation_attempted_count
+            report["remoteMutationCompletedCount"] = (
+                uploaded_count + deleted_count + directory_created_count
+            )
+            report["readbackAttemptedCount"] = read_receipt["attempted"]
+            report["readbackVerifiedCount"] = read_receipt["verified"]
+            report["safeNoOp"] = mutation_attempted_count == 0
+            emit_report(report, args)
+            return 1
+        report["uploadedCount"] = uploaded_count
+        report["deletedCount"] = deleted_count
+        report["directoryCreateAttemptedCount"] = directory_create_attempted_count
+        report["directoryCreatedCount"] = directory_created_count
+        report["remoteMutationAttemptedCount"] = mutation_attempted_count
+        report["remoteMutationCompletedCount"] = (
+            uploaded_count + deleted_count + directory_created_count
+        )
+        report["readbackAttemptedCount"] = read_receipt["attempted"]
+        report["readbackVerifiedCount"] = read_receipt["verified"]
+        report["safeNoOp"] = mutation_attempted_count == 0
+        report["rollbackRestored"] = True
+        report["manifestRecheckedAtCompletion"] = recheck_bound_inputs()
+        if not report["manifestRecheckedAtCompletion"]:
+            report["status"] = "rollback_restored_identity_changed"
+        emit_report(report, args)
+        return 0 if report["manifestRecheckedAtCompletion"] else 1
 
     uploaded_count = 0
     upload_attempted_count = 0
-    readback_attempted_count = 0
-    readback_verified_count = 0
+    read_receipt = {"attempted": 0, "verified": 0}
     non_claim_uploaded_count = 0
     non_claim_readback_count = 0
     claim_uploaded_count = 0
     claim_readback_count = 0
+    retired_delete_attempted_count = 0
+    retired_deleted_count = 0
+    retired_absent_verified_count = 0
+    rollback_prior_state_qualified = False
+    rollback_known_state_qualified = False
     claims_exposed = False
     staged_nonclaim_readback_complete = False
     phase = "connect"
@@ -1093,6 +1547,20 @@ def main(argv=None):
             ftp.cwd(remote_dir)
             made_dirs = set(["."])
             if args.phase == PREACTIVATION_PHASE:
+                phase = "preactivation-prior-state-qualification"
+                managed_paths = release_identity_manifest["rollbackPolicy"][
+                    "managedPaths"
+                ]
+                current_prior_state = read_remote_state(
+                    ftp, managed_paths, read_receipt
+                )
+                if not remote_state_matches(
+                    current_prior_state, rollback_snapshot["priorState"]
+                ):
+                    raise StaticSiteReadbackError(
+                        "remote state changed after rollback capture"
+                    )
+                rollback_prior_state_qualified = True
                 for entry in non_claim_files:
                     rel = entry["relativePath"]
                     current = ""
@@ -1119,9 +1587,7 @@ def main(argv=None):
                     if args.phase == PREACTIVATION_PHASE
                     else "readback:staged-nonclaim:"
                 ) + remote_name
-                readback_attempted_count += 1
-                readback_exact(ftp, remote_name, entry["bytes"])
-                readback_verified_count += 1
+                readback_exact(ftp, remote_name, entry["bytes"], read_receipt)
                 non_claim_readback_count += 1
             staged_nonclaim_readback_complete = non_claim_readback_count == len(
                 non_claim_files
@@ -1134,6 +1600,22 @@ def main(argv=None):
                     "staged non-claim FTPS readback did not complete"
                 )
             if args.phase == FINAL_PHASE:
+                phase = "final-preclaim:known-state-qualification"
+                managed_paths = release_identity_manifest["rollbackPolicy"][
+                    "managedPaths"
+                ]
+                current_release_state = read_remote_state(
+                    ftp, managed_paths, read_receipt
+                )
+                if not known_release_state(
+                    current_release_state,
+                    rollback_snapshot["priorState"],
+                    forward_release_state(packaged_files),
+                ):
+                    raise StaticSiteReadbackError(
+                        "remote state includes bytes outside prior and forward identities"
+                    )
+                rollback_known_state_qualified = True
                 phase = "final-preclaim:bound-input-recheck"
                 report["manifestRecheckedBeforeClaims"] = recheck_bound_inputs()
                 if not report["manifestRecheckedBeforeClaims"]:
@@ -1167,13 +1649,27 @@ def main(argv=None):
                     uploaded_count += 1
                     claim_uploaded_count += 1
                     phase = "readback:claim:" + remote_name
-                    readback_attempted_count += 1
-                    readback_exact(ftp, remote_name, entry["bytes"])
-                    readback_verified_count += 1
+                    readback_exact(ftp, remote_name, entry["bytes"], read_receipt)
                     claim_readback_count += 1
+                for remote_name in RETIRED_SITE_PATHS:
+                    phase = "retired-path-read:" + remote_name
+                    current = read_remote_optional(ftp, remote_name, read_receipt)
+                    if current is not None:
+                        phase = "retired-path-delete:" + remote_name
+                        retired_delete_attempted_count += 1
+                        ftp.delete(remote_name)
+                        retired_deleted_count += 1
+                    phase = "retired-path-verify-absent:" + remote_name
+                    if read_remote_optional(ftp, remote_name, read_receipt) is not None:
+                        raise StaticSiteReadbackError(
+                            "retired path remained present after final activation"
+                        )
+                    retired_absent_verified_count += 1
     except Exception as exc:
         if args.phase == PREACTIVATION_PHASE:
-            if phase.startswith("upload:nonclaim:") or phase.startswith(
+            if phase == "preactivation-prior-state-qualification":
+                status = "preactivation_prior_state_mismatch_no_upload"
+            elif phase.startswith("upload:nonclaim:") or phase.startswith(
                 "mkdir:nonclaim:"
             ):
                 status = "nonclaim_stage_upload_failed_partial_possible"
@@ -1184,6 +1680,10 @@ def main(argv=None):
         else:
             if phase.startswith("readback:staged-nonclaim:"):
                 status = "final_staged_nonclaim_readback_failed"
+            elif phase.startswith("retired-path-delete:"):
+                status = "retired_path_deletion_failed_partial_possible"
+            elif phase.startswith("retired-path-"):
+                status = "retired_path_verification_failed_partial_possible"
             elif phase.startswith("final-preclaim:"):
                 status = "final_preclaim_gate_failed_no_claims"
             elif claims_exposed:
@@ -1193,17 +1693,24 @@ def main(argv=None):
         report["status"] = status
         report["uploadedCount"] = uploaded_count
         report["uploadAttemptedCount"] = upload_attempted_count
-        report["readbackAttemptedCount"] = readback_attempted_count
-        report["readbackVerifiedCount"] = readback_verified_count
+        report["readbackAttemptedCount"] = read_receipt["attempted"]
+        report["readbackVerifiedCount"] = read_receipt["verified"]
         report["nonClaimUploadedCount"] = non_claim_uploaded_count
         report["nonClaimReadbackCount"] = non_claim_readback_count
         report["claimUploadedCount"] = claim_uploaded_count
         report["claimReadbackCount"] = claim_readback_count
+        report["retiredDeleteAttemptedCount"] = retired_delete_attempted_count
+        report["retiredDeletedCount"] = retired_deleted_count
+        report["retiredAbsentVerifiedCount"] = retired_absent_verified_count
+        report["rollbackPriorStateQualified"] = rollback_prior_state_qualified
+        report["rollbackKnownStateQualified"] = rollback_known_state_qualified
         report["stagedNonClaimReadbackComplete"] = staged_nonclaim_readback_complete
         report["claimsExposed"] = claims_exposed
         report["errorType"] = exc.__class__.__name__
         report["failedPhase"] = phase
-        report["safeNoOp"] = upload_attempted_count == 0
+        report["safeNoOp"] = (
+            upload_attempted_count == 0 and retired_delete_attempted_count == 0
+        )
         emit_report(report, args)
         return 1
     report["manifestRecheckedAtCompletion"] = recheck_bound_inputs()
@@ -1228,12 +1735,17 @@ def main(argv=None):
             report["nextRequiredGate"] = "final_full_https_verification"
     report["uploadedCount"] = uploaded_count
     report["uploadAttemptedCount"] = upload_attempted_count
-    report["readbackAttemptedCount"] = readback_attempted_count
-    report["readbackVerifiedCount"] = readback_verified_count
+    report["readbackAttemptedCount"] = read_receipt["attempted"]
+    report["readbackVerifiedCount"] = read_receipt["verified"]
     report["nonClaimUploadedCount"] = non_claim_uploaded_count
     report["nonClaimReadbackCount"] = non_claim_readback_count
     report["claimUploadedCount"] = claim_uploaded_count
     report["claimReadbackCount"] = claim_readback_count
+    report["retiredDeleteAttemptedCount"] = retired_delete_attempted_count
+    report["retiredDeletedCount"] = retired_deleted_count
+    report["retiredAbsentVerifiedCount"] = retired_absent_verified_count
+    report["rollbackPriorStateQualified"] = rollback_prior_state_qualified
+    report["rollbackKnownStateQualified"] = rollback_known_state_qualified
     report["stagedNonClaimReadbackComplete"] = staged_nonclaim_readback_complete
     report["claimsExposed"] = claims_exposed
     report["safeNoOp"] = False
@@ -1241,19 +1753,15 @@ def main(argv=None):
     expected_uploads = (
         len(non_claim_files) if args.phase == PREACTIVATION_PHASE else len(claim_files)
     )
-    expected_readbacks = (
-        len(non_claim_files)
-        if args.phase == PREACTIVATION_PHASE
-        else len(non_claim_files) + len(claim_files)
-    )
     phase_complete = (
         uploaded_count == expected_uploads
-        and readback_verified_count == expected_readbacks
+        and non_claim_readback_count == len(non_claim_files)
         and staged_nonclaim_readback_complete
         and (
-            claim_readback_count == 0
+            claim_readback_count == 0 and retired_absent_verified_count == 0
             if args.phase == PREACTIVATION_PHASE
             else claim_readback_count == len(RELEASE_CLAIM_PATHS)
+            and retired_absent_verified_count == len(RETIRED_SITE_PATHS)
         )
     )
     return (

@@ -1,5 +1,6 @@
 import json
 import hashlib
+import ftplib
 import os
 import ssl
 import unittest
@@ -12,6 +13,7 @@ from scripts import (
     ftp_deploy_memoryendpoints,
     ftp_deploy_static_site,
     multiagentmemory_release_identity,
+    multiagentmemory_static_site_rollback,
     package_memoryendpoints,
     package_multiagentmemory_static_site,
 )
@@ -21,9 +23,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TruthOrderedFtp:
-    def __init__(self, *, readback_drift=None, fail_after_store=None):
+    def __init__(
+        self,
+        *,
+        readback_drift=None,
+        fail_after_store=None,
+        fail_delete=None,
+        fail_retr=None,
+    ):
         self.readback_drift = readback_drift
         self.fail_after_store = fail_after_store
+        self.fail_delete = fail_delete
+        self.fail_retr = fail_retr
         self.remote = {}
         self.events = []
 
@@ -49,8 +60,20 @@ class TruthOrderedFtp:
     def retrbinary(self, command, callback):
         name = command.removeprefix("RETR ")
         self.events.append(("RETR", name))
+        if name == self.fail_retr:
+            raise OSError("simulated RETR transport failure")
+        if name not in self.remote:
+            raise ftplib.error_perm("550 file not found")
         data = self.remote[name]
         callback(data + b"drift" if name == self.readback_drift else data)
+
+    def delete(self, name):
+        self.events.append(("DELE", name))
+        if name == self.fail_delete:
+            raise OSError("simulated retired-path delete failure")
+        if name not in self.remote:
+            raise ftplib.error_perm("550 file not found")
+        del self.remote[name]
 
 
 class DeployProtocolTests(unittest.TestCase):
@@ -139,7 +162,17 @@ class DeployProtocolTests(unittest.TestCase):
         )
 
     def run_release_phase(
-        self, temporary, ftp, activation_gate, phase, *, dry_run=False
+        self,
+        temporary,
+        ftp,
+        activation_gate,
+        phase,
+        *,
+        dry_run=False,
+        capture_rollback=False,
+        restore_rollback=False,
+        omit_rollback=False,
+        rollback_parent=None,
     ):
         site_root = ROOT / "sites" / "multiagentmemory.com"
         _snapshot, zip_bytes, manifest, _qualification = (
@@ -152,6 +185,36 @@ class DeployProtocolTests(unittest.TestCase):
         manifest_path.write_bytes(
             package_multiagentmemory_static_site.manifest_bytes(manifest)
         )
+        rollback_parent = rollback_parent or temporary
+        rollback_package_path = rollback_parent / "multiagentmemory-prior-state.zip"
+        rollback_manifest_path = (
+            rollback_parent / "multiagentmemory-prior-state.manifest.json"
+        )
+        if (
+            not capture_rollback
+            and not omit_rollback
+            and not rollback_package_path.exists()
+        ):
+            fields, _profile = self.static_profile_fields()
+            target_binding = multiagentmemory_static_site_rollback.build_target_binding(
+                target_domain="multiagentmemory.com",
+                protocol="ftps",
+                credential_source="filezilla_site_manager",
+                profile_selector="multiagentmemory",
+                host=fields["ftp server"],
+                port=21,
+                user=fields["ftp username"],
+                remote_dir=".",
+            )
+            managed_paths = manifest["rollbackPolicy"]["managedPaths"]
+            prior_state = {path: ftp.remote.get(path) for path in managed_paths}
+            multiagentmemory_static_site_rollback.write_rollback_pair(
+                rollback_package_path,
+                rollback_manifest_path,
+                prior_state,
+                manifest,
+                target_binding,
+            )
         with (
             patch.object(
                 ftp_deploy_static_site,
@@ -179,8 +242,21 @@ class DeployProtocolTests(unittest.TestCase):
                 "--json-out",
                 str(report_path),
             ]
+            if not omit_rollback:
+                arguments.extend(
+                    [
+                        "--rollback-package",
+                        str(rollback_package_path),
+                        "--rollback-manifest",
+                        str(rollback_manifest_path),
+                    ]
+                )
             if dry_run:
                 arguments.insert(0, "--dry-run")
+            if capture_rollback:
+                arguments.insert(0, "--capture-rollback")
+            if restore_rollback:
+                arguments.insert(0, "--restore-rollback")
             exit_code = ftp_deploy_static_site.main(arguments)
         return exit_code, json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -1508,18 +1584,28 @@ Password: multi-secret
             set(package_multiagentmemory_static_site.ALLOWED_SITE_FILES)
             - set(claim_paths)
         )
+        managed_paths = sorted(
+            [
+                *package_multiagentmemory_static_site.ALLOWED_SITE_FILES,
+                *multiagentmemory_release_identity.RETIRED_SITE_PATHS,
+            ]
+        )
         self.assertEqual(0, stage_exit)
         self.assertEqual("nonclaims_staged_preactivation", stage_report["status"])
         self.assertEqual(10, stage_report["uploadedCount"])
-        self.assertEqual(10, stage_report["readbackVerifiedCount"])
+        self.assertEqual(27, stage_report["readbackVerifiedCount"])
+        self.assertTrue(stage_report["rollbackPriorStateQualified"])
         self.assertEqual(0, stage_report["claimUploadedCount"])
         self.assertFalse(stage_report["claimsExposed"])
         self.assertEqual(
-            [("STOR", path) for path in non_claim_paths]
+            [("RETR", path) for path in managed_paths]
+            + [("STOR", path) for path in non_claim_paths]
             + [("RETR", path) for path in non_claim_paths],
             stage_events,
         )
-        self.assertFalse(any(path in claim_paths for _verb, path in stage_events))
+        self.assertFalse(
+            any(verb == "STOR" and path in claim_paths for verb, path in stage_events)
+        )
 
         self.assertEqual(0, final_exit)
         self.assertEqual("claims_activated_final", final_report["status"])
@@ -1530,111 +1616,580 @@ Password: multi-secret
         self.assertEqual(10, final_report["nonClaimReadbackCount"])
         self.assertEqual(6, final_report["claimUploadedCount"])
         self.assertEqual(6, final_report["claimReadbackCount"])
+        self.assertEqual(1, final_report["retiredAbsentVerifiedCount"])
+        self.assertTrue(final_report["rollbackKnownStateQualified"])
         final_events = ftp.events[len(stage_events) :]
         self.assertEqual(
             [("RETR", path) for path in non_claim_paths]
+            + [("RETR", path) for path in managed_paths]
             + [
                 event
                 for path in claim_paths
                 for event in (("STOR", path), ("RETR", path))
-            ],
+            ]
+            + [("RETR", "releases.html"), ("RETR", "releases.html")],
             final_events,
         )
-        self.assertEqual(
-            [
-                ("STOR", "releases/index.html"),
-                ("RETR", "releases/index.html"),
-                ("STOR", "releases.json"),
-                ("RETR", "releases.json"),
-            ],
-            final_events[-4:],
+
+    def test_static_rollback_capture_is_stable_target_bound_and_canonical(self):
+        ftp = TruthOrderedFtp()
+        ftp.remote.update(
+            {
+                "index.html": b"prior index",
+                "releases.html": b"retired legacy page",
+            }
         )
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            exit_code, report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+                capture_rollback=True,
+            )
+            rollback_package = temporary / "multiagentmemory-prior-state.zip"
+            rollback_manifest = temporary / "multiagentmemory-prior-state.manifest.json"
+            release_manifest = json.loads(
+                (temporary / "multiagentmemory-site-v1.0.0.manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual("rollback_prior_state_captured", report["status"])
+            self.assertEqual(34, report["readbackAttemptedCount"])
+            self.assertEqual(34, report["readbackVerifiedCount"])
+            self.assertEqual(0, report["remoteMutationAttemptedCount"])
+            self.assertFalse(report["safeNoOp"])
+            self.assertTrue(report["remoteSafeNoOp"])
+            self.assertEqual(2, report["rollback"]["priorPresentCount"])
+            self.assertEqual(15, report["rollback"]["priorAbsentCount"])
+            self.assertTrue(rollback_package.is_file())
+            self.assertTrue(rollback_manifest.is_file())
+            self.assertFalse(
+                any(verb in {"STOR", "DELE"} for verb, _path in ftp.events)
+            )
+
+            verified = multiagentmemory_static_site_rollback.verify_rollback_pair(
+                rollback_package,
+                rollback_manifest,
+                release_manifest,
+                report["targetBinding"],
+            )
+            self.assertEqual(b"prior index", verified["priorState"]["index.html"])
+            self.assertEqual(
+                b"retired legacy page",
+                verified["priorState"]["releases.html"],
+            )
+
+            wrong_binding = multiagentmemory_static_site_rollback.build_target_binding(
+                target_domain="multiagentmemory.com",
+                protocol="ftps",
+                credential_source="filezilla_site_manager",
+                profile_selector="multiagentmemory",
+                host="other-target.invalid",
+                port=21,
+                user="static-user",
+                remote_dir=".",
+            )
+            with self.assertRaises(
+                multiagentmemory_static_site_rollback.RollbackArtifactError
+            ) as mismatch:
+                multiagentmemory_static_site_rollback.verify_rollback_pair(
+                    rollback_package,
+                    rollback_manifest,
+                    release_manifest,
+                    wrong_binding,
+                )
+            self.assertEqual(
+                "rollback_target_binding_mismatch", mismatch.exception.code
+            )
+
+            canonical_manifest_bytes = rollback_manifest.read_bytes()
+            parsed_manifest = json.loads(canonical_manifest_bytes.decode("utf-8"))
+            rollback_manifest.write_text(
+                json.dumps(parsed_manifest, indent=2), encoding="utf-8"
+            )
+            with self.assertRaises(
+                multiagentmemory_static_site_rollback.RollbackArtifactError
+            ) as rewritten:
+                multiagentmemory_static_site_rollback.verify_rollback_pair(
+                    rollback_package,
+                    rollback_manifest,
+                    release_manifest,
+                    report["targetBinding"],
+                )
+            self.assertEqual(
+                "rollback_manifest_not_canonical", rewritten.exception.code
+            )
+            rollback_manifest.write_bytes(canonical_manifest_bytes)
+
+            archive_bytes = rollback_package.read_bytes() + b"trailing bytes"
+            rollback_package.write_bytes(archive_bytes)
+            rebound_manifest = json.loads(rollback_manifest.read_text(encoding="utf-8"))
+            rebound_manifest["archive"]["bytes"] = len(archive_bytes)
+            rebound_manifest["archive"]["sha256"] = hashlib.sha256(
+                archive_bytes
+            ).hexdigest()
+            rollback_manifest.write_bytes(
+                multiagentmemory_release_identity.canonical_json_bytes(rebound_manifest)
+            )
+            with self.assertRaises(
+                multiagentmemory_static_site_rollback.RollbackArtifactError
+            ) as noncanonical:
+                multiagentmemory_static_site_rollback.verify_rollback_pair(
+                    rollback_package,
+                    rollback_manifest,
+                    release_manifest,
+                    report["targetBinding"],
+                )
+            self.assertEqual(
+                "rollback_archive_not_canonical", noncanonical.exception.code
+            )
+
+    def test_static_rollback_target_binding_rejects_remote_dir_aliases(self):
+        arguments = {
+            "target_domain": "multiagentmemory.com",
+            "protocol": "ftps",
+            "credential_source": "filezilla_site_manager",
+            "profile_selector": "multiagentmemory",
+            "host": "static-target.invalid",
+            "port": 21,
+            "user": "static-user",
+        }
+        root_binding = multiagentmemory_static_site_rollback.build_target_binding(
+            **arguments, remote_dir="."
+        )
+        nested_binding = multiagentmemory_static_site_rollback.build_target_binding(
+            **arguments, remote_dir="public_html/site"
+        )
+        self.assertNotEqual(
+            root_binding["targetBindingSha256"],
+            nested_binding["targetBindingSha256"],
+        )
+        for alias in (
+            "",
+            "/",
+            "/public_html/site",
+            "public_html/site/",
+            " public_html/site",
+            "public_html/site ",
+            "public_html\\site",
+            "public_html//site",
+            "public_html/./site",
+            "public_html/../site",
+        ):
+            with (
+                self.subTest(alias=alias),
+                self.assertRaises(
+                    multiagentmemory_static_site_rollback.RollbackArtifactError
+                ) as rejected,
+            ):
+                multiagentmemory_static_site_rollback.build_target_binding(
+                    **arguments, remote_dir=alias
+                )
+            self.assertEqual("target_remote_dir_invalid", rejected.exception.code)
+
+    def test_static_rollback_pair_race_preserves_competing_manifest(self):
+        site_root = ROOT / "sites" / "multiagentmemory.com"
+        _snapshot, _zip_bytes, release_manifest, _qualification = (
+            package_multiagentmemory_static_site.expected_package(site_root)
+        )
+        fields, _profile = self.static_profile_fields()
+        target_binding = multiagentmemory_static_site_rollback.build_target_binding(
+            target_domain="multiagentmemory.com",
+            protocol="ftps",
+            credential_source="filezilla_site_manager",
+            profile_selector="multiagentmemory",
+            host=fields["ftp server"],
+            port=21,
+            user=fields["ftp username"],
+            remote_dir=".",
+        )
+        prior_state = {
+            path: None for path in release_manifest["rollbackPolicy"]["managedPaths"]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            package_path = temporary / "prior.zip"
+            manifest_path = temporary / "prior.manifest.json"
+            competing_bytes = b"independently created artifact"
+            exclusive_write = multiagentmemory_static_site_rollback._exclusive_write
+
+            def race_manifest_write(path, data):
+                if Path(path) == manifest_path:
+                    manifest_path.write_bytes(competing_bytes)
+                    raise FileExistsError("simulated manifest publication race")
+                return exclusive_write(path, data)
+
+            with (
+                patch.object(
+                    multiagentmemory_static_site_rollback,
+                    "_exclusive_write",
+                    side_effect=race_manifest_write,
+                ),
+                self.assertRaises(FileExistsError),
+            ):
+                multiagentmemory_static_site_rollback.write_rollback_pair(
+                    package_path,
+                    manifest_path,
+                    prior_state,
+                    release_manifest,
+                    target_binding,
+                )
+
+            self.assertFalse(package_path.exists())
+            self.assertEqual(competing_bytes, manifest_path.read_bytes())
+
+    def test_static_rollback_capture_reports_exact_partial_read_counts(self):
+        managed_paths = sorted(
+            [
+                *package_multiagentmemory_static_site.ALLOWED_SITE_FILES,
+                *multiagentmemory_release_identity.RETIRED_SITE_PATHS,
+            ]
+        )
+        ftp = TruthOrderedFtp(fail_retr=managed_paths[1])
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            exit_code, report = self.run_release_phase(
+                Path(tmp),
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+                capture_rollback=True,
+            )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("rollback_capture_failed", report["status"])
+        self.assertEqual(2, report["readbackAttemptedCount"])
+        self.assertEqual(1, report["readbackVerifiedCount"])
+        self.assertEqual(0, report["remoteMutationAttemptedCount"])
+        self.assertTrue(report["remoteSafeNoOp"])
+        self.assertTrue(report["safeNoOp"])
+
+    def test_static_release_refuses_missing_rollback_artifacts_before_connection(self):
+        ftp = TruthOrderedFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            exit_code, report = self.run_release_phase(
+                Path(tmp),
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+                omit_rollback=True,
+            )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("rollback_artifacts_required", report["status"])
+        self.assertTrue(report["safeNoOp"])
+        self.assertEqual([], ftp.events)
+
+    def test_static_rollback_capture_rejects_state_change_without_remote_mutation(self):
+        class ChangingPriorFtp(TruthOrderedFtp):
+            def __init__(self):
+                super().__init__()
+                self.remote["releases.html"] = b"legacy"
+                self.legacy_reads = 0
+
+            def retrbinary(self, command, callback):
+                name = command.removeprefix("RETR ")
+                if name != "releases.html":
+                    return super().retrbinary(command, callback)
+                self.events.append(("RETR", name))
+                self.legacy_reads += 1
+                callback(self.remote[name] + str(self.legacy_reads).encode("ascii"))
+
+        ftp = ChangingPriorFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            exit_code, report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+                capture_rollback=True,
+            )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(
+                "rollback_prior_state_changed_during_capture", report["status"]
+            )
+            self.assertTrue(report["safeNoOp"])
+            self.assertEqual(0, report["remoteMutationAttemptedCount"])
+            self.assertFalse((temporary / "multiagentmemory-prior-state.zip").exists())
+            self.assertFalse(
+                (temporary / "multiagentmemory-prior-state.manifest.json").exists()
+            )
+            self.assertFalse(
+                any(verb in {"STOR", "DELE"} for verb, _path in ftp.events)
+            )
+
+    def test_static_rollback_capture_requires_preactivation_phase(self):
+        ftp = TruthOrderedFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            exit_code, report = self.run_release_phase(
+                Path(tmp),
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "final",
+                capture_rollback=True,
+            )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("rollback_capture_requires_preactivation", report["status"])
+        self.assertTrue(report["safeNoOp"])
+        self.assertEqual([], ftp.events)
+
+    def test_static_rollback_capture_refuses_to_create_artifact_parent(self):
+        ftp = TruthOrderedFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            missing_parent = temporary / "missing-parent"
+            exit_code, report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+                capture_rollback=True,
+                rollback_parent=missing_parent,
+            )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual("rollback_capture_failed", report["status"])
+            self.assertEqual("write_local_rollback_artifacts", report["failedPhase"])
+            self.assertEqual("RollbackArtifactError", report["errorType"])
+            self.assertFalse(report["localArtifactsPresent"])
+            self.assertTrue(report["remoteSafeNoOp"])
+            self.assertTrue(report["safeNoOp"])
+            self.assertFalse(missing_parent.exists())
+
+    def test_static_final_deletes_retired_path_and_restore_reinstates_prior_state(self):
+        legacy_bytes = b"retired legacy page"
+        ftp = TruthOrderedFtp()
+        ftp.remote["releases.html"] = legacy_bytes
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            final_exit, final_report = self.stage_then_activate(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+            )
+            self.assertEqual(0, final_exit)
+            self.assertEqual(1, final_report["retiredDeleteAttemptedCount"])
+            self.assertEqual(1, final_report["retiredDeletedCount"])
+            self.assertEqual(1, final_report["retiredAbsentVerifiedCount"])
+            self.assertNotIn("releases.html", ftp.remote)
+            self.assertEqual(
+                [
+                    ("RETR", "releases.html"),
+                    ("DELE", "releases.html"),
+                    ("RETR", "releases.html"),
+                ],
+                ftp.events[-3:],
+            )
+
+            restore_event_offset = len(ftp.events)
+            restore_exit, restore_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-10"),
+                "final",
+                restore_rollback=True,
+            )
+            restore_events = ftp.events[restore_event_offset:]
+
+        self.assertEqual(0, restore_exit)
+        self.assertEqual("rollback_restored", restore_report["status"])
+        self.assertTrue(restore_report["rollbackRestored"])
+        self.assertEqual(1, restore_report["uploadedCount"])
+        self.assertEqual(16, restore_report["deletedCount"])
+        self.assertEqual(17, restore_report["remoteMutationAttemptedCount"])
+        self.assertFalse(restore_report["safeNoOp"])
+        self.assertEqual({"releases.html": legacy_bytes}, ftp.remote)
+        self.assertLess(
+            restore_events.index(("STOR", "releases.html")),
+            next(
+                index
+                for index, event in enumerate(restore_events)
+                if event[0] == "DELE"
+            ),
+        )
+
+    def test_static_rollback_counts_directory_creation_as_remote_mutation(self):
+        class DirectoryTrackingFtp(TruthOrderedFtp):
+            def mkd(self, path):
+                self.events.append(("MKD", path))
+
+        prior_path = "docs/api-reference.html"
+        prior_bytes = b"prior nested page"
+        ftp = DirectoryTrackingFtp()
+        ftp.remote[prior_path] = prior_bytes
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            final_exit, _final_report = self.stage_then_activate(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+            )
+            self.assertEqual(0, final_exit)
+            restore_event_offset = len(ftp.events)
+            restore_exit, restore_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-10"),
+                "final",
+                restore_rollback=True,
+            )
+            restore_events = ftp.events[restore_event_offset:]
+
+        self.assertEqual(0, restore_exit)
+        self.assertEqual("rollback_restored", restore_report["status"])
+        self.assertEqual(1, restore_report["directoryCreateAttemptedCount"])
+        self.assertEqual(1, restore_report["directoryCreatedCount"])
+        self.assertEqual(17, restore_report["remoteMutationAttemptedCount"])
+        self.assertEqual(17, restore_report["remoteMutationCompletedCount"])
+        self.assertEqual(prior_bytes, ftp.remote[prior_path])
+        self.assertLess(
+            restore_events.index(("MKD", "docs")),
+            restore_events.index(("STOR", prior_path)),
+        )
+
+    def test_static_retired_delete_failure_reports_exact_partial_state(self):
+        ftp = TruthOrderedFtp(fail_delete="releases.html")
+        ftp.remote["releases.html"] = b"retired legacy page"
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            exit_code, report = self.stage_then_activate(
+                Path(tmp),
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+            )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual(
+            "retired_path_deletion_failed_partial_possible", report["status"]
+        )
+        self.assertTrue(report["claimsExposed"])
+        self.assertEqual(6, report["claimUploadedCount"])
+        self.assertEqual(6, report["claimReadbackCount"])
+        self.assertEqual(1, report["retiredDeleteAttemptedCount"])
+        self.assertEqual(0, report["retiredDeletedCount"])
+        self.assertEqual(0, report["retiredAbsentVerifiedCount"])
+        self.assertFalse(report["safeNoOp"])
+        self.assertEqual(b"retired legacy page", ftp.remote["releases.html"])
+
+    def test_static_unknown_remote_state_blocks_claims_and_rollback_without_mutation(
+        self,
+    ):
+        ftp = TruthOrderedFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            stage_exit, _stage_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "preactivation",
+            )
+            self.assertEqual(0, stage_exit)
+            unknown_path = multiagentmemory_release_identity.RELEASE_CLAIM_PATHS[0]
+            ftp.remote[unknown_path] = b"unrecognized remote bytes"
+            before_final_events = len(ftp.events)
+            final_exit, final_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                "final",
+            )
+            final_events = ftp.events[before_final_events:]
+            self.assertEqual(1, final_exit)
+            self.assertEqual(
+                "final_preclaim_gate_failed_no_claims", final_report["status"]
+            )
+            self.assertFalse(final_report["claimsExposed"])
+            self.assertFalse(final_report["rollbackKnownStateQualified"])
+            self.assertTrue(final_report["safeNoOp"])
+            self.assertFalse(
+                any(verb in {"STOR", "DELE"} for verb, _path in final_events)
+            )
+
+            before_restore_events = len(ftp.events)
+            restore_exit, restore_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-10"),
+                "final",
+                restore_rollback=True,
+            )
+            restore_events = ftp.events[before_restore_events:]
+
+        self.assertEqual(1, restore_exit)
+        self.assertEqual(
+            "rollback_current_state_unrecognized_no_mutation",
+            restore_report["status"],
+        )
+        self.assertEqual(0, restore_report["remoteMutationAttemptedCount"])
+        self.assertTrue(restore_report["safeNoOp"])
+        self.assertFalse(
+            any(verb in {"STOR", "DELE"} for verb, _path in restore_events)
+        )
+
+    def test_static_rollback_delete_failure_reports_attempted_partial_restore(self):
+        ftp = TruthOrderedFtp()
+        gate = ftp_deploy_static_site.release_activation_gate
+        with tempfile.TemporaryDirectory() as tmp:
+            temporary = Path(tmp)
+            final_exit, _final_report = self.stage_then_activate(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+            )
+            self.assertEqual(0, final_exit)
+            first_restore_path = sorted(
+                set(package_multiagentmemory_static_site.ALLOWED_SITE_FILES)
+                - set(multiagentmemory_release_identity.RELEASE_CLAIM_PATHS)
+            )[0]
+            ftp.fail_delete = first_restore_path
+            restore_exit, restore_report = self.run_release_phase(
+                temporary,
+                ftp,
+                lambda identity, utc_date=None: gate(identity, "2026-08-10"),
+                "final",
+                restore_rollback=True,
+            )
+
+        self.assertEqual(1, restore_exit)
+        self.assertEqual(
+            "rollback_restore_failed_partial_possible", restore_report["status"]
+        )
+        self.assertEqual(
+            "rollback_delete:" + first_restore_path, restore_report["failedPhase"]
+        )
+        self.assertEqual(1, restore_report["remoteMutationAttemptedCount"])
+        self.assertEqual(0, restore_report["deletedCount"])
+        self.assertEqual(0, restore_report["uploadedCount"])
+        self.assertFalse(restore_report["safeNoOp"])
 
     def test_static_first_stor_failure_after_send_reports_partial_mutation_not_safe_noop(
         self,
     ):
-        class FailingFtp:
-            def __init__(self):
-                self.remote_received = []
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def cwd(self, _path):
-                return None
-
-            def mkd(self, _path):
-                return None
-
-            def storbinary(self, command, handle):
-                self.remote_received.append((command, handle.read()))
-                raise OSError("simulated failure after remote bytes were consumed")
-
-        site_root = ROOT / "sites" / "multiagentmemory.com"
-        snapshot = package_multiagentmemory_static_site.capture_site_snapshot(
-            site_root, require_complete=True
-        )
         activation_gate = ftp_deploy_static_site.release_activation_gate
-        failing_ftp = FailingFtp()
+        first_nonclaim = ".well-known/ai-agent.json"
+        failing_ftp = TruthOrderedFtp(fail_after_store=first_nonclaim)
         with tempfile.TemporaryDirectory() as tmp:
-            package_path = Path(tmp) / "multiagentmemory-site-v1.0.0.zip"
-            manifest_path = Path(tmp) / "multiagentmemory-site-v1.0.0.manifest.json"
-            report_path = Path(tmp) / "deploy-report.json"
-            self.assertEqual(
-                0,
-                package_multiagentmemory_static_site.main(
-                    [
-                        "--write",
-                        "--phase",
-                        "preactivation",
-                        "--site-root",
-                        str(site_root),
-                        "--package",
-                        str(package_path),
-                        "--manifest",
-                        str(manifest_path),
-                        "--expected-site-aggregate-sha256",
-                        snapshot["manifest"]["aggregateSha256"],
-                    ]
-                ),
+            exit_code, report = self.run_release_phase(
+                Path(tmp),
+                failing_ftp,
+                lambda identity, utc_date=None: activation_gate(identity, "2026-08-09"),
+                "preactivation",
             )
-            with (
-                patch.object(
-                    ftp_deploy_static_site,
-                    "load_filezilla_site",
-                    return_value=self.static_profile_fields(),
-                ),
-                patch.object(
-                    ftp_deploy_static_site,
-                    "release_activation_gate",
-                    side_effect=lambda ledger, utc_date=None: activation_gate(
-                        ledger, "2026-08-09"
-                    ),
-                ),
-                patch.object(
-                    ftp_deploy_static_site, "connect_ftp", return_value=failing_ftp
-                ),
-            ):
-                exit_code = ftp_deploy_static_site.main(
-                    [
-                        "--phase",
-                        "preactivation",
-                        "--site-root",
-                        str(site_root),
-                        "--package",
-                        str(package_path),
-                        "--package-manifest",
-                        str(manifest_path),
-                        "--filezilla-site-match",
-                        "multiagentmemory",
-                        "--json-out",
-                        str(report_path),
-                    ]
-                )
-            report = json.loads(report_path.read_text(encoding="utf-8"))
 
         self.assertEqual(1, exit_code)
         self.assertEqual(
@@ -1643,8 +2198,8 @@ Password: multi-secret
         self.assertEqual(0, report["uploadedCount"])
         self.assertEqual(1, report["uploadAttemptedCount"])
         self.assertFalse(report["safeNoOp"])
-        self.assertEqual(1, len(failing_ftp.remote_received))
-        self.assertGreater(len(failing_ftp.remote_received[0][1]), 0)
+        self.assertIn(("STOR", first_nonclaim), failing_ftp.events)
+        self.assertGreater(len(failing_ftp.remote[first_nonclaim]), 0)
 
     def test_static_preactivation_readback_drift_blocks_all_release_claims(self):
         ftp = TruthOrderedFtp(readback_drift=".well-known/ai-agent.json")
@@ -1665,8 +2220,9 @@ Password: multi-secret
         self.assertFalse(report["claimsExposed"])
         self.assertFalse(
             any(
-                path in multiagentmemory_release_identity.RELEASE_CLAIM_PATHS
-                for _verb, path in ftp.events
+                verb == "STOR"
+                and path in multiagentmemory_release_identity.RELEASE_CLAIM_PATHS
+                for verb, path in ftp.events
             )
         )
 
@@ -1784,7 +2340,7 @@ Password: multi-secret
         self.assertEqual("claims_activated_activation_date_changed", report["status"])
         self.assertTrue(report["sourceTagPublished"])
         self.assertTrue(report["claimsExposed"])
-        self.assertEqual(16, report["readbackVerifiedCount"])
+        self.assertEqual(35, report["readbackVerifiedCount"])
         self.assertFalse(report["safeNoOp"])
 
     def test_filezilla_site_loader_returns_redacted_report(self):

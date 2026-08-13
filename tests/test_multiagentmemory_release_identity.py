@@ -510,6 +510,26 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
             )
             original_manifest_bytes = site_package.manifest_bytes(manifest)
             self.assertEqual(release_identity.RELEASE_IDENTITY_FIELDS, set(manifest))
+            self.assertEqual(
+                ["releases.html"],
+                manifest["cutoverPolicy"]["finalRetiredPathDeleteOrder"],
+            )
+            self.assertEqual(
+                ["releases.html"],
+                manifest["cutoverPolicy"]["finalRetiredPathVerificationPaths"],
+            )
+            self.assertEqual(
+                sorted(
+                    [
+                        *site_package.ALLOWED_SITE_FILES,
+                        *release_identity.RETIRED_SITE_PATHS,
+                    ]
+                ),
+                manifest["rollbackPolicy"]["managedPaths"],
+            )
+            self.assertTrue(
+                manifest["rollbackPolicy"]["restorePresentBeforeAbsentRequired"]
+            )
             self.assertFalse(prequalification["localTagPresent"])
             self.assertEqual(
                 self.fixture.head,
@@ -526,6 +546,17 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
             def fake_fetch(base_url, relative, opener=None):
                 self.assertEqual(verify_static_site.CANONICAL_LIVE_BASE_URL, base_url)
                 requested.append(relative)
+                if relative in release_identity.RETIRED_SITE_PATHS:
+                    return {
+                        "status": 404,
+                        "data": b"not found",
+                        "errorType": "HTTPError",
+                        "requestedUrl": base_url
+                        + verify_static_site.live_route_for(relative),
+                        "finalUrl": None,
+                        "canonicalFinalUrl": False,
+                        "mediaType": None,
+                    }
                 return {
                     "status": 200,
                     "data": (self.fixture.site_root / relative).read_bytes(),
@@ -592,12 +623,121 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
                         [*base, "--phase", release_identity.FINAL_PHASE]
                     ),
                 )
-                self.assertEqual(list(site_package.ALLOWED_SITE_FILES), requested)
+                self.assertEqual(
+                    [
+                        *site_package.ALLOWED_SITE_FILES,
+                        *release_identity.RETIRED_SITE_PATHS,
+                    ],
+                    requested,
+                )
                 final_report = json.loads(report_path.read_text(encoding="utf-8"))
                 self.assertEqual(16, final_report["fileCount"])
                 self.assertEqual(6, final_report["claimFileCount"])
+                self.assertEqual(1, final_report["retiredRouteCount"])
+                self.assertEqual(1, final_report["retiredRouteVerifiedCount"])
                 self.assertTrue(final_report["claimsVerified"])
                 self.fixture.push_release_source()
+
+    def test_final_live_verifier_rejects_retired_route_content_and_redirects(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            self.qualifier_patch(),
+            patch("builtins.print"),
+        ):
+            temporary = Path(tmp)
+            _snapshot, zip_bytes, manifest, _qualification = (
+                site_package.expected_package(
+                    self.fixture.site_root,
+                    repo_root=self.fixture.repository,
+                )
+            )
+            package_path = temporary / "multiagentmemory-site-v1.0.0.zip"
+            manifest_path = temporary / "multiagentmemory-site-v1.0.0.manifest.json"
+            package_path.write_bytes(zip_bytes)
+            manifest_path.write_bytes(site_package.manifest_bytes(manifest))
+            self.fixture.tag_local()
+            self.fixture.push_tag()
+            activation_gate = verify_static_site.live_activation_gate
+
+            def current_gate(identity, utc_date=None):
+                return activation_gate(identity, "2026-08-09")
+
+            for name, retired_status, error_type in (
+                ("legacy-content", 200, None),
+                ("redirect", 301, "HTTPError"),
+            ):
+                with self.subTest(name=name):
+                    report_path = temporary / f"retired-{name}.json"
+
+                    def fake_fetch(base_url, relative, opener=None):
+                        route = verify_static_site.live_route_for(relative)
+                        if relative in release_identity.RETIRED_SITE_PATHS:
+                            return {
+                                "status": retired_status,
+                                "data": b"legacy or redirect response",
+                                "errorType": error_type,
+                                "requestedUrl": base_url + route,
+                                "finalUrl": (
+                                    base_url + "/releases/"
+                                    if retired_status == 200
+                                    else None
+                                ),
+                                "canonicalFinalUrl": retired_status == 200,
+                                "mediaType": (
+                                    "text/html" if retired_status == 200 else None
+                                ),
+                            }
+                        return {
+                            "status": 200,
+                            "data": (self.fixture.site_root / relative).read_bytes(),
+                            "errorType": None,
+                            "requestedUrl": base_url + route,
+                            "finalUrl": base_url + route,
+                            "canonicalFinalUrl": True,
+                            "mediaType": verify_static_site.EXPECTED_MEDIA_TYPES[
+                                relative
+                            ],
+                        }
+
+                    with (
+                        patch.object(
+                            verify_static_site,
+                            "fetch_live",
+                            side_effect=fake_fetch,
+                        ),
+                        patch.object(
+                            verify_static_site,
+                            "live_activation_gate",
+                            side_effect=current_gate,
+                        ),
+                    ):
+                        exit_code = verify_static_site.main(
+                            [
+                                "--base-url",
+                                verify_static_site.CANONICAL_LIVE_BASE_URL,
+                                "--repo-root",
+                                str(self.fixture.repository),
+                                "--site-root",
+                                str(self.fixture.site_root),
+                                "--package",
+                                str(package_path),
+                                "--package-manifest",
+                                str(manifest_path),
+                                "--phase",
+                                release_identity.FINAL_PHASE,
+                                "--json-out",
+                                str(report_path),
+                            ]
+                        )
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                    retired = report["retiredRouteItems"][0]
+                    self.assertEqual(1, exit_code)
+                    self.assertEqual("live_route_verification_failed", report["status"])
+                    self.assertEqual(1, report["retiredRouteCount"])
+                    self.assertEqual(0, report["retiredRouteVerifiedCount"])
+                    self.assertFalse(retired["ordinaryNotFound"])
+                    self.assertFalse(retired["noRedirectVerified"])
+                    self.assertFalse(retired["verified"])
 
     def test_premature_tag_blocks_live_network_before_any_request(self):
         with tempfile.TemporaryDirectory() as tmp, self.qualifier_patch():
@@ -786,7 +926,7 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
         ]
         verify_commands = [line for line in commands if "verify_static_site.py" in line]
         self.assertEqual(4, len(package_commands))
-        self.assertEqual(4, len(deploy_commands))
+        self.assertEqual(6, len(deploy_commands))
         self.assertEqual(3, len(verify_commands))
 
         package_modes = set()
@@ -821,6 +961,8 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
             else:
                 self.assertTrue(parsed.package)
                 self.assertTrue(parsed.package_manifest)
+                self.assertTrue(parsed.rollback_package)
+                self.assertTrue(parsed.rollback_manifest)
                 self.assertEqual(".", parsed.repo_root)
                 deploy_phases.append(parsed.phase)
                 if parsed.dry_run:
@@ -829,6 +971,8 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
             [
                 release_identity.PREACTIVATION_PHASE,
                 release_identity.PREACTIVATION_PHASE,
+                release_identity.PREACTIVATION_PHASE,
+                release_identity.FINAL_PHASE,
                 release_identity.FINAL_PHASE,
             ],
             deploy_phases,
@@ -858,6 +1002,8 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
             if "ftp_deploy_static_site.py" in command
             and "--dry-run" not in command
             and "--connection-check" not in command
+            and "--capture-rollback" not in command
+            and "--restore-rollback" not in command
         ]
         self.assertEqual(2, len(live_uploads))
         self.assertTrue(all("--package" in line for line in live_uploads))
@@ -887,17 +1033,21 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
             "### 1. Render, test, and commit locally only",
             "### 2. Build one immutable package in preactivation",
             "### 3. Prove only the FTPS target",
-            "### 4. Stage only non-claim bytes",
-            "### 5. Prove the ten staged routes over canonical HTTPS",
-            "### 6. Requalify immediately before creating the tag",
-            "### 7. Publish the exact annotated tag, then prove final identity",
-            "### 8. Activate only the six claim paths",
-            "### 9. Prove all 16 canonical HTTPS routes",
-            "### 10. Advance `main` last",
+            "### 4. Capture one target-bound prior state",
+            "### 5. Stage only non-claim bytes",
+            "### 6. Prove the ten staged routes over canonical HTTPS",
+            "### 7. Requalify immediately before creating the tag",
+            "### 8. Publish the exact annotated tag, then prove final identity",
+            "### 9. Activate the six claim paths, then retire the old path",
+            "### 10. Prove all 16 canonical routes and the retired-route 404",
+            "### 11. Advance `main` last",
         )
         positions = [section.index(heading) for heading in step_headings]
         self.assertEqual(sorted(positions), positions)
-        self.assertEqual(10, sum(section.count(heading) for heading in step_headings))
+        self.assertEqual(11, sum(section.count(heading) for heading in step_headings))
+        rollback_capture = section.index(
+            "ftp_deploy_static_site.py --capture-rollback --phase preactivation"
+        )
         preactivation_stage = section.index(
             "ftp_deploy_static_site.py --phase preactivation"
         )
@@ -918,6 +1068,7 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
         )
         push_main = section.index('git push origin "${SOURCE_COMMIT}:refs/heads/main"')
 
+        self.assertLess(rollback_capture, preactivation_stage)
         self.assertLess(preactivation_stage, preactivation_live)
         self.assertLess(preactivation_live, pretag_requalification)
         self.assertLess(pretag_requalification, create_tag)
@@ -935,6 +1086,10 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
         self.assertIn("`nonclaims_live_verified_preactivation`", section)
         self.assertIn("`claims_activated_final`", section)
         self.assertIn("`full_live_verified_final`", section)
+        self.assertIn("retired `/releases.html`", section)
+        self.assertIn("ordinary HTTPS `404`", section)
+        self.assertIn("`rollback_prior_state_captured`", section)
+        self.assertIn("`rollback_current_state_unrecognized_no_mutation`", section)
         for obsolete_status in (
             "`activated_preactivation`",
             "`preactivation_live_verified`",

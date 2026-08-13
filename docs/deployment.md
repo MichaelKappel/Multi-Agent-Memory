@@ -95,7 +95,7 @@ Do not claim live dogfooding until the live authenticated MATM workflow is verif
 
 MultiAgentMemory.com is a static documentation companion site, not the Python WSGI endpoint. Its source lives in `sites/multiagentmemory.com/`.
 
-The companion release uses one immutable ZIP and one adjacent external release-identity JSON file through two explicit phases. The deterministic ZIP contains exactly the 16 allowlisted public files and no embedded manifest. The external JSON contains the nested site and package manifests, describes and hashes the ZIP, and binds a clean local commit, the canonical **required** annotated tag name/ref/URL/target, the preactivation remote-`main` lease, release-ledger hash, site aggregate, ZIP hash, website version, UTC activation date, and closed cutover order. Preactivation proves the required tag is absent locally and remotely. Final qualification parses the annotated tag object's own headers and proves the local and remote tag objects are identical and target the bound commit. Observed tag state is phase evidence; it is not embedded as a false preactivation claim in the immutable identity.
+The companion release uses one immutable ZIP and one adjacent external release-identity JSON file through two explicit phases. The deterministic ZIP contains exactly the 16 allowlisted public files and no embedded manifest. The external JSON contains the nested site and package manifests, describes and hashes the ZIP, and binds a clean local commit, the canonical **required** annotated tag name/ref/URL/target, the preactivation remote-`main` lease, release-ledger hash, site aggregate, ZIP hash, website version, UTC activation date, closed cutover order, retired-path contract, and rollback policy. Preactivation proves the required tag is absent locally and remotely. Final qualification parses the annotated tag object's own headers and proves the local and remote tag objects are identical and target the bound commit. Observed tag state is phase evidence; it is not embedded as a false preactivation claim in the immutable identity.
 
 The public `releases.json` ledger contains only deployed or withdrawn records. Source review, package inspection, and failed attempts remain private operational evidence. Never create a public predeployment ledger row, move a tag, recreate a tag, force-push a release tag, or publish `main` before live activation.
 
@@ -145,7 +145,19 @@ This target-only check resolves the target profile and remote directory. It perf
 py -3 scripts\ftp_deploy_static_site.py --connection-check --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-deploy-connection-check-latest.json
 ```
 
-### 4. Stage only non-claim bytes
+### 4. Capture one target-bound prior state
+
+Before the first STOR, capture the prior state of all 16 package paths plus retired `releases.html`. Capture uses two complete FTPS RETR passes and requires byte-for-byte stable results, including stable absence. It performs no remote mutation. The resulting ignored ZIP contains only prior-present public static bytes; the adjacent closed manifest records presence or absence for every managed path and binds the artifacts to the exact forward release identity and a redacted digest of the selected FTPS target, profile, host, port, user, and remote directory.
+
+Both output paths must be new, and both parent directories must already exist; the capture command never creates artifact directories. Never overwrite, regenerate, or substitute these held artifacts after staging begins.
+
+```powershell
+py -3 scripts\ftp_deploy_static_site.py --capture-rollback --phase preactivation --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --rollback-package "dist\multiagentmemory-site-v$VERSION.prior-state.zip" --rollback-manifest "dist\multiagentmemory-site-v$VERSION.prior-state.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-rollback-capture.json
+```
+
+Continue only when the report status is `rollback_prior_state_captured`, both read passes cover all 17 identity-bound managed paths, `remoteMutationAttemptedCount` is `0`, and the target binding is verified and redacted.
+
+### 5. Stage only non-claim bytes
 
 Run only while the ledger activation date is the current UTC date. The preactivation deploy re-proves the clean source, exact commit/site/package identity, bound remote-`main` lease, complete local and remote tag absence, target binding, and activation date before mutation. It then performs STOR followed by exact RETR for only these ten non-claim paths:
 
@@ -163,12 +175,12 @@ Run only while the ledger activation date is the current UTC date. The preactiva
 It must not STOR any of the six release-claim paths during preactivation.
 
 ```powershell
-py -3 scripts\ftp_deploy_static_site.py --phase preactivation --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-nonclaim-stage.json
+py -3 scripts\ftp_deploy_static_site.py --phase preactivation --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --rollback-package "dist\multiagentmemory-site-v$VERSION.prior-state.zip" --rollback-manifest "dist\multiagentmemory-site-v$VERSION.prior-state.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-nonclaim-stage.json
 ```
 
-Continue only when the report status is `nonclaims_staged_preactivation`, `claimsExposed` is `false`, `uploadedCount` and `readbackVerifiedCount` are both `10`, and the release-identity digest matches the immutable external manifest. Any attempted STOR is possible remote mutation; record a partial failure truthfully and do not substitute new bytes.
+The controller first proves that every managed remote path still exactly matches the held prior state, then stages the ten non-claims. Continue only when the report status is `nonclaims_staged_preactivation`, `rollbackPriorStateQualified` is `true`, `claimsExposed` is `false`, `uploadedCount`, `nonClaimUploadedCount`, and `nonClaimReadbackCount` are all `10`, and the release-identity and rollback digests match the held artifacts. Any attempted STOR is possible remote mutation; record a partial failure truthfully and do not substitute new bytes.
 
-### 5. Prove the ten staged routes over canonical HTTPS
+### 6. Prove the ten staged routes over canonical HTTPS
 
 The preactivation verifier accepts exactly `https://multiagentmemory.com` as its base origin. It rejects HTTP, alternate hosts, user info, ports, paths, queries, fragments, redirects, final-origin drift, non-200 responses, wrong media types, and byte drift. It re-proves tag absence and the bound package/source identity before and after downloading exactly the ten non-claim routes. It does not request a release-claim route.
 
@@ -178,15 +190,15 @@ py -3 scripts\verify_static_site.py --base-url https://multiagentmemory.com --ph
 
 Continue only when the status is `nonclaims_live_verified_preactivation`, `fileCount` and `nonClaimFileCount` are both `10`, `claimFileCount` is `0`, `claimsVerified` is `false`, and the UTC activation gate remains true. This proves that the verifier did not request a claim route; it does not infer the state of unrequested remote routes.
 
-### 6. Requalify immediately before creating the tag
+### 7. Requalify immediately before creating the tag
 
 After the ten-route HTTPS proof and immediately before the first tag command, run the release dry run against the unchanged artifacts. This is the last pre-tag source/package/remote-`main` lease/UTC requalification. It performs no upload. Any failure or any intervening source, package, remote-main, tag, or UTC change stops this release attempt.
 
 ```powershell
-py -3 scripts\ftp_deploy_static_site.py --dry-run --phase preactivation --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-pretag-requalification.json
+py -3 scripts\ftp_deploy_static_site.py --dry-run --phase preactivation --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --rollback-package "dist\multiagentmemory-site-v$VERSION.prior-state.zip" --rollback-manifest "dist\multiagentmemory-site-v$VERSION.prior-state.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-pretag-requalification.json
 ```
 
-### 7. Publish the exact annotated tag, then prove final identity
+### 8. Publish the exact annotated tag, then prove final identity
 
 Create the canonical annotated tag on the already-bound commit and push **the tag before `main`**. Lightweight tags are forbidden. Never use `--force`, and never move, delete, or recreate a release tag.
 
@@ -200,9 +212,9 @@ py -3 scripts\package_multiagentmemory_static_site.py --verify --phase final --r
 
 Final qualification requires an annotated local tag object whose internal `object`, `type`, and `tag` headers bind the exact commit, declare `type commit`, and name `$TAG`. It also requires both remote raw tag-object and peeled `^{}` records, byte-identical local and remote tag objects, and exact commit/site/package identity. The ZIP and external manifest remain byte-identical across both phases.
 
-### 8. Activate only the six claim paths
+### 9. Activate the six claim paths, then retire the old path
 
-The final deploy first RETRs all ten already-staged non-claim paths and requires exact package bytes. It then rechecks the bound source/package/tag identity and UTC activation date immediately before the first claim STOR. Only then does it STOR and RETR the six claims in this canonical order:
+The final deploy first RETRs all ten already-staged non-claim paths and requires exact package bytes. It then reads all 17 managed paths and rejects any byte state outside the held prior state and the immutable forward release. Next it rechecks the bound source/package/tag/rollback identity and UTC activation date immediately before the first claim STOR. Only then does it STOR and RETR the six claims in this canonical order:
 
 1. `ai-manifest.json`
 2. `ai.txt`
@@ -211,25 +223,25 @@ The final deploy first RETRs all ten already-staged non-claim paths and requires
 5. `releases/index.html`
 6. `releases.json`
 
-The final phase never re-STORs a non-claim path. Its last two writes are always the human release page followed by the machine ledger.
+The final phase never re-STORs a non-claim path. Its last two STORs are always the human release page followed by the machine ledger. After all six claim readbacks succeed, it deletes identity-bound retired `releases.html` if present and proves it absent by FTPS RETR. A delete or absence-verification failure is a partial activation failure and the receipt preserves exact upload, readback, delete-attempt, delete-completion, and absence-verification counts.
 
 ```powershell
-py -3 scripts\ftp_deploy_static_site.py --phase final --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-claim-activation.json
+py -3 scripts\ftp_deploy_static_site.py --phase final --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --rollback-package "dist\multiagentmemory-site-v$VERSION.prior-state.zip" --rollback-manifest "dist\multiagentmemory-site-v$VERSION.prior-state.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-claim-activation.json
 ```
 
-Continue only when the status is `claims_activated_final`, the staged non-claim readback count is `10`, the claim upload and claim readback counts are both `6`, and `claimsExposed` is `true`.
+Continue only when the status is `claims_activated_final`, `rollbackKnownStateQualified` is `true`, the staged non-claim readback count is `10`, the claim upload and claim readback counts are both `6`, `retiredAbsentVerifiedCount` is `1`, and `claimsExposed` is `true`.
 
-### 9. Prove all 16 canonical HTTPS routes
+### 10. Prove all 16 canonical routes and the retired-route 404
 
-The final verifier repeats the strict canonical-origin, no-redirect, 200-status, closed-media-type, exact-byte, tag, package, source, and UTC checks across all 16 allowlisted routes:
+The final verifier repeats the strict canonical-origin, no-redirect, 200-status, closed-media-type, exact-byte, tag, package, source, and UTC checks across all 16 allowlisted routes. It also requests identity-bound retired `/releases.html` and requires an ordinary HTTPS `404` from the exact requested URL. Content, a redirect, a shim, a tombstone, or another status fails final verification.
 
 ```powershell
 py -3 scripts\verify_static_site.py --base-url https://multiagentmemory.com --phase final --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --json-out var\reports\multiagentmemory-live-final-verification.json
 ```
 
-Continue only when the status is `full_live_verified_final`, `fileCount` is `16`, `claimFileCount` is `6`, `claimsVerified` is `true`, the local and remote annotated-tag identity is verified, and the same immutable release-identity digest is reported.
+Continue only when the status is `full_live_verified_final`, `fileCount` is `16`, `claimFileCount` is `6`, `retiredRouteCount` and `retiredRouteVerifiedCount` are both `1`, `claimsVerified` is `true`, the local and remote annotated-tag identity is verified, and the same immutable release-identity digest is reported.
 
-### 10. Advance `main` last
+### 11. Advance `main` last
 
 Only after final package qualification, final claim activation, and the full 16-route HTTPS verification return GO may the exact commit be fast-forwarded to `main`:
 
@@ -242,8 +254,18 @@ If this push is rejected because remote `main` advanced concurrently, do not mov
 ### Recovery truth
 
 - Before any STOR: correct the reported local input or target problem and rerun only if the exact package, absent-tag state, remote-main lease, and UTC date remain valid.
-- After a preactivation STOR: the report is not a safe no-op, but all six claim paths remain untouched. Re-run only the unchanged immutable package after diagnosing the stage/readback failure.
+- After a preactivation STOR: the report is not a safe no-op, but all six claim paths remain untouched. A direct rerun is allowed only if a fresh qualification proves all 17 managed paths still exactly match the held prior state. Otherwise restore and verify the held target-bound prior state first, then rerun only the unchanged immutable package while its remaining gates are still valid.
 - After ten-route HTTPS GO but before tag push: only the exact canonical annotated tag may be created. A tag collision consumes the version; never move an existing ref.
 - After tag push but before claim STOR: the tag is immutable. A final qualification or staged-byte readback failure is a release incident; do not delete or rewrite evidence and do not expose claims.
-- During claim activation: public claim state may be mixed. Record the exact partial claim position. Complete and reverify only the unchanged package within the same UTC window, or restore a separately qualified prior production identity.
+- During claim activation or retired-path deletion: public state may be mixed. Record the exact partial upload/delete position. Complete and reverify only the unchanged package within the same UTC window, or restore the held target-bound prior state.
 - After final HTTPS GO: publish only the bound commit to `main`. A rejected `main` push is coordination drift, not permission to change the release tag.
+
+Rollback never guesses. It first proves every managed remote path is exactly either its held prior state or the bound forward release state; any unknown byte returns `rollback_current_state_unrecognized_no_mutation` and blocks before mutation. It then skips paths already at prior state, restores every prior-present byte with STOR plus exact RETR before attempting any deletion, restores prior-absent paths with DELE plus an absence RETR, and finishes with a full 17-path prior-state readback. That present-before-absent order is part of the immutable release identity. The receipt reports every attempted and completed mutation. Restore deliberately remains callable after the UTC activation window has closed.
+
+After the canonical tag exists, use final qualification for recovery:
+
+```powershell
+py -3 scripts\ftp_deploy_static_site.py --restore-rollback --phase final --repo-root . --site-root sites\multiagentmemory.com --package "dist\multiagentmemory-site-v$VERSION.zip" --package-manifest "dist\multiagentmemory-site-v$VERSION.manifest.json" --rollback-package "dist\multiagentmemory-site-v$VERSION.prior-state.zip" --rollback-manifest "dist\multiagentmemory-site-v$VERSION.prior-state.manifest.json" --filezilla-site-match multiagentmemory --target-domain multiagentmemory.com --protocol ftps --json-out var\reports\multiagentmemory-rollback-restore.json
+```
+
+If recovery is required before any tag exists, use the same command with `--phase preactivation`; all preactivation source, package, absent-tag, and remote-`main` lease checks still apply. Do not use a phase inconsistent with current immutable tag state, regenerate the rollback artifacts, change the target selector, or restore over unrecognized remote bytes.
