@@ -31,11 +31,11 @@ Authoritative roots:
 
 Repository synchronization checkpoint:
 
-- LocalEndpoints `master`: clean, local/upstream/live-remote equal at `8c02d854eab30c929fc08f1fd0ac8339875333de`.
+- LocalEndpoints `master`: clean, local/upstream/live-remote equal at `103c5cb335faf1f08aea6167fd8c3d04ba261af8`.
 - RemoteEndpoints `main`: clean, local/upstream/GitHub equal at `26e7fd66f856738b22642eb32c09c0d5732846b2`.
-- Connect `desktop-csharp`: clean, local/upstream/live-remote equal at `317684dc34bd98bda5e09087e1063e094b439373`.
+- Connect `desktop-csharp`: clean, local/upstream/live-remote equal at `90b2f7c44529da30e97c92fa6d6735404e551a9d`.
 - MemoryEndpoints private `main`: clean, local/upstream equal at `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586`.
-- This public repository is clean/upstream-equal at pre-coordinator parent `7a10c84e0a6d5e8d62ebeb34dc18b2a0070687c5`. The commit containing this file must be resolved from Git because a tracked file cannot embed its own commit hash.
+- This public repository is clean/upstream-equal at pre-reconciliation parent `a6bfd122c023391dd224663432f6b011660f0647`. The commit containing this file must be resolved from Git because a tracked file cannot embed its own commit hash.
 
 ## Gate vocabulary
 
@@ -51,11 +51,11 @@ Repository synchronization checkpoint:
 
 | System | Highest exact gate | Current hard stop | Next safe action |
 | --- | --- | --- | --- |
-| LocalEndpoints.com | SOURCE/CHECKIN/PUSH GO at `8c02d854eab30c929fc08f1fd0ac8339875333de`; existing archive integrity independently verified | Formal PACKAGE/PUBLISH/DEPLOYMENT/LIVE NO-GO: archive source `1.5.261` embeds public/deployed `1.5.258`, so the validation-only controller rejects every supported target-write lane before adapter/lock | Preserve the archive; build and independently qualify a new versioned immutable successor whose source/public/release identities agree, then qualify distinct truthful forward and retained verifier contracts |
-| RemoteEndpoints.com | SOURCE/CHECKIN/PUSH GO at `26e7fd66f856738b22642eb32c09c0d5732846b2` | PACKAGE/INSTALLED/DEPLOYMENT/LIVE NO-GO: no complete target runtime, trust, immutable package, protected atomic root/controller, reload, or one-shot activation evidence | Establish the protected target/runtime/controller boundary and full production admission chain before creating one immutable package or attempt |
-| LocalEndpoint Connect | CHECKIN/PUSH current at `317684dc34bd98bda5e09087e1063e094b439373`; bounded source slices pass | Whole SOURCE/PACKAGE/SIGNING/INSTALLED/DEPLOYMENT/LIVE NO-GO: committed-byte ValidationOnly timed out before a success receipt and privacy-clean signed package authority is absent | Correct and independently qualify the ValidationOnly timeout contract, run one fresh no-retry lane, then satisfy identity/plugin/signing/package/install gates |
-| MultiAgentMemory.com | SOURCE/CHECKIN/PUSH GO for pre-coordinator parent `7a10c84e0a6d5e8d62ebeb34dc18b2a0070687c5` | PACKAGE/DEPLOYMENT/LIVE NO-GO: current FileZilla inventory has no target-bound `multiagentmemory` profile and the old package is stale | Obtain the exact target profile, rebuild and qualify from the new coordinator commit, then perform the governed tag/package/activate/live sequence |
-| MemoryEndpoints.com | SOURCE/CHECKIN/PUSH and exact clean PACKAGE GO at `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586` | DEPLOYMENT/LIVE NO-GO: connection admission returned `missing_remote_dir`, `safeNoOp=true`, `liveReady=false`, with zero mutation; production remains older | Resolve and independently bind the protected remote directory/target, rerun preflight and migration/release admission, then deploy only the unchanged exact package if every later gate passes |
+| LocalEndpoints.com | SOURCE/CHECKIN/PUSH and intrinsic PACKAGE GO at `103c5cb335faf1f08aea6167fd8c3d04ba261af8`; aligned immutable v1.5.262 archive independently verified | DEPLOYMENT/LIVE NO-GO: no current target-issued protected runtime, activation capability, retained readback, host-tool acceptance, short-lived authorization, matching credential, or protected-host preflight | Preserve the exact archive; obtain one complete independent target evidence set before its activation boundary or keep v1.5.258 live and cut a truthfully dated successor |
+| RemoteEndpoints.com | SOURCE/CHECKIN/PUSH GO at `26e7fd66f856738b22642eb32c09c0d5732846b2`; anonymous home and health routes respond | PACKAGE/INSTALLED/DEPLOYMENT/LIVE NO-GO: exact live revision is absent; production exposes Python 3.9 and a direct mutable root, while provider access requires an owner 2FA session and the trust/controller/atomic-root/reload chain is absent | Complete the provider-authenticated target inventory, then establish the supported runtime, trusted controller boundary, atomic root/baseline, immutable package, and zero-overlap reload/rollback proof |
+| LocalEndpoint Connect | Whole SOURCE GO and CHECKIN/PUSH current at `90b2f7c44529da30e97c92fa6d6735404e551a9d`; exact committed-byte ValidationOnly succeeds | PACKAGE/SIGNING/INSTALLED/DEPLOYMENT/LIVE NO-GO: ValidationOnly intentionally performed no build, signing, package, publish, or install action, and external production identities and authorities remain absent | Preserve the success receipt and satisfy shipped-binary identity, plugin closure, production signing, privacy-clean package, clean-install, and two-machine live gates independently |
+| MultiAgentMemory.com | SOURCE/CHECKIN/PUSH GO for pre-reconciliation parent `a6bfd122c023391dd224663432f6b011660f0647` | PACKAGE/DEPLOYMENT/LIVE NO-GO: no target-bound `MultiAgentMemory.com` FTPS profile or alternate mechanism exists, and the ignored historical package is stale | Obtain the exact target-bound mechanism, refresh activation truth, rebuild and qualify from the final coordinator commit, then perform the governed tag/package/rollback/activate/live sequence |
+| MemoryEndpoints.com | SOURCE/CHECKIN/PUSH and exact clean PACKAGE GO at `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586` | DEPLOYMENT/LIVE NO-GO: target-bound transport/release authority and required protected target, migration-preflight, and current-schema receipts are absent; production remains at older `81e2f2b3c6417cb05d9247414915843663a45300` | Bind valid Memory-specific transport and protected release authority, complete the required preflight and schema receipts, then deploy only the unchanged exact package if every later gate passes |
 
 Zero systems currently have DEPLOYMENT GO. No upload, activation, restart, rollback, tag, or production mutation was performed in this reconciliation.
 
@@ -63,12 +63,11 @@ Zero systems currently have DEPLOYMENT GO. No upload, activation, restart, rollb
 
 ### LocalEndpoints.com
 
-- Commit `8c02d854eab30c929fc08f1fd0ac8339875333de`, tree `e8cdeba3e68713bd9a8a4174255f2ef70ec4f275`, is clean and remote-equal.
-- Final source gates on exact bytes: 212 Python tests collected = 211 passed + one POSIX-only Windows skip; focused controller/verifier 98 collected = 97 passed + the same skip; Node 11/11; Ruff lint; 56/56 format-clean; 83/83 in-memory compile; UAI generator/manifest closure; diff and byte hygiene.
-- Existing archive: 813,171 bytes, 77 members, 1,874,668 uncompressed bytes, SHA-256 `55a1a3e49fe37fc2804e9a5b904c8f07fc68efb21c4d6228acf7b6273b15a2b0`, member-closure SHA-256 `acc918069ef33e03b16548858aa9a076cfd21c00790564d8c2b959f1a92a87d6`.
-- The archive is not forward-deployable: source version `1.5.261` and embedded public/deployed version `1.5.258` differ. No receipt, credential, runtime, preflight, or acknowledgement can waive that immutable identity mismatch.
-- The package-excluded controller is validation-only future-successor scaffolding. Supported CLI and controller target-write lanes fail before target adapter construction or lock acquisition; read-only receipt inspection is structural and non-authoritative.
-- Fresh bounded, no-proxy, GET-only comparison at `2026-08-13T10:15:55Z` using `tools/verify_live_deployment.py` (44,571 bytes; SHA-256 `b41b862fa7db85b56536d0887808743b96a28a19d36e2abdaceb3dc540a8630c`) observed live `1.5.258`: 48 passed, 55 failed, 103 total. It was comparison-only and performed no mutation.
+- Commit `103c5cb335faf1f08aea6167fd8c3d04ba261af8`, tree `21625251b8789712aa006cc0f9638f3013edd064`, is clean and remote-equal.
+- Final source gates on exact bytes: 216 Python tests collected = 215 passed + one POSIX-only Windows skip; focused controller/verifier/release-history 132 collected = 131 passed + the same skip; Node 11/11; Ruff lint; 56/56 format-clean; 83/83 in-memory compile; UAI generator/manifest closure; diff and byte hygiene.
+- Exact aligned archive `localendpoints-site-v1.5.262.zip`: 813,576 bytes, 77 members, 1,876,869 uncompressed bytes, SHA-256 `88edd3548020421078889fbae55b4048b03e3a0f19890023f0f9323da5e978df`, member-closure SHA-256 `f8a29b5ba04b6a9268e380a44c82feabd359550c82d8ba8848cf54ba8efdfd86`.
+- Source, package, public website, and authorized forward release identities all bind v1.5.262. Exact local forward verification passes 103/103; independently frozen retained v1.5.258 verification passes 59/59 live, while the forward comparison against still-live v1.5.258 passes 48/103. Both live observations were read-only.
+- Intrinsic package eligibility is GO, but no current target-issued runtime, activation capability, retained readback, host-tool acceptance, short-lived authorization, matching credential, or protected-host preflight exists. The controller has no target transport. No upload, activation, pointer mutation, restart, or other production operation occurred.
 
 ### RemoteEndpoints.com
 
@@ -76,36 +75,42 @@ Zero systems currently have DEPLOYMENT GO. No upload, activation, restart, rollb
 - Maintained source closure: 234 files, 4,978,821 bytes; 24,606-byte ordinal path/SHA ledger; SHA-256 `da0bd7fa3971fc5f4307fb0711c8a577f2df4853ea42bc443a88052f3116d542`.
 - Gates: 884 Python tests plus 45 subtests, Node 21, Ruff lint/format 136, external-cache compile, diff/fsck, and repository/UAI checks all pass.
 - Non-publishing package-input preflight is exact for 56 files / 2,029,324 bytes, allowlist SHA-256 `07ad99c6426a157a5665fff071557c4fa45bd1beb5f104079ae6de7658a88a8f`, closure SHA-256 `7fed1d52279ac73ec726df82f64c57f3040068e6107fea54e48556cf72543f87`, zero high-confidence secret findings. No package was built.
-- Anonymous production still lacks exact release/current-source proof. Current source cannot be deployed until the provider/runtime/trust/controller/atomic-root/reload chain is independently qualified.
+- Fresh anonymous production checks return HTTP 200 for `/` and `/api/health`, but `/api/version` is absent and no exact current-source release proof exists.
+- Read-only target inventory authenticates only through the historical FTPS surface. The served root selects Python 3.9, has no protected atomic release root/current baseline, and remains directly mutable. The hosting provider's supported control path requires an owner 2FA session before runtime or shell changes can be established.
+- Current source cannot be packaged or deployed until the provider-authenticated runtime, trust, protected-controller, atomic-root/baseline, immutable-package, reload, rollback, and single-use activation chain is independently qualified.
 
 ### LocalEndpoint Connect
 
-- Commit `317684dc34bd98bda5e09087e1063e094b439373`, tree `2940262df9643225b5afb093adf78baf947ddeed`, is clean and upstream-equal.
-- The AppInstaller ValidationOnly repair and bounded source gates are checked in. The later committed-byte ValidationOnly lane reached 97% without a recorded test failure but exhausted its controller timeout before JUnit, prohibited-output closure, and a success receipt.
-- That fail-closed attempt performed zero packaging or deployment. Whole SOURCE remains unaccepted; the held debug bundle and external identities are not a privacy-clean production package.
-- PACKAGE, SIGNING, INSTALLED, DEPLOYMENT, Remote live compatibility, and Memory swarm live proof remain NO-GO.
+- Commit `90b2f7c44529da30e97c92fa6d6735404e551a9d`, tree `a3ecc3b9834fade5dbb009b24042239e78715e25`, is clean and upstream/live-remote equal.
+- Exact source gates pass: full repository 1,471/1,471, focused ValidationOnly 54/54, and freshness 124/124.
+- The exact committed-byte no-retry ValidationOnly controller exits zero after 9,772.2 seconds. Pytest records 1,471 total = 1,469 passed + two intentional skips, with zero failures or errors. .NET records 3,358 total = 3,357 executed and passed + one intentional not-executed test, with zero failures.
+- The complete prohibited-output scan reports zero findings. ValidationOnly package, publish, signing, and install flags are all false; no package, signing, installation, upload, or deployment action occurred.
+- The accepted success receipt is 3,417,561 bytes at SHA-256 `60a9bf560216547df193da1a7fd88eb42ff55b0a79eca39b85c1f2759de9eb02`; its sidecar is SHA-256 `bcd3ad380329f6465b7d2971b0f39a0f17ed174ac9682b9cc7df4ef73b89ec25`, and its staged manifest is SHA-256 `2001f371ca9f5d24aa01aaf61f88430545fea5163acfcca3b4125c95195e49dc`. All 260 privacy indicators are false and all 13 recorded commands pass.
+- Whole SOURCE is GO. PACKAGE, SIGNING, INSTALLED, DEPLOYMENT, Remote live compatibility, and Memory swarm live proof remain independently NO-GO pending exact production binaries and external authorities.
 
 ### MultiAgentMemory.com and this public checkout
 
-- Pre-coordinator parent `7a10c84e0a6d5e8d62ebeb34dc18b2a0070687c5`, tree `e5a9be7df4229591ce5787a7aaa4b30b8e21cea6`, is clean and upstream-equal; 767 Python tests and the required static, Ruff, secret, boundary, and UAI gates pass.
-- It adds target-bound prior-state capture, exact rollback pairing, retired-route deletion/404 verification, and truthful partial-mutation receipts. Those are source capabilities, not deployment authority.
-- The current FileZilla inventory has no target-bound `multiagentmemory` profile. The historical site package/tag/activation state is stale and non-replayable; no package, upload, tag, or activation occurred.
+- Pre-reconciliation parent `a6bfd122c023391dd224663432f6b011660f0647`, tree `6cd38cb612f5f0508f23445331dd4968ceafe278`, is clean and upstream-equal.
+- Source includes target-bound prior-state capture, exact rollback pairing, retired-route deletion/404 verification, and truthful partial-mutation receipts. Those are source capabilities, not deployment authority.
+- The current FileZilla inventory has no profile whose exact name or host binds `MultiAgentMemory.com`, and no alternate target-bound mechanism is configured. The ignored historical package/manifest is stale and fails current release-identity closure.
+- Fresh live comparison differs on 15 of 16 canonical paths; `/releases/` and `/static/favicon.svg` are absent while the retired `/releases.html` surface remains. No package, upload, tag, activation, or production mutation occurred.
 
 ### MemoryEndpoints.com
 
 - Private commit `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586`, tree `de64c3932e14e9f93e7f086eba26aa9f607923f5`, is clean and upstream-equal.
 - Two independent builds produced the same clean package from the exact commit: 293 files, 10,506,324 bytes, SHA-256 `2ca7fe6c15f09f78554737c0d43505fc565ea4f0f2f5757f2c7baaea8f2214d3`; source revision and content hash match, secret scan reports zero hits, and the exact-SHA local WSGI verifier passes 44 routes.
-- The no-upload deployment connection check returned `missing_remote_dir`, `safeNoOp=true`, `liveReady=false`, `remoteMutationAttempted=false`, zero uploads, zero directory creation, and no restart request. No credential value was printed or persisted in source.
+- The repo-owned no-upload deployment check remains a safe no-op because no Memory-specific target binding exists. Historical note credentials fail current Memory authentication; an unrelated authenticating profile exposes no Memory build marker and therefore grants no target identity.
+- Protected deployment also requires the target-binding receipt, current migration preflight, and current-schema release receipt before the bounded deployment window. None is present, so no upload, directory creation, restart, migration, or other target mutation occurred.
 - Public production still reports older revision `81e2f2b3c6417cb05d9247414915843663a45300`. This checkout cannot prove the private commercial implementation bytes by itself; the separate private source/package evidence above is the current authority, while public discovery remains observation rather than LIVE GO.
 
 ## Ordered continuation
 
-1. Preserve all five clean pushed source revisions and the exact MemoryEndpoints package; do not rebuild or reinterpret already blocked artifacts.
-2. Resolve MemoryEndpoints' target-bound remote-directory and migration/release preflight inputs. Deploy only if the unchanged package and every protected authority remain exact; otherwise retain the safe no-op.
-3. Create a new LocalEndpoints immutable successor with matching source/public/release identities and independently executable truthful forward and retained verifier contracts.
-4. Establish RemoteEndpoints' supported runtime, trusted bootstrap/controller privilege boundary, protected atomic root/baseline, immutable package, and zero-overlap reload/rollback proof.
-5. Correct Connect's ValidationOnly timeout contract, obtain whole SOURCE acceptance, then satisfy production identity, plugin, signing, package, clean-install, and two-machine live gates.
-6. Obtain MultiAgentMemory.com's exact target profile and rebuild/requalify only from the final coordinator commit before any tag, package, or deployment action.
+1. Preserve all five clean pushed source revisions plus the exact LocalEndpoints and MemoryEndpoints packages; do not rebuild or reinterpret accepted immutable bytes.
+2. Bind valid Memory-specific transport and protected release authority, then complete the target, migration-preflight, and current-schema receipts. Deploy only if the unchanged exact package and every later gate remain valid; otherwise retain the safe no-op.
+3. Complete RemoteEndpoints' provider-authenticated target inventory and establish its supported runtime, trusted bootstrap/controller privilege boundary, protected atomic root/baseline, immutable package, and zero-overlap reload/rollback proof.
+4. Preserve Connect's exact ValidationOnly success, then satisfy shipped-binary identity, plugin closure, production signing, privacy-clean package, clean-install, and two-machine live gates independently.
+5. Obtain MultiAgentMemory.com's exact target-bound transport, refresh activation truth, and rebuild/requalify only from the final coordinator commit before any tag, package, or deployment action.
+6. For LocalEndpoints, obtain one complete target-issued evidence set before the v1.5.262 activation boundary or keep v1.5.258 live and cut a new truthfully dated successor; never deploy stale activation metadata.
 7. Prove the unattended Remote lifecycle and Memory swarm on owned fixtures only after their independent installed/deployment authorities exist; keep Demo/authenticated UI parity and private-data containment exact.
 
 ## Operating cadence
