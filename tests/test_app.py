@@ -376,7 +376,9 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("Create your human account", setup)
         self.assertIn("scripts/setup_memoryendpoints_company.py", setup)
         self.assertIn("scripts/recover_memoryendpoints_company_master.py", setup)
-        self.assertIn('--company-label "Example Company"', setup)
+        self.assertIn("setup_memoryendpoints_company.py --project-root .", setup)
+        self.assertIn("Windows user, machine, and project-folder names", setup)
+        self.assertIn("credentials still authorize access", setup)
         self.assertIn("prints only redacted confirmation", setup)
         self.assertIn('href="/agent-coordination"', setup)
         self.assertNotIn("Bearer me_", setup)
@@ -425,6 +427,38 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertTrue(setup_contract["bothOneTimeValuesPreservedAndScrubbed"])
         self.assertTrue(setup_contract["outcomeUnknownLocked"])
         self.assertTrue(setup_contract["storageAvoided"])
+
+    def test_local_setup_prefills_editable_os_labels_without_changing_authentication(self):
+        environment = {"USERNAME": "Local.User", "COMPUTERNAME": "MEMORY-PC"}
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "memoryendpoints.app.credential_system_available", return_value=True
+        ):
+            status, _headers, setup = call_app(
+                "/agent-setup", headers={"REMOTE_ADDR": "127.0.0.1"}
+            )
+
+        self.assertEqual("200 OK", status)
+        self.assertIn('name="companyLabel"', setup)
+        self.assertIn('value="MEMORY-PC"', setup)
+        self.assertIn('value="Local.User on MEMORY-PC"', setup)
+        self.assertIn('value="Multi-Agent-Memory"', setup)
+        self.assertIn("editable labels", setup)
+        self.assertIn("They do not replace authentication", setup)
+
+    def test_remote_setup_does_not_disclose_server_os_names(self):
+        environment = {"USERNAME": "Private.Local.User", "COMPUTERNAME": "PRIVATE-MACHINE"}
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "memoryendpoints.app.credential_system_available", return_value=True
+        ):
+            status, _headers, setup = call_app(
+                "/agent-setup", headers={"REMOTE_ADDR": "10.1.10.42"}
+            )
+
+        self.assertEqual("200 OK", status)
+        self.assertNotIn("Private.Local.User", setup)
+        self.assertNotIn("PRIVATE-MACHINE", setup)
+        self.assertIn('name="companyLabel"', setup)
+        self.assertIn('value=""', setup)
 
     def test_agent_setup_omits_creation_form_when_credentials_are_unavailable(self):
         with patch("memoryendpoints.app.credential_system_available", return_value=False):

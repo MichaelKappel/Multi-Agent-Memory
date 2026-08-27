@@ -1,10 +1,12 @@
 import datetime
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
 import secrets
+import socket
 from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -3507,28 +3509,89 @@ def route_connector_authorize(
     )
 
 
-def route_agent_setup(start_response):
+def _request_is_from_local_machine(environ):
+    raw_address = str(environ.get("REMOTE_ADDR") or "").strip()
+    try:
+        remote_address = ipaddress.ip_address(raw_address)
+    except ValueError:
+        return False
+    if remote_address.is_loopback:
+        return True
+    try:
+        local_addresses = {
+            ipaddress.ip_address(item[4][0])
+            for item in socket.getaddrinfo(socket.gethostname(), None)
+        }
+    except (OSError, ValueError):
+        return False
+    return remote_address in local_addresses
+
+
+def _safe_local_label(value, fallback=""):
+    label = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    label = re.sub(r"\s+", " ", label).strip()
+    return (label or fallback)[:120]
+
+
+def _safe_local_username(value):
+    username = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return username[:64] if len(username) >= 3 else ""
+
+
+def _local_setup_defaults(environ):
+    if not _request_is_from_local_machine(environ):
+        return {}
+    windows_user = _safe_local_label(
+        os.environ.get("USERNAME") or os.environ.get("USER")
+    )
+    machine_name = _safe_local_label(
+        os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME"),
+        "Local computer",
+    )
+    workspace_label = (
+        "%s on %s" % (windows_user, machine_name)
+        if windows_user
+        else machine_name
+    )
+    return {
+        "companyLabel": machine_name,
+        "workspaceLabel": _safe_local_label(workspace_label),
+        "projectLabel": _safe_local_label(ROOT.name, "Multi-Agent-Memory"),
+        "username": _safe_local_username(windows_user),
+        "displayName": windows_user,
+    }
+
+
+def route_agent_setup(environ, start_response):
     setup_available = credential_system_available()
+    defaults = _local_setup_defaults(environ)
     if setup_available:
         setup_form = """
         <form class="setup-form" method="post" action="/api/matm/agent-setup/free-account" data-agent-setup-form>
           <label>
             Company name
-            <input name="companyLabel" autocomplete="organization" maxlength="120" placeholder="Example Company" required>
+            <input name="companyLabel" autocomplete="organization" maxlength="120" placeholder="Example Company" value="{company_label}" required>
           </label>
           <label>
             Workspace name
-            <input name="label" autocomplete="off" maxlength="120" placeholder="Agent Operations" required>
+            <input name="label" autocomplete="off" maxlength="120" placeholder="Agent Operations" value="{workspace_label}" required>
           </label>
           <label>
             First project
-            <input name="projectLabel" autocomplete="off" maxlength="120" placeholder="Memory Integration" required>
+            <input name="projectLabel" autocomplete="off" maxlength="120" placeholder="Memory Integration" value="{project_label}" required>
           </label>
           <button class="button primary" type="submit" data-agent-setup-submit>Create workspace</button>
         </form>
         <noscript><p class="setup-noscript">JavaScript is required for the interactive form. Use the copy-safe API examples below; this form never sends labels in a URL.</p></noscript>
-        """
-        setup_status = "Enter labels to create your workspace. No checkout is required."
+        """.format(
+            company_label=escape_html(defaults.get("companyLabel") or ""),
+            workspace_label=escape_html(defaults.get("workspaceLabel") or ""),
+            project_label=escape_html(defaults.get("projectLabel") or ""),
+        )
+        if defaults:
+            setup_status = "Windows user, machine, and project names were filled in as editable labels. They do not replace authentication."
+        else:
+            setup_status = "Enter labels to create your workspace. No checkout is required."
     else:
         setup_form = """
         <div class="setup-boundary-note setup-unavailable" role="alert" data-agent-setup-unavailable>
@@ -3666,11 +3729,8 @@ def route_agent_setup(start_response):
     <summary>Copy-Safe Setup for agents and developers</summary>
     <p>Use the repository helper for agent-driven setup. It checks both target locations before creating anything, writes the company master to <code>&lt;project-root&gt;/__COMPANY_MASTER_DEFAULT_SECRET_PATH__</code>, saves the exceptional owner-recovery secret separately, and prints only redacted confirmation. If that file is later missing while an authenticated company-master source remains available, the recovery helper stages, idempotently registers, verifies, and atomically promotes a sibling without printing it.</p>
     <h3>Agent setup helper</h3>
-    <pre><code>python scripts/setup_memoryendpoints_company.py \\
-  --company-label "Example Company" \\
-  --workspace-label "Example Workspace" \\
-  --project-label "Example Project" \\
-  --project-root .</code></pre>
+    <p>On the server computer, Windows user, machine, and project-folder names are used as editable defaults. They identify labels only; credentials still authorize access.</p>
+    <pre><code>python scripts/setup_memoryendpoints_company.py --project-root .</code></pre>
     <h3>Company-master recovery helper</h3>
     <pre><code>python scripts/recover_memoryendpoints_company_master.py \\
   --project-root . \\
@@ -3847,12 +3907,18 @@ def _human_page_authenticated(environ):
 
 def route_human_access_page(environ, start_response, demo=False):
     authenticated = False if demo else _human_page_authenticated(environ)
+    defaults = {} if demo else _local_setup_defaults(environ)
     version = _asset_version(
         "css/human-access.css",
         "js/human-access.js",
         "js/human-access-bootstrap.js",
     )
-    main = render_human_access_main(authenticated=authenticated, demo=demo)
+    main = render_human_access_main(
+        authenticated=authenticated,
+        demo=demo,
+        default_username=defaults.get("username") or "",
+        default_display_name=defaults.get("displayName") or "",
+    )
     script_nonce = secrets.token_urlsafe(18)
     page = html_page(
         "Human access Demo" if demo else "Human access",
@@ -10348,7 +10414,7 @@ def _application_dispatch(environ, start_response):
     if path in ("/docs", "/docs/") and method == "GET":
         return route_docs(start_response)
     if path == "/agent-setup" and method == "GET":
-        return route_agent_setup(start_response)
+        return route_agent_setup(environ, start_response)
     if path == "/agent-coordination" and method == "GET":
         return route_agent_coordination(start_response)
     if path == "/console" and method == "GET":

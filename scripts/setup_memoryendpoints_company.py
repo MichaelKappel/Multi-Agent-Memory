@@ -32,6 +32,37 @@ def _slug(value):
     return normalized[:60] or "company"
 
 
+def _safe_label(value, fallback):
+    label = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    label = re.sub(r"\s+", " ", label).strip()
+    return (label or fallback)[:120]
+
+
+def default_setup_labels(project_root=".", environ=None):
+    """Return editable local labels without treating OS names as authority."""
+    environment = os.environ if environ is None else environ
+    windows_user = _safe_label(
+        environment.get("USERNAME") or environment.get("USER"),
+        "Local user",
+    )
+    machine_name = _safe_label(
+        environment.get("COMPUTERNAME") or environment.get("HOSTNAME"),
+        "Local computer",
+    )
+    project_name = _safe_label(
+        Path(project_root).expanduser().resolve().name,
+        "Multi-Agent-Memory",
+    )
+    return {
+        "companyLabel": machine_name,
+        "workspaceLabel": _safe_label(
+            "%s on %s" % (windows_user, machine_name),
+            machine_name,
+        ),
+        "projectLabel": project_name,
+    }
+
+
 def default_recovery_path(company_label):
     return (
         Path.home()
@@ -130,15 +161,20 @@ def _post_setup(base_url, labels, open_url=urlopen):
 
 
 def create_and_persist_company(
-    company_label,
-    workspace_label,
-    project_label,
+    company_label=None,
+    workspace_label=None,
+    project_label=None,
     project_root=".",
     recovery_out=None,
     base_url="https://memoryendpoints.com",
+    environ=None,
     open_url=urlopen,
 ):
     base_url = _validate_base_url(base_url)
+    defaults = default_setup_labels(project_root, environ=environ)
+    company_label = _safe_label(company_label, defaults["companyLabel"])
+    workspace_label = _safe_label(workspace_label, defaults["workspaceLabel"])
+    project_label = _safe_label(project_label, defaults["projectLabel"])
     company_path = _prepare_target(Path(project_root) / PROJECT_SECRET_PATH)
     recovery_path = _prepare_target(recovery_out or default_recovery_path(company_label))
     if company_path == recovery_path:
@@ -210,9 +246,18 @@ def _parser():
     parser = argparse.ArgumentParser(
         description="Create a company and save its one-time credentials without printing them."
     )
-    parser.add_argument("--company-label", required=True)
-    parser.add_argument("--workspace-label", required=True)
-    parser.add_argument("--project-label", required=True)
+    parser.add_argument(
+        "--company-label",
+        help="Editable company label; defaults to the local machine name.",
+    )
+    parser.add_argument(
+        "--workspace-label",
+        help="Editable workspace label; defaults to the Windows user on this machine.",
+    )
+    parser.add_argument(
+        "--project-label",
+        help="Editable project label; defaults to the project-root folder name.",
+    )
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--recovery-out")
     parser.add_argument("--base-url", default="https://memoryendpoints.com")

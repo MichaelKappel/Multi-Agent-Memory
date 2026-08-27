@@ -7,6 +7,7 @@ from scripts.setup_memoryendpoints_company import (
     PROJECT_SECRET_PATH,
     SetupError,
     create_and_persist_company,
+    default_setup_labels,
 )
 
 
@@ -37,6 +38,42 @@ class SetupMemoryEndpointsCompanyTests(unittest.TestCase):
             "companyMasterTokenSecret": "master-secret-test-only",
             "humanOwnerRecoverySecret": "recovery-secret-test-only",
         }
+
+    def test_local_defaults_use_machine_user_and_project_folder_as_labels_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project_root = Path(temporary) / "Multi-Agent-Memory"
+            labels = default_setup_labels(
+                project_root,
+                environ={"USERNAME": "Local.User", "COMPUTERNAME": "MEMORY-PC"},
+            )
+
+        self.assertEqual("MEMORY-PC", labels["companyLabel"])
+        self.assertEqual("Local.User on MEMORY-PC", labels["workspaceLabel"])
+        self.assertEqual("Multi-Agent-Memory", labels["projectLabel"])
+
+    def test_setup_uses_local_defaults_when_label_arguments_are_omitted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project_root = root / "Multi-Agent-Memory"
+            recovery_out = root / "owner" / "recovery.json"
+            calls = []
+
+            def open_url(request, timeout):
+                calls.append((request, timeout))
+                return _Response(self.payload())
+
+            create_and_persist_company(
+                project_root=project_root,
+                recovery_out=recovery_out,
+                environ={"USERNAME": "local-user", "COMPUTERNAME": "MEMORY-PC"},
+                open_url=open_url,
+            )
+
+            request_payload = json.loads(calls[0][0].data.decode("utf-8"))
+
+        self.assertEqual("MEMORY-PC", request_payload["companyLabel"])
+        self.assertEqual("local-user on MEMORY-PC", request_payload["label"])
+        self.assertEqual("Multi-Agent-Memory", request_payload["projectLabel"])
 
     def test_setup_writes_standard_company_file_and_separate_recovery_file(self):
         with tempfile.TemporaryDirectory() as temporary:

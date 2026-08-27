@@ -1,29 +1,28 @@
 import io
+import os
 import unittest
+from unittest.mock import patch
 
 from app import application
 from memoryendpoints.human_access_ui import render_human_access_main
 
 
-def call_get(path):
+def call_get(path, environ_updates=None):
     captured = {}
 
     def start_response(status, headers):
         captured["status"] = status
         captured["headers"] = {name.lower(): value for name, value in headers}
 
-    body = b"".join(
-        application(
-            {
-                "REQUEST_METHOD": "GET",
-                "PATH_INFO": path,
-                "QUERY_STRING": "",
-                "CONTENT_LENGTH": "0",
-                "wsgi.input": io.BytesIO(b""),
-            },
-            start_response,
-        )
-    ).decode("utf-8")
+    environ = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": path,
+        "QUERY_STRING": "",
+        "CONTENT_LENGTH": "0",
+        "wsgi.input": io.BytesIO(b""),
+    }
+    environ.update(environ_updates or {})
+    body = b"".join(application(environ, start_response)).decode("utf-8")
     return captured["status"], captured["headers"], body
 
 
@@ -133,6 +132,34 @@ class HumanAccessMarkupContractTests(unittest.TestCase):
         warning_end = demo.index("</aside>", warning_position)
         self.assertNotIn("hidden", demo[warning_position:warning_end])
         self.assertNotIn("data-human-access-demo-warning", production)
+
+    def test_local_human_access_prefills_windows_username_as_a_label_only(self):
+        with patch.dict(
+            os.environ,
+            {"USERNAME": "Local.User", "COMPUTERNAME": "MEMORY-PC"},
+            clear=False,
+        ):
+            status, _headers, body = call_get(
+                "/human", {"REMOTE_ADDR": "127.0.0.1"}
+            )
+
+        self.assertEqual("200 OK", status)
+        self.assertEqual(2, body.count('name="username" autocomplete="username" required value="local-user"'))
+        self.assertIn('name="displayName" autocomplete="name" value="Local.User"', body)
+
+    def test_remote_human_access_does_not_disclose_server_windows_identity(self):
+        with patch.dict(
+            os.environ,
+            {"USERNAME": "Private.Local.User", "COMPUTERNAME": "PRIVATE-MACHINE"},
+            clear=False,
+        ):
+            status, _headers, body = call_get(
+                "/human", {"REMOTE_ADDR": "10.1.10.42"}
+            )
+
+        self.assertEqual("200 OK", status)
+        self.assertNotIn("Private.Local.User", body)
+        self.assertNotIn("PRIVATE-MACHINE", body)
 
 
 if __name__ == "__main__":

@@ -77,9 +77,12 @@ JSON, `.local-secrets/` must be ignored by source control, and the contract
 names the required `baseUrl`, `companyId`, `workspaceId`, and
 `companyMasterTokenSecret` fields without including a raw value. Normal agents
 use their bound agent credential. Agent-driven setup uses
-`scripts/setup_memoryendpoints_company.py`, and setup is not complete until the
-helper verifies that the default file and separate owner-recovery file were
-written without printing either value. Browser setup exposes **Save to project
+`scripts/setup_memoryendpoints_company.py`; on the server computer it defaults
+editable company, workspace, and project labels from the machine name, Windows
+user, and project-root folder. These names are labels only and never authenticate
+a person or device. Setup is not complete until the helper verifies that the
+default file and separate owner-recovery file were written without printing
+either value. Browser setup exposes **Save to project
 secret folder**; after the human grants project-folder access it creates the
 default JSON file directly, or downloads the exact filename as a fallback that
  the human must move and verify. If the default file is missing, a company-scoped

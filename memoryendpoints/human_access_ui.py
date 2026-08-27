@@ -10,17 +10,27 @@ from html import escape
 from .credential_guidance import COMPANY_MASTER_DEFAULT_SECRET_PATH
 
 
-def _field(label, name, input_type="text", autocomplete="off", required=True, extra=""):
+def _field(
+    label,
+    name,
+    input_type="text",
+    autocomplete="off",
+    required=True,
+    extra="",
+    value="",
+):
     required_attribute = " required" if required else ""
+    value_attribute = ' value="%s"' % escape(value, quote=True) if value else ""
     return (
         '<label class="human-access-field"><span>%s</span>'
-        '<input type="%s" name="%s" autocomplete="%s"%s %s></label>'
+        '<input type="%s" name="%s" autocomplete="%s"%s%s %s></label>'
         % (
             escape(label),
             escape(input_type, quote=True),
             escape(name, quote=True),
             escape(autocomplete, quote=True),
             required_attribute,
+            value_attribute,
             extra,
         )
     )
@@ -42,7 +52,7 @@ def _company_master_guidance_markup(context):
     )
 
 
-def _authentication_markup():
+def _authentication_markup(default_username="", default_display_name=""):
     return """
 <div class="human-access-auth-grid" data-human-access-locked>
   <section class="human-access-card" aria-labelledby="human-login-title">
@@ -76,7 +86,9 @@ def _authentication_markup():
   </section>
 </div>
 """.format(
-        login_username=_field("Username", "username", autocomplete="username"),
+        login_username=_field(
+            "Username", "username", autocomplete="username", value=default_username
+        ),
         login_password=_field("Password", "password", "password", "current-password"),
         master=_field(
             "Company master credential",
@@ -86,8 +98,16 @@ def _authentication_markup():
             extra='spellcheck="false" data-human-access-secret-control',
         ),
         master_guidance=_company_master_guidance_markup("enrollment"),
-        account_username=_field("Username", "username", autocomplete="username"),
-        display_name=_field("Display name", "displayName", autocomplete="name", required=False),
+        account_username=_field(
+            "Username", "username", autocomplete="username", value=default_username
+        ),
+        display_name=_field(
+            "Display name",
+            "displayName",
+            autocomplete="name",
+            required=False,
+            value=default_display_name,
+        ),
         account_password=_field("Password", "password", "password", "new-password"),
         password_confirmation=_field(
             "Confirm password", "passwordConfirmation", "password", "new-password"
@@ -202,7 +222,12 @@ def _protected_markup(demo=False):
     )
 
 
-def render_human_access_main(authenticated=False, demo=False):
+def render_human_access_main(
+    authenticated=False,
+    demo=False,
+    default_username="",
+    default_display_name="",
+):
     preauth = not authenticated and not demo
     attributes = ["data-human-access"]
     if preauth:
@@ -233,6 +258,9 @@ def render_human_access_main(authenticated=False, demo=False):
 """.format(
         attributes=" ".join(attributes),
         demo_warning=demo_warning,
-        authentication=_authentication_markup(),
+        authentication=_authentication_markup(
+            default_username=default_username,
+            default_display_name=default_display_name,
+        ),
         protected=protected,
     )
