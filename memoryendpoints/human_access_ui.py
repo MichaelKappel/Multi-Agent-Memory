@@ -227,6 +227,7 @@ def render_human_access_main(
     demo=False,
     default_username="",
     default_display_name="",
+    local_auto_login=False,
 ):
     preauth = not authenticated and not demo
     attributes = ["data-human-access"]
@@ -234,6 +235,8 @@ def render_human_access_main(
         attributes.extend(["data-human-preauth-shell", "data-human-access-preauth-only"])
     if demo:
         attributes.append("data-human-access-demo")
+    if local_auto_login:
+        attributes.append("data-human-access-local-auto-login")
     demo_warning = ""
     if demo:
         demo_warning = """

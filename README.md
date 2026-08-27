@@ -78,6 +78,13 @@ See [docs/repository-structure.md](docs/repository-structure.md) for ownership a
 See [docs/system-architecture.md](docs/system-architecture.md) for the request lifecycle, tenancy model, relational ownership, memory/wiki/coordination/sync flows, and evidence boundaries.
 See [docs/verification.md](docs/verification.md) and [docs/deployment.md](docs/deployment.md) for rerunnable operating checks. Human owner enrollment, enumeration-safe sign-in failures, reauthentication, and one-time credential handling are documented in the [human one-time access contract](docs/human-one-time-access-contract.md).
 
+On a Windows intranet host, opening Human Access on the host computer redirects
+an HTTP LAN URL to `localhost` and automatically opens the local Windows user's
+password-backed human session. This direct-loopback convenience does not trust
+LAN IP addresses, machine names, proxy headers, or asserted usernames. Other
+computers continue to require explicit authentication over HTTPS or a trusted
+private tunnel.
+
 ## Public Evidence
 
 - `/api/version`

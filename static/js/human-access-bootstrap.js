@@ -7,6 +7,7 @@
     if (!root || !api) return;
     var demoMode = root.hasAttribute("data-human-access-demo");
     var preauthOnly = root.hasAttribute("data-human-access-preauth-only");
+    var localAutoLogin = root.hasAttribute("data-human-access-local-auto-login");
     var options = {
       root: root,
       demoMode: demoMode,
@@ -19,7 +20,8 @@
     }
     var controller = api.create(options);
     controller.mount();
-    if (!preauthOnly && !demoMode) controller.revalidateHumanSession();
+    if (preauthOnly && localAutoLogin && !demoMode) controller.loginLocalComputer();
+    else if (!preauthOnly && !demoMode) controller.revalidateHumanSession();
     window.MemoryEndpointsHumanAccessController = controller;
   }
 
