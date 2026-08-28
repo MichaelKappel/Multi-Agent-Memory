@@ -6,6 +6,7 @@ resource-bound, human-approved, and valid only for the selected workspace.
 """
 
 import base64
+import getpass
 import hashlib
 import hmac
 import html
@@ -15,6 +16,7 @@ import math
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import threading
 import time
@@ -545,6 +547,95 @@ def _oauth_browser_same_origin(environ):
     return _origin(environ.get("HTTP_REFERER")) == expected
 
 
+def _host_local_operator_auto_sign_in_enabled():
+    """Allow an explicit kill switch while keeping Windows-host setup automatic."""
+    if os.name != "nt":
+        return False
+    configured = str(
+        os.environ.get("MEMORYENDPOINTS_MCP_HOST_LOCAL_AUTO_SIGN_IN") or ""
+    ).strip().lower()
+    if configured in ("0", "false", "no", "off", "disabled"):
+        return False
+    if configured in ("1", "true", "yes", "on", "enabled"):
+        return True
+    return True
+
+
+def _current_windows_username():
+    if os.name != "nt":
+        return ""
+    try:
+        return str(getpass.getuser() or "").strip()
+    except (ImportError, KeyError, OSError):
+        return ""
+
+
+def _request_origin_matches_issuer(environ):
+    scheme = str(environ.get("wsgi.url_scheme") or "").strip().lower()
+    raw_host = str(environ.get("HTTP_HOST") or "").strip()
+    if (
+        scheme not in ("http", "https")
+        or not raw_host
+        or "@" in raw_host
+        or any(character in raw_host for character in "\r\n/\\")
+    ):
+        return False
+    return _origin("%s://%s" % (scheme, raw_host)) == _origin(_issuer_url())
+
+
+def _request_is_directly_from_this_host(environ):
+    """Use only the socket peer; forwarded identity headers are never trusted."""
+    if not _host_local_operator_auto_sign_in_enabled():
+        return False
+    if any(
+        str(environ.get(name) or "").strip()
+        for name in (
+            "HTTP_FORWARDED",
+            "HTTP_X_FORWARDED_FOR",
+            "HTTP_X_FORWARDED_HOST",
+            "HTTP_X_FORWARDED_PROTO",
+            "HTTP_X_REAL_IP",
+        )
+    ):
+        return False
+    if not _request_origin_matches_issuer(environ):
+        return False
+    try:
+        remote_address = ipaddress.ip_address(
+            str(environ.get("REMOTE_ADDR") or "").strip()
+        )
+    except ValueError:
+        return False
+    try:
+        issuer_address = ipaddress.ip_address(
+            str(urlsplit(_issuer_url()).hostname or "").strip()
+        )
+    except ValueError:
+        return False
+    if issuer_address.is_loopback:
+        return remote_address.is_loopback
+    if remote_address != issuer_address:
+        return False
+    try:
+        local_addresses = {
+            ipaddress.ip_address(item[4][0])
+            for item in socket.getaddrinfo(socket.gethostname(), None)
+        }
+    except (OSError, ValueError):
+        return False
+    return issuer_address in local_addresses
+
+
+def _host_local_operator_session(environ, store):
+    """Open a normal session only for the matching Windows user on this host."""
+    if not _request_is_directly_from_this_host(environ):
+        return {"ok": False}
+    username = _current_windows_username()
+    if not username:
+        return {"ok": False}
+    return store.open_host_local_human_session(username, 30 * 60)
+
+
 def _oauth_session(environ, start_response, store_factory):
     if environ.get("REQUEST_METHOD") != "POST":
         return _oauth_error(start_response, "405 Method Not Allowed", "invalid_request", "Use POST to sign in.")
@@ -700,7 +791,14 @@ def _login_page(client_name):
     return _page("Sign in", main, script=True)
 
 
-def _consent_page(client_name, catalog, pending_id, pending_secret, scopes):
+def _consent_page(
+    client_name,
+    catalog,
+    pending_id,
+    pending_secret,
+    scopes,
+    host_local_session=False,
+):
     options = []
     choices = {}
     for company in catalog.get("items") or []:
@@ -714,10 +812,18 @@ def _consent_page(client_name, catalog, pending_id, pending_secret, scopes):
                 company.get("companyLabel") or "Company",
                 workspace.get("label") or "Workspace",
             )
-            options.append(
-                '<option value="%s">%s</option>'
-                % (html.escape(choice, quote=True), html.escape(label))
+            options.append((choice, label))
+    only_choice = len(options) == 1
+    rendered_options = []
+    for choice, label in options:
+        rendered_options.append(
+            '<option value="%s">%s</option>'
+            % (
+                html.escape(choice, quote=True),
+                html.escape(label),
             )
+        )
+    placeholder = "" if only_choice else '<option value="">Choose a workspace</option>'
     scope_rows = []
     if "memory:read" in scopes:
         scope_rows.append("Search and read public-safe memory in the selected workspace")
@@ -726,11 +832,12 @@ def _consent_page(client_name, catalog, pending_id, pending_secret, scopes):
     main = """
 <h1>Allow ChatGPT to use Multi-Agent Memory?</h1>
 <p>Signed in as <strong>%s</strong>. <strong>%s</strong> will receive only the permissions listed below for one workspace.</p>
+%s
 <ul>%s</ul>
 <form method="post" action="/oauth/authorize">
   <input type="hidden" name="authorization_id" value="%s">
   <input type="hidden" name="authorization_secret" value="%s">
-  <label>Workspace <select name="choice" required><option value="">Choose a workspace</option>%s</select></label>
+  <label>Workspace <select name="choice" required>%s%s</select></label>
   <div><button class="button primary" name="decision" value="allow" type="submit">Allow connection</button>
   <button class="button" name="decision" value="deny" type="submit">Cancel</button></div>
 </form>
@@ -738,10 +845,16 @@ def _consent_page(client_name, catalog, pending_id, pending_secret, scopes):
 """ % (
         html.escape(catalog.get("displayName") or catalog.get("username") or "human user"),
         html.escape(client_name),
+        (
+            '<p class="callout">Signed in automatically as the Windows operator on this computer. Other computers still require an account password.</p>'
+            if host_local_session
+            else ""
+        ),
         "".join("<li>%s</li>" % html.escape(item) for item in scope_rows),
         html.escape(pending_id, quote=True),
         html.escape(pending_secret, quote=True),
-        "".join(options),
+        placeholder,
+        "".join(rendered_options),
     )
     return _page("Approve connection", main), choices
 
@@ -765,6 +878,18 @@ def _authorize_get(environ, start_response, store_factory):
     session_secret = _cookie(environ, HUMAN_SESSION_COOKIE)
     store = store_factory()
     catalog = store.mcp_human_authorization_catalog(session_secret) if session_secret else {"ok": False}
+    response_headers = []
+    host_local_session = False
+    if not catalog.get("ok"):
+        local_session = _host_local_operator_session(environ, store)
+        if local_session.get("ok") and local_session.get("sessionSecret"):
+            session_secret = local_session["sessionSecret"]
+            catalog = store.mcp_human_authorization_catalog(session_secret)
+            if catalog.get("ok"):
+                host_local_session = True
+                response_headers.append(
+                    ("Set-Cookie", _human_session_cookie(session_secret))
+                )
     if not catalog.get("ok"):
         return _response(start_response, "200 OK", _login_page(request["client_name"]), "text/html; charset=utf-8", _sensitive_headers())
     if not any(item.get("workspaces") for item in catalog.get("items") or []):
@@ -772,7 +897,12 @@ def _authorize_get(environ, start_response, store_factory):
     authorization_id = uuid.uuid4().hex
     pending_secret = secrets.token_urlsafe(32)
     page, choices = _consent_page(
-        request["client_name"], catalog, authorization_id, pending_secret, request["scopes"]
+        request["client_name"],
+        catalog,
+        authorization_id,
+        pending_secret,
+        request["scopes"],
+        host_local_session=host_local_session,
     )
     now = _now()
     with _LOCK:
@@ -800,7 +930,13 @@ def _authorize_get(environ, start_response, store_factory):
                     now + _AUTHORIZATION_TTL_SECONDS,
                 ),
             )
-    return _response(start_response, "200 OK", page, "text/html; charset=utf-8", _sensitive_headers())
+    return _response(
+        start_response,
+        "200 OK",
+        page,
+        "text/html; charset=utf-8",
+        _sensitive_headers(response_headers),
+    )
 
 
 def _authorization_redirect(row, values):
@@ -1490,6 +1626,9 @@ def _setup_status():
         "oauth21PkceS256": True,
         "dynamicClientRegistration": True,
         "humanLoginAndConsent": True,
+        "hostLocalWindowsOperatorAutoSignIn": _host_local_operator_auto_sign_in_enabled(),
+        "hostLocalAutoSignInBoundary": "direct_same_host_socket_only",
+        "remoteHumanPasswordRequired": True,
         "externalHttpsConfigurationPresent": transport_public and issuer_public,
         "externalReachabilityVerified": False,
         "mcpTransportPublicHttps": transport_public,
@@ -1518,7 +1657,7 @@ def _setup_page():
 <p>%s</p>
 <ol><li>On this host, run <code>powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 -Status</code>.</li>
 <li>If the status says an external route is needed, create an OpenAI Secure MCP Tunnel and run the command shown by the script.</li>
-<li>In ChatGPT developer mode, add the MCP URL shown below. ChatGPT will bring you back here to sign in and approve one workspace.</li></ol>
+<li>In ChatGPT developer mode, add the MCP URL shown below. On this Windows host, a matching existing human account signs in automatically; other computers require a password. You still approve one workspace.</li></ol>
 <dl><dt>MCP URL</dt><dd><code>%s</code></dd><dt>OAuth issuer</dt><dd><code>%s</code></dd></dl>
 <p>Connection is proven only after <code>initialize</code>, <code>tools/list</code>, and <code>workspace_status</code> succeed.</p>
 """ % (html.escape(readiness), html.escape(status["mcpTransport"]), html.escape(status["oauthIssuer"]))

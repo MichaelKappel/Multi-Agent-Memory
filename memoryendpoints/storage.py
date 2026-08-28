@@ -5359,6 +5359,67 @@ class FileStore(object):
             self._save(data)
         return {"ok": True, "humanAccountSessionId": session_id, "sessionSecret": session_secret, "csrfToken": csrf_token, "expiresAt": record["expiresAt"], "credentialReturnedOnce": True, "valuesRedacted": True}
 
+    def open_host_local_human_session(self, username, ttl_seconds=1800):
+        """Open a session for an existing account after the HTTP layer proves host locality."""
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("host_local_operator_unavailable")
+        seconds = _bounded_ttl_seconds(
+            ttl_seconds,
+            1800,
+            _MIN_HUMAN_SESSION_TTL_SECONDS,
+            _MAX_HUMAN_SESSION_TTL_SECONDS,
+        )
+        with _LOCK:
+            data = self._load()
+            account = next(
+                (
+                    item
+                    for item in data.get("humanAccounts", {}).values()
+                    if item.get("usernameNormalized") == normalized
+                    and item.get("status") == "active"
+                ),
+                None,
+            )
+            if not account:
+                return _agent_access_error("host_local_operator_unavailable")
+            session_id = _id("accountsession")
+            session_secret, session_digest = _governed_credential(
+                "accountsession", account["humanAccountId"], session_id
+            )
+            csrf_token, csrf_digest = _governed_credential(
+                "accountcsrf", account["humanAccountId"], session_id
+            )
+            now = utc_now()
+            record = {
+                "humanAccountSessionId": session_id,
+                "humanAccountId": account["humanAccountId"],
+                "selectedAuthorityId": None,
+                "selectedCompanyId": None,
+                "sessionHash": session_digest,
+                "csrfHash": csrf_digest,
+                "createdAt": now,
+                "expiresAt": _expires_at(seconds),
+                "lastSeenAt": None,
+                "passwordReauthenticatedAt": None,
+                "rotatedFromSessionId": None,
+                "revokedAt": None,
+            }
+            data.setdefault("humanAccountSessions", {})[session_id] = record
+            self._save(data)
+        return {
+            "ok": True,
+            "humanAccountSessionId": session_id,
+            "sessionSecret": session_secret,
+            "csrfToken": csrf_token,
+            "expiresAt": record["expiresAt"],
+            "authenticationMethod": "host_local_windows_operator",
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
     def authenticate_human_account_session(self, session_secret, csrf_token=None, require_csrf=False):
         session_id, secret = _parse_governed_credential(session_secret, "accountsession")
         if not session_id:
@@ -20344,6 +20405,68 @@ class SQLiteStore(FileStore):
                         (session_id, account["human_account_id"], None, None, session_digest, csrf_digest, now, expires_at, None, None, None, None),
                     )
         return {"ok": True, "humanAccountSessionId": session_id, "sessionSecret": session_secret, "csrfToken": csrf_token, "expiresAt": expires_at, "credentialReturnedOnce": True, "valuesRedacted": True}
+
+    def open_host_local_human_session(self, username, ttl_seconds=1800):
+        """Open a session for an existing account after the HTTP layer proves host locality."""
+        normalized = _normalize_human_username(username)
+        if not normalized:
+            return _agent_access_error("host_local_operator_unavailable")
+        with _LOCK:
+            with self._open_connection() as connection:
+                account = connection.execute(
+                    "SELECT * FROM matm_human_accounts WHERE username_normalized = ? AND status = 'active'",
+                    (normalized,),
+                ).fetchone()
+        if not account:
+            return _agent_access_error("host_local_operator_unavailable")
+        session_id = _id("accountsession")
+        session_secret, session_digest = _governed_credential(
+            "accountsession", account["human_account_id"], session_id
+        )
+        csrf_token, csrf_digest = _governed_credential(
+            "accountcsrf", account["human_account_id"], session_id
+        )
+        now = utc_now()
+        expires_at = _expires_at(
+            _bounded_ttl_seconds(
+                ttl_seconds,
+                1800,
+                _MIN_HUMAN_SESSION_TTL_SECONDS,
+                _MAX_HUMAN_SESSION_TTL_SECONDS,
+            )
+        )
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        "INSERT INTO matm_human_account_sessions (human_account_session_id, human_account_id, selected_authority_id, selected_company_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at, password_reauthenticated_at, rotated_from_session_id, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            session_id,
+                            account["human_account_id"],
+                            None,
+                            None,
+                            session_digest,
+                            csrf_digest,
+                            now,
+                            expires_at,
+                            None,
+                            None,
+                            None,
+                            None,
+                        ),
+                    )
+        return {
+            "ok": True,
+            "humanAccountSessionId": session_id,
+            "sessionSecret": session_secret,
+            "csrfToken": csrf_token,
+            "expiresAt": expires_at,
+            "authenticationMethod": "host_local_windows_operator",
+            "credentialReturnedOnce": True,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
 
     def authenticate_human_account_session(self, session_secret, csrf_token=None, require_csrf=False):
         session_id, secret = _parse_governed_credential(session_secret, "accountsession")

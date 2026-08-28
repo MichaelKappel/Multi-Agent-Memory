@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from memoryendpoints.mcp_server import route_mcp
@@ -265,6 +266,86 @@ class McpServerTests(unittest.TestCase):
         self.assertTrue(accepted["signedIn"])
         self.assertIn("__Host-memoryendpoints-human=", headers["Set-Cookie"])
         self.assertIn("HttpOnly", headers["Set-Cookie"])
+
+    def test_matching_windows_operator_auto_signs_in_only_from_direct_same_host(self):
+        os.environ["MEMORYENDPOINTS_MCP_ISSUER_URL"] = "https://10.1.10.209:8088"
+        client_id = self.register()
+        verifier = "v" * 64
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        ).decode("ascii").rstrip("=")
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": REDIRECT,
+                "scope": "memory:read memory:write",
+                "state": "state-host-local-operator",
+                "resource": RESOURCE,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+        direct_headers = {
+            "REMOTE_ADDR": "10.1.10.209",
+            "HTTP_HOST": "10.1.10.209:8088",
+            "wsgi.url_scheme": "https",
+        }
+        local_addresses = [
+            (2, 1, 6, "", ("10.1.10.209", 0)),
+        ]
+        with patch(
+            "memoryendpoints.mcp_server._host_local_operator_auto_sign_in_enabled",
+            return_value=True,
+        ), patch(
+            "memoryendpoints.mcp_server._current_windows_username",
+            return_value="mcp-owner",
+        ), patch(
+            "memoryendpoints.mcp_server.socket.getaddrinfo",
+            return_value=local_addresses,
+        ):
+            status, headers, page = self.call(
+                "/oauth/authorize", query=query, headers=direct_headers
+            )
+            self.assertEqual("200 OK", status)
+            text = page.decode("utf-8")
+            self.assertIn("Allow ChatGPT to use Multi-Agent Memory?", text)
+            self.assertIn("Signed in automatically as the Windows operator", text)
+            self.assertNotIn("data-mcp-login", text)
+            self.assertIn("__Host-memoryendpoints-human=", headers["Set-Cookie"])
+            self.assertIn("Secure", headers["Set-Cookie"])
+            self.assertNotIn('value="">Choose a workspace', text)
+
+            denied_cases = (
+                dict(direct_headers, HTTP_X_FORWARDED_FOR="10.1.10.209"),
+                dict(direct_headers, REMOTE_ADDR="10.1.10.77"),
+                dict(
+                    direct_headers,
+                    REMOTE_ADDR="10.1.10.77",
+                    HTTP_X_FORWARDED_FOR="10.1.10.209",
+                ),
+                dict(direct_headers, REMOTE_ADDR="127.0.0.1"),
+                dict(direct_headers, HTTP_HOST="other.example.test"),
+            )
+            for request_headers in denied_cases:
+                with self.subTest(headers=request_headers):
+                    denied_status, denied_headers, denied_page = self.call(
+                        "/oauth/authorize", query=query, headers=request_headers
+                    )
+                    self.assertEqual("200 OK", denied_status)
+                    self.assertIn("data-mcp-login", denied_page.decode("utf-8"))
+                    self.assertNotIn("Set-Cookie", denied_headers)
+
+            with patch(
+                "memoryendpoints.mcp_server._current_windows_username",
+                return_value="different-user",
+            ):
+                mismatch_status, mismatch_headers, mismatch_page = self.call(
+                    "/oauth/authorize", query=query, headers=direct_headers
+                )
+            self.assertEqual("200 OK", mismatch_status)
+            self.assertIn("data-mcp-login", mismatch_page.decode("utf-8"))
+            self.assertNotIn("Set-Cookie", mismatch_headers)
 
     def test_dcr_rejects_non_chatgpt_redirect(self):
         status, _headers, payload = self.json_call(

@@ -8,17 +8,43 @@ master or governed agent credentials.
 
 1. An administrator keeps the Multi-Agent Memory LAN host running over HTTPS.
 2. ChatGPT connects through a public HTTPS MCP URL or OpenAI Secure MCP Tunnel.
-3. ChatGPT discovers the OAuth metadata and opens the Multi-Agent Memory login
-   page in the browser.
-4. The human signs in with their normal Multi-Agent Memory username and
-   password, chooses one active workspace, reviews the requested read/write
-   scopes, and selects **Allow connection**.
-5. ChatGPT exchanges the one-use PKCE code and treats the app as connected only
+3. ChatGPT discovers the OAuth metadata and opens the Multi-Agent Memory
+   authorization page in the browser.
+4. On the Windows computer hosting Multi-Agent Memory, an existing active human
+   account whose username exactly matches the Windows account is signed in
+   automatically. Every other computer uses the normal Multi-Agent Memory
+   username and password.
+5. The human chooses one active workspace, reviews the requested read/write
+   scopes, and selects **Allow connection**. When only one workspace is
+   available, it is selected automatically.
+6. ChatGPT exchanges the one-use PKCE code and treats the app as connected only
    after `initialize`, `tools/list`, and the read-only `workspace_status` tool
    succeed.
 
 Passwords, company master credentials, governed agent credentials, raw private
 payloads, and refresh tokens are never displayed in the approval page.
+
+## Automatic Windows-host sign-in
+
+The passwordless convenience path is deliberately narrow. It opens a normal
+short-lived human session only when all of these facts are true:
+
+- the server is running on Windows;
+- the socket peer address belongs to that same computer;
+- the OAuth issuer uses a numeric loopback or local-interface address and the
+  direct peer matches that address;
+- the request uses the exact configured OAuth issuer origin;
+- no `Forwarded`, `X-Forwarded-*`, or `X-Real-IP` identity header is present;
+- an existing active human account has the same canonical username as the
+  Windows account running the service.
+
+It never creates an account, links a company, grants a workspace, treats a
+machine name as authority, or marks the session as password-reauthenticated.
+The normal consent page and active account/company/workspace checks still run.
+A request from another LAN computer, a reverse proxy, or a mismatched Windows
+account gets the ordinary password form. Set
+`MEMORYENDPOINTS_MCP_HOST_LOCAL_AUTO_SIGN_IN=0` on the server to disable the
+convenience path.
 
 ## Windows host check
 
@@ -148,6 +174,8 @@ password, OpenAI key, OAuth code, access token, refresh token, or tenant payload
   disconnects the connection's token family.
 - Every MCP call revalidates the human account, company authority, company, and
   workspace as active.
+- Windows-host automatic sign-in trusts only a direct same-host socket peer and
+  an existing username match; forwarded identity headers never enable it.
 - Read and write scopes are enforced independently.
 - `Origin` is fail-closed when present; requests are size- and rate-limited.
 - Tool results remain public-safe and memory writes enter the existing firewall,

@@ -137,6 +137,39 @@ class LocalHumanLoopbackSecurityTests(unittest.TestCase):
         self.assertNotIn("loginLocalComputer", controller)
         self.assertNotIn("/api/matm/human/local-session", controller)
 
+    def test_sqlite_host_local_session_resolves_only_an_existing_matching_account(self):
+        setup = self.store.create_free_account(
+            "Local workspace", "Local company", "Local project"
+        )
+        master_secret = setup[2]
+        proof = self.store.create_company_master_proof(master_secret)
+        created = self.store.create_human_account(
+            "local.user",
+            "A-local-remote-password-2026",
+            proof["masterProofSecret"],
+            "Local User",
+        )
+        self.assertTrue(created["ok"], created)
+
+        session = self.store.open_host_local_human_session("Local.User", 1800)
+        self.assertTrue(session["ok"], session)
+        self.assertEqual(
+            "host_local_windows_operator", session["authenticationMethod"]
+        )
+        principal = self.store.authenticate_human_account_session(
+            session["sessionSecret"]
+        )
+        self.assertEqual("local.user", principal["username"])
+        self.assertIsNone(principal["passwordReauthenticatedAt"])
+
+        rejected = self.store.open_host_local_human_session(
+            "different.user", 1800
+        )
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(
+            "host_local_operator_unavailable", rejected["status"]
+        )
+
     def test_same_machine_lan_url_redirects_to_loopback_for_secure_cookie(self):
         headers = {
             "REMOTE_ADDR": "10.1.10.209",
