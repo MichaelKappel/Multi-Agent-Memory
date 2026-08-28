@@ -1592,8 +1592,11 @@ Password: multi-secret
         )
         self.assertEqual(0, stage_exit)
         self.assertEqual("nonclaims_staged_preactivation", stage_report["status"])
-        self.assertEqual(11, stage_report["uploadedCount"])
-        self.assertEqual(29, stage_report["readbackVerifiedCount"])
+        self.assertEqual(len(non_claim_paths), stage_report["uploadedCount"])
+        self.assertEqual(
+            len(managed_paths) + len(non_claim_paths),
+            stage_report["readbackVerifiedCount"],
+        )
         self.assertTrue(stage_report["rollbackPriorStateQualified"])
         self.assertEqual(0, stage_report["claimUploadedCount"])
         self.assertFalse(stage_report["claimsExposed"])
@@ -1613,7 +1616,7 @@ Password: multi-secret
         self.assertTrue(final_report["sourceTagIdentityVerified"])
         self.assertTrue(final_report["stagedNonClaimReadbackComplete"])
         self.assertEqual(0, final_report["nonClaimUploadedCount"])
-        self.assertEqual(11, final_report["nonClaimReadbackCount"])
+        self.assertEqual(len(non_claim_paths), final_report["nonClaimReadbackCount"])
         self.assertEqual(6, final_report["claimUploadedCount"])
         self.assertEqual(6, final_report["claimReadbackCount"])
         self.assertEqual(1, final_report["retiredAbsentVerifiedCount"])
@@ -1659,13 +1662,16 @@ Password: multi-secret
 
             self.assertEqual(0, exit_code)
             self.assertEqual("rollback_prior_state_captured", report["status"])
-            self.assertEqual(36, report["readbackAttemptedCount"])
-            self.assertEqual(36, report["readbackVerifiedCount"])
+            managed_path_count = len(package_multiagentmemory_static_site.ALLOWED_SITE_FILES) + len(
+                multiagentmemory_release_identity.RETIRED_SITE_PATHS
+            )
+            self.assertEqual(managed_path_count * 2, report["readbackAttemptedCount"])
+            self.assertEqual(managed_path_count * 2, report["readbackVerifiedCount"])
             self.assertEqual(0, report["remoteMutationAttemptedCount"])
             self.assertFalse(report["safeNoOp"])
             self.assertTrue(report["remoteSafeNoOp"])
             self.assertEqual(2, report["rollback"]["priorPresentCount"])
-            self.assertEqual(16, report["rollback"]["priorAbsentCount"])
+            self.assertEqual(managed_path_count - 2, report["rollback"]["priorAbsentCount"])
             self.assertTrue(rollback_package.is_file())
             self.assertTrue(rollback_manifest.is_file())
             self.assertFalse(
@@ -2008,8 +2014,9 @@ Password: multi-secret
         self.assertEqual("rollback_restored", restore_report["status"])
         self.assertTrue(restore_report["rollbackRestored"])
         self.assertEqual(1, restore_report["uploadedCount"])
-        self.assertEqual(17, restore_report["deletedCount"])
-        self.assertEqual(18, restore_report["remoteMutationAttemptedCount"])
+        expected_deleted = len(package_multiagentmemory_static_site.ALLOWED_SITE_FILES)
+        self.assertEqual(expected_deleted, restore_report["deletedCount"])
+        self.assertEqual(expected_deleted + 1, restore_report["remoteMutationAttemptedCount"])
         self.assertFalse(restore_report["safeNoOp"])
         self.assertEqual({"releases.html": legacy_bytes}, ftp.remote)
         self.assertLess(
@@ -2053,8 +2060,9 @@ Password: multi-secret
         self.assertEqual("rollback_restored", restore_report["status"])
         self.assertEqual(1, restore_report["directoryCreateAttemptedCount"])
         self.assertEqual(1, restore_report["directoryCreatedCount"])
-        self.assertEqual(18, restore_report["remoteMutationAttemptedCount"])
-        self.assertEqual(18, restore_report["remoteMutationCompletedCount"])
+        expected_mutations = len(package_multiagentmemory_static_site.ALLOWED_SITE_FILES) + 1
+        self.assertEqual(expected_mutations, restore_report["remoteMutationAttemptedCount"])
+        self.assertEqual(expected_mutations, restore_report["remoteMutationCompletedCount"])
         self.assertEqual(prior_bytes, ftp.remote[prior_path])
         self.assertLess(
             restore_events.index(("MKD", "docs")),
@@ -2340,7 +2348,7 @@ Password: multi-secret
         self.assertEqual("claims_activated_activation_date_changed", report["status"])
         self.assertTrue(report["sourceTagPublished"])
         self.assertTrue(report["claimsExposed"])
-        self.assertEqual(37, report["readbackVerifiedCount"])
+        self.assertEqual(report["plannedReadbackCount"], report["readbackVerifiedCount"])
         self.assertFalse(report["safeNoOp"])
 
     def test_filezilla_site_loader_returns_redacted_report(self):

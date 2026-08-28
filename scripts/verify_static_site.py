@@ -89,6 +89,7 @@ EXPECTED_MEDIA_TYPES = {
     "releases/index.html": "text/html",
     "robots.txt": "text/plain",
     "sitemap.xml": "application/xml",
+    "static/chatgpt-app-icon.png": "image/png",
     "static/favicon.svg": "image/svg+xml",
     "static/site.css": "text/css",
 }

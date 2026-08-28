@@ -48,6 +48,59 @@ function Resolve-HttpsUrl {
     return $uri.AbsoluteUri.TrimEnd('/')
 }
 
+function Write-McpHostConfig {
+    param(
+        [string]$McpPublicUrl = '',
+        [string]$IssuerUrl = '',
+        [string]$OpenAiTunnelId = ''
+    )
+    $configDirectory = Join-Path $resolvedRoot '.local-secrets'
+    $configPath = Join-Path $configDirectory 'mcp-host.json'
+    $existing = $null
+    if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        try { $existing = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json }
+        catch { throw 'mcp_host_config_invalid' }
+    }
+    $config = [ordered]@{ schemaVersion = 'multi_agent_memory.mcp_host.v1' }
+    $existingPublic = [string]$existing.mcpPublicUrl
+    $existingIssuer = [string]$existing.oauthIssuerUrl
+    $existingTunnelId = [string]$existing.openAiTunnelId
+    if ($existingPublic -or $existingIssuer) {
+        if (-not ($existingPublic -and $existingIssuer)) { throw 'mcp_host_config_public_urls_incomplete' }
+        $config.mcpPublicUrl = Resolve-HttpsUrl $existingPublic 'mcp_host_config_public_url_invalid' -RequireMcpPath
+        $config.oauthIssuerUrl = Resolve-HttpsUrl $existingIssuer 'mcp_host_config_issuer_url_invalid' -RequireOrigin
+    }
+    if ($existingTunnelId) {
+        if ($existingTunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'mcp_host_config_tunnel_id_invalid' }
+        $config.openAiTunnelId = $existingTunnelId
+    }
+    if ($McpPublicUrl -or $IssuerUrl) {
+        if (-not ($McpPublicUrl -and $IssuerUrl)) { throw 'public_mcp_url_and_oauth_issuer_url_required_together' }
+        $config.mcpPublicUrl = Resolve-HttpsUrl $McpPublicUrl 'public_mcp_url_must_be_https_mcp_path' -RequireMcpPath
+        $config.oauthIssuerUrl = Resolve-HttpsUrl $IssuerUrl 'oauth_issuer_url_must_be_https_origin' -RequireOrigin
+    }
+    if ($OpenAiTunnelId) {
+        if ($OpenAiTunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'tunnel_id_invalid' }
+        $config.openAiTunnelId = $OpenAiTunnelId
+    }
+    $config.valuesRedacted = $true
+    $config.rawCredentialExposed = $false
+    $config.rawPayloadExposed = $false
+    if (-not (Test-Path -LiteralPath $configDirectory -PathType Container)) {
+        $null = New-Item -ItemType Directory -Path $configDirectory
+    }
+    $temporaryPath = $configPath + '.tmp-' + [Guid]::NewGuid().ToString('N')
+    try {
+        $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+        Move-Item -LiteralPath $temporaryPath -Destination $configPath -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
 function Test-JsonEndpoint {
     param([Parameter(Mandatory = $true)][string]$Url)
     try {
@@ -157,34 +210,7 @@ $localUri = [Uri]$LocalMcpUrl
 $localOrigin = $localUri.GetLeftPart([UriPartial]::Authority)
 
 if ($PublicMcpUrl -or $OAuthIssuerUrl) {
-    if (-not ($PublicMcpUrl -and $OAuthIssuerUrl)) {
-        throw 'public_mcp_url_and_oauth_issuer_url_required_together'
-    }
-    $PublicMcpUrl = Resolve-HttpsUrl $PublicMcpUrl 'public_mcp_url_must_be_https_mcp_path' -RequireMcpPath
-    $OAuthIssuerUrl = Resolve-HttpsUrl $OAuthIssuerUrl 'oauth_issuer_url_must_be_https_origin' -RequireOrigin
-    $configDirectory = Join-Path $resolvedRoot '.local-secrets'
-    $configPath = Join-Path $configDirectory 'mcp-host.json'
-    if (-not (Test-Path -LiteralPath $configDirectory -PathType Container)) {
-        $null = New-Item -ItemType Directory -Path $configDirectory
-    }
-    $config = [ordered]@{
-        schemaVersion = 'multi_agent_memory.mcp_host.v1'
-        mcpPublicUrl = $PublicMcpUrl
-        oauthIssuerUrl = $OAuthIssuerUrl
-        valuesRedacted = $true
-        rawCredentialExposed = $false
-        rawPayloadExposed = $false
-    }
-    $temporaryPath = $configPath + '.tmp-' + [Guid]::NewGuid().ToString('N')
-    try {
-        $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
-        Move-Item -LiteralPath $temporaryPath -Destination $configPath -Force
-    }
-    finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryPath -Force
-        }
-    }
+    Write-McpHostConfig -McpPublicUrl $PublicMcpUrl -IssuerUrl $OAuthIssuerUrl
 }
 
 $protectedMetadata = Test-JsonEndpoint ($localOrigin + '/.well-known/oauth-protected-resource/mcp')
@@ -305,6 +331,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'tunnel_client_init_failed' }
         & $tunnelCommand doctor --profile $Profile --profile-dir $resolvedTunnelProfileDir --explain
         if ($LASTEXITCODE -ne 0) { throw 'tunnel_client_doctor_failed' }
+        Write-McpHostConfig -OpenAiTunnelId $TunnelId
     }
     if ($Run) {
         & $tunnelCommand run --profile $Profile --profile-dir $resolvedTunnelProfileDir

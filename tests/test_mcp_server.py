@@ -21,6 +21,11 @@ TEST_PEPPER = "mcp-server-test-pepper-0123456789-abcdefghijklmnopqrstuvwxyz"
 RESOURCE = "https://memory.example.test/mcp"
 ISSUER = "https://memory.example.test"
 REDIRECT = "https://chatgpt.com/connector/oauth/test-callback"
+OPENAI_TUNNEL_ID = "tunnel_" + "a" * 32
+OPENAI_TUNNEL_RESOURCE = (
+    "https://tunnel-service.gateway.unified-0.internal.api.openai.org/v1/mcp/"
+    + OPENAI_TUNNEL_ID
+)
 
 
 class McpServerTests(unittest.TestCase):
@@ -32,6 +37,7 @@ class McpServerTests(unittest.TestCase):
                 "MEMORYENDPOINTS_MCP_OAUTH_PATH",
                 "MEMORYENDPOINTS_MCP_PUBLIC_URL",
                 "MEMORYENDPOINTS_MCP_ISSUER_URL",
+                "MEMORYENDPOINTS_MCP_OPENAI_TUNNEL_ID",
             )
         }
         self.tempdir = tempfile.TemporaryDirectory()
@@ -105,7 +111,7 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual("201 Created", status, payload)
         return payload["client_id"]
 
-    def authorize_and_exchange(self, scopes="memory:read memory:write"):
+    def authorize_and_exchange(self, scopes="memory:read memory:write", resource=RESOURCE):
         client_id = self.register()
         verifier = "v" * 64
         challenge = base64.urlsafe_b64encode(
@@ -118,7 +124,7 @@ class McpServerTests(unittest.TestCase):
                 "redirect_uri": REDIRECT,
                 "scope": scopes,
                 "state": "state-0123456789",
-                "resource": RESOURCE,
+                "resource": resource,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
             }
@@ -160,7 +166,7 @@ class McpServerTests(unittest.TestCase):
                 "code": returned["code"][0],
                 "redirect_uri": REDIRECT,
                 "code_verifier": verifier,
-                "resource": RESOURCE,
+                "resource": resource,
             }
         ).encode("utf-8")
         status, _headers, body = self.call(
@@ -168,6 +174,60 @@ class McpServerTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status, body)
         return client_id, returned["code"][0], verifier, json.loads(body)
+
+    def test_configured_openai_tunnel_resource_is_exactly_bound(self):
+        os.environ["MEMORYENDPOINTS_MCP_OPENAI_TUNNEL_ID"] = OPENAI_TUNNEL_ID
+        _client_id, _code, _verifier, tokens = self.authorize_and_exchange(
+            resource=OPENAI_TUNNEL_RESOURCE
+        )
+        auth = {"HTTP_AUTHORIZATION": "Bearer " + tokens["access_token"]}
+        status, _headers, initialized = self.json_call(
+            "/mcp",
+            "POST",
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "tunnel-test", "version": "1"},
+                },
+            },
+            auth,
+        )
+        self.assertEqual("200 OK", status, initialized)
+        self.assertEqual("2025-11-25", initialized["result"]["protocolVersion"])
+
+        rejected_resources = (
+            OPENAI_TUNNEL_RESOURCE.replace(
+                OPENAI_TUNNEL_ID, "tunnel_" + "b" * 32
+            ),
+            OPENAI_TUNNEL_RESOURCE.replace("internal.api.openai.org", "example.test"),
+            OPENAI_TUNNEL_RESOURCE.replace("/v1/mcp/", ":443/v1/mcp/"),
+            OPENAI_TUNNEL_RESOURCE + "?unexpected=true",
+        )
+        for rejected_resource in rejected_resources:
+            with self.subTest(resource=rejected_resource):
+                client_id = self.register()
+                verifier = "v" * 64
+                challenge = base64.urlsafe_b64encode(
+                    hashlib.sha256(verifier.encode("ascii")).digest()
+                ).decode("ascii").rstrip("=")
+                query = urlencode(
+                    {
+                        "response_type": "code",
+                        "client_id": client_id,
+                        "redirect_uri": REDIRECT,
+                        "scope": "memory:read",
+                        "state": "state-rejected-resource",
+                        "resource": rejected_resource,
+                        "code_challenge": challenge,
+                        "code_challenge_method": "S256",
+                    }
+                )
+                status, _headers, _page = self.call("/oauth/authorize", query=query)
+                self.assertEqual("400 Bad Request", status)
 
     def test_metadata_and_unauthorized_challenge_are_standard_shaped(self):
         status, _headers, metadata = self.json_call("/.well-known/oauth-protected-resource/mcp")
@@ -544,6 +604,47 @@ Get-NextAction -LocalMcpReady $false -TunnelClientInstalled $false -DcrSampleSup
         self.assertIn("$localCandidates.Count -eq 1", script)
         self.assertIn("--profile-dir $resolvedTunnelProfileDir", script)
         self.assertIn("tunnelProfilePresent = $tunnelProfilePresent", script)
+        self.assertIn("function Write-McpHostConfig", script)
+        self.assertIn("openAiTunnelId", script)
+        self.assertIn("Write-McpHostConfig -OpenAiTunnelId $TunnelId", script)
+
+    def test_windows_helper_preserves_urls_when_it_records_the_tunnel_id(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is not available")
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "setup_chatgpt_mcp.ps1"
+        command = r"""
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:MCP_SETUP_SCRIPT_TEST_PATH, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'setup_script_parse_failed' }
+foreach ($name in @('Resolve-HttpsUrl', 'Write-McpHostConfig')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if (-not $definition) { throw ('setup_function_missing_' + $name) }
+    Invoke-Expression $definition.Extent.Text
+}
+$resolvedRoot = [IO.Path]::GetFullPath($env:MCP_SETUP_TEMP_ROOT)
+Write-McpHostConfig -McpPublicUrl 'https://mcp.example.test/mcp' -IssuerUrl 'https://auth.example.test'
+Write-McpHostConfig -OpenAiTunnelId ('tunnel_' + ('a' * 32))
+$config = Get-Content -LiteralPath (Join-Path $resolvedRoot '.local-secrets\mcp-host.json') -Raw | ConvertFrom-Json
+if ($config.mcpPublicUrl -cne 'https://mcp.example.test/mcp') { throw 'public_url_not_preserved' }
+if ($config.oauthIssuerUrl -cne 'https://auth.example.test') { throw 'issuer_url_not_preserved' }
+if ($config.openAiTunnelId -cne ('tunnel_' + ('a' * 32))) { throw 'tunnel_id_not_recorded' }
+if (-not $config.valuesRedacted -or $config.rawCredentialExposed -or $config.rawPayloadExposed) { throw 'redaction_flags_invalid' }
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            process_environment = dict(os.environ)
+            process_environment["MCP_SETUP_SCRIPT_TEST_PATH"] = str(script_path)
+            process_environment["MCP_SETUP_TEMP_ROOT"] = temporary
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                env=process_environment,
+            )
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_windows_helper_reads_modern_www_authenticate_headers(self):
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")

@@ -46,6 +46,10 @@ _REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60
 _CHATGPT_REDIRECT = re.compile(
     r"^https://chatgpt\.com/connector/oauth/[A-Za-z0-9_-]{1,160}$"
 )
+_OPENAI_TUNNEL_ID = re.compile(r"^tunnel_[0-9a-f]{32}$")
+_OPENAI_TUNNEL_GATEWAY_HOST = re.compile(
+    r"^tunnel-service\.gateway\.[a-z0-9-]{1,64}\.internal\.api\.openai\.org$"
+)
 _PKCE_VALUE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 _PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
 _OPAQUE_ID = re.compile(r"^[A-Za-z0-9_-]{8,160}$")
@@ -89,6 +93,43 @@ def _resource_url():
         "mcpPublicUrl"
     )
     return _configured_https_url(configured) or SITE_URL.rstrip("/") + "/mcp"
+
+
+def _configured_openai_tunnel_id():
+    host_config = _local_host_config()
+    candidate = str(
+        os.environ.get("MEMORYENDPOINTS_MCP_OPENAI_TUNNEL_ID")
+        or host_config.get("openAiTunnelId")
+        or ""
+    ).strip()
+    return candidate if _OPENAI_TUNNEL_ID.fullmatch(candidate) else ""
+
+
+def _accepted_resource_url(value):
+    candidate = str(value or "").strip()
+    if candidate == _resource_url():
+        return candidate
+    tunnel_id = _configured_openai_tunnel_id()
+    if not tunnel_id:
+        return ""
+    parsed = urlsplit(candidate)
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    hostname = str(parsed.hostname or "").lower()
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.username
+        or parsed.password
+        or port is not None
+        or parsed.query
+        or parsed.fragment
+        or not _OPENAI_TUNNEL_GATEWAY_HOST.fullmatch(hostname)
+        or parsed.path != "/v1/mcp/" + tunnel_id
+    ):
+        return ""
+    return candidate
 
 
 def _issuer_url():
@@ -616,7 +657,7 @@ def _authorize_parameters(environ):
         raise ValueError("unsupported_authorization_request")
     if not _PKCE_CHALLENGE.fullmatch(code_challenge) or len(state) > 1024:
         raise ValueError("invalid_authorization_request")
-    if resource != _resource_url():
+    if not _accepted_resource_url(resource):
         raise ValueError("invalid_resource")
     requested_scopes = _scopes(scope_value)
     with _LOCK:
@@ -902,7 +943,7 @@ def _token(environ, start_response, store_factory):
         return _oauth_error(start_response, "415 Unsupported Media Type", "invalid_request", "Form encoding is required.")
     except ValueError:
         return _oauth_error(start_response, "400 Bad Request", "invalid_request", "The token request is incomplete.")
-    if resource != _resource_url():
+    if not _accepted_resource_url(resource):
         return _oauth_error(start_response, "400 Bad Request", "invalid_target", "The resource does not match this MCP server.")
     now = _now()
     with _LOCK:
@@ -1045,7 +1086,7 @@ def _bearer_principal(environ, store_factory):
     with _LOCK:
         with _database() as connection:
             row = connection.execute("SELECT * FROM mcp_oauth_access_tokens WHERE token_id = ?", (token_id,)).fetchone()
-    if not row or row["revoked_at"] or row["expires_at"] < now or row["resource_url"] != _resource_url():
+    if not row or row["revoked_at"] or row["expires_at"] < now or not _accepted_resource_url(row["resource_url"]):
         return None
     if not hmac.compare_digest(row["secret_hash"], _secret_hash("access", token_id, token_secret)):
         return None
@@ -1454,6 +1495,10 @@ def _setup_status():
         "mcpTransportPublicHttps": transport_public,
         "oauthIssuerPublicHttps": issuer_public,
         "oauthIssuerReachabilityRequired": True,
+        "openAiTunnelResourceBindingConfigured": bool(
+            _configured_openai_tunnel_id()
+        ),
+        "openAiTunnelResourceBindingExact": True,
         "requiresSecureMcpTunnelOrPublicHttps": _private_host(resource),
         "valuesRedacted": True,
         "rawCredentialExposed": False,

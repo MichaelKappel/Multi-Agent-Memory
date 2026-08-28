@@ -71,6 +71,7 @@ ALLOWED_SITE_FILES = (
     "releases/index.html",
     "robots.txt",
     "sitemap.xml",
+    "static/chatgpt-app-icon.png",
     "static/favicon.svg",
     "static/site.css",
 )

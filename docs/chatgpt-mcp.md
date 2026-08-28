@@ -74,6 +74,14 @@ finds it automatically when exactly one `tunnel-client.exe` exists below the
 ignored `.local-secrets/tools/tunnel-client` directory. An ambiguous set still
 requires the explicit `-TunnelClientPath` option.
 
+After `doctor --explain` succeeds, the helper also records the non-secret
+tunnel ID in the ignored `.local-secrets/mcp-host.json` file. ChatGPT presents
+the selected Secure MCP Tunnel gateway URL as the OAuth resource. The server
+accepts that URL only when its path contains this exact configured tunnel ID
+and its host is an OpenAI tunnel gateway. It does not accept wildcard tunnel
+IDs, arbitrary hosts, ports, query strings, or fragments. Issued tokens remain
+bound to the exact resource ChatGPT requested.
+
 After the first successful `-Configure -Run`, later starts do not need the
 tunnel ID again:
 
@@ -124,14 +132,16 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 `
   -OAuthIssuerUrl https://auth.example.com
 ```
 
-This writes only URLs and redaction flags to the ignored
-`.local-secrets/mcp-host.json` file. It stores no password, OpenAI key, OAuth
-code, access token, refresh token, or tenant payload.
+This writes only URLs, the non-secret configured tunnel ID when available, and
+redaction flags to the ignored `.local-secrets/mcp-host.json` file. It stores no
+password, OpenAI key, OAuth code, access token, refresh token, or tenant payload.
 
 ## Security contract
 
 - DCR accepts only exact `https://chatgpt.com` connector callbacks.
-- OAuth requires PKCE S256 and exact `resource` propagation.
+- OAuth requires PKCE S256 and exact `resource` propagation. A Secure MCP
+  Tunnel resource is accepted only for the exact locally configured tunnel ID
+  on a recognized OpenAI gateway host.
 - Authorization codes are one-use and expire after two minutes.
 - Access tokens are opaque, audience-bound, and expire after one hour.
 - Refresh tokens rotate on use and expire after 30 days; `/oauth/revoke`

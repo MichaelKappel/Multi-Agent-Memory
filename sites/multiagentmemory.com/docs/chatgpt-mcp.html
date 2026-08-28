@@ -45,6 +45,7 @@
   -TunnelId tunnel_0123456789abcdef0123456789abcdef `
   -LocalMcpUrl https://your-intranet-host.example/mcp</code></pre>
     <p>The helper prompts with hidden input when <code>CONTROL_PLANE_API_KEY</code> is not already present. It does not save or print the key. It first verifies that the installed binary exposes OpenAI's built-in <code>sample_mcp_with_dcr</code> profile, initializes that DCR-capable profile under the ignored <code>.local-secrets/tunnel-client/profiles</code> directory, runs <code>doctor --explain</code>, and keeps the foreground tunnel attached to the terminal. When the client is not on <code>PATH</code>, the helper finds it automatically if exactly one <code>tunnel-client.exe</code> exists below the ignored <code>.local-secrets/tools/tunnel-client</code> directory; ambiguous installs require <code>-TunnelClientPath</code>.</p>
+    <p>After <code>doctor --explain</code> succeeds, the helper records the non-secret tunnel ID in the ignored <code>.local-secrets/mcp-host.json</code> file. The server accepts ChatGPT's Secure MCP Tunnel gateway URL as an OAuth resource only when it contains that exact tunnel ID on a recognized OpenAI gateway host. Wildcard tunnel IDs, arbitrary hosts, ports, query strings, and fragments are rejected, and tokens remain bound to the exact requested resource.</p>
     <p>After the first successful configuration, restart it without entering the tunnel ID again:</p>
     <pre><code>powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 `
   -Status -Run `
@@ -76,7 +77,7 @@
     <h2>Security properties</h2>
     <ul>
       <li>Dynamic registration accepts only exact ChatGPT connector callbacks.</li>
-      <li>Authorization code flow requires PKCE S256 and exact resource propagation.</li>
+      <li>Authorization code flow requires PKCE S256 and exact resource propagation. A tunnel resource must use the exact locally configured tunnel ID on a recognized OpenAI gateway host.</li>
       <li>Authorization codes are one-use; opaque access tokens expire after one hour; refresh tokens rotate and can be disconnected through token-family revocation.</li>
       <li>Every MCP call revalidates the human account, company authority, company, and workspace.</li>
       <li>Read and write scopes are enforced independently, and memory writes keep the existing firewall, quota, idempotency, confirmed-readback, audit, and review controls.</li>
