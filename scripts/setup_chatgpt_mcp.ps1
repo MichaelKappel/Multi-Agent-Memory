@@ -54,6 +54,25 @@ function Test-JsonEndpoint {
     }
 }
 
+function Get-ResponseHeaderValue {
+    param(
+        [Parameter(Mandatory = $true)]$Response,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if (-not $Response.Headers) { return '' }
+    try {
+        $values = @($Response.Headers.GetValues($Name))
+        if ($values.Count) { return [string]($values -join ', ') }
+    }
+    catch {}
+    try {
+        $value = $Response.Headers[$Name]
+        if ($null -ne $value) { return [string](@($value) -join ', ') }
+    }
+    catch {}
+    return ''
+}
+
 function Test-McpChallenge {
     param(
         [Parameter(Mandatory = $true)][string]$Url,
@@ -78,7 +97,7 @@ function Test-McpChallenge {
         $challenge = ''
         if ($_.Exception.Response) {
             try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
-            try { $challenge = [string]$_.Exception.Response.Headers['WWW-Authenticate'] } catch { $challenge = '' }
+            $challenge = [string](Get-ResponseHeaderValue -Response $_.Exception.Response -Name 'WWW-Authenticate')
         }
         $expected = 'resource_metadata="' + $ExpectedMetadataUrl + '"'
         $valid = $statusCode -eq 401 -and $challenge.Contains($expected) -and $challenge.Contains('scope="memory:read memory:write"')

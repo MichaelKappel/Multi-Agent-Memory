@@ -535,6 +535,38 @@ Get-NextAction -LocalMcpReady $false -TunnelClientInstalled $false -DcrSampleSup
         self.assertIn("Start or restart the local Multi-Agent Memory host", completed.stdout)
         self.assertNotIn("Download tunnel-client", completed.stdout)
 
+    def test_windows_helper_reads_modern_www_authenticate_headers(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is not available")
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "setup_chatgpt_mcp.ps1"
+        command = r'''
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:MCP_SETUP_SCRIPT_TEST_PATH, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'setup_script_parse_failed' }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ResponseHeaderValue' }, $true)
+if (-not $definition) { throw 'response_header_helper_missing' }
+Invoke-Expression $definition.Extent.Text
+Add-Type -AssemblyName System.Net.Http
+$response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]::Unauthorized)
+$expected = 'Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource/mcp", scope="memory:read memory:write"'
+$null = $response.Headers.TryAddWithoutValidation('WWW-Authenticate', $expected)
+$actual = Get-ResponseHeaderValue -Response $response -Name 'WWW-Authenticate'
+if ($actual -cne $expected) { throw 'modern_www_authenticate_header_not_read' }
+'''
+        process_environment = dict(os.environ)
+        process_environment["MCP_SETUP_SCRIPT_TEST_PATH"] = str(script_path)
+        completed = subprocess.run(
+            [powershell, "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env=process_environment,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
