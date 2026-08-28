@@ -132,10 +132,6 @@ TOUR_KNOWLEDGE_PAGE_ROUTE = re.compile(r"^/tour/knowledge/(?:company|workspace|p
 HUMAN_SESSION_COOKIE = "__Host-memoryendpoints-human"
 HUMAN_SESSION_SECONDS = 15 * 60
 HUMAN_REAUTH_SECONDS = 5 * 60
-LOCAL_HUMAN_CREDENTIAL_SCHEMA = "memoryendpoints.local_windows_human_credential.v1"
-LOCAL_HUMAN_CREDENTIAL_PATH = (
-    ROOT / ".local-secrets" / "memoryendpoints-local-windows-human.json"
-)
 _CONNECTOR_REQUEST_HANDLE_ROUTE = re.compile(
     r"^/connect/authorize/(pairref_[A-Za-z0-9_-]{43})$"
 )
@@ -3585,168 +3581,6 @@ def _request_origin(environ):
     return "%s://%s" % (scheme, host)
 
 
-def _local_human_auto_login_enabled():
-    value = str(
-        os.environ.get("MEMORYENDPOINTS_LOCAL_HUMAN_AUTO_LOGIN", "1")
-    ).strip().lower()
-    return value not in ("0", "false", "no", "off")
-
-
-def _local_human_auto_login_available(environ):
-    return (
-        _local_human_auto_login_enabled()
-        and _request_is_direct_loopback(environ)
-        and bool(_local_setup_defaults(environ).get("username"))
-    )
-
-
-def _load_local_human_credential(path=None):
-    path = LOCAL_HUMAN_CREDENTIAL_PATH if path is None else path
-    try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    defaults = _local_setup_defaults({"REMOTE_ADDR": "127.0.0.1"})
-    if (
-        payload.get("schemaVersion") != LOCAL_HUMAN_CREDENTIAL_SCHEMA
-        or payload.get("windowsUser") != defaults.get("displayName")
-        or payload.get("machineName")
-        != _safe_local_label(
-            os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME"),
-            "Local computer",
-        )
-    ):
-        return None
-    username = _safe_local_username(payload.get("username"))
-    password = payload.get("password")
-    if not username or not isinstance(password, str) or len(password) < 20:
-        return None
-    return {"username": username, "password": password}
-
-
-def _save_local_human_credential(username, password, path=None):
-    path = LOCAL_HUMAN_CREDENTIAL_PATH if path is None else path
-    target = Path(path)
-    if target.exists():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        os.chmod(str(target.parent), 0o700)
-    temporary = target.with_name(".%s.%s.tmp" % (target.name, secrets.token_hex(8)))
-    payload = {
-        "schemaVersion": LOCAL_HUMAN_CREDENTIAL_SCHEMA,
-        "username": username,
-        "password": password,
-        "windowsUser": _safe_local_label(
-            os.environ.get("USERNAME") or os.environ.get("USER")
-        ),
-        "machineName": _safe_local_label(
-            os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME"),
-            "Local computer",
-        ),
-    }
-    try:
-        descriptor = os.open(
-            str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-        )
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        if os.name != "nt":
-            os.chmod(str(temporary), 0o600)
-        os.replace(str(temporary), str(target))
-        if os.name != "nt":
-            os.chmod(str(target), 0o600)
-        return True
-    except OSError:
-        try:
-            temporary.unlink()
-        except OSError:
-            pass
-        return False
-
-
-def _load_local_company_master_secret():
-    path = ROOT / COMPANY_MASTER_DEFAULT_SECRET_PATH
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    if payload.get("schemaVersion") != "memoryendpoints.company_master_credential_file.v1":
-        return ""
-    secret = payload.get("companyMasterTokenSecret")
-    return secret if isinstance(secret, str) else ""
-
-
-def _select_only_human_membership(store, result):
-    session_secret = result.get("sessionSecret")
-    if not session_secret:
-        return result
-    memberships = store.list_human_company_memberships(session_secret)
-    items = memberships.get("items") if memberships.get("ok") else None
-    if not isinstance(items, list) or len(items) != 1:
-        return result
-    selected = store.select_human_company_membership(
-        session_secret, items[0].get("authorityId")
-    )
-    return selected if selected.get("ok") else result
-
-
-def _open_local_human_account_session(store):
-    """Open a password-backed session using only the server user's private file."""
-    credential_file_exists = LOCAL_HUMAN_CREDENTIAL_PATH.exists()
-    credential = _load_local_human_credential()
-    if credential_file_exists and not credential:
-        return {"ok": False, "status": "local_human_auto_login_unavailable"}
-    if credential:
-        password = credential.get("password")
-        result = store.login_human_account(
-            credential.get("username"), password, 30 * 60
-        )
-        if result.get("ok"):
-            password = ""
-            return _select_only_human_membership(store, result)
-        username = credential.get("username")
-        display_name = _local_setup_defaults(
-            {"REMOTE_ADDR": "127.0.0.1"}
-        ).get("displayName") or username
-    else:
-        defaults = _local_setup_defaults({"REMOTE_ADDR": "127.0.0.1"})
-        username = defaults.get("username")
-        display_name = defaults.get("displayName") or username
-        password = secrets.token_urlsafe(48)
-    master_secret = _load_local_company_master_secret()
-    if not username or not master_secret:
-        password = ""
-        return {"ok": False, "status": "local_human_auto_login_unavailable"}
-    proof = store.create_company_master_proof(master_secret, 2 * 60)
-    master_secret = ""
-    if not proof.get("ok"):
-        password = ""
-        return {"ok": False, "status": "local_human_auto_login_unavailable"}
-    result = store.create_human_account_with_session(
-        username,
-        password,
-        proof.get("masterProofSecret"),
-        display_name,
-        30 * 60,
-    )
-    if not result.get("ok"):
-        password = ""
-        return result
-    if not credential and not _save_local_human_credential(username, password):
-        password = ""
-        return {"ok": False, "status": "local_human_auto_login_unavailable"}
-    password = ""
-    return _select_only_human_membership(store, result)
-
-
 def _redirect_local_http_human_request(environ, start_response, path):
     if not str(environ.get("HTTP_HOST") or "").strip():
         return None
@@ -4161,11 +3995,6 @@ def route_human_access_page(environ, start_response, demo=False):
         demo=demo,
         default_username=defaults.get("username") or "",
         default_display_name=defaults.get("displayName") or "",
-        local_auto_login=(
-            not demo
-            and not authenticated
-            and _local_human_auto_login_available(environ)
-        ),
     )
     script_nonce = secrets.token_urlsafe(18)
     page = html_page(
@@ -6826,36 +6655,6 @@ def route_human(environ, start_response, path):
         content_type = str(environ.get("CONTENT_TYPE") or "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             return problem(start_response, "415 Unsupported Media Type", "JSON required", "Human account operations accept only application/json request bodies.", "json_content_type_required")
-
-    if path == "/api/matm/human/local-session":
-        if method != "POST":
-            return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to open a same-computer human session.", "method_not_allowed", headers=[("Allow", "POST")])
-        if not _local_human_auto_login_available(environ):
-            return _human_problem(start_response, "local_human_auto_login_unavailable")
-        if _token(environ):
-            return _human_problem(start_response, "human_owner_required")
-        if not _human_same_origin(environ):
-            return _human_problem(start_response, "trusted_origin_required")
-        _body, rejected = _access_body(environ, start_response)
-        if rejected:
-            return rejected
-        result = _open_local_human_account_session(store)
-        if not result.get("ok"):
-            return _human_storage_error(start_response, result)
-        session_secret = result.get("sessionSecret")
-        payload = _human_complete_session_payload(
-            store, session_secret, result.get("csrfToken")
-        )
-        if payload is None:
-            return _human_problem(start_response, "human_session_required")
-        payload["localWindowsAutoLogin"] = True
-        payload["passwordReauthenticationRequiredForSensitiveActions"] = True
-        return one_time_secret_response(
-            start_response,
-            payload,
-            "200 OK",
-            headers=[("Set-Cookie", _human_session_cookie(session_secret, 30 * 60))],
-        )
 
     if path == "/api/matm/human/recovery/closure-session":
         if method != "POST":

@@ -9,7 +9,6 @@
   var ROUTES = Object.freeze({
     masterProof: Object.freeze({method: "POST", path: "/api/matm/human/company-master-proofs"}),
     accountCreate: Object.freeze({method: "POST", path: "/api/matm/human/accounts"}),
-    localSession: Object.freeze({method: "POST", path: "/api/matm/human/local-session"}),
     sessionInspect: Object.freeze({method: "GET", path: "/api/matm/human/session"}),
     sessionLogin: Object.freeze({method: "POST", path: "/api/matm/human/session"}),
     sessionReauth: Object.freeze({method: "POST", path: "/api/matm/human/session/reauth"}),
@@ -885,20 +884,6 @@
       } catch (error) { if (actionEpoch === epoch) applyError(error, ""); }
     }
 
-    async function loginLocalComputer() {
-      scrubProtectedState("Signing in with this Windows computer…");
-      var actionEpoch = epoch;
-      setSessionState(SESSION_STATES.SIGNING_IN);
-      try {
-        var payload = await requestOperation("localSession", {}, {}, {});
-        if (actionEpoch !== epoch) return;
-        await unlockFromSession(payload, actionEpoch);
-      } catch (error) {
-        if (actionEpoch !== epoch) return;
-        scrubProtectedState("Automatic same-computer sign-in was unavailable. Sign in with a password or create the first owner account.");
-      }
-    }
-
     async function revalidateHumanSession() {
       scrubProtectedState("Revalidating your human session…");
       var actionEpoch = epoch;
@@ -1256,7 +1241,6 @@
       mount: mount,
       scrubProtectedState: scrubProtectedState,
       revalidateHumanSession: revalidateHumanSession,
-      loginLocalComputer: loginLocalComputer,
       getSnapshot: getSnapshot,
       refreshRoster: refreshRoster,
       refreshAgentMasterSetting: refreshAgentMasterSetting,

@@ -16,34 +16,20 @@ Company-master and agent bearer tokens cannot call any human account, roster, hi
 
 ## Session and enrollment routes
 
-### `POST /api/matm/human/local-session`
-
-The private-intranet runtime may bootstrap the Windows user who is operating the
-server computer. This route is enabled by default and is called automatically by
-the signed-out Human Access page only when all of these conditions hold:
-
-- the TCP peer and requested host are loopback (`localhost`, `127.0.0.1`, or
-  `::1`);
-- no `Forwarded` or `X-Forwarded-*` identity header is present;
-- browser Fetch Metadata and Origin/Referer prove the request is same-origin;
-- the standard project-relative company-master credential file is valid; and
-- the current process has a usable Windows username.
-
-On first use, the server creates one password-backed owner account using the
-Windows username as an editable account label, stores its generated local
-credential in the ignored `.local-secrets` directory, selects the only linked
-company, and sets the normal `Secure`, `HttpOnly`, `SameSite=Strict`, host-only
-human cookie. Later calls reuse that account. The password, company master, and
-session secret are never returned in the response. Set
-`MEMORYENDPOINTS_LOCAL_HUMAN_AUTO_LOGIN=0` to disable this behavior.
+### Local Windows convenience is not authentication
 
 When a human opens an HTTP LAN address on the server computer, protected page
-requests redirect to the equivalent `http://localhost:<port>` URL. Browsers
+requests may redirect to the equivalent `http://localhost:<port>` URL. Browsers
 treat localhost as a trustworthy local origin, allowing the required secure
-cookie to work without weakening the cookie for the LAN address. Another LAN
-computer is never authenticated by its IP address, reverse-DNS name, machine
-name, or claimed Windows username. Password-based access from another computer
-requires HTTPS (or a trusted private tunnel terminating in HTTPS).
+cookie to work without weakening the cookie for the LAN address. The Human
+Access page may also prefill the local Windows username as an editable label.
+
+Loopback, LAN IP addresses, reverse-DNS names, machine names, proxy headers, and
+asserted Windows usernames never prove human identity and must never mint a
+human session. `POST /api/matm/human/local-session` is intentionally not a
+supported route. Human owners must create or enter an explicit password through
+the normal same-origin enrollment or sign-in flow. Password access from another
+computer requires HTTPS (or a trusted private tunnel terminating in HTTPS).
 
 ### `POST /api/matm/human/company-master-proofs`
 
