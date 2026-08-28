@@ -6,6 +6,7 @@ import socket
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -120,6 +121,7 @@ class LanHostOperationsTests(unittest.TestCase):
 
     def test_second_listener_bind_failure_closes_first_listener(self):
         fake_api = Mock()
+        fake_api.base_environ = {}
         with (
             patch.object(serve_lan, "make_server", return_value=fake_api),
             patch.object(
@@ -131,6 +133,22 @@ class LanHostOperationsTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 serve_lan.create_servers(self.config(), application=lambda *_: ())
         fake_api.server_close.assert_called_once_with()
+
+    def test_wsgi_request_scheme_matches_the_actual_listener_transport(self):
+        server = Mock()
+        server.base_environ = {}
+        http_config = self.config()
+        serve_lan.configure_wsgi_transport(server, http_config)
+        self.assertEqual("http", server.base_environ["wsgi.url_scheme"])
+
+        tls_config = replace(
+            http_config,
+            tls_cert_file=self.root / "server.pem",
+            tls_key_file=self.root / "server-key.pem",
+            tls_ca_file=self.root / "ca.pem",
+        )
+        serve_lan.configure_wsgi_transport(server, tls_config)
+        self.assertEqual("https", server.base_environ["wsgi.url_scheme"])
 
     @staticmethod
     def wsgi_application(environ, start_response):

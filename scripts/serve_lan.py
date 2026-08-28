@@ -241,6 +241,14 @@ def configure_application_environment(config: LanHostConfig) -> None:
         sys.path.insert(0, str(config.root))
 
 
+def configure_wsgi_transport(server: WSGIServer, config: LanHostConfig) -> None:
+    """Bind the WSGI request scheme to the listener's actual transport."""
+    base_environ = getattr(server, "base_environ", None)
+    if not isinstance(base_environ, dict):
+        raise ConfigurationError("wsgi_base_environment_unavailable")
+    base_environ["wsgi.url_scheme"] = config.api_scheme
+
+
 def create_servers(config: LanHostConfig, application: Callable | None = None):
     configure_application_environment(config)
     if application is None:
@@ -257,6 +265,7 @@ def create_servers(config: LanHostConfig, application: Callable | None = None):
             server_class=ThreadingWSGIServer,
             handler_class=QuietWSGIRequestHandler,
         )
+        configure_wsgi_transport(api_server, config)
         api_server.allowed_network = config.allowed_network
         if config.tls_enabled:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
