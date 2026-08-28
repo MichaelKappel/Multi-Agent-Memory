@@ -104,8 +104,16 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
                     (limit_bytes, workspace_id),
                 )
 
-    def _provision_agent(self, setup, agent_id, scope_type, scope_id):
+    def _provision_agent(
+        self, setup, agent_id, scope_type, scope_id, entry_room_id=None
+    ):
         master = setup["companyMasterTokenSecret"]
+        assignment_context = {
+            "agentClass": "game_npc" if agent_id.startswith("npc-") else "test_agent",
+            "boundary": "in_game_only" if agent_id.startswith("npc-") else "test",
+        }
+        if entry_room_id:
+            assignment_context["entryRoomId"] = entry_room_id
         status, requested = call_api(
             "/api/matm/access/agent-name-requests",
             "POST",
@@ -113,10 +121,7 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
                 "requestedName": agent_id,
                 "displayName": agent_id,
                 "requestedGrant": {"scopeType": scope_type, "scopeId": scope_id},
-                "assignmentContext": {
-                    "agentClass": "game_npc" if agent_id.startswith("npc-") else "test_agent",
-                    "boundary": "in_game_only" if agent_id.startswith("npc-") else "test",
-                },
+                "assignmentContext": assignment_context,
                 "justification": "Provision a scoped agent for Escape NPC memory tests.",
             },
             master,
@@ -244,7 +249,7 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
                 self.assertEqual(403, status, forbidden)
                 self.assertEqual("npc_scope_forbidden", forbidden["error"]["code"])
 
-                self._create_room(
+                game_room = self._create_room(
                     setup,
                     "game",
                     game_id,
@@ -265,6 +270,7 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
                     "npc-ward-orderly-" + backend,
                     "project",
                     project_id,
+                    entry_room_id=game_room["roomId"],
                 )
                 sibling_npc = self._provision_agent(
                     setup,

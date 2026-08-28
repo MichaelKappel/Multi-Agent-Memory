@@ -361,6 +361,8 @@ def _connector_problem(start_response, code, detail=None, headers=None):
         "pairing_not_found": "404 Not Found",
         "pairing_request_not_found": "404 Not Found",
         "workspace_not_found": "404 Not Found",
+        "onboarding_workspace_required": "409 Conflict",
+        "onboarding_entry_unavailable": "409 Conflict",
         "rotation_not_found": "404 Not Found",
         "idempotency_conflict": "409 Conflict",
         "authorization_code_already_exchanged": "409 Conflict",
@@ -417,6 +419,8 @@ def _connector_problem(start_response, code, detail=None, headers=None):
         "pairing_not_found": "The pairing resource was not found.",
         "pairing_request_not_found": "The pairing request was not found.",
         "workspace_not_found": "The selected workspace was not found in the authenticated company.",
+        "onboarding_workspace_required": "A company-scoped invitation requires one validated onboarding workspace before its one-time URL can be issued.",
+        "onboarding_entry_unavailable": "The invitation's exact authorized onboarding room is missing, inactive, ambiguous, or outside the immutable grant. No invitation was consumed and no agent credential was created.",
         "rotation_not_found": "The connector rotation was not found.",
         "idempotency_conflict": "The idempotency key was already used for a different request.",
         "authorization_code_already_exchanged": "The authorization code was already exchanged by another request.",
@@ -1846,6 +1850,8 @@ def _access_problem(start_response, code, detail=None):
         "idempotency_conflict": "409 Conflict",
         "company_master_credential_exists": "409 Conflict",
         "company_master_credential_limit": "409 Conflict",
+        "onboarding_workspace_required": "409 Conflict",
+        "onboarding_entry_unavailable": "409 Conflict",
         "invite_expired": "410 Gone",
         "invite_redeemed": "410 Gone",
         "invite_revoked": "410 Gone",
@@ -1883,6 +1889,8 @@ def _access_problem(start_response, code, detail=None):
         "top_level_agent_master_credential_request_invalid": "The request must match the published top-level-agent company-master v1 schema exactly.",
         "company_master_credential_exists": "The candidate company-master credential is already registered or unavailable.",
         "company_master_credential_limit": "The company has reached the active company-master credential safety limit.",
+        "onboarding_workspace_required": "A company-scoped invitation requires one validated onboarding workspace before its one-time URL can be issued.",
+        "onboarding_entry_unavailable": "The invitation's exact authorized onboarding room is missing, inactive, ambiguous, or outside the immutable grant. No invitation was consumed and no agent credential was created.",
     }
     status = statuses.get(code, "422 Unprocessable Entity")
     headers = list(_CONNECTOR_JSON_HEADERS)
@@ -5765,6 +5773,129 @@ def _public_invite_with_grant(invite):
     return public
 
 
+def _agent_onboarding_receipt(invite, principal, persisted_onboarding):
+    invite = invite or {}
+    principal = principal or {}
+    persisted_onboarding = persisted_onboarding or {}
+    room = persisted_onboarding.get("entryRoom") or {}
+    workspace_id = persisted_onboarding.get("workspaceId") or principal.get(
+        "workspaceId"
+    )
+    agent_id = principal.get("agentId") or invite.get("agentId") or ""
+    scope_type = principal.get("scopeType") or invite.get("scopeType")
+    scope_id = principal.get("scopeId") or invite.get("scopeId")
+    room_list_query_url = _protected_query_url(
+        "/api/matm/meeting-rooms",
+        {
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "scope": room.get("scope"),
+            "scope_id": room.get("scopeId"),
+        },
+    )
+    transcript_query_url = _protected_query_url(
+        "/api/matm/meeting-messages",
+        {
+            "workspace_id": workspace_id,
+            "room_id": room.get("roomId"),
+            "agent_id": agent_id,
+        },
+    )
+    routing_decision_query_url = _protected_query_url(
+        "/api/matm/routing-decisions",
+        {
+            "workspace_id": workspace_id,
+            "routed_agent_id": agent_id,
+            "status": "active",
+        },
+    )
+    current_message_query_url = _protected_query_url(
+        "/api/matm/current-message",
+        {"workspace_id": workspace_id, "agent_id": agent_id, "limit": 50},
+    )
+    agent_inbox_query_url = _protected_query_url(
+        "/api/matm/agent-inbox",
+        {"workspace_id": workspace_id, "agent_id": agent_id, "limit": 50},
+    )
+    return {
+        "schemaVersion": "memoryendpoints.agent_onboarding_receipt.v1",
+        "state": "awaiting_introduction",
+        "agentId": agent_id,
+        "workspaceId": workspace_id,
+        "projectId": principal.get("projectId")
+        or (invite.get("assignmentContext") or {}).get("projectId"),
+        "assignmentContext": invite.get("assignmentContext") or {},
+        "immutableGrant": {
+            "scopeType": scope_type,
+            "scopeId": scope_id,
+            "workspaceId": principal.get("workspaceId") or workspace_id,
+            "projectId": principal.get("projectId"),
+            "accessRule": "scope_and_descendants",
+            "immutable": True,
+        },
+        # Preserve the existing v1 redemption field while clients adopt the
+        # complete receipt.
+        "immutableScope": invite.get("grant") or {},
+        "entryRoom": {
+            "roomId": room.get("roomId"),
+            "scope": room.get("scope"),
+            "scopeId": room.get("scopeId"),
+            "name": room.get("name"),
+            "purpose": room.get("purpose"),
+            "defaultRoom": bool(room.get("defaultRoom")),
+            "alwaysAvailable": bool(room.get("alwaysAvailable")),
+            "roomListQueryUrl": room_list_query_url,
+            "transcriptQueryUrl": transcript_query_url,
+            "postRoute": "/api/matm/meeting-messages",
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        },
+        "introduction": {
+            "required": True,
+            "requiredClaims": [
+                "identity",
+                "purpose",
+                "current_work_or_requested_assignment",
+            ],
+            "idempotencyKeyRequired": True,
+            "maxSafeSummaryLength": 2000,
+            "nextState": "awaiting_routing",
+        },
+        "routing": {
+            "waitForRouting": True,
+            "routingDecisionQueryUrl": routing_decision_query_url,
+            "currentMessageQueryUrl": current_message_query_url,
+            "agentInboxQueryUrl": agent_inbox_query_url,
+            "acknowledgementRoute": "/api/matm/notifications/ack",
+        },
+        "polling": {
+            "contractRoute": "/api/matm/agent-compatibility",
+            "contractField": "disconnectedDelivery",
+            "transport": "outbound_http_polling",
+            "pushClaimed": False,
+        },
+        "credentialPersistence": {
+            "schemaVersion": "memoryendpoints.agent_credential_file.v1",
+            "serviceBaseUrl": SITE_URL,
+            "defaultRelativePath": ".local-secrets/agents/%s.json" % agent_id,
+            "requiredFields": [
+                "schemaVersion",
+                "baseUrl",
+                "workspaceId",
+                "agentId",
+                "agentTokenSecret",
+            ],
+            "scopeRefreshRoute": "/api/matm/me",
+            "sourceControlAllowed": False,
+            "credentialReturnedOnce": True,
+        },
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
 def route_connector_pairing(environ, start_response, path):
     """Crash-safe URL pairing for one exact connector agent."""
     method = environ["REQUEST_METHOD"]
@@ -7304,6 +7435,9 @@ def route_access(environ, start_response, path):
             return _access_result_error(start_response, result, redemption=True)
         invite = _public_invite_with_grant(result.get("invite") or {})
         principal = result.get("principal") or {}
+        onboarding = _agent_onboarding_receipt(
+            invite, principal, result.get("onboarding") or {}
+        )
         return one_time_secret_response(
             start_response,
             {
@@ -7311,12 +7445,7 @@ def route_access(environ, start_response, path):
                 "agentTokenSecret": result.get("agentToken"),
                 "principal": _public_auth_principal(principal),
                 "invite": invite,
-                "onboarding": {
-                    "assignmentContext": invite.get("assignmentContext") or {},
-                    "workspaceId": principal.get("workspaceId"),
-                    "projectId": principal.get("projectId") or (invite.get("assignmentContext") or {}).get("projectId"),
-                    "immutableScope": invite.get("grant"),
-                },
+                "onboarding": onboarding,
                 "valuesRedacted": True,
                 "rawPayloadExposed": False,
             },

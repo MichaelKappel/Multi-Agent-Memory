@@ -154,6 +154,7 @@ class GovernedAgentAccessApiContract:
         scope_id=None,
         supersedes_credential_id=None,
         memory_transfer_from_credential_id=None,
+        assignment_context=None,
     ):
         body = {
             "requestedName": requested_name,
@@ -162,7 +163,9 @@ class GovernedAgentAccessApiContract:
                 "scopeType": scope_type,
                 "scopeId": scope_id or self.workspace_id,
             },
-            "assignmentContext": {
+            "assignmentContext": assignment_context
+            if assignment_context is not None
+            else {
                 "projectId": self.project_id,
                 "taskId": "initial-game-setup",
                 "taskLabel": "Initial game setup",
@@ -295,6 +298,73 @@ class GovernedAgentAccessApiContract:
         data = json.loads(self.store_path.read_text(encoding="utf-8"))
         data["agentInvites"][invite_id]["expiresAt"] = "2000-01-01T00:00:00.000000Z"
         self.store_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _create_custom_room(
+        self, scope, scope_id, parent_scope_type, parent_scope_id
+    ):
+        status, _headers, payload = call_api(
+            "/api/matm/meeting-rooms",
+            "POST",
+            {
+                "workspaceId": self.workspace_id,
+                "scope": scope,
+                "scopeId": scope_id,
+                "parentScopeType": parent_scope_type,
+                "parentScopeId": parent_scope_id,
+                "label": "%s onboarding room" % scope.title(),
+                "purpose": "Exact authorized entry room for onboarding contract tests.",
+            },
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "onboarding-room-" + uuid.uuid4().hex
+            },
+        )
+        self.assertIn(status, (200, 201), payload)
+        self.assertTrue(payload["persisted"])
+        return payload["room"]
+
+    def _remove_meeting_room(self, room_id):
+        if self.backend == "sqlite":
+            with closing(sqlite3.connect(self.sqlite_path)) as connection:
+                with connection:
+                    connection.execute(
+                        "DELETE FROM matm_meeting_rooms WHERE room_id = ?",
+                        (room_id,),
+                    )
+            return
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(data.get("meetingRooms", {}).pop(room_id, None))
+        self.store_path.write_text(
+            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+    def _receipt_get(self, url, token):
+        parsed = urlsplit(url)
+        self.assertEqual("", parsed.scheme)
+        self.assertEqual("", parsed.netloc)
+        return call_api(parsed.path, token=token, query=parsed.query)
+
+    def _persisted_onboarding(self, invite_id):
+        if self.backend == "sqlite":
+            with closing(sqlite3.connect(self.sqlite_path)) as connection:
+                row = connection.execute(
+                    """
+                    SELECT onboarding_workspace_id, onboarding_entry_room_id
+                    FROM matm_agent_invites WHERE invite_id = ?
+                    """,
+                    (invite_id,),
+                ).fetchone()
+            self.assertIsNotNone(row)
+            return {
+                "workspaceId": row[0],
+                "entryRoomId": row[1],
+            }
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        invite = data["agentInvites"][invite_id]
+        return {
+            "workspaceId": invite["onboardingWorkspaceId"],
+            "entryRoomId": invite["onboardingEntryRoomId"],
+        }
 
     def _access_counts(self):
         if self.backend == "sqlite":
@@ -887,6 +957,300 @@ class GovernedAgentAccessApiContract:
             "agent_token_already_revoked",
         )
         self._assert_not_persisted(first_secret, second_secret, redeemed["agentTokenSecret"])
+
+    def test_redemption_returns_persisted_scope_aware_onboarding_receipt(self):
+        provisioned = self._provision_agent(
+            requested_name="receipt-contract-agent",
+            display_name="Receipt Contract Agent",
+        )
+        receipt = provisioned["redeemed"]["onboarding"]
+        issued_invite = provisioned["issued"]["invite"]
+        principal = provisioned["principal"]
+        token = provisioned["agentTokenSecret"]
+
+        self.assertEqual(
+            "memoryendpoints.agent_onboarding_receipt.v1",
+            receipt["schemaVersion"],
+        )
+        self.assertEqual("awaiting_introduction", receipt["state"])
+        self.assertEqual(principal["agentId"], receipt["agentId"])
+        self.assertEqual(self.workspace_id, receipt["workspaceId"])
+        self.assertEqual(self.project_id, receipt["projectId"])
+        self.assertEqual(
+            {
+                "scopeType": "workspace",
+                "scopeId": self.workspace_id,
+                "workspaceId": self.workspace_id,
+                "projectId": None,
+                "accessRule": "scope_and_descendants",
+                "immutable": True,
+            },
+            receipt["immutableGrant"],
+        )
+        self.assertEqual("workspace", receipt["entryRoom"]["scope"])
+        self.assertEqual(self.workspace_id, receipt["entryRoom"]["scopeId"])
+        self.assertNotIn("onboardingWorkspaceId", issued_invite)
+        self.assertNotIn("onboardingEntryRoomId", issued_invite)
+        persisted_selection = self._persisted_onboarding(
+            issued_invite["inviteId"]
+        )
+        self.assertEqual(receipt["workspaceId"], persisted_selection["workspaceId"])
+        self.assertEqual(
+            receipt["entryRoom"]["roomId"], persisted_selection["entryRoomId"]
+        )
+        self.assertEqual(
+            [
+                "identity",
+                "purpose",
+                "current_work_or_requested_assignment",
+            ],
+            receipt["introduction"]["requiredClaims"],
+        )
+        self.assertTrue(receipt["introduction"]["required"])
+        self.assertTrue(receipt["introduction"]["idempotencyKeyRequired"])
+        self.assertEqual("awaiting_routing", receipt["introduction"]["nextState"])
+        self.assertTrue(receipt["routing"]["waitForRouting"])
+        self.assertEqual(
+            "/api/matm/agent-compatibility", receipt["polling"]["contractRoute"]
+        )
+        self.assertEqual(
+            "disconnectedDelivery", receipt["polling"]["contractField"]
+        )
+        self.assertFalse(receipt["polling"]["pushClaimed"])
+        self.assertFalse(receipt["credentialPersistence"]["sourceControlAllowed"])
+        self.assertTrue(
+            receipt["credentialPersistence"]["credentialReturnedOnce"]
+        )
+        self.assertEqual(
+            ".local-secrets/agents/%s.json" % principal["agentId"],
+            receipt["credentialPersistence"]["defaultRelativePath"],
+        )
+        self.assertNotIn(token, json.dumps(receipt, sort_keys=True))
+        self.assertTrue(receipt["valuesRedacted"])
+        self.assertFalse(receipt["rawCredentialExposed"])
+        self.assertFalse(receipt["rawPayloadExposed"])
+
+        status, _headers, inventory = call_api(
+            "/api/matm/access/invites", token=self.master_token
+        )
+        self.assertEqual(200, status, inventory)
+        persisted_invite = next(
+            item
+            for item in inventory["items"]
+            if item["inviteId"] == issued_invite["inviteId"]
+        )
+        self.assertNotIn("onboardingWorkspaceId", persisted_invite)
+        self.assertNotIn("onboardingEntryRoomId", persisted_invite)
+        self._assert_no_governed_credential(inventory)
+
+        credential_document = {
+            "schemaVersion": receipt["credentialPersistence"]["schemaVersion"],
+            "baseUrl": receipt["credentialPersistence"]["serviceBaseUrl"],
+            "workspaceId": receipt["workspaceId"],
+            "agentId": receipt["agentId"],
+            "agentTokenSecret": token,
+        }
+        self.assertEqual(
+            set(receipt["credentialPersistence"]["requiredFields"]),
+            set(credential_document),
+        )
+        status, _headers, me = call_api(
+            receipt["credentialPersistence"]["scopeRefreshRoute"],
+            token=credential_document["agentTokenSecret"],
+            query="workspace_id=" + credential_document["workspaceId"],
+        )
+        self.assertEqual(200, status, me)
+        self.assertEqual(receipt["agentId"], me["principal"]["agentId"])
+
+        for url in (
+            receipt["entryRoom"]["roomListQueryUrl"],
+            receipt["entryRoom"]["transcriptQueryUrl"],
+            receipt["routing"]["routingDecisionQueryUrl"],
+            receipt["routing"]["currentMessageQueryUrl"],
+            receipt["routing"]["agentInboxQueryUrl"],
+        ):
+            with self.subTest(url=urlsplit(url).path):
+                status, _headers, payload = self._receipt_get(url, token)
+                self.assertEqual(200, status, payload)
+                self.assertTrue(payload["ok"])
+
+        status, _headers, introduced = call_api(
+            receipt["entryRoom"]["postRoute"],
+            "POST",
+            {
+                "workspaceId": receipt["workspaceId"],
+                "roomId": receipt["entryRoom"]["roomId"],
+                "senderAgentId": receipt["agentId"],
+                "safeSummary": (
+                    "Receipt Contract Agent joined to verify the scoped "
+                    "onboarding and routing contract."
+                ),
+            },
+            token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "onboarding-introduction-"
+                + uuid.uuid4().hex
+            },
+        )
+        self.assertEqual(201, status, introduced)
+        self.assertTrue(introduced["persisted"])
+        self.assertTrue(introduced["visibleToSender"])
+
+    def test_onboarding_entry_selection_matches_every_supported_scope(self):
+        goal_id = "onboarding-goal"
+        task_id = "onboarding-task"
+        game_id = "onboarding-game"
+        session_id = "onboarding-session"
+        self._create_custom_room("goal", goal_id, "project", self.project_id)
+        self._create_custom_room("task", task_id, "goal", goal_id)
+        self._create_custom_room("game", game_id, "project", self.project_id)
+        self._create_custom_room("session", session_id, "game", game_id)
+
+        scope_cases = (
+            ("company", self.company_id),
+            ("workspace", self.workspace_id),
+            ("project", self.project_id),
+            ("goal", goal_id),
+            ("task", task_id),
+            ("game", game_id),
+            ("session", session_id),
+        )
+        for scope_type, scope_id in scope_cases:
+            with self.subTest(scope_type=scope_type):
+                provisioned = self._provision_agent(
+                    requested_name="onboarding-%s-agent" % scope_type,
+                    display_name="Onboarding %s Agent" % scope_type.title(),
+                    scope_type=scope_type,
+                    scope_id=scope_id,
+                )
+                receipt = provisioned["redeemed"]["onboarding"]
+                self.assertEqual(scope_type, receipt["immutableGrant"]["scopeType"])
+                self.assertEqual(scope_id, receipt["immutableGrant"]["scopeId"])
+                self.assertEqual(scope_type, receipt["entryRoom"]["scope"])
+                self.assertEqual(scope_id, receipt["entryRoom"]["scopeId"])
+                persisted_selection = self._persisted_onboarding(
+                    provisioned["issued"]["invite"]["inviteId"]
+                )
+                self.assertEqual(
+                    receipt["entryRoom"]["roomId"],
+                    persisted_selection["entryRoomId"],
+                )
+
+    def test_npc_project_invite_requires_explicit_game_or_session_entry(self):
+        game_room = self._create_custom_room(
+            "game", "npc-onboarding-game", "project", self.project_id
+        )
+        npc = self._provision_agent(
+            requested_name="npc-onboarding-reviewer",
+            display_name="NPC Onboarding Reviewer",
+            scope_type="project",
+            scope_id=self.project_id,
+            assignment_context={
+                "projectId": self.project_id,
+                "entryRoomId": game_room["roomId"],
+            },
+        )
+        receipt = npc["redeemed"]["onboarding"]
+        self.assertEqual("project", receipt["immutableGrant"]["scopeType"])
+        self.assertEqual("game", receipt["entryRoom"]["scope"])
+        self.assertEqual(game_room["roomId"], receipt["entryRoom"]["roomId"])
+
+        status, _headers, rooms = call_api(
+            "/api/matm/meeting-rooms",
+            token=self.master_token,
+            query="workspace_id=" + self.workspace_id,
+        )
+        self.assertEqual(200, status, rooms)
+        project_room = next(
+            room
+            for room in rooms["items"]
+            if room["scope"] == "project" and room["scopeId"] == self.project_id
+        )
+        request = self._request_access(
+            requested_name="npc-invalid-entry-reviewer",
+            display_name="NPC Invalid Entry Reviewer",
+            scope_type="project",
+            scope_id=self.project_id,
+            assignment_context={
+                "projectId": self.project_id,
+                "entryRoomId": project_room["roomId"],
+            },
+        )
+        self._approve(request["requestId"])
+        status, _headers, denied = call_api(
+            "/api/matm/access/invites",
+            "POST",
+            {"approvedRequestId": request["requestId"], "expiresInSeconds": 900},
+            self.master_token,
+        )
+        self._assert_error(status, denied, 409, "onboarding_entry_unavailable")
+
+    def test_onboarding_entry_is_fail_closed_before_issue_and_after_room_race(self):
+        missing_room = self._create_custom_room(
+            "goal", "missing-before-issue-goal", "project", self.project_id
+        )
+        missing_request = self._request_access(
+            requested_name="missing-entry-agent",
+            display_name="Missing Entry Agent",
+            scope_type="goal",
+            scope_id="missing-before-issue-goal",
+        )
+        self._approve(missing_request["requestId"])
+        self._remove_meeting_room(missing_room["roomId"])
+        before_issue_counts = self._access_counts()
+        status, _headers, unavailable = call_api(
+            "/api/matm/access/invites",
+            "POST",
+            {
+                "approvedRequestId": missing_request["requestId"],
+                "expiresInSeconds": 900,
+            },
+            self.master_token,
+        )
+        self._assert_error(
+            status, unavailable, 409, "onboarding_entry_unavailable"
+        )
+        self.assertEqual(before_issue_counts, self._access_counts())
+
+        stale_room = self._create_custom_room(
+            "task", "stale-after-issue-task", "project", self.project_id
+        )
+        stale_request = self._request_access(
+            requested_name="stale-entry-agent",
+            display_name="Stale Entry Agent",
+            scope_type="task",
+            scope_id="stale-after-issue-task",
+        )
+        self._approve(stale_request["requestId"])
+        issued, invite_secret = self._issue(stale_request["requestId"])
+        persisted_selection = self._persisted_onboarding(
+            issued["invite"]["inviteId"]
+        )
+        self.assertEqual(stale_room["roomId"], persisted_selection["entryRoomId"])
+        self._remove_meeting_room(stale_room["roomId"])
+        before_redeem_counts = self._access_counts()
+        status, _headers, rejected = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            {"inviteSecret": invite_secret},
+        )
+        self._assert_error(
+            status, rejected, 409, "onboarding_entry_unavailable"
+        )
+        self.assertEqual(before_redeem_counts, self._access_counts())
+
+        status, _headers, inventory = call_api(
+            "/api/matm/access/invites", token=self.master_token
+        )
+        self.assertEqual(200, status, inventory)
+        persisted = next(
+            item
+            for item in inventory["items"]
+            if item["inviteId"] == issued["invite"]["inviteId"]
+        )
+        self.assertEqual("issued", persisted["status"])
+        self.assertNotIn("onboardingEntryRoomId", persisted)
+        self._assert_no_governed_credential(inventory)
 
     def test_workspace_agent_is_bound_to_name_scope_and_workspace_rooms_only(self):
         provisioned = self._provision_agent()

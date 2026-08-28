@@ -2564,6 +2564,11 @@ def _public_agent_access_request(record):
     }
 
 
+def _agent_invite_assignment_context(value):
+    context = _public_value(value or {})
+    return context if isinstance(context, dict) else {}
+
+
 def _public_agent_invite(record):
     return {
         "inviteId": record.get("inviteId"),
@@ -2580,7 +2585,9 @@ def _public_agent_invite(record):
         "redeemedAt": record.get("redeemedAt"),
         "grantId": record.get("grantId"),
         "agentTokenId": record.get("agentTokenId"),
-        "assignmentContext": _public_value(record.get("assignmentContext") or {}),
+        "assignmentContext": _agent_invite_assignment_context(
+            record.get("assignmentContext") or {}
+        ),
         "singleUse": True,
         "valuesRedacted": True,
         "rawCredentialExposed": False,
@@ -6559,6 +6566,151 @@ class FileStore(object):
     def approve_agent_access_request(self, master_token, request_id, expires_in_seconds=None):
         return self.decide_agent_access_request(master_token, request_id, "approved")
 
+    def _select_agent_invite_onboarding_data(
+        self, data, request, identity, assignment_context
+    ):
+        context = _agent_invite_assignment_context(assignment_context)
+        scope_type = request.get("scopeType")
+        scope_id = request.get("scopeId")
+        company_id = request.get("companyId")
+        workspace_id = self._agent_access_scope_workspace_data(
+            data, scope_type, scope_id
+        )
+        context_workspace_id = str(context.get("workspaceId") or "").strip()
+        context_project_id = str(context.get("projectId") or "").strip()
+        context_project = (
+            data.get("projects", {}).get(context_project_id)
+            if context_project_id
+            else None
+        )
+        project_workspace_id = (
+            context_project.get("workspaceId") if context_project else ""
+        )
+        if context_project_id and not context_project:
+            return None, "onboarding_entry_unavailable"
+        if scope_type == "company":
+            if context_workspace_id:
+                workspace = data.get("workspaces", {}).get(context_workspace_id)
+                if not workspace or workspace.get("companyId") != company_id:
+                    return None, "onboarding_entry_unavailable"
+                workspace_id = context_workspace_id
+            if project_workspace_id:
+                project_workspace = data.get("workspaces", {}).get(
+                    project_workspace_id
+                )
+                if (
+                    not project_workspace
+                    or project_workspace.get("companyId") != company_id
+                    or (workspace_id and workspace_id != project_workspace_id)
+                ):
+                    return None, "onboarding_entry_unavailable"
+                workspace_id = project_workspace_id
+            if not workspace_id:
+                active_workspace_ids = sorted(
+                    item.get("workspaceId")
+                    for item in data.get("workspaces", {}).values()
+                    if item.get("companyId") == company_id
+                    and item.get("status") == "active"
+                    and item.get("workspaceId")
+                )
+                if len(active_workspace_ids) != 1:
+                    return None, "onboarding_workspace_required"
+                workspace_id = active_workspace_ids[0]
+        else:
+            if not workspace_id:
+                return None, "onboarding_entry_unavailable"
+            if context_workspace_id and context_workspace_id != workspace_id:
+                return None, "onboarding_entry_unavailable"
+            if project_workspace_id and project_workspace_id != workspace_id:
+                return None, "onboarding_entry_unavailable"
+
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        if (
+            workspace.get("companyId") != company_id
+            or workspace.get("status") != "active"
+        ):
+            return None, "onboarding_entry_unavailable"
+        self._ensure_default_meeting_rooms(data, workspace_id)
+        provisional_grant = {
+            "companyId": company_id,
+            "scopeType": scope_type,
+            "scopeId": scope_id,
+        }
+        is_npc = _is_npc_agent_name(identity.get("agentId"))
+        requested_entry_room_id = str(context.get("entryRoomId") or "").strip()
+        candidates = []
+        for room in data.get("meetingRooms", {}).values():
+            if (
+                room.get("workspaceId") != workspace_id
+                or room.get("status") != "active"
+                or not self._agent_grant_allows_data(
+                    data,
+                    provisional_grant,
+                    room.get("scope"),
+                    room.get("scopeId"),
+                )
+            ):
+                continue
+            if is_npc and room.get("scope") not in NPC_MEETING_SCOPE_TYPES:
+                continue
+            if is_npc and scope_type == "project":
+                if not requested_entry_room_id:
+                    continue
+                if room.get("roomId") == requested_entry_room_id:
+                    candidates.append(room)
+                continue
+            if room.get("scope") != scope_type or room.get("scopeId") != scope_id:
+                continue
+            if requested_entry_room_id and room.get("roomId") != requested_entry_room_id:
+                continue
+            candidates.append(room)
+        if len(candidates) != 1:
+            return None, "onboarding_entry_unavailable"
+        room = dict(candidates[0])
+        return {
+            "workspaceId": workspace_id,
+            "entryRoomId": room.get("roomId"),
+            "entryRoom": room,
+        }, None
+
+    def _revalidate_agent_invite_onboarding_data(self, data, invite, identity):
+        workspace_id = invite.get("onboardingWorkspaceId")
+        entry_room_id = invite.get("onboardingEntryRoomId")
+        room = data.get("meetingRooms", {}).get(entry_room_id) if entry_room_id else None
+        provisional_grant = {
+            "companyId": invite.get("companyId"),
+            "scopeType": invite.get("scopeType"),
+            "scopeId": invite.get("scopeId"),
+        }
+        if (
+            not workspace_id
+            or not room
+            or room.get("workspaceId") != workspace_id
+            or room.get("status") != "active"
+            or not self._agent_grant_allows_data(
+                data,
+                provisional_grant,
+                room.get("scope"),
+                room.get("scopeId"),
+            )
+        ):
+            return None
+        is_npc = _is_npc_agent_name(identity.get("agentId"))
+        if is_npc:
+            if room.get("scope") not in NPC_MEETING_SCOPE_TYPES:
+                return None
+            if invite.get("scopeType") != "project" and (
+                room.get("scope") != invite.get("scopeType")
+                or room.get("scopeId") != invite.get("scopeId")
+            ):
+                return None
+        elif (
+            room.get("scope") != invite.get("scopeType")
+            or room.get("scopeId") != invite.get("scopeId")
+        ):
+            return None
+        return {"workspaceId": workspace_id, "entryRoom": dict(room)}
+
     def issue_agent_invite(self, master_token, request_id, expires_in_seconds=900, assignment_context=None):
         principal = self.authenticate_company_master(master_token)
         if not principal:
@@ -6591,6 +6743,14 @@ class FileStore(object):
             identity = data.get("agentIdentities", {}).get(request.get("agentIdentityId"))
             if not identity or identity.get("status") != "active":
                 return _agent_access_error("agent_identity_inactive")
+            public_assignment_context = _agent_invite_assignment_context(
+                assignment_context or request.get("assignmentContext") or {}
+            )
+            onboarding, onboarding_error = self._select_agent_invite_onboarding_data(
+                data, request, identity, public_assignment_context
+            )
+            if onboarding_error:
+                return _agent_access_error(onboarding_error)
             invite_id = _id("invite")
             invite_secret, invite_digest = _governed_credential("invite", request.get("companyId"), invite_id)
             invite = {
@@ -6610,7 +6770,9 @@ class FileStore(object):
                 "approvedByMasterKeyId": principal.get("masterKeyId"),
                 "grantId": None,
                 "agentTokenId": None,
-                "assignmentContext": _public_value(assignment_context or request.get("assignmentContext") or {}),
+                "assignmentContext": public_assignment_context,
+                "onboardingWorkspaceId": onboarding.get("workspaceId"),
+                "onboardingEntryRoomId": onboarding.get("entryRoomId"),
             }
             if prior_invite_id:
                 # One request owns one current invitation. The immutable audit
@@ -6672,6 +6834,11 @@ class FileStore(object):
             request = data.get("agentAccessRequests", {}).get(invite.get("requestId"))
             if not identity or identity.get("status") != "active" or not request or request.get("status") != "approved":
                 return _agent_access_error("invite_unavailable")
+            onboarding = self._revalidate_agent_invite_onboarding_data(
+                data, invite, identity
+            )
+            if not onboarding:
+                return _agent_access_error("onboarding_entry_unavailable")
             predecessor_token = None
             predecessor_grant = None
             original_grant_id = None
@@ -6774,6 +6941,7 @@ class FileStore(object):
                 "invite": _public_agent_invite(invite),
                 "principal": _public_agent_principal(identity, public_grant, token_record),
                 "agentToken": agent_token,
+                "onboarding": onboarding,
                 "credentialReturnedOnce": True,
                 "valuesRedacted": True,
             }
@@ -11110,6 +11278,8 @@ class SQLiteStore(FileStore):
               grant_id TEXT,
               agent_token_id TEXT,
               assignment_context_json TEXT NOT NULL,
+              onboarding_workspace_id TEXT NOT NULL,
+              onboarding_entry_room_id TEXT NOT NULL,
               FOREIGN KEY (request_id) REFERENCES matm_agent_access_requests (request_id),
               FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
               FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
@@ -17596,6 +17766,8 @@ class SQLiteStore(FileStore):
                         "grantId": row["grant_id"],
                         "agentTokenId": row["agent_token_id"],
                         "assignmentContext": self._json_load(row["assignment_context_json"], {}),
+                        "onboardingWorkspaceId": row["onboarding_workspace_id"],
+                        "onboardingEntryRoomId": row["onboarding_entry_room_id"],
                     }
 
                 for row in connection.execute("SELECT * FROM matm_agent_access_grants ORDER BY created_at, grant_id"):
@@ -18134,8 +18306,9 @@ class SQLiteStore(FileStore):
                               invite_id, request_id, company_id, agent_identity_id, token_hash,
                               scope_type, scope_id, status, created_at, expires_at, redeemed_at,
                               approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
-                              grant_id, agent_token_id, assignment_context_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              grant_id, agent_token_id, assignment_context_json,
+                              onboarding_workspace_id, onboarding_entry_room_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 invite.get("inviteId") or invite_id,
@@ -18155,6 +18328,8 @@ class SQLiteStore(FileStore):
                                 invite.get("grantId"),
                                 invite.get("agentTokenId"),
                                 self._json_dump(invite.get("assignmentContext") or {}),
+                                invite.get("onboardingWorkspaceId"),
+                                invite.get("onboardingEntryRoomId"),
                             ),
                         )
 
@@ -18867,6 +19042,157 @@ class SQLiteStore(FileStore):
     def deny_agent_access_request(self, master_token, request_id):
         return self.decide_agent_access_request(master_token, request_id, "denied")
 
+    def _select_agent_invite_onboarding_sql(
+        self, connection, request, identity, assignment_context
+    ):
+        context = _agent_invite_assignment_context(assignment_context)
+        scope_type = request["scope_type"]
+        scope_id = request["scope_id"]
+        company_id = request["company_id"]
+        target = self._agent_scope_details_sql(connection, scope_type, scope_id)
+        workspace_id = target.get("workspaceId") if target else None
+        context_workspace_id = str(context.get("workspaceId") or "").strip()
+        context_project_id = str(context.get("projectId") or "").strip()
+        project = (
+            connection.execute(
+                "SELECT project_id, workspace_id FROM matm_projects WHERE project_id = ?",
+                (context_project_id,),
+            ).fetchone()
+            if context_project_id
+            else None
+        )
+        if context_project_id and not project:
+            return None, "onboarding_entry_unavailable"
+        project_workspace_id = project["workspace_id"] if project else ""
+        if scope_type == "company":
+            if context_workspace_id:
+                workspace = connection.execute(
+                    "SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ? AND company_id = ? AND status = 'active'",
+                    (context_workspace_id, company_id),
+                ).fetchone()
+                if not workspace:
+                    return None, "onboarding_entry_unavailable"
+                workspace_id = context_workspace_id
+            if project_workspace_id:
+                project_workspace = connection.execute(
+                    "SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ? AND company_id = ? AND status = 'active'",
+                    (project_workspace_id, company_id),
+                ).fetchone()
+                if (
+                    not project_workspace
+                    or (workspace_id and workspace_id != project_workspace_id)
+                ):
+                    return None, "onboarding_entry_unavailable"
+                workspace_id = project_workspace_id
+            if not workspace_id:
+                rows = list(
+                    connection.execute(
+                        "SELECT workspace_id FROM matm_workspaces WHERE company_id = ? AND status = 'active' ORDER BY workspace_id",
+                        (company_id,),
+                    )
+                )
+                if len(rows) != 1:
+                    return None, "onboarding_workspace_required"
+                workspace_id = rows[0]["workspace_id"]
+        else:
+            if not workspace_id:
+                return None, "onboarding_entry_unavailable"
+            if context_workspace_id and context_workspace_id != workspace_id:
+                return None, "onboarding_entry_unavailable"
+            if project_workspace_id and project_workspace_id != workspace_id:
+                return None, "onboarding_entry_unavailable"
+
+        workspace = connection.execute(
+            "SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ? AND company_id = ? AND status = 'active'",
+            (workspace_id, company_id),
+        ).fetchone()
+        if not workspace:
+            return None, "onboarding_entry_unavailable"
+        self._ensure_default_meeting_rooms_sql(connection, workspace_id)
+        provisional_grant = {
+            "company_id": company_id,
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+        }
+        is_npc = _is_npc_agent_name(identity["agent_id"])
+        requested_entry_room_id = str(context.get("entryRoomId") or "").strip()
+        candidates = []
+        for row in connection.execute(
+            "SELECT * FROM matm_meeting_rooms WHERE workspace_id = ? AND status = 'active'",
+            (workspace_id,),
+        ):
+            room = self._room_from_row(row)
+            if not self._agent_grant_allows_sql(
+                connection,
+                provisional_grant,
+                room.get("scope"),
+                room.get("scopeId"),
+            ):
+                continue
+            if is_npc and room.get("scope") not in NPC_MEETING_SCOPE_TYPES:
+                continue
+            if is_npc and scope_type == "project":
+                if requested_entry_room_id and room.get("roomId") == requested_entry_room_id:
+                    candidates.append(room)
+                continue
+            if room.get("scope") != scope_type or room.get("scopeId") != scope_id:
+                continue
+            if requested_entry_room_id and room.get("roomId") != requested_entry_room_id:
+                continue
+            candidates.append(room)
+        if len(candidates) != 1:
+            return None, "onboarding_entry_unavailable"
+        room = candidates[0]
+        return {
+            "workspaceId": workspace_id,
+            "entryRoomId": room.get("roomId"),
+            "entryRoom": room,
+        }, None
+
+    def _revalidate_agent_invite_onboarding_sql(
+        self, connection, invite, identity
+    ):
+        workspace_id = invite["onboarding_workspace_id"]
+        entry_room_id = invite["onboarding_entry_room_id"]
+        row = (
+            connection.execute(
+                "SELECT * FROM matm_meeting_rooms WHERE workspace_id = ? AND room_id = ? AND status = 'active'",
+                (workspace_id, entry_room_id),
+            ).fetchone()
+            if workspace_id and entry_room_id
+            else None
+        )
+        if not row:
+            return None
+        room = self._room_from_row(row)
+        provisional_grant = {
+            "company_id": invite["company_id"],
+            "scope_type": invite["scope_type"],
+            "scope_id": invite["scope_id"],
+        }
+        if not self._agent_grant_allows_sql(
+            connection,
+            provisional_grant,
+            room.get("scope"),
+            room.get("scopeId"),
+        ):
+            return None
+        is_npc = _is_npc_agent_name(identity["agent_id"])
+        if is_npc:
+            if room.get("scope") not in NPC_MEETING_SCOPE_TYPES:
+                return None
+            if invite["scope_type"] != "project" and (
+                room.get("scope") != invite["scope_type"]
+                or room.get("scopeId") != invite["scope_id"]
+            ):
+                return None
+        elif (
+            room.get("scope") != invite["scope_type"]
+            or room.get("scopeId") != invite["scope_id"]
+        ):
+            return None
+        return {"workspaceId": workspace_id, "entryRoom": room}
+
     def issue_agent_invite(self, master_token, request_id, expires_in_seconds=900, assignment_context=None):
         principal = self.authenticate_company_master(master_token)
         if not principal:
@@ -18908,8 +19234,18 @@ class SQLiteStore(FileStore):
                     identity = connection.execute("SELECT * FROM matm_agent_identities WHERE agent_identity_id = ? AND status = 'active'", (request["agent_identity_id"],)).fetchone()
                     if not identity:
                         return _agent_access_error("agent_identity_inactive")
+                    public_context = _agent_invite_assignment_context(
+                        assignment_context
+                        or self._json_load(request["assignment_context_json"], {})
+                        or {}
+                    )
+                    onboarding, onboarding_error = self._select_agent_invite_onboarding_sql(
+                        connection, request, identity, public_context
+                    )
+                    if onboarding_error:
+                        return _agent_access_error(onboarding_error)
                     invite_secret, invite_digest = _governed_credential("invite", request["company_id"], invite_id)
-                    context = _public_value(assignment_context or self._json_load(request["assignment_context_json"], {}) or {})
+                    context = public_context
                     if prior_invite_id:
                         replaced = connection.execute(
                             """
@@ -18919,7 +19255,8 @@ class SQLiteStore(FileStore):
                                 created_at = ?, expires_at = ?, redeemed_at = NULL,
                                 approved_by_master_key_id = ?, revoked_at = NULL,
                                 revoked_by_master_key_id = NULL, grant_id = NULL,
-                                agent_token_id = NULL, assignment_context_json = ?
+                                agent_token_id = NULL, assignment_context_json = ?,
+                                onboarding_workspace_id = ?, onboarding_entry_room_id = ?
                             WHERE invite_id = ? AND request_id = ?
                               AND status IN ('revoked', 'expired')
                             """,
@@ -18933,6 +19270,8 @@ class SQLiteStore(FileStore):
                                 expires_at,
                                 principal["masterKeyId"],
                                 self._json_dump(context),
+                                onboarding.get("workspaceId"),
+                                onboarding.get("entryRoomId"),
                                 prior_invite_id,
                                 request_id,
                             ),
@@ -18946,10 +19285,31 @@ class SQLiteStore(FileStore):
                               invite_id, request_id, company_id, agent_identity_id, token_hash,
                               scope_type, scope_id, status, created_at, expires_at, redeemed_at,
                               approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
-                              grant_id, agent_token_id, assignment_context_json
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              grant_id, agent_token_id, assignment_context_json,
+                              onboarding_workspace_id, onboarding_entry_room_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (invite_id, request_id, request["company_id"], identity["agent_identity_id"], invite_digest, request["scope_type"], request["scope_id"], "issued", now, expires_at, None, principal["masterKeyId"], None, None, None, None, self._json_dump(context)),
+                            (
+                                invite_id,
+                                request_id,
+                                request["company_id"],
+                                identity["agent_identity_id"],
+                                invite_digest,
+                                request["scope_type"],
+                                request["scope_id"],
+                                "issued",
+                                now,
+                                expires_at,
+                                None,
+                                principal["masterKeyId"],
+                                None,
+                                None,
+                                None,
+                                None,
+                                self._json_dump(context),
+                                onboarding.get("workspaceId"),
+                                onboarding.get("entryRoomId"),
+                            ),
                         )
                     if prior_invite_id:
                         changed = connection.execute(
@@ -18983,6 +19343,8 @@ class SQLiteStore(FileStore):
                         "agentName": identity["agent_name"], "scopeType": request["scope_type"], "scopeId": request["scope_id"],
                         "status": "issued", "createdAt": now, "expiresAt": expires_at,
                         "assignmentContext": context,
+                        "onboardingWorkspaceId": onboarding.get("workspaceId"),
+                        "onboardingEntryRoomId": onboarding.get("entryRoomId"),
                     }
         return {"ok": True, "request": self._agent_request_public_sql(dict(self._row_dict(request), invite_id=invite_id)), "invite": _public_agent_invite(invite), "inviteSecret": invite_secret, "credentialReturnedOnce": True, "valuesRedacted": True}
     def redeem_agent_invite(self, invite_secret):
@@ -19014,6 +19376,11 @@ class SQLiteStore(FileStore):
                     identity = connection.execute("SELECT * FROM matm_agent_identities WHERE agent_identity_id = ? AND status = 'active'", (invite["agent_identity_id"],)).fetchone()
                     if not request or not identity:
                         return _agent_access_error("invite_unavailable")
+                    onboarding = self._revalidate_agent_invite_onboarding_sql(
+                        connection, invite, identity
+                    )
+                    if not onboarding:
+                        return _agent_access_error("onboarding_entry_unavailable")
                     predecessor = None
                     original_grant_id = None
                     if request["supersedes_token_id"]:
@@ -19130,7 +19497,7 @@ class SQLiteStore(FileStore):
             "grantId": grant_id, "agentTokenId": agent_token_id,
             "assignmentContext": self._json_load(invite["assignment_context_json"], {}),
         }
-        return {"ok": True, "invite": _public_agent_invite(public_invite), "principal": _public_agent_principal(identity_record, grant_record, token_record), "agentToken": agent_token, "credentialReturnedOnce": True, "valuesRedacted": True}
+        return {"ok": True, "invite": _public_agent_invite(public_invite), "principal": _public_agent_principal(identity_record, grant_record, token_record), "agentToken": agent_token, "onboarding": onboarding, "credentialReturnedOnce": True, "valuesRedacted": True}
 
     def authenticate_agent_token(self, token, scope_type=None, scope_id=None):
         agent_token_id, secret = _parse_governed_credential(token, "agent")

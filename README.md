@@ -121,6 +121,52 @@ python run_dev.py
 
 Open `http://127.0.0.1:8088/`.
 
+### Persistent Windows LAN host
+
+Protected agent and human traffic must not use plain HTTP outside loopback. On
+the host computer, open PowerShell 7 as the Windows user who will run the
+service, create the private LAN certificate once, and install the bounded
+logon task:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\new_lan_tls_certificate.ps1 -AdvertiseHost 10.1.10.209
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_lan_host_task.ps1 -AdvertiseHost 10.1.10.209 -AllowedNetwork 10.1.10.0/24
+```
+
+Replace the address and private CIDR with this host's stable LAN address and
+network. The task runs only as the current interactive Windows user with
+limited privileges, starts at logon, supervises both listeners, and has bounded
+restart behavior. It emits redacted JSON and never places credentials in the
+task definition or command line.
+
+- Protected runtime: `https://10.1.10.209:8088`
+- Public documentation: `http://10.1.10.209:8090`
+
+The host trusts its generated private CA for the current Windows user. Before
+another computer sends a password, invite, bearer credential, or private
+payload, securely copy only `.local-secrets\tls\lan-ca.cer` to that computer,
+verify its SHA-256 fingerprint out of band against the generator's output, and
+install it for that Windows user with the repository's helper and the expected
+fingerprint:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_lan_client_trust.ps1 -CertificatePath .\lan-ca.cer -ExpectedSha256Fingerprint '<fingerprint shown on the host>'
+```
+
+The helper verifies the SHA-256 fingerprint, validity period, CA constraints,
+and expected subject before touching the current-user **Trusted Root
+Certification Authorities** store, then verifies readback. Use `-WhatIf` for a
+no-change preview.
+Never copy `lan-server-key.pem`, agent credential files, or any other
+`.local-secrets` content. A client that has not established this trust may read
+the public documentation but must not bypass a certificate warning to use the
+protected runtime.
+
+Rerunning the installer is safe when its exact managed definition is already
+present. It migrates the known earlier `var\lan-host\serve_lan.py` task and
+fails closed instead of overwriting an unknown task with the same name. Use
+`-PlanOnly` to inspect the redacted task plan without changing the machine.
+
 Default local storage is the stdlib SQLite relational database under `var/`. Override its path when an isolated local database is useful:
 
 ```powershell

@@ -478,6 +478,8 @@ CREATE TABLE IF NOT EXISTS matm_agent_invites (
   grant_id VARCHAR(96) NULL,
   agent_token_id VARCHAR(96) NULL,
   assignment_context_json TEXT NOT NULL,
+  onboarding_workspace_id VARCHAR(96) NOT NULL,
+  onboarding_entry_room_id VARCHAR(96) NOT NULL,
   UNIQUE KEY ux_matm_agent_invites_request (request_id),
   UNIQUE KEY ux_matm_agent_invites_hash (token_hash),
   KEY ix_matm_agent_invites_company_status (company_id, status, expires_at),

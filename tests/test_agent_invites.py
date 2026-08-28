@@ -205,6 +205,22 @@ class AgentInviteContractMixin(object):
         sibling_project = self._add_sibling_project()
         self.store.register_scope_node(self.company_id, "goal", "goal-one", "project", self.project_id)
         self.store.register_scope_node(self.company_id, "task", "task-one", "goal", "goal-one")
+        goal_room, goal_room_created = self.store.create_meeting_room(
+            self.workspace_id,
+            "goal",
+            "goal-one",
+            parent_scope_type="project",
+            parent_scope_id=self.project_id,
+        )
+        task_room, task_room_created = self.store.create_meeting_room(
+            self.workspace_id,
+            "task",
+            "task-one",
+            parent_scope_type="goal",
+            parent_scope_id="goal-one",
+        )
+        self.assertTrue(goal_room_created, goal_room)
+        self.assertTrue(task_room_created, task_room)
 
         _r, _a, project_invite = self._issue("project-agent", "project", self.project_id)
         project_principal = self.store.redeem_agent_invite(project_invite["inviteSecret"])["principal"]
