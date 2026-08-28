@@ -519,7 +519,7 @@ if ($errors.Count) { throw 'setup_script_parse_failed' }
 $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-NextAction' }, $true)
 if (-not $definition) { throw 'next_action_function_missing' }
 Invoke-Expression $definition.Extent.Text
-Get-NextAction -LocalMcpReady $false -TunnelClientInstalled $false -DcrSampleSupported $false -TunnelIdProvided $false -ControlPlaneApiKeyPresent $false
+Get-NextAction -LocalMcpReady $false -TunnelClientInstalled $false -DcrSampleSupported $false -TunnelProfilePresent $false -TunnelIdProvided $false -ControlPlaneApiKeyPresent $false
 """
         process_environment = dict(os.environ)
         process_environment["MCP_SETUP_SCRIPT_TEST_PATH"] = str(script_path)
@@ -534,6 +534,16 @@ Get-NextAction -LocalMcpReady $false -TunnelClientInstalled $false -DcrSampleSup
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn("Start or restart the local Multi-Agent Memory host", completed.stdout)
         self.assertNotIn("Download tunnel-client", completed.stdout)
+
+    def test_windows_helper_uses_an_explicit_ignored_profile_directory(self):
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "setup_chatgpt_mcp.ps1"
+        script = script_path.read_text(encoding="utf-8")
+        self.assertIn("[string]$TunnelProfileDir", script)
+        self.assertIn(".local-secrets\\tunnel-client\\profiles", script)
+        self.assertIn(".local-secrets\\tools\\tunnel-client", script)
+        self.assertIn("$localCandidates.Count -eq 1", script)
+        self.assertIn("--profile-dir $resolvedTunnelProfileDir", script)
+        self.assertIn("tunnelProfilePresent = $tunnelProfilePresent", script)
 
     def test_windows_helper_reads_modern_www_authenticate_headers(self):
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")

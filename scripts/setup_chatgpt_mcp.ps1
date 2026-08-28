@@ -6,6 +6,7 @@ param(
     [string]$TunnelId = '',
     [ValidatePattern('^[A-Za-z0-9._-]{1,64}$')]
     [string]$Profile = 'multi-agent-memory',
+    [string]$TunnelProfileDir = '',
     [string]$TunnelClientPath = '',
     [string]$PublicMcpUrl = '',
     [string]$OAuthIssuerUrl = '',
@@ -17,6 +18,15 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $ProjectRoot) { $ProjectRoot = Split-Path -Parent $PSScriptRoot }
 $resolvedRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path)
+if (-not $TunnelProfileDir) {
+    $TunnelProfileDir = Join-Path $resolvedRoot '.local-secrets\tunnel-client\profiles'
+}
+elseif (-not [IO.Path]::IsPathRooted($TunnelProfileDir)) {
+    $TunnelProfileDir = Join-Path $resolvedRoot $TunnelProfileDir
+}
+$resolvedTunnelProfileDir = [IO.Path]::GetFullPath($TunnelProfileDir)
+$tunnelProfilePath = Join-Path $resolvedTunnelProfileDir ($Profile + '.yaml')
+$tunnelProfileAlternatePath = Join-Path $resolvedTunnelProfileDir ($Profile + '.yml')
 if (-not $LocalMcpUrl) {
     $siteUrl = [string]$env:MEMORYENDPOINTS_SITE_URL
     $LocalMcpUrl = if ($siteUrl) { $siteUrl.TrimEnd('/') + '/mcp' } else { 'https://127.0.0.1:8088/mcp' }
@@ -117,6 +127,7 @@ function Get-NextAction {
         [Parameter(Mandatory = $true)][bool]$LocalMcpReady,
         [Parameter(Mandatory = $true)][bool]$TunnelClientInstalled,
         [Parameter(Mandatory = $true)][bool]$DcrSampleSupported,
+        [Parameter(Mandatory = $true)][bool]$TunnelProfilePresent,
         [Parameter(Mandatory = $true)][bool]$TunnelIdProvided,
         [Parameter(Mandatory = $true)][bool]$ControlPlaneApiKeyPresent
     )
@@ -129,10 +140,13 @@ function Get-NextAction {
     if (-not $DcrSampleSupported) {
         return 'Update tunnel-client to a current official OpenAI build that includes the sample_mcp_with_dcr profile.'
     }
-    if (-not $TunnelIdProvided) {
+    if (-not ($TunnelIdProvided -or $TunnelProfilePresent)) {
         return 'Create or select a tunnel in OpenAI Platform Tunnels, then pass -TunnelId.'
     }
     if (-not $ControlPlaneApiKeyPresent) {
+        if ($TunnelProfilePresent) {
+            return 'Run -Run; the helper will prompt for the existing Tunnels Read + Use runtime key without saving it.'
+        }
         return 'Create a runtime API key with Tunnels Read + Use; the script will prompt without saving it.'
     }
     return 'Run -Configure, then keep -Run active while connecting from ChatGPT.'
@@ -208,12 +222,27 @@ else {
     $command = Get-Command tunnel-client.exe -ErrorAction SilentlyContinue
     if (-not $command) { $command = Get-Command tunnel-client -ErrorAction SilentlyContinue }
     if ($command) { $tunnelCommand = $command.Source }
+    if (-not $tunnelCommand) {
+        $localToolRoot = Join-Path $resolvedRoot '.local-secrets\tools\tunnel-client'
+        if (Test-Path -LiteralPath $localToolRoot -PathType Container) {
+            $localCandidates = @(
+                Get-ChildItem -LiteralPath $localToolRoot -Filter 'tunnel-client.exe' -File -Recurse -ErrorAction SilentlyContinue
+            )
+            if ($localCandidates.Count -eq 1) {
+                $tunnelCommand = $localCandidates[0].FullName
+            }
+        }
+    }
 }
 $dcrSampleSupported = $false
 if ($tunnelCommand) {
-    & $tunnelCommand profiles samples show sample_mcp_with_dcr *> $null
+    & $tunnelCommand profiles samples show sample_mcp_with_dcr --profile-dir $resolvedTunnelProfileDir *> $null
     $dcrSampleSupported = $LASTEXITCODE -eq 0
 }
+$tunnelProfilePresent = [bool](
+    (Test-Path -LiteralPath $tunnelProfilePath -PathType Leaf) -or
+    (Test-Path -LiteralPath $tunnelProfileAlternatePath -PathType Leaf)
+)
 
 $report = [ordered]@{
     schemaVersion = 'multi_agent_memory.chatgpt_mcp_setup.v1'
@@ -227,12 +256,14 @@ $report = [ordered]@{
     setupStatus = $setupStatus
     tunnelClientInstalled = [bool]$tunnelCommand
     tunnelClientDcrSampleSupported = [bool]$dcrSampleSupported
+    tunnelProfilePresent = $tunnelProfilePresent
     tunnelIdProvided = [bool]$TunnelId
     controlPlaneApiKeyPresent = [bool]$env:CONTROL_PLANE_API_KEY
     nextAction = Get-NextAction `
         -LocalMcpReady ([bool]($setupStatus.ok -and $resourceMetadataExact -and $authorizationMetadataExact -and $mcpChallenge.ok)) `
         -TunnelClientInstalled ([bool]$tunnelCommand) `
         -DcrSampleSupported ([bool]$dcrSampleSupported) `
+        -TunnelProfilePresent $tunnelProfilePresent `
         -TunnelIdProvided ([bool]$TunnelId) `
         -ControlPlaneApiKeyPresent ([bool]$env:CONTROL_PLANE_API_KEY)
     externalOAuthRequirement = 'Secure MCP Tunnel carries MCP discovery and calls, but the OAuth authorization server must still be reachable by the browser and OpenAI token exchange.'
@@ -248,8 +279,9 @@ if ($Status) {
 if (-not $report.localMcpReady) { throw 'local_mcp_server_not_ready' }
 if (-not $tunnelCommand) { throw 'tunnel_client_not_found' }
 if ($Configure -and -not $dcrSampleSupported) { throw 'tunnel_client_dcr_sample_not_supported' }
-if (-not $TunnelId) { $TunnelId = Read-Host 'OpenAI tunnel_id' }
-if ($TunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'tunnel_id_invalid' }
+if ($Configure -and -not $TunnelId) { $TunnelId = Read-Host 'OpenAI tunnel_id' }
+if ($Configure -and $TunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'tunnel_id_invalid' }
+if ($Run -and -not $Configure -and -not $tunnelProfilePresent) { throw 'tunnel_profile_not_found_run_configure_first' }
 
 $temporaryApiKey = $false
 if (-not $env:CONTROL_PLANE_API_KEY) {
@@ -266,13 +298,16 @@ if (-not $env:CONTROL_PLANE_API_KEY) {
 
 try {
     if ($Configure) {
-        & $tunnelCommand init --sample sample_mcp_with_dcr --profile $Profile --tunnel-id $TunnelId --mcp-server-url $LocalMcpUrl
+        if (-not (Test-Path -LiteralPath $resolvedTunnelProfileDir -PathType Container)) {
+            $null = New-Item -ItemType Directory -Path $resolvedTunnelProfileDir
+        }
+        & $tunnelCommand init --sample sample_mcp_with_dcr --profile $Profile --profile-dir $resolvedTunnelProfileDir --tunnel-id $TunnelId --mcp-server-url $LocalMcpUrl
         if ($LASTEXITCODE -ne 0) { throw 'tunnel_client_init_failed' }
-        & $tunnelCommand doctor --profile $Profile --explain
+        & $tunnelCommand doctor --profile $Profile --profile-dir $resolvedTunnelProfileDir --explain
         if ($LASTEXITCODE -ne 0) { throw 'tunnel_client_doctor_failed' }
     }
     if ($Run) {
-        & $tunnelCommand run --profile $Profile
+        & $tunnelCommand run --profile $Profile --profile-dir $resolvedTunnelProfileDir
         if ($LASTEXITCODE -ne 0) { throw 'tunnel_client_run_failed' }
     }
 }

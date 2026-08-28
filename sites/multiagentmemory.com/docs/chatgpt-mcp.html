@@ -44,7 +44,12 @@
   -Status -Configure -Run `
   -TunnelId tunnel_0123456789abcdef0123456789abcdef `
   -LocalMcpUrl https://your-intranet-host.example/mcp</code></pre>
-    <p>The helper prompts with hidden input when <code>CONTROL_PLANE_API_KEY</code> is not already present. It does not save or print the key. It first verifies that the installed binary exposes OpenAI's built-in <code>sample_mcp_with_dcr</code> profile, initializes that DCR-capable profile, runs <code>doctor --explain</code>, and keeps the foreground tunnel attached to the terminal.</p>
+    <p>The helper prompts with hidden input when <code>CONTROL_PLANE_API_KEY</code> is not already present. It does not save or print the key. It first verifies that the installed binary exposes OpenAI's built-in <code>sample_mcp_with_dcr</code> profile, initializes that DCR-capable profile under the ignored <code>.local-secrets/tunnel-client/profiles</code> directory, runs <code>doctor --explain</code>, and keeps the foreground tunnel attached to the terminal. When the client is not on <code>PATH</code>, the helper finds it automatically if exactly one <code>tunnel-client.exe</code> exists below the ignored <code>.local-secrets/tools/tunnel-client</code> directory; ambiguous installs require <code>-TunnelClientPath</code>.</p>
+    <p>After the first successful configuration, restart it without entering the tunnel ID again:</p>
+    <pre><code>powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 `
+  -Status -Run `
+  -LocalMcpUrl https://your-intranet-host.example/mcp</code></pre>
+    <p>The restricted runtime key is still requested for each run unless the operator supplies <code>CONTROL_PLANE_API_KEY</code> to that process. The helper does not silently persist credentials or create an automatic-start task.</p>
     <p>In ChatGPT, enable developer mode, create a developer-mode app, choose <strong>Tunnel</strong> under Connection, and select the associated tunnel.</p>
 
     <h2>OAuth still needs a reachable issuer</h2>

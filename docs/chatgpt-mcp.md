@@ -66,7 +66,26 @@ when it exits. It uses OpenAI's `sample_mcp_with_dcr` profile, runs `doctor
 --explain`, and keeps the foreground tunnel process attached to the terminal.
 Before configuration, it asks the installed binary to show that built-in sample
 and stops with an upgrade instruction if the binary does not support it. It
-never writes or prints the runtime API key.
+never writes or prints the runtime API key. The non-secret tunnel profile is
+stored predictably under the ignored
+`.local-secrets/tunnel-client/profiles` directory instead of a user-global
+configuration directory. When `tunnel-client` is not on `PATH`, the helper also
+finds it automatically when exactly one `tunnel-client.exe` exists below the
+ignored `.local-secrets/tools/tunnel-client` directory. An ambiguous set still
+requires the explicit `-TunnelClientPath` option.
+
+After the first successful `-Configure -Run`, later starts do not need the
+tunnel ID again:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 `
+  -Status -Run `
+  -LocalMcpUrl https://your-intranet-host.example/mcp
+```
+
+The helper still prompts for the restricted runtime key each time unless the
+operator supplies `CONTROL_PLANE_API_KEY` to that process. It does not silently
+persist a credential or create an automatic-start task.
 
 In ChatGPT, enable developer mode, create a developer-mode app, choose
 **Tunnel** under Connection, and select the associated tunnel. Keep
