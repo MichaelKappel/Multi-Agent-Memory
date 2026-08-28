@@ -339,6 +339,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
             SITE_ROOT / "index.html",
             SITE_ROOT / "docs" / "how-it-works.html",
             SITE_ROOT / "docs" / "api-reference.html",
+            SITE_ROOT / "docs" / "chatgpt-mcp.html",
             SITE_ROOT / "docs" / "memory-boundary.html",
             RELEASE_PAGE,
         )
@@ -356,6 +357,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
                 "https://multiagentmemory.com/",
                 "https://multiagentmemory.com/docs/how-it-works.html",
                 "https://multiagentmemory.com/docs/api-reference.html",
+                "https://multiagentmemory.com/docs/chatgpt-mcp.html",
                 "https://multiagentmemory.com/docs/memory-boundary.html",
                 CANONICAL_RELEASE_URL,
             ],

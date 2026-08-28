@@ -120,7 +120,18 @@ ROUTE_TABLE = [
     {"route": "/api/matm/readiness-result", "access": "public", "methods": ["GET"], "purpose": "AI-ready web readiness evidence."},
     {"route": "/api/matm/redacted-example-receipts", "access": "public", "methods": ["GET"], "purpose": "Public-safe receipt examples."},
     {"route": "/api/matm/agent-setup/free-account", "access": "public", "methods": ["GET", "POST"], "purpose": "Free 200 MB workspace setup."},
+    {"route": "/mcp/setup", "access": "public", "methods": ["GET"], "purpose": "Human ChatGPT MCP connection and host-readiness guide."},
+    {"route": "/mcp/setup/status", "access": "public", "methods": ["GET"], "purpose": "Redacted local MCP/OAuth configuration status; external reachability remains unverified."},
     {"route": "/mcp/resources", "access": "public", "methods": ["GET"], "purpose": "MCP-style public resource list."},
+    {"route": "/.well-known/oauth-protected-resource", "access": "public", "methods": ["GET"], "purpose": "OAuth protected-resource metadata for the MCP resource."},
+    {"route": "/.well-known/oauth-protected-resource/mcp", "access": "public", "methods": ["GET"], "purpose": "Path-specific OAuth protected-resource metadata for the MCP resource."},
+    {"route": "/.well-known/oauth-authorization-server", "access": "public", "methods": ["GET"], "purpose": "OAuth authorization-server metadata with PKCE S256 and dynamic client registration."},
+    {"route": "/oauth/register", "access": "public", "methods": ["POST"], "purpose": "Dynamic registration restricted to exact ChatGPT connector callback URLs."},
+    {"route": "/oauth/authorize", "access": "public", "methods": ["GET", "POST"], "purpose": "Human sign-in, workspace consent, and one-use authorization-code issuance."},
+    {"route": "/oauth/session", "access": "public", "methods": ["POST"], "purpose": "Exact configured-issuer same-origin browser login for OAuth consent."},
+    {"route": "/oauth/token", "access": "public", "methods": ["POST"], "purpose": "PKCE-bound authorization-code and rotating refresh-token exchange."},
+    {"route": "/oauth/revoke", "access": "public", "methods": ["POST"], "purpose": "Disconnect an OAuth connection by revoking its access/refresh token family."},
+    {"route": "/mcp", "access": "oauth", "methods": ["POST"], "purpose": "OAuth-protected MCP Streamable HTTP JSON-RPC transport."},
     {"route": "/robots.txt", "access": "public", "methods": ["GET"], "purpose": "Crawler policy."},
     {"route": "/sitemap.xml", "access": "public", "methods": ["GET"], "purpose": "Human page sitemap."},
     {"route": "/llms.txt", "access": "public", "methods": ["GET"], "purpose": "Compact AI-readable site summary."},
@@ -200,6 +211,9 @@ PUBLIC_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "pub
 
 
 PROTECTED_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "protected"]
+
+
+OAUTH_ROUTES = [item["route"] for item in ROUTE_TABLE if item["access"] == "oauth"]
 
 
 def current_store_backend():
@@ -665,6 +679,7 @@ def capability_matrix():
         },
         "publicRoutes": PUBLIC_ROUTES,
         "protectedRoutes": PROTECTED_ROUTES,
+        "oauthRoutes": OAUTH_ROUTES,
         "companionDocumentation": {
             "site": COMPANION_DOCS_URL,
             "role": "GitHub companion documentation for MATM architecture, repository handoff, and memory boundary details.",
@@ -3031,8 +3046,15 @@ def manifest():
             "protectedWritesRequireRouteAppropriateGovernedAuthority": True,
             "unsupportedActionsReturnSafeNoOp": True,
         },
-        "routes": {"public": PUBLIC_ROUTES, "protected": PROTECTED_ROUTES},
-        "mcp": {"resources": "%s/mcp/resources" % SITE_URL, "wellKnown": "%s/.well-known/mcp.json" % SITE_URL},
+        "routes": {"public": PUBLIC_ROUTES, "protected": PROTECTED_ROUTES, "oauth": OAUTH_ROUTES},
+        "mcp": {
+            "transport": "%s/mcp" % SITE_URL,
+            "setup": "%s/mcp/setup" % SITE_URL,
+            "protectedResourceMetadata": "%s/.well-known/oauth-protected-resource/mcp" % SITE_URL,
+            "authorizationServerMetadata": "%s/.well-known/oauth-authorization-server" % SITE_URL,
+            "resources": "%s/mcp/resources" % SITE_URL,
+            "wellKnown": "%s/.well-known/mcp.json" % SITE_URL,
+        },
         "agentCompatibility": {
             "contract": "%s/api/matm/agent-compatibility" % SITE_URL,
             "supportedAbilityLevels": [item["level"] for item in AGENT_ABILITY_LEVELS],

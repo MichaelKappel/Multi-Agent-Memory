@@ -82,6 +82,27 @@ class HumanLifecycleStorageMixin(object):
         self.assertEqual(self.company_id, rotated["companyId"])
         self.assertEqual(reauthenticated["passwordReauthenticatedAt"], rotated["passwordReauthenticatedAt"])
 
+    def test_mcp_authorization_catalog_and_principal_are_active_membership_bound(self):
+        catalog = self.store.mcp_human_authorization_catalog(self.session_secret)
+        self.assertTrue(catalog["ok"], catalog)
+        self.assertEqual("escape-owner", catalog["username"])
+        self.assertEqual(1, len(catalog["items"]))
+        self.assertEqual(self.company_id, catalog["items"][0]["companyId"])
+        self.assertEqual(
+            self.workspace_id, catalog["items"][0]["workspaces"][0]["workspaceId"]
+        )
+        session = self.store.authenticate_human_account_session(self.session_secret)
+        principal = self.store.mcp_human_principal(
+            session["humanAccountId"], self.company_id, self.workspace_id
+        )
+        self.assertEqual(self.workspace_id, principal["workspaceId"])
+        self.assertEqual("GamesFor.me", principal["companyLabel"])
+        self.assertIsNone(
+            self.store.mcp_human_principal(
+                session["humanAccountId"], self.company_id, "workspace-not-authorized"
+            )
+        )
+
     def test_master_proof_is_required_single_use_expiring_and_never_persists_raw_master(self):
         without_proof = self.store.create_human_account(
             "orphan-owner",

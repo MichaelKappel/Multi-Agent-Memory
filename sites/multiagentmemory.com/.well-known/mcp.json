@@ -22,6 +22,12 @@
       "route": "/docs/api-reference.html"
     },
     {
+      "uri": "multiagentmemory://docs/chatgpt-mcp",
+      "name": "Connect ChatGPT To Multi-Agent Memory",
+      "mimeType": "text/html",
+      "route": "/docs/chatgpt-mcp.html"
+    },
+    {
       "uri": "multiagentmemory://docs/releases",
       "name": "Production Release History",
       "mimeType": "text/html",

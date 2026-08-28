@@ -46,7 +46,17 @@ ROUTES = [
     "/api/matm/readiness-result",
     "/api/matm/redacted-example-receipts",
     "/api/matm/agent-setup/free-account",
+    "/mcp/setup",
+    "/mcp/setup/status",
     "/mcp/resources",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+    "/oauth/register",
+    "/oauth/authorize",
+    "/oauth/session",
+    "/oauth/token",
+    "/oauth/revoke",
     "/robots.txt",
     "/sitemap.xml",
     "/llms.txt",
@@ -109,11 +119,52 @@ CONNECTOR_PUBLIC_PROBES = {
     },
 }
 
+MCP_PUBLIC_PROBES = {
+    "/oauth/register": {
+        "path": "/oauth/register",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (405,),
+    },
+    "/oauth/authorize": {
+        "path": "/oauth/authorize",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (400,),
+    },
+    "/oauth/token": {
+        "path": "/oauth/token",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (405,),
+    },
+    "/oauth/session": {
+        "path": "/oauth/session",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (405,),
+    },
+    "/oauth/revoke": {
+        "path": "/oauth/revoke",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (405,),
+    },
+}
+
 SITE_IDENTITY_OPTIONAL_ROUTES = {
     "/api/matm/openapi.json",
     "/api/matm/sync/capabilities",
     "/api/matm/uai-memory/contract",
     "/mcp/resources",
+    "/mcp/setup/status",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+    "/oauth/register",
+    "/oauth/session",
+    "/oauth/token",
+    "/oauth/revoke",
     "/robots.txt",
 }
 
@@ -364,7 +415,7 @@ def main(argv=None):
     items = []
     observed_source_sha = None
     for route in ROUTES:
-        probe = CONNECTOR_PUBLIC_PROBES.get(route) or {
+        probe = CONNECTOR_PUBLIC_PROBES.get(route) or MCP_PUBLIC_PROBES.get(route) or {
             "path": route,
             "method": "GET",
             "body": None,
@@ -422,6 +473,7 @@ def main(argv=None):
         for item in items
         if item["status"] not in (
             CONNECTOR_PUBLIC_PROBES.get(item["route"])
+            or MCP_PUBLIC_PROBES.get(item["route"])
             or {
                 "expectedStatuses": (
                     (200, 301, 302, 307, 308)

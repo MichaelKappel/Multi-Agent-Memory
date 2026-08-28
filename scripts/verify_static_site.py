@@ -27,6 +27,9 @@ try:
         projection_drift,
     )
 except ImportError:
+    script_directory = str(Path(__file__).resolve().parent)
+    if script_directory not in sys.path:
+        sys.path.insert(0, script_directory)
     from multiagentmemory_release_identity import (
         FINAL_PHASE,
         PREACTIVATION_PHASE,
@@ -53,6 +56,7 @@ REQUIRED_FILES = [
     "index.html",
     "docs/how-it-works.html",
     "docs/api-reference.html",
+    "docs/chatgpt-mcp.html",
     "docs/memory-boundary.html",
     "releases/index.html",
     "releases.json",
@@ -76,6 +80,7 @@ EXPECTED_MEDIA_TYPES = {
     "ai-manifest.json": "application/json",
     "ai.txt": "text/plain",
     "docs/api-reference.html": "text/html",
+    "docs/chatgpt-mcp.html": "text/html",
     "docs/how-it-works.html": "text/html",
     "docs/memory-boundary.html": "text/html",
     "index.html": "text/html",

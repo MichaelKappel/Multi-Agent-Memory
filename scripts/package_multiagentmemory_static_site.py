@@ -62,6 +62,7 @@ ALLOWED_SITE_FILES = (
     "ai-manifest.json",
     "ai.txt",
     "docs/api-reference.html",
+    "docs/chatgpt-mcp.html",
     "docs/how-it-works.html",
     "docs/memory-boundary.html",
     "index.html",

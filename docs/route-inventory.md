@@ -43,7 +43,18 @@ never exposed by the public `/knowledge` shell.
 | `/api/matm/readiness-result` | GET | AI-ready web readiness evidence. |
 | `/api/matm/redacted-example-receipts` | GET | Public-safe receipt examples. |
 | `/api/matm/agent-setup/free-account` | GET, POST | Free 200 MB workspace setup. |
+| `/mcp/setup` | GET | Human ChatGPT MCP connection and host-readiness guide. |
+| `/mcp/setup/status` | GET | Redacted local MCP/OAuth configuration status; external reachability remains unverified. |
 | `/mcp/resources` | GET | MCP-style public resource list. |
+| `/.well-known/oauth-protected-resource` | GET | OAuth protected-resource metadata for the MCP resource. |
+| `/.well-known/oauth-protected-resource/mcp` | GET | Path-specific OAuth protected-resource metadata for the MCP resource. |
+| `/.well-known/oauth-authorization-server` | GET | OAuth authorization-server metadata with PKCE S256 and dynamic client registration. |
+| `/oauth/register` | POST | Dynamic registration restricted to exact ChatGPT connector callback URLs. |
+| `/oauth/authorize` | GET, POST | Human sign-in, workspace consent, and one-use authorization-code issuance. |
+| `/oauth/session` | POST | Exact configured-issuer same-origin browser login for OAuth consent. |
+| `/oauth/token` | POST | PKCE-bound authorization-code and rotating refresh-token exchange. |
+| `/oauth/revoke` | POST | Disconnect an OAuth connection by revoking its access/refresh token family. |
+| `/mcp` | POST | OAuth-protected MCP Streamable HTTP JSON-RPC transport. |
 | `/robots.txt` | GET | Crawler policy. |
 | `/sitemap.xml` | GET | Human page sitemap. |
 | `/llms.txt` | GET | Compact AI-readable site summary. |

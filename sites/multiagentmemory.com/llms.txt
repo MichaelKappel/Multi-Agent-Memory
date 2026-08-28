@@ -7,6 +7,7 @@ Primary links:
 - Documentation site: https://multiagentmemory.com
 - Detailed system guide: https://multiagentmemory.com/docs/how-it-works.html
 - API and data reference: https://multiagentmemory.com/docs/api-reference.html
+- Connect ChatGPT with OAuth and MCP: https://multiagentmemory.com/docs/chatgpt-mcp.html
 - Memory boundary: https://multiagentmemory.com/docs/memory-boundary.html
 - Production release history: https://multiagentmemory.com/releases/
 - Machine-readable release ledger: https://multiagentmemory.com/releases.json

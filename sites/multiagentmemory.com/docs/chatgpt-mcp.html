@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect ChatGPT | MultiAgentMemory.com</title>
+  <meta name="description" content="Connect ChatGPT to the public Multi-Agent Memory MCP server with OAuth login, workspace consent, and Secure MCP Tunnel for a private host.">
+  <link rel="stylesheet" href="/static/site.css?v=ui4">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">MultiAgentMemory.com</a>
+    <nav aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/docs/how-it-works.html">How It Works</a>
+      <a href="/docs/api-reference.html">API Reference</a>
+      <a href="/docs/chatgpt-mcp.html" aria-current="page">Connect ChatGPT</a>
+      <a href="/docs/memory-boundary.html">Memory Boundary</a>
+      <a href="/releases/">Releases</a>
+      <a href="https://github.com/MichaelKappel/Multi-Agent-Memory">GitHub Repo</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>Connect ChatGPT to Multi-Agent Memory</h1>
+    <p>The public runtime has a real Streamable HTTP MCP endpoint and a separate OAuth 2.1 login flow. ChatGPT opens the normal Multi-Agent Memory sign-in page, the human approves one active workspace and exact read/write scopes, and short-lived OAuth tokens remain bound to that choice.</p>
+
+    <h2>Human connection flow</h2>
+    <ol>
+      <li>Keep the Multi-Agent Memory host running over HTTPS.</li>
+      <li>Give ChatGPT a public HTTPS MCP route or select an OpenAI Secure MCP Tunnel.</li>
+      <li>Sign in with the normal Multi-Agent Memory username and password.</li>
+      <li>Choose one active workspace and review the requested permissions.</li>
+      <li>Approve the connection. Connected is proven only after <code>initialize</code>, <code>tools/list</code>, and the read-only <code>workspace_status</code> tool succeed.</li>
+    </ol>
+    <p>The approval page never displays a company master credential, governed agent credential, password, raw private payload, access token, or refresh token.</p>
+
+    <h2>Windows host check</h2>
+    <pre><code>powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 -Status -LocalMcpUrl https://your-intranet-host.example/mcp</code></pre>
+    <p>The redacted report verifies exact resource/issuer metadata, PKCE S256, and the resource-bound OAuth 401 challenge from <code>/mcp</code>. It does not claim that ChatGPT can reach the host. A public-looking DNS name is configuration, not proof of external reachability.</p>
+
+    <h2>Private host through OpenAI Secure MCP Tunnel</h2>
+    <p>Create or select a tunnel in OpenAI Platform, create a separate runtime API key with Tunnels Read + Use, associate the tunnel with the target ChatGPT workspace, and install the currently supported <code>tunnel-client</code>. Then run:</p>
+    <pre><code>powershell -ExecutionPolicy Bypass -File scripts/setup_chatgpt_mcp.ps1 `
+  -Status -Configure -Run `
+  -TunnelId tunnel_0123456789abcdef0123456789abcdef `
+  -LocalMcpUrl https://your-intranet-host.example/mcp</code></pre>
+    <p>The helper prompts with hidden input when <code>CONTROL_PLANE_API_KEY</code> is not already present. It does not save or print the key. It first verifies that the installed binary exposes OpenAI's built-in <code>sample_mcp_with_dcr</code> profile, initializes that DCR-capable profile, runs <code>doctor --explain</code>, and keeps the foreground tunnel attached to the terminal.</p>
+    <p>In ChatGPT, enable developer mode, create a developer-mode app, choose <strong>Tunnel</strong> under Connection, and select the associated tunnel.</p>
+
+    <h2>OAuth still needs a reachable issuer</h2>
+    <p>Secure MCP Tunnel carries MCP discovery and JSON-RPC, but does not automatically tunnel the authorization server. The configured OAuth issuer needs an approved public HTTPS reverse proxy for this exact route set:</p>
+    <ul>
+      <li><code>/.well-known/oauth-authorization-server</code> and <code>/.well-known/oauth-protected-resource/mcp</code></li>
+      <li><code>/oauth/register</code>, <code>/oauth/authorize</code>, <code>/oauth/session</code>, <code>/oauth/token</code>, and <code>/oauth/revoke</code></li>
+      <li><code>/static/js/mcp-authorize.js</code> and <code>/static/css/site.css</code></li>
+    </ul>
+    <p>The browser needs the authorization, session, JavaScript, and CSS routes; OpenAI needs discovery, registration, token, and revocation. Do not expose the entire internal host merely to expose OAuth. The proxy must preserve the configured public origin because login accepts only an exact same-origin browser request.</p>
+
+    <h2>Available tools</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Scope</th><th>Behavior</th></tr></thead>
+        <tbody>
+          <tr><td data-label="Tool"><code>workspace_status</code></td><td data-label="Scope"><code>memory:read</code></td><td data-label="Behavior">Shows the human-approved company and workspace binding.</td></tr>
+          <tr><td data-label="Tool"><code>memory_search</code></td><td data-label="Scope"><code>memory:read</code></td><td data-label="Behavior">Searches public-safe memory only in the approved workspace.</td></tr>
+          <tr><td data-label="Tool"><code>memory_remember</code></td><td data-label="Scope"><code>memory:write</code></td><td data-label="Behavior">Submits a public-safe note through the normal firewall and review queue.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Security properties</h2>
+    <ul>
+      <li>Dynamic registration accepts only exact ChatGPT connector callbacks.</li>
+      <li>Authorization code flow requires PKCE S256 and exact resource propagation.</li>
+      <li>Authorization codes are one-use; opaque access tokens expire after one hour; refresh tokens rotate and can be disconnected through token-family revocation.</li>
+      <li>Every MCP call revalidates the human account, company authority, company, and workspace.</li>
+      <li>Read and write scopes are enforced independently, and memory writes keep the existing firewall, quota, idempotency, confirmed-readback, audit, and review controls.</li>
+    </ul>
+    <p>Protocol details and source-verifiable routes are in the <a href="/docs/api-reference.html">API and data reference</a>. Current platform behavior is defined by OpenAI's <a href="https://developers.openai.com/plugins/build/auth">MCP authentication guide</a>, <a href="https://developers.openai.com/api/docs/guides/secure-mcp-tunnels">Secure MCP Tunnel guide</a>, and <a href="https://developers.openai.com/plugins/deploy/connect-chatgpt">ChatGPT connection guide</a>.</p>
+  </main>
+  <footer>
+    <p>Public documentation for the Multi-Agent Memory runtime. No credential or private tenant payload belongs in this static site. See the <a href="/releases/">production release history</a>.</p>
+  </footer>
+</body>
+</html>

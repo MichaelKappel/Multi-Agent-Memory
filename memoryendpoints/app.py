@@ -62,6 +62,7 @@ from .http import (
 )
 from .human_access_ui import render_human_access_main
 from .human_operational import route_human_operational
+from .mcp_server import route_mcp
 from .runtime import backend_error_code, configured_store_backend, store_backend_health
 from .security import evaluate_memory_firewall, governed_bearer_token, redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
@@ -3274,7 +3275,9 @@ def route_docs(start_response):
     <li><a href="/api/matm/openapi.json"><code>/api/matm/openapi.json</code></a> gives agents and connectors a bounded OpenAPI-style golden path.</li>
     <li><a href="/agent-coordination"><code>/agent-coordination</code></a> gives authenticated agents one copy-safe coordination quickstart.</li>
     <li><a href="/api/matm/readiness-result"><code>/api/matm/readiness-result</code></a> exposes current local readiness and deployment blockers.</li>
-    <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a> and <a href="/mcp/resources"><code>/mcp/resources</code></a> expose resource discovery.</li>
+    <li><a href="/mcp/setup"><code>/mcp/setup</code></a> explains the ChatGPT connection flow; <a href="/mcp"><code>/mcp</code></a> is the OAuth-protected Streamable HTTP transport.</li>
+    <li><a href="/.well-known/oauth-protected-resource/mcp"><code>/.well-known/oauth-protected-resource/mcp</code></a> and <a href="/.well-known/oauth-authorization-server"><code>/.well-known/oauth-authorization-server</code></a> expose standards-based MCP authentication discovery.</li>
+    <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a> and <a href="/mcp/resources"><code>/mcp/resources</code></a> remain public discovery pointers.</li>
   </ul>
 </section>
 """.format(companion_docs_url=COMPANION_DOCS_URL, github_repo_url=GITHUB_REPO_URL)
@@ -3970,6 +3973,8 @@ Invoke-RestMethod -Method Post -Uri "$env:MEMORYENDPOINTS_BASE_URL/api/matm/noti
     <li><a href="/ai-manifest.json"><code>/ai-manifest.json</code></a></li>
     <li><a href="/.well-known/mcp.json"><code>/.well-known/mcp.json</code></a></li>
     <li><a href="/mcp/resources"><code>/mcp/resources</code></a></li>
+    <li><a href="/mcp/setup"><code>/mcp/setup</code></a></li>
+    <li><a href="/.well-known/oauth-protected-resource/mcp"><code>/.well-known/oauth-protected-resource/mcp</code></a></li>
   </ul>
 </section>
 """
@@ -5066,9 +5071,17 @@ def route_public_json(path, start_response, environ=None):
             {
                 "schemaVersion": "mcp.well_known.v1",
                 "name": SITE_NAME,
+                "transport": "%s/mcp" % SITE_URL,
+                "transportType": "streamable_http",
+                "authentication": {
+                    "type": "oauth2.1",
+                    "protectedResourceMetadata": "%s/.well-known/oauth-protected-resource/mcp" % SITE_URL,
+                    "authorizationServerMetadata": "%s/.well-known/oauth-authorization-server" % SITE_URL,
+                },
+                "setup": "%s/mcp/setup" % SITE_URL,
                 "resources": "%s/mcp/resources" % SITE_URL,
                 "companionDocumentation": COMPANION_DOCS_URL,
-                "boundary": "Public resources only; protected MATM APIs require workspace key.",
+                "boundary": "MCP tools require a human-approved OAuth workspace grant; public discovery contains no tenant memory.",
             },
         )
     if path == "/mcp/resources":
@@ -10618,6 +10631,9 @@ def _application_dispatch(environ, start_response):
         )
         if redirected is not None:
             return redirected
+    mcp_response = route_mcp(environ, start_response, path, _store)
+    if mcp_response is not None:
+        return mcp_response
     cors_api_route = path.startswith("/api/") and not path.startswith("/api/matm/human/")
     if cors_api_route:
         start_response = _cors_start_response(environ, start_response)

@@ -36,13 +36,55 @@ The complete route and method list is also maintained in [route-inventory.md](ro
 | `/api/matm/readiness-result` | Bounded readiness checks, evidence, and deployment status. |
 | `/api/matm/redacted-example-receipts` | Public-safe receipt examples. |
 | `/api/matm/agent-setup/free-account` | Free workspace setup information and one-time-key POST endpoint. |
+| `/mcp/setup` | Human ChatGPT MCP connection and host-readiness guide. |
+| `/mcp/setup/status` | Redacted MCP/OAuth configuration status; external reachability remains unverified. |
 | `/mcp/resources` | Public MCP-style resource list. |
+| `/.well-known/oauth-protected-resource` | OAuth protected-resource metadata. |
+| `/.well-known/oauth-protected-resource/mcp` | Path-specific OAuth protected-resource metadata. |
+| `/.well-known/oauth-authorization-server` | OAuth authorization-server discovery. |
+| `/oauth/register` | ChatGPT-only dynamic client registration. |
+| `/oauth/authorize` | Human sign-in and workspace consent. |
+| `/oauth/session` | Exact configured-issuer same-origin browser login for consent. |
+| `/oauth/token` | PKCE authorization-code and rotating refresh-token exchange. |
+| `/oauth/revoke` | Access/refresh token-family revocation for disconnect. |
+| `/mcp` | OAuth-protected Streamable HTTP MCP JSON-RPC endpoint. |
 | `/robots.txt` | Crawler policy; never an authorization mechanism. |
 | `/sitemap.xml` | Public human-page sitemap. |
 | `/llms.txt` and `/llms-full.txt` | Compact and expanded AI-readable public summaries. |
 | `/ai.txt` and `/ai-manifest.json` | Plain-text and JSON agent discovery. |
 | `/.well-known/mcp.json` | MCP discovery pointer. |
 | `/.well-known/ai-agent.json` | AI agent discovery pointer. |
+
+### ChatGPT MCP connection
+
+The runtime exposes a separate OAuth 2.1 MCP surface; it does not relabel the
+LocalEndpoint connector-pairing credential as an OAuth token. ChatGPT discovers
+`/.well-known/oauth-protected-resource/mcp`, follows the authorization-server
+metadata, dynamically registers only an exact ChatGPT connector callback, and
+uses authorization code plus PKCE S256. The `resource` value is required at
+authorization and token exchange and is bound to every short-lived opaque
+access token. Refresh tokens rotate on use.
+
+`POST /mcp` is stateless Streamable HTTP JSON-RPC. It supports `initialize`,
+`notifications/initialized`, `ping`, `tools/list`, and `tools/call`. The initial
+tool set is `workspace_status`, `memory_search`, and `memory_remember`. Each
+connection is bound to the signed-in human account, current company membership,
+one explicitly approved active workspace, exact OAuth scopes, and the canonical
+MCP resource. Authority is revalidated before each call. Memory writes pass
+through the existing firewall and review queue; raw credentials and raw private
+payloads are not returned.
+
+An unauthenticated MCP request returns `401` with a `WWW-Authenticate` challenge
+containing `resource_metadata`. Human approval is shown only after the normal
+same-origin account login succeeds. The authorization code is short-lived and
+one-use, access tokens expire after one hour, and the server persists only
+domain-separated credential verifiers.
+
+Run `scripts/setup_chatgpt_mcp.ps1 -Status` on Windows for a redacted readiness
+report. A private MCP transport can use OpenAI Secure MCP Tunnel. The tunnel
+does not automatically make the OAuth authorization server public, so the
+configured issuer must still be reachable for browser authorization and token
+exchange. See [chatgpt-mcp.md](chatgpt-mcp.md) for the exact operator flow.
 
 ### GET, POST `/api/matm/agent-setup/free-account`
 

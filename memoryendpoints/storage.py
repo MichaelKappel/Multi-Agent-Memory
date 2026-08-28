@@ -5543,6 +5543,100 @@ class FileStore(object):
         items.sort(key=lambda item: (item.get("companyLabel") or "", item.get("authorityId") or ""))
         return {"ok": True, "items": items, "valuesRedacted": True}
 
+    def mcp_human_authorization_catalog(self, session_secret):
+        """Return only active workspaces the signed-in human may grant to MCP."""
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        data = self._load()
+        items = []
+        for authority in data.get("humanCompanyAuthorities", {}).values():
+            if authority.get("humanAccountId") != session["humanAccountId"]:
+                continue
+            company = data.get("companies", {}).get(authority.get("companyId")) or {}
+            if company.get("status", "active") != "active":
+                continue
+            workspaces = []
+            for workspace in data.get("workspaces", {}).values():
+                if (
+                    workspace.get("companyId") == authority.get("companyId")
+                    and workspace.get("status", "active") == "active"
+                ):
+                    workspaces.append(
+                        {
+                            "workspaceId": workspace.get("workspaceId"),
+                            "label": workspace.get("label"),
+                            "status": "active",
+                            "valuesRedacted": True,
+                        }
+                    )
+            workspaces.sort(
+                key=lambda item: (item.get("label") or "", item.get("workspaceId") or "")
+            )
+            if workspaces:
+                items.append(
+                    {
+                        "authorityId": authority.get("authorityId"),
+                        "companyId": authority.get("companyId"),
+                        "companyLabel": company.get("label"),
+                        "role": authority.get("role"),
+                        "workspaces": workspaces,
+                        "valuesRedacted": True,
+                    }
+                )
+        items.sort(
+            key=lambda item: (item.get("companyLabel") or "", item.get("companyId") or "")
+        )
+        return {
+            "ok": True,
+            "humanAccountId": session.get("humanAccountId"),
+            "username": session.get("username"),
+            "displayName": session.get("displayName") or session.get("username"),
+            "items": items,
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def mcp_human_principal(self, human_account_id, company_id, workspace_id):
+        """Revalidate a persisted MCP grant against current human authority."""
+        data = self._load()
+        account = data.get("humanAccounts", {}).get(human_account_id) or {}
+        if account.get("status") != "active":
+            return None
+        authority = next(
+            (
+                item
+                for item in data.get("humanCompanyAuthorities", {}).values()
+                if item.get("humanAccountId") == human_account_id
+                and item.get("companyId") == company_id
+            ),
+            None,
+        )
+        company = data.get("companies", {}).get(company_id) or {}
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        if (
+            not authority
+            or company.get("status", "active") != "active"
+            or workspace.get("companyId") != company_id
+            or workspace.get("status", "active") != "active"
+        ):
+            return None
+        return {
+            "humanAccountId": human_account_id,
+            "username": account.get("username"),
+            "displayName": account.get("displayName") or account.get("username"),
+            "authorityId": authority.get("authorityId"),
+            "role": authority.get("role"),
+            "companyId": company_id,
+            "companyLabel": company.get("label"),
+            "workspaceId": workspace_id,
+            "workspaceLabel": workspace.get("label"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
     def list_human_agent_tokens(self, session_secret, company_id):
         actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)
         if not actor:
@@ -20462,6 +20556,101 @@ class SQLiteStore(FileStore):
                 )
             )
         return {"ok": True, "items": items, "valuesRedacted": True}
+
+    def mcp_human_authorization_catalog(self, session_secret):
+        """Return only active workspaces the signed-in human may grant to MCP."""
+        session = self.authenticate_human_account_session(session_secret)
+        if not session:
+            return _agent_access_error("human_account_session_required")
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT h.authority_id, h.company_id, h.role,
+                           c.label AS company_label,
+                           w.workspace_id, w.label AS workspace_label
+                    FROM matm_human_company_authorities h
+                    JOIN matm_companies c ON c.company_id = h.company_id
+                    JOIN matm_workspaces w ON w.company_id = h.company_id
+                    WHERE h.human_account_id = ?
+                      AND c.status = 'active'
+                      AND w.status = 'active'
+                    ORDER BY c.label, h.authority_id, w.label, w.workspace_id
+                    """,
+                    (session["humanAccountId"],),
+                ).fetchall()
+        by_authority = {}
+        for row in rows:
+            item = by_authority.setdefault(
+                row["authority_id"],
+                {
+                    "authorityId": row["authority_id"],
+                    "companyId": row["company_id"],
+                    "companyLabel": row["company_label"],
+                    "role": row["role"],
+                    "workspaces": [],
+                    "valuesRedacted": True,
+                },
+            )
+            item["workspaces"].append(
+                {
+                    "workspaceId": row["workspace_id"],
+                    "label": row["workspace_label"],
+                    "status": "active",
+                    "valuesRedacted": True,
+                }
+            )
+        return {
+            "ok": True,
+            "humanAccountId": session.get("humanAccountId"),
+            "username": session.get("username"),
+            "displayName": session.get("displayName") or session.get("username"),
+            "items": list(by_authority.values()),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    def mcp_human_principal(self, human_account_id, company_id, workspace_id):
+        """Revalidate a persisted MCP grant against current human authority."""
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT a.human_account_id, a.username, a.display_name,
+                           h.authority_id, h.role,
+                           c.company_id, c.label AS company_label,
+                           w.workspace_id, w.label AS workspace_label
+                    FROM matm_human_accounts a
+                    JOIN matm_human_company_authorities h
+                      ON h.human_account_id = a.human_account_id
+                    JOIN matm_companies c ON c.company_id = h.company_id
+                    JOIN matm_workspaces w ON w.company_id = c.company_id
+                    WHERE a.human_account_id = ?
+                      AND c.company_id = ?
+                      AND w.workspace_id = ?
+                      AND a.status = 'active'
+                      AND c.status = 'active'
+                      AND w.status = 'active'
+                    """,
+                    (human_account_id, company_id, workspace_id),
+                ).fetchone()
+        if not row:
+            return None
+        return {
+            "humanAccountId": row["human_account_id"],
+            "username": row["username"],
+            "displayName": row["display_name"] or row["username"],
+            "authorityId": row["authority_id"],
+            "role": row["role"],
+            "companyId": row["company_id"],
+            "companyLabel": row["company_label"],
+            "workspaceId": row["workspace_id"],
+            "workspaceLabel": row["workspace_label"],
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
 
     def list_human_agent_tokens(self, session_secret, company_id):
         actor = self._credential_management_human_session(session_secret, require_recent_reauth=False)

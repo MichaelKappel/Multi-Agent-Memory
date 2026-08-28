@@ -603,8 +603,8 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
                 preactivation_report = json.loads(
                     report_path.read_text(encoding="utf-8")
                 )
-                self.assertEqual(10, preactivation_report["fileCount"])
-                self.assertEqual(10, preactivation_report["nonClaimFileCount"])
+                self.assertEqual(11, preactivation_report["fileCount"])
+                self.assertEqual(11, preactivation_report["nonClaimFileCount"])
                 self.assertEqual(0, preactivation_report["claimFileCount"])
                 self.assertFalse(preactivation_report["claimsVerified"])
                 self.assertFalse(
@@ -631,7 +631,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
                     requested,
                 )
                 final_report = json.loads(report_path.read_text(encoding="utf-8"))
-                self.assertEqual(16, final_report["fileCount"])
+                self.assertEqual(17, final_report["fileCount"])
                 self.assertEqual(6, final_report["claimFileCount"])
                 self.assertEqual(1, final_report["retiredRouteCount"])
                 self.assertEqual(1, final_report["retiredRouteVerifiedCount"])
