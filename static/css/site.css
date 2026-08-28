@@ -1573,6 +1573,78 @@ a.status-badge {
   margin-top: 4px;
 }
 
+.conversation-intro,
+.field-help {
+  color: var(--muted);
+}
+
+.conversation-intro {
+  margin: -2px 0 12px;
+  max-width: 78ch;
+}
+
+.field-help {
+  font-size: 0.86rem;
+  margin: -2px 0 0;
+}
+
+.meeting-conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.conversation-room-pane,
+.conversation-thread-pane {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--panel);
+}
+
+.conversation-room-pane h3,
+.conversation-thread-pane h3 {
+  margin: 0 0 8px;
+}
+
+.conversation-room-pane .meeting-room-list,
+.conversation-thread-pane .meeting-message-list {
+  grid-template-columns: 1fr;
+}
+
+.conversation-thread-pane .meeting-message-list {
+  max-height: 34rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-margin-top: 12px;
+}
+
+.conversation-composer[aria-busy="true"] {
+  opacity: 0.76;
+}
+
+.meeting-room-row.is-selected {
+  border-color: #76abb1;
+  box-shadow: inset 4px 0 0 var(--accent), var(--shadow-sm);
+  background: #f3fbfb;
+}
+
+.console-advanced-controls {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f8fafb;
+}
+
+.console-advanced-controls > summary {
+  cursor: pointer;
+  color: var(--accent-deep);
+  font-weight: 800;
+}
+
 .lane-overview {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2357,6 +2429,14 @@ footer p {
 
   .meeting-room-list {
     grid-template-columns: 1fr;
+  }
+
+  .meeting-conversation-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-thread-pane .meeting-message-list {
+    max-height: none;
   }
 
   .meeting-room-list > .filter-summary,

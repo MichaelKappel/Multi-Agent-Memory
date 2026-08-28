@@ -191,6 +191,7 @@ function createPreauthHarness(options) {
   const navigateCalls = [];
   const transport = options.useWindowFetch ? null : api.createDemoTransport();
   const controllerOptions = {root, documentRef, windowRef, sessionAuthority: api.createSessionAuthority(), navigate(pathname) { navigateCalls.push(pathname); }};
+  if (options.returnPath) controllerOptions.returnPath = options.returnPath;
   if (transport) controllerOptions.transport = transport;
   const controller = api.createPreauth(controllerOptions);
   controller.mount();
@@ -260,6 +261,14 @@ async function main() {
   assert.strictEqual(preauthLogin.loginPassword.value, "");
   await settle();
   assert.deepStrictEqual(preauthLogin.navigateCalls, ["/human"]);
+
+  const consolePreauth = createPreauthHarness({returnPath: "/console"});
+  consolePreauth.loginForm.elements.username.value = "demo-owner";
+  consolePreauth.loginPassword.value = "PREAUTH-CONSOLE-PASSWORD";
+  consolePreauth.loginForm.dispatch("submit");
+  assert.strictEqual(consolePreauth.loginPassword.value, "");
+  await settle();
+  assert.deepStrictEqual(consolePreauth.navigateCalls, ["/console"]);
 
   const preauthEnrollment = createPreauthHarness();
   preauthEnrollment.master.value = "PREAUTH-MASTER-CANARY";

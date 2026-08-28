@@ -1,6 +1,13 @@
 (function () {
   "use strict";
 
+  function protectedReturnPath(pathname) {
+    if (pathname === "/console" || pathname === "/knowledge" || String(pathname || "").indexOf("/knowledge/") === 0) {
+      return pathname;
+    }
+    return "/human";
+  }
+
   function mount() {
     var root = document.querySelector("[data-human-access]");
     var api = window.MemoryEndpointsHumanAccess;
@@ -11,6 +18,7 @@
       root: root,
       demoMode: demoMode,
       preauthOnly: preauthOnly,
+      returnPath: protectedReturnPath(window.location.pathname),
       navigate: function (path) { window.location.assign(path); }
     };
     if (demoMode) {

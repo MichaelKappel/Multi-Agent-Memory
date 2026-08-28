@@ -903,6 +903,7 @@
     latestReceiptItems: [],
     latestAuditItems: [],
     latestReviewItems: [],
+    draftMutationKeys: {},
   };
   var agentLanes = [];
   var longTermMemoryTag = "long-term-memory-migration";
@@ -2766,6 +2767,8 @@
       if (requiresResponse) {
         row.className += " attention-row";
       }
+      row.setAttribute("role", "article");
+      row.setAttribute("aria-label", (isTargeted ? "Targeted" : "Broadcast") + " message from " + (message.senderAgentId || "unknown"));
       appendCopyActions(row, [
         { label: "Copy message id", copyLabel: "Message id", value: message.messageId },
         { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
@@ -2774,7 +2777,7 @@
     });
   }
 
-  function renderMessageDelivery(payload, refreshedAgentId) {
+  function renderMessageDelivery(payload, refreshState) {
     var node = pick("[data-console-message-delivery]");
     if (!node) {
       return;
@@ -2789,9 +2792,14 @@
     var laneRecipient = operatorSummary.targetAgentId || delivery.targetAgentId || message.targetAgentId || notification.targetAgentId || "";
     var messageType = operatorSummary.messageType || delivery.messageType || (laneRecipient ? "targeted" : "broadcast");
     var responseDisposition = operatorSummary.responseDisposition || delivery.responseDisposition || notification.responseDisposition || "viewed_acknowledgement";
+    var responseRequired = message.responseRequired !== undefined
+      ? Boolean(message.responseRequired)
+      : responseDisposition === "required_response";
     var isTargeted = messageType === "targeted";
     var target = isTargeted ? laneRecipient : "";
-    var refreshedLane = refreshedAgentId || laneRecipient || state.agentId;
+    var refresh = refreshState || {};
+    var refreshedLane = refresh.agentId || "";
+    var refreshFailed = Boolean(refresh.error);
     var recipientText = isTargeted ? (target || "selected agent") : "all agents";
     var expectedRecipientCount = payload && payload.expectedRecipientCount !== undefined
       ? payload.expectedRecipientCount
@@ -2841,18 +2849,19 @@
       message.safeSummary || "The message was accepted by the current-message lane.",
       [
         { text: messageType, kind: isTargeted ? "neutral" : "good" },
-        { text: message.responseRequired ? "response required" : "ack only", kind: message.responseRequired ? "warn" : "neutral" },
+        { text: responseRequired ? "response required" : "ack only", kind: responseRequired ? "warn" : "neutral" },
         { text: operatorSummary.valuesRedacted || message.valuesRedacted ? "redacted" : "", kind: "good" },
       ],
       [
-        "from " + (message.senderAgentId || "unknown"),
+        "from " + (message.senderAgentId || state.agentId || "verified principal"),
         "to " + recipientText,
         "delivery " + messageType,
         "response " + responseDisposition,
         "message " + shortId(message.messageId),
         "notification " + shortId(notification.notificationId),
         isTargeted ? "" : "recipients " + recipientReadbackText,
-        "refreshed " + refreshedLane + " inbox",
+        refreshedLane ? "refreshed " + refreshedLane + " inbox" : "server delivery confirmed",
+        refreshFailed ? "inbox refresh needs retry" : "",
       ]
     );
     row.className += " delivery-row";
@@ -2861,7 +2870,13 @@
       { label: "Copy notification id", copyLabel: "Notification id", value: notification.notificationId },
     ]);
     node.appendChild(summaryLine);
-    node.appendChild(el("div", "result-count", isTargeted ? refreshedLane + " inbox refreshed." : "Broadcast accepted; " + refreshedLane + " inbox refreshed."));
+    if (refreshFailed) {
+      node.appendChild(el("div", "result-count", "Message accepted; inbox refresh failed. Use Refresh all lanes to retry."));
+    } else if (refreshedLane) {
+      node.appendChild(el("div", "result-count", refreshedLane + " inbox refreshed after confirmed delivery."));
+    } else {
+      node.appendChild(el("div", "result-count", "Delivery confirmed by the service. Refreshing the permitted inbox lane…"));
+    }
     node.appendChild(row);
   }
 
@@ -3078,6 +3093,19 @@
       form.elements.roomId.value = "";
     }
     renderSelectedMeetingRoom();
+    updateMeetingRoomSelectionMarkers();
+  }
+
+  function updateMeetingRoomSelectionMarkers() {
+    var buttons = consoleRoot.querySelectorAll("[data-console-open-room]");
+    Array.prototype.forEach.call(buttons, function (button) {
+      var selected = button.getAttribute("data-console-open-room") === state.selectedMeetingRoomId;
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+      var row = button.closest ? button.closest(".meeting-room-row") : null;
+      if (row) {
+        row.classList.toggle("is-selected", selected);
+      }
+    });
   }
 
   function setMeetingRoom(roomId, room) {
@@ -3091,6 +3119,14 @@
       form.elements.roomId.value = roomId;
     }
     renderSelectedMeetingRoom();
+    updateMeetingRoomSelectionMarkers();
+  }
+
+  function focusMeetingTranscript() {
+    var transcript = pick("[data-console-meeting-messages-list]");
+    if (transcript && typeof transcript.focus === "function") {
+      transcript.focus();
+    }
   }
 
   function setRoutingRoomField(fieldName, room) {
@@ -3274,9 +3310,20 @@
         sourceButton.type = "button";
         destinationButton.type = "button";
         copyButton.type = "button";
+        openButton.textContent = "Open " + roomTitle(room);
+        sourceButton.textContent = "Use " + roomTitle(room) + " as source";
+        destinationButton.textContent = "Route to " + roomTitle(room);
+        copyButton.textContent = "Copy " + roomTitle(room) + " id";
+        openButton.setAttribute("data-console-open-room", room.roomId);
+        openButton.setAttribute("aria-pressed", room.roomId === state.selectedMeetingRoomId ? "true" : "false");
+        if (room.roomId === state.selectedMeetingRoomId) {
+          row.className += " is-selected";
+        }
         openButton.addEventListener("click", function () {
           setMeetingRoom(room.roomId, room);
-          refreshMeetingMessages(room.roomId).catch(function (error) { setStatus(error.message, true); });
+          refreshMeetingMessages(room.roomId)
+            .then(focusMeetingTranscript)
+            .catch(function (error) { setStatus(error.message, true); });
         });
         sourceButton.addEventListener("click", function () {
           setRoutingRoomField("sourceRoomId", room);
@@ -3555,6 +3602,8 @@
           message.createdAt || "",
         ]
       );
+      row.setAttribute("role", "article");
+      row.setAttribute("aria-label", "Meeting message from " + (message.senderAgentId || "unknown"));
       appendCopyActions(row, [
         { label: "Copy meeting message id", copyLabel: "Meeting message id", value: message.meetingMessageId },
         { label: "Copy room id", copyLabel: "Meeting room id", value: message.roomId || room.roomId },
@@ -4803,6 +4852,30 @@
     return "console-access-" + action + "-" + String(target || "mutation") + "-" + entropy;
   }
 
+  function draftMutationKey(action, signature) {
+    var existing = state.draftMutationKeys[action];
+    if (existing && existing.signature === signature) {
+      return existing.key;
+    }
+    var key = accessIdempotencyKey(action, "draft");
+    state.draftMutationKeys[action] = {signature: signature, key: key};
+    return key;
+  }
+
+  function completeDraftMutation(action) {
+    delete state.draftMutationKeys[action];
+  }
+
+  function setFormPending(form, pending) {
+    if (!form) {
+      return;
+    }
+    form.setAttribute("aria-busy", pending ? "true" : "false");
+    Array.prototype.forEach.call(form.querySelectorAll('button[type="submit"]'), function (button) {
+      button.disabled = Boolean(pending);
+    });
+  }
+
   function decideAccessRequest(requestId, decision) {
     if (!hasPermission("canApproveAgentAccess")) {
       return Promise.reject(new Error("This credential cannot approve agent access."));
@@ -5352,8 +5425,8 @@
     }
     state.inboxAgentId = agentId;
     var form = pick("[data-console-inbox]");
-    if (form && form.elements.agentId) {
-      form.elements.agentId.value = agentId;
+    if (form && form.elements.inboxAgentId) {
+      form.elements.inboxAgentId.value = agentId;
     }
   }
 
@@ -6229,7 +6302,6 @@
         headers: {"Idempotency-Key": "console-meeting-room-" + scope + "-" + scopeId + "-" + Date.now()},
         body: {
           workspaceId: state.workspaceId,
-          creatorAgentId: createMeetingRoomForm.elements.creatorAgentId.value.trim() || state.agentId,
           scope: scope,
           scopeId: scopeId,
           name: createMeetingRoomForm.elements.name.value.trim(),
@@ -6282,7 +6354,6 @@
           workspaceId: state.workspaceId,
           sourceRoomId: sourceRoomId,
           destinationRoomId: destinationRoomId,
-          coordinatorAgentId: routingDecisionForm.elements.coordinatorAgentId.value.trim() || state.agentId,
           routedAgentId: routingDecisionForm.elements.routedAgentId.value.trim(),
           lane: routingDecisionForm.elements.lane.value.trim(),
           specificGoal: routingDecisionForm.elements.specificGoal.value.trim(),
@@ -6324,36 +6395,57 @@
     meetingMessageForm.addEventListener("submit", function (event) {
       event.preventDefault();
       var roomControl = formControl(meetingMessageForm, "roomId");
-      var senderControl = formControl(meetingMessageForm, "senderAgentId");
       var summaryControl = formControl(meetingMessageForm, "safeSummary");
       var roomId = (roomControl && roomControl.value ? roomControl.value.trim() : "") || state.selectedMeetingRoomId;
       if (!roomId) {
-        setStatus("Meeting room id is required.", true);
+        setStatus("Select a meeting room before sending a reply.", true);
         return;
       }
-      var senderAgentId = senderControl && senderControl.value ? senderControl.value.trim() : "";
       var safeSummary = summaryControl && summaryControl.value ? summaryControl.value.trim() : "";
-      if (!senderAgentId || !safeSummary) {
-        setStatus("Sender agent and safe meeting note are required.", true);
+      if (!safeSummary) {
+        setStatus("Write a public-safe reply before sending.", true);
         return;
       }
+      if (!hasWorkspaceSession()) {
+        setStatus("Load a governed workspace before sending a reply.", true);
+        return;
+      }
+      var mutationAction = "meeting-reply";
+      var mutationSignature = JSON.stringify([state.workspaceId, roomId, safeSummary]);
+      var mutationKey = draftMutationKey(mutationAction, mutationSignature);
+      var accepted = false;
       setMeetingRoom(roomId, state.selectedMeetingRoom && state.selectedMeetingRoom.roomId === roomId ? state.selectedMeetingRoom : null);
+      setFormPending(meetingMessageForm, true);
+      setStatus("Sending reply to " + roomTitle(state.selectedMeetingRoom || {}) + "…", false);
       api("/api/matm/meeting-messages", {
         method: "POST",
-        headers: {"Idempotency-Key": "console-meeting-" + roomId + "-" + Date.now()},
+        headers: {"Idempotency-Key": mutationKey},
         body: {
           workspaceId: state.workspaceId,
           roomId: roomId,
-          senderAgentId: senderAgentId,
           safeSummary: safeSummary,
         },
       })
         .then(function (payload) {
+          accepted = true;
+          completeDraftMutation(mutationAction);
           renderMeetingPost(payload);
+          if (summaryControl) {
+            summaryControl.value = "";
+          }
+          setStatus("Reply delivered; refreshing the room transcript…", false);
           return refreshMeetingRooms().then(function () { return refreshMeetingMessages(roomId); });
         })
-        .then(function () { setStatus("Meeting message posted and room refreshed.", false); })
-        .catch(function (error) { setStatus(error.message, true); });
+        .then(function () {
+          setStatus("Reply delivered and the room transcript is current.", false);
+          if (summaryControl) {
+            summaryControl.focus();
+          }
+        })
+        .catch(function (error) {
+          setStatus(accepted ? "Reply delivered, but the transcript refresh failed. Use Refresh rooms to retry." : error.message, !accepted);
+        })
+        .finally(function () { setFormPending(meetingMessageForm, false); });
     });
   }
 
@@ -6388,45 +6480,71 @@
     messageForm.addEventListener("submit", function (event) {
       event.preventDefault();
       var target = messageForm.elements.targetAgentId.value.trim();
-      var refreshedLane = target || state.agentId;
+      var summaryControl = messageForm.elements.safeSummary;
+      var safeSummary = summaryControl.value.trim();
+      if (!safeSummary) {
+        setStatus("Write a public-safe message before sending.", true);
+        return;
+      }
+      if (!hasWorkspaceSession()) {
+        setStatus("Load a governed workspace before sending a message.", true);
+        return;
+      }
       var body = {
         workspaceId: state.workspaceId,
-        senderAgentId: messageForm.elements.senderAgentId.value.trim(),
-        safeSummary: messageForm.elements.safeSummary.value.trim(),
+        safeSummary: safeSummary,
         responseRequired: messageForm.elements.responseRequired.checked,
       };
       if (target) {
         body.targetAgentId = target;
-        setInboxAgent(target);
-        renderEmpty("[data-console-inbox-list]", "Refreshing " + target + " inbox after delivery.");
       }
+      var mutationAction = "current-message";
+      var mutationSignature = JSON.stringify([state.workspaceId, target, safeSummary, body.responseRequired]);
+      var mutationKey = draftMutationKey(mutationAction, mutationSignature);
+      var acceptedPayload = null;
+      setFormPending(messageForm, true);
       setStatus(target ? "Sending targeted message to " + target + "." : "Sending broadcast message.", false);
       api("/api/matm/agent-messages", {
         method: "POST",
-        headers: {"Idempotency-Key": "console-message-" + Date.now()},
+        headers: {"Idempotency-Key": mutationKey},
         body: body,
       })
         .then(function (payload) {
-          setStatus("Message accepted; refreshing " + refreshedLane + " inbox.", false);
+          acceptedPayload = payload;
+          completeDraftMutation(mutationAction);
+          renderMessageDelivery(payload, {});
+          summaryControl.value = "";
+          setStatus("Message accepted; refreshing your permitted inbox lane.", false);
           var exactFilters = {
             messageId: payload.messageId || (payload.message && payload.message.messageId) || "",
             notificationId: payload.notificationId || (payload.notification && payload.notification.notificationId) || "",
             limit: inboxExactFilters().limit,
           };
-          setInboxExactFilters(exactFilters.messageId, exactFilters.notificationId);
-          return refreshInbox(refreshedLane, exactFilters).then(function (inboxPayload) {
-            var actualLane = inboxAgentFromPayload(inboxPayload, refreshedLane);
-            renderMessageDelivery(payload, actualLane);
+          setInboxExactFilters(target ? "" : exactFilters.messageId, target ? "" : exactFilters.notificationId);
+          var refreshFilters = target ? {messageId: "", notificationId: "", limit: exactFilters.limit} : exactFilters;
+          return refreshInbox(state.agentId, refreshFilters).then(function (inboxPayload) {
+            var actualLane = inboxAgentFromPayload(inboxPayload, state.agentId);
+            renderMessageDelivery(payload, {agentId: actualLane});
             return refreshLaneOverview().then(function () {
               return {deliveryPayload: payload, refreshedLane: actualLane};
             });
           });
         })
         .then(function (result) {
-          var actualLane = (result && result.refreshedLane) || refreshedLane;
+          var actualLane = (result && result.refreshedLane) || state.agentId;
           setStatus(target ? "Targeted message sent; " + actualLane + " inbox refreshed." : "Broadcast message sent; " + actualLane + " inbox refreshed.", false);
+          summaryControl.focus();
         })
-        .catch(function (error) { setStatus(error.message, true); });
+        .catch(function (error) {
+          if (acceptedPayload) {
+            renderMessageDelivery(acceptedPayload, {error: error.message});
+            setStatus("Message accepted, but the inbox refresh failed. Use Refresh all lanes to retry.", false);
+            summaryControl.focus();
+          } else {
+            setStatus(error.message, true);
+          }
+        })
+        .finally(function () { setFormPending(messageForm, false); });
     });
   }
 
@@ -6523,7 +6641,7 @@
   if (inboxForm) {
     inboxForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      setInboxAgent(inboxForm.elements.agentId.value.trim() || state.agentId);
+      setInboxAgent(inboxForm.elements.inboxAgentId.value.trim() || state.agentId);
       refreshInbox(state.inboxAgentId).catch(function (error) { setStatus(error.message, true); });
     });
   }

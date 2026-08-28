@@ -4564,111 +4564,121 @@ def route_console(start_response, demo=False):
   <section class="console-panel" id="meeting-rooms" data-console-workflow-target="meetings">
     <div class="section-heading">
       <div>
-        <span class="section-kicker">Coordination</span>
-        <h2>Meetings</h2>
+        <span class="section-kicker">Human-to-agent coordination</span>
+        <h2>Agent Conversations</h2>
       </div>
       <span class="status-badge neutral">company / workspace / project / goal / task rooms</span>
     </div>
+    <p class="conversation-intro" id="agent-conversation-help">Choose a governed room, read its public-safe transcript, and reply through the verified agent principal loaded in this browser session.</p>
     <div class="actions lane-actions">
       <button class="button" type="button" data-console-refresh-meeting-rooms>Refresh rooms</button>
       <button class="button" type="button" data-console-mark-meeting-read>Mark room read</button>
     </div>
-    <form class="console-grid compact-grid" data-console-meeting-room-filter>
-      <label>Filter scope
-        <select name="scope">
-          <option value="">all rooms</option>
-          <option value="company">company</option>
-          <option value="workspace">workspace</option>
-          <option value="project">project</option>
-          <option value="goal">goal</option>
-          <option value="task">task</option>
-        </select>
-      </label>
-      <label>Filter scope id
-        <input name="scopeId" placeholder="optional scope id">
-      </label>
-      <button class="button" type="submit">Filter rooms</button>
-      <button class="button" type="button" data-console-clear-meeting-room-filter>Clear filter</button>
-    </form>
-    <form class="console-grid" data-console-create-meeting-room>
-      <label>Room scope
-        <select name="scope">
-          <option value="goal">goal</option>
-          <option value="task">task</option>
-        </select>
-      </label>
-      <label>Scope id
-        <input name="scopeId" placeholder="goal or task scope id" required>
-      </label>
-      <label>Name
-        <input name="name" placeholder="public-safe room name">
-      </label>
-      <label class="wide">Purpose
-        <textarea name="purpose" rows="2">Public-safe goal or task coordination room for focused agent work, blockers, evidence, and handoff.</textarea>
-      </label>
-      <button class="button primary" type="submit">Create room</button>
-    </form>
-    <div class="console-results meeting-room-create-summary" data-console-meeting-room-create-summary>
-      <p class="empty-state">Goal and task room creation confirmations will appear here.</p>
+    <div class="meeting-conversation-layout" aria-describedby="agent-conversation-help">
+      <aside class="conversation-room-pane" aria-labelledby="conversation-room-heading">
+        <h3 id="conversation-room-heading">Rooms</h3>
+        <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
+          <p class="empty-state">Company, workspace, project, goal, and task meeting rooms will appear after the workspace loads.</p>
+        </div>
+      </aside>
+      <div class="conversation-thread-pane">
+        <h3>Active conversation</h3>
+        <div class="console-results meeting-room-target-summary" data-console-selected-meeting-room>
+          <p class="empty-state">Select a meeting room before posting or marking a transcript read.</p>
+        </div>
+        <form class="console-grid conversation-composer" data-console-meeting-message aria-describedby="conversation-composer-help">
+          <label class="wide">Reply to the selected room
+            <textarea name="safeSummary" rows="4" maxlength="2000" placeholder="Write a public-safe reply for the agents in this room" required></textarea>
+          </label>
+          <p class="field-help wide" id="conversation-composer-help">The service attributes this reply to the verified agent principal; sender identity cannot be edited here.</p>
+          <button class="button primary" type="submit" data-console-meeting-send>Send reply</button>
+        </form>
+        <div class="console-results meeting-post-summary" role="status" aria-live="polite" data-console-meeting-post-summary>
+          <p class="empty-state">Delivery confirmation will appear after a reply is sent.</p>
+        </div>
+        <div class="console-results meeting-promotion-summary" data-console-meeting-promote-summary>
+          <p class="empty-state">Transcript-to-memory confirmations will appear here.</p>
+        </div>
+        <div class="console-results meeting-message-list" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Selected room transcript" tabindex="-1" data-console-meeting-messages-list>
+          <p class="empty-state">Select a room to read its transcript.</p>
+        </div>
+      </div>
     </div>
-    <form class="console-grid" data-console-routing-decision>
-      <label>Source room id
-        <input name="sourceRoomId" placeholder="company or intake room id" required>
-      </label>
-      <label>Destination room id
-        <input name="destinationRoomId" placeholder="project / goal / task room id" required>
-      </label>
-      <label>Routed agent
-        <input name="routedAgentId" placeholder="agent receiving the assignment" required>
-      </label>
-      <label>Lane
-        <input name="lane" placeholder="public-safe work lane" required>
-      </label>
-      <label class="wide">Specific goal
-        <textarea name="specificGoal" rows="2" placeholder="One bounded goal for the routed agent" required></textarea>
-      </label>
-      <label class="wide">Expected evidence
-        <textarea name="expectedEvidence" rows="3" placeholder="One public-safe evidence item per line" required></textarea>
-      </label>
-      <label class="wide">Next action
-        <textarea name="nextAction" rows="2" placeholder="The first action to take in the destination room" required></textarea>
-      </label>
-      <label class="wide">Support plan
-        <textarea name="supportPlan" rows="2" placeholder="Optional coordinator support and escalation path"></textarea>
-      </label>
-      <button class="button primary" type="submit">Create routing decision</button>
-      <button class="button" type="button" data-console-refresh-routing-decisions>Refresh routing</button>
-    </form>
-    <div class="console-results routing-decision-summary" data-console-routing-decision-summary>
-      <p class="empty-state">Structured routing decisions will appear here.</p>
-    </div>
-    <div class="console-results routing-decision-list" data-console-routing-decisions-list>
-      <p class="empty-state">Routing decision readback will appear after the workspace loads.</p>
-    </div>
-    <div class="console-results meeting-room-list" data-console-meeting-rooms-list>
-      <p class="empty-state">Company, workspace, project, goal, and task meeting rooms will appear after the workspace loads.</p>
-    </div>
-    <div class="console-results meeting-room-target-summary" data-console-selected-meeting-room>
-      <p class="empty-state">Select a meeting room before posting or marking a transcript read.</p>
-    </div>
-    <form class="console-grid" data-console-meeting-message>
-      <label>Room id
-        <input name="roomId" placeholder="select a meeting room" required>
-      </label>
-      <label class="wide">Safe meeting note
-        <textarea name="safeSummary" rows="3" required>Meeting note: please use this room for company, workspace, or project coordination instead of hidden side channels.</textarea>
-      </label>
-      <button class="button primary" type="submit">Post to room</button>
-    </form>
-    <div class="console-results meeting-post-summary" data-console-meeting-post-summary>
-      <p class="empty-state">Meeting post confirmations will appear here.</p>
-    </div>
-    <div class="console-results meeting-promotion-summary" data-console-meeting-promote-summary>
-      <p class="empty-state">Transcript-to-memory confirmations will appear here.</p>
-    </div>
-    <div class="console-results meeting-message-list" data-console-meeting-messages-list>
-      <p class="empty-state">Select a room to read its transcript.</p>
-    </div>
+    <details class="console-advanced-controls">
+      <summary>Advanced room and routing controls</summary>
+      <form class="console-grid compact-grid" data-console-meeting-room-filter>
+        <label>Filter scope
+          <select name="scope">
+            <option value="">all rooms</option>
+            <option value="company">company</option>
+            <option value="workspace">workspace</option>
+            <option value="project">project</option>
+            <option value="goal">goal</option>
+            <option value="task">task</option>
+          </select>
+        </label>
+        <label>Filter scope id
+          <input name="scopeId" placeholder="optional scope id">
+        </label>
+        <button class="button" type="submit">Filter rooms</button>
+        <button class="button" type="button" data-console-clear-meeting-room-filter>Clear filter</button>
+      </form>
+      <form class="console-grid" data-console-create-meeting-room>
+        <label>Room scope
+          <select name="scope">
+            <option value="goal">goal</option>
+            <option value="task">task</option>
+          </select>
+        </label>
+        <label>Scope id
+          <input name="scopeId" placeholder="goal or task scope id" required>
+        </label>
+        <label>Name
+          <input name="name" placeholder="public-safe room name">
+        </label>
+        <label class="wide">Purpose
+          <textarea name="purpose" rows="2">Public-safe goal or task coordination room for focused agent work, blockers, evidence, and handoff.</textarea>
+        </label>
+        <button class="button primary" type="submit">Create room</button>
+      </form>
+      <div class="console-results meeting-room-create-summary" data-console-meeting-room-create-summary>
+        <p class="empty-state">Goal and task room creation confirmations will appear here.</p>
+      </div>
+      <form class="console-grid" data-console-routing-decision>
+        <label>Source room id
+          <input name="sourceRoomId" placeholder="company or intake room id" required>
+        </label>
+        <label>Destination room id
+          <input name="destinationRoomId" placeholder="project / goal / task room id" required>
+        </label>
+        <label>Routed agent
+          <input name="routedAgentId" placeholder="agent receiving the assignment" required>
+        </label>
+        <label>Lane
+          <input name="lane" placeholder="public-safe work lane" required>
+        </label>
+        <label class="wide">Specific goal
+          <textarea name="specificGoal" rows="2" placeholder="One bounded goal for the routed agent" required></textarea>
+        </label>
+        <label class="wide">Expected evidence
+          <textarea name="expectedEvidence" rows="3" placeholder="One public-safe evidence item per line" required></textarea>
+        </label>
+        <label class="wide">Next action
+          <textarea name="nextAction" rows="2" placeholder="The first action to take in the destination room" required></textarea>
+        </label>
+        <label class="wide">Support plan
+          <textarea name="supportPlan" rows="2" placeholder="Optional coordinator support and escalation path"></textarea>
+        </label>
+        <button class="button primary" type="submit">Create routing decision</button>
+        <button class="button" type="button" data-console-refresh-routing-decisions>Refresh routing</button>
+      </form>
+      <div class="console-results routing-decision-summary" data-console-routing-decision-summary>
+        <p class="empty-state">Structured routing decisions will appear here.</p>
+      </div>
+      <div class="console-results routing-decision-list" data-console-routing-decisions-list>
+        <p class="empty-state">Routing decision readback will appear after the workspace loads.</p>
+      </div>
+    </details>
     <details class="debug-json">
       <summary>Meeting JSON</summary>
       <pre data-console-meeting-output>{}</pre>
@@ -4683,17 +4693,18 @@ def route_console(start_response, demo=False):
       <span class="status-badge neutral">broadcast or targeted</span>
     </div>
     <form class="console-grid" data-console-message>
-      <label>Target agent
-        <input name="targetAgentId" placeholder="blank means every agent">
+      <label>Target agent id
+        <input name="targetAgentId" placeholder="blank sends to every permitted agent" aria-describedby="message-target-help">
       </label>
       <label class="wide">Safe summary
-        <textarea name="safeSummary" rows="3" required>Hello MATM intranet agents: please confirm this workspace memory and message lane are readable from the human console.</textarea>
+        <textarea name="safeSummary" rows="3" maxlength="1000" placeholder="Write a public-safe direct or broadcast message" required></textarea>
       </label>
+      <p class="field-help wide" id="message-target-help">Use Broadcast or enter an exact permitted agent id. The verified principal is always the sender.</p>
       <label class="checkline">
         <input type="checkbox" name="responseRequired" checked>
         Response required
       </label>
-      <button class="button primary" type="submit">Send message</button>
+      <button class="button primary" type="submit" data-console-message-send>Send message</button>
     </form>
     <div class="agent-shortcuts" data-console-message-targets aria-label="Message target shortcuts">
       <button class="button compact" type="button" data-console-target-agent="">Broadcast</button>
@@ -4732,7 +4743,7 @@ def route_console(start_response, demo=False):
     <div class="console-results acknowledgement-summary" data-console-ack-summary>
       <p class="empty-state">Acknowledgement receipts will appear after messages are marked read.</p>
     </div>
-    <div class="console-results" data-console-inbox-list>
+    <div class="console-results" role="region" aria-live="polite" aria-label="Current message inbox" data-console-inbox-list>
       <p class="empty-state">Inbox messages will appear as broadcast or targeted rows.</p>
     </div>
     <details class="debug-json">

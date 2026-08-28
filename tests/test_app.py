@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -1064,6 +1065,7 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         css = (Path(__file__).resolve().parents[1] / "static" / "css" / "site.css").read_text(encoding="utf-8")
 
         self.assertIn(".site-nav > .site-nav-demo", css)
+
         self.assertIn(".ecosystem-menu > summary", css)
         self.assertIn(".ecosystem-links", css)
         self.assertIn(".site-nav-ready .site-nav-toggle", css)
@@ -1104,6 +1106,50 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         contrast_contract = json.loads(contrast_completed.stdout)
         self.assertTrue(contrast_contract["ok"])
         self.assertGreaterEqual(contrast_contract["minimumContrast"], 4.5)
+
+    def test_tour_agent_conversation_forms_bind_actor_to_verified_principal(self):
+        status, _headers, text = call_app("/tour")
+        self.assertEqual("200 OK", status)
+
+        meeting_form = re.search(
+            r'<form\b[^>]*data-console-meeting-message[^>]*>(.*?)</form>',
+            text,
+            re.DOTALL,
+        )
+        direct_form = re.search(
+            r'<form\b[^>]*data-console-message(?:\s|>)[^>]*>(.*?)</form>',
+            text,
+            re.DOTALL,
+        )
+        inbox_form = re.search(
+            r'<form\b[^>]*data-console-inbox[^>]*>(.*?)</form>',
+            text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(meeting_form)
+        self.assertIsNotNone(direct_form)
+        self.assertIsNotNone(inbox_form)
+        self.assertIn('name="safeSummary"', meeting_form.group(1))
+        self.assertIn('maxlength="2000"', meeting_form.group(1))
+        self.assertNotIn('name="senderAgentId"', meeting_form.group(1))
+        self.assertIn('name="safeSummary"', direct_form.group(1))
+        self.assertIn('maxlength="1000"', direct_form.group(1))
+        self.assertNotIn('name="senderAgentId"', direct_form.group(1))
+        self.assertIn('name="inboxAgentId"', inbox_form.group(1))
+        self.assertIn('role="log"', text)
+        self.assertIn('aria-label="Selected room transcript"', text)
+        self.assertIn('aria-label="Current message inbox"', text)
+        self.assertIn("Advanced room and routing controls", text)
+
+        js = (Path(__file__).resolve().parents[1] / "static" / "js" / "site.js").read_text(encoding="utf-8")
+        self.assertNotIn("messageForm.elements.senderAgentId", js)
+        self.assertNotIn("createMeetingRoomForm.elements.creatorAgentId", js)
+        self.assertNotIn("routingDecisionForm.elements.coordinatorAgentId", js)
+        self.assertNotIn("inboxForm.elements.agentId", js)
+        self.assertIn("inboxForm.elements.inboxAgentId", js)
+        self.assertIn("setFormPending(messageForm, true)", js)
+        self.assertIn("renderMessageDelivery(payload, {})", js)
+        self.assertIn("Message accepted, but the inbox refresh failed.", js)
 
     def test_public_tour_reuses_auth_interfaces_and_preserves_empty_auth_shells(self):
         status, _headers, console = call_app("/console")
@@ -1438,18 +1484,18 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("params.cursor = filters.cursor", js)
         self.assertIn('limit: limitControl ? limitControl.value : "25"', js)
         self.assertIn("limit: inboxExactFilters().limit", js)
-        self.assertIn("refreshInbox(refreshedLane, exactFilters)", js)
-        self.assertIn("setInboxExactFilters(exactFilters.messageId, exactFilters.notificationId)", js)
+        self.assertIn("refreshInbox(state.agentId, refreshFilters)", js)
+        self.assertIn('setInboxExactFilters(target ? "" : exactFilters.messageId', js)
         self.assertIn("var resolvedAgent = inboxAgentFromPayload(payload, requestedAgent);", js)
         self.assertIn("if (!payload)", js)
-        self.assertIn("Refreshing \" + target + \" inbox after delivery.", js)
         self.assertIn("Sending targeted message to \" + target", js)
-        self.assertIn("Message accepted; refreshing \" + refreshedLane", js)
+        self.assertIn("Message accepted; refreshing your permitted inbox lane.", js)
         self.assertIn("Targeted message delivered", js)
         self.assertIn("Broadcast delivered", js)
         self.assertIn("Broadcast message sent; \" + actualLane + \" inbox refreshed.", js)
         self.assertIn("Targeted message sent; \" + actualLane + \" inbox refreshed.", js)
-        self.assertIn("Broadcast accepted; \" + refreshedLane + \" inbox refreshed.", js)
+        self.assertIn("Message accepted; inbox refresh failed.", js)
+        self.assertIn("Delivery confirmed by the service.", js)
         self.assertIn("refreshedLane: actualLane", js)
         self.assertIn("payload.delivery", js)
         self.assertIn("payload.operatorSummary", js)
@@ -1675,9 +1721,11 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn("data-console-mark-meeting-read", js)
         self.assertIn("data-console-meeting-message", js)
         self.assertIn("Meeting rooms refreshed.", js)
-        self.assertIn("Meeting message posted and room refreshed.", js)
+        self.assertIn("Reply delivered and the room transcript is current.", js)
         self.assertIn('formControl(meetingMessageForm, "roomId")', js)
-        self.assertIn("Sender agent and safe meeting note are required.", js)
+        self.assertIn("Write a public-safe reply before sending.", js)
+        self.assertIn("setFormPending(meetingMessageForm, true)", js)
+        self.assertIn("draftMutationKey(mutationAction, mutationSignature)", js)
         self.assertIn("Meeting message saved as hosted memory and queued for review decision.", js)
         self.assertIn("Save as memory", js)
         self.assertIn("data-console-meeting-promote-summary", js)

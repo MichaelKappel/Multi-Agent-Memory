@@ -454,6 +454,9 @@
     var clipboard = options.clipboard || (windowRef && windowRef.navigator && windowRef.navigator.clipboard);
     var demoMode = options.demoMode === true;
     var preauthOnly = options.preauthOnly === true;
+    var returnPath = options.returnPath === "/console" || options.returnPath === "/knowledge" || String(options.returnPath || "").indexOf("/knowledge/") === 0
+      ? options.returnPath
+      : "/human";
     var navigate = options.navigate || function (path) {
       if (windowRef && windowRef.location && typeof windowRef.location.assign === "function") windowRef.location.assign(path);
     };
@@ -797,7 +800,7 @@
         masterProofSecret = "";
         setSessionState(SESSION_STATES.READY);
         setStatus("Authentication succeeded. Loading the protected human console…", "success");
-        navigate("/human");
+        navigate(returnPath);
         return;
       }
       showProtected();
