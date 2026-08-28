@@ -209,11 +209,11 @@ def _mcp_error(request_id, code, message, data=None):
     return {"jsonrpc": "2.0", "id": request_id, "error": error}
 
 
-def _sensitive_headers(extra=None):
+def _sensitive_headers(extra=None, referrer_policy="no-referrer"):
     return list(extra or []) + [
         ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
         ("Pragma", "no-cache"),
-        ("Referrer-Policy", "no-referrer"),
+        ("Referrer-Policy", referrer_policy),
         ("X-Frame-Options", "DENY"),
         (
             "Content-Security-Policy",
@@ -324,6 +324,11 @@ def _origin_allowed(environ):
     configured = str(os.environ.get("MEMORYENDPOINTS_MCP_ALLOWED_ORIGINS") or "")
     allowed.update(_origin(item.strip()) for item in configured.split(",") if item.strip())
     return supplied.lower().rstrip("/") in {item for item in allowed if item}
+
+
+def _oauth_page_headers(extra=None):
+    """Keep same-origin referrers available for opaque embedded-browser origins."""
+    return _sensitive_headers(extra, referrer_policy="same-origin")
 
 
 def _rate_allowed(environ, bucket, limit, window=60):
@@ -538,13 +543,16 @@ def _authorization_server_metadata():
 
 
 def _oauth_browser_same_origin(environ):
-    if str(environ.get("HTTP_SEC_FETCH_SITE") or "").strip().lower() != "same-origin":
-        return False
     expected = _origin(_issuer_url())
-    supplied = _origin(environ.get("HTTP_ORIGIN"))
+    raw_origin = str(environ.get("HTTP_ORIGIN") or "").strip()
+    supplied = _origin(raw_origin)
+    fetch_site = str(environ.get("HTTP_SEC_FETCH_SITE") or "").strip().lower()
     if supplied:
-        return supplied == expected
-    return _origin(environ.get("HTTP_REFERER")) == expected
+        return fetch_site == "same-origin" and supplied == expected
+    referer_matches = _origin(environ.get("HTTP_REFERER")) == expected
+    if raw_origin.lower() == "null":
+        return referer_matches
+    return fetch_site == "same-origin" and referer_matches
 
 
 def _host_local_operator_auto_sign_in_enabled():
@@ -891,7 +899,7 @@ def _authorize_get(environ, start_response, store_factory):
                     ("Set-Cookie", _human_session_cookie(session_secret))
                 )
     if not catalog.get("ok"):
-        return _response(start_response, "200 OK", _login_page(request["client_name"]), "text/html; charset=utf-8", _sensitive_headers())
+        return _response(start_response, "200 OK", _login_page(request["client_name"]), "text/html; charset=utf-8", _oauth_page_headers())
     if not any(item.get("workspaces") for item in catalog.get("items") or []):
         return _response(start_response, "403 Forbidden", _error_page("No workspace available", "This account has no active linked workspace to authorize."), "text/html; charset=utf-8", _sensitive_headers())
     authorization_id = uuid.uuid4().hex
@@ -935,7 +943,7 @@ def _authorize_get(environ, start_response, store_factory):
         "200 OK",
         page,
         "text/html; charset=utf-8",
-        _sensitive_headers(response_headers),
+        _oauth_page_headers(response_headers),
     )
 
 
@@ -948,7 +956,7 @@ def _authorization_redirect(row, values):
 
 
 def _authorize_post(environ, start_response, store_factory):
-    if not _origin_allowed(environ):
+    if not _oauth_browser_same_origin(environ):
         return _response(start_response, "403 Forbidden", _error_page("Request rejected", "The request origin is not trusted."), "text/html; charset=utf-8", _sensitive_headers())
     try:
         params = _read_form(environ)

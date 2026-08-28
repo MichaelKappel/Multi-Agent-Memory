@@ -153,6 +153,7 @@ class McpServerTests(unittest.TestCase):
             headers={
                 "HTTP_COOKIE": "__Host-memoryendpoints-human=" + self.session_secret,
                 "HTTP_ORIGIN": ISSUER,
+                "HTTP_SEC_FETCH_SITE": "same-origin",
             },
         )
         self.assertEqual("302 Found", status)
@@ -266,6 +267,58 @@ class McpServerTests(unittest.TestCase):
         self.assertTrue(accepted["signedIn"])
         self.assertIn("__Host-memoryendpoints-human=", headers["Set-Cookie"])
         self.assertIn("HttpOnly", headers["Set-Cookie"])
+
+    def test_opaque_embedded_browser_origin_requires_exact_issuer_referer(self):
+        payload = {"username": "mcp-owner", "password": "Correct-Horse-Battery-Staple-2026"}
+        opaque_headers = {
+            "HTTP_ORIGIN": "null",
+            "HTTP_REFERER": ISSUER + "/oauth/authorize",
+            "HTTP_SEC_FETCH_SITE": "cross-site",
+        }
+        status, headers, accepted = self.json_call(
+            "/oauth/session", "POST", payload, opaque_headers
+        )
+        self.assertEqual("200 OK", status, accepted)
+        self.assertTrue(accepted["signedIn"])
+        self.assertIn("__Host-memoryendpoints-human=", headers["Set-Cookie"])
+
+        for denied_headers in (
+            {"HTTP_ORIGIN": "null", "HTTP_SEC_FETCH_SITE": "cross-site"},
+            dict(opaque_headers, HTTP_REFERER="https://other.example.test/oauth/authorize"),
+            dict(opaque_headers, HTTP_ORIGIN="https://other.example.test"),
+        ):
+            with self.subTest(headers=denied_headers):
+                denied_status, _denied_headers, denied = self.json_call(
+                    "/oauth/session", "POST", payload, denied_headers
+                )
+                self.assertEqual("403 Forbidden", denied_status)
+                self.assertEqual("access_denied", denied["error"])
+
+    def test_oauth_authorize_page_preserves_only_same_origin_referrer(self):
+        client_id = self.register()
+        verifier = "v" * 64
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode("ascii")).digest()
+        ).decode("ascii").rstrip("=")
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": REDIRECT,
+                "scope": "memory:read",
+                "state": "state-referrer-policy",
+                "resource": RESOURCE,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+        status, headers, _page = self.call(
+            "/oauth/authorize",
+            query=query,
+            headers={"HTTP_COOKIE": "__Host-memoryendpoints-human=" + self.session_secret},
+        )
+        self.assertEqual("200 OK", status)
+        self.assertEqual("same-origin", headers["Referrer-Policy"])
 
     def test_matching_windows_operator_auto_signs_in_only_from_direct_same_host(self):
         os.environ["MEMORYENDPOINTS_MCP_ISSUER_URL"] = "https://10.1.10.209:8088"

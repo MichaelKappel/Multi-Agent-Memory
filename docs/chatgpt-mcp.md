@@ -178,6 +178,10 @@ password, OpenAI key, OAuth code, access token, refresh token, or tenant payload
   an existing username match; forwarded identity headers never enable it.
 - Read and write scopes are enforced independently.
 - `Origin` is fail-closed when present; requests are size- and rate-limited.
+- ChatGPT embedded-browser consent remains same-origin even when the browser
+  reports an opaque `Origin`: that compatibility path requires the exact OAuth
+  issuer `Referer` emitted under a `same-origin` referrer policy. Missing or
+  mismatched proof is rejected.
 - Tool results remain public-safe and memory writes enter the existing firewall,
   quota, idempotency, confirmed-readback, audit, and review workflow.
 

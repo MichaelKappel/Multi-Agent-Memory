@@ -85,6 +85,7 @@
       <li>Authorization codes are one-use; opaque access tokens expire after one hour; refresh tokens rotate and can be disconnected through token-family revocation.</li>
       <li>Every MCP call revalidates the human account, company authority, company, and workspace.</li>
       <li>Windows-host automatic sign-in trusts only a direct same-host socket peer and an existing username match. Forwarded identity headers never enable it.</li>
+      <li>Embedded-browser consent accepts an opaque <code>Origin</code> only with the exact OAuth issuer referrer emitted under a same-origin referrer policy. Missing or mismatched proof is rejected.</li>
       <li>Read and write scopes are enforced independently, and memory writes keep the existing firewall, quota, idempotency, confirmed-readback, audit, and review controls.</li>
     </ul>
     <p>Protocol details and source-verifiable routes are in the <a href="/docs/api-reference.html">API and data reference</a>. Current platform behavior is defined by OpenAI's <a href="https://developers.openai.com/plugins/build/auth">MCP authentication guide</a>, <a href="https://developers.openai.com/api/docs/guides/secure-mcp-tunnels">Secure MCP Tunnel guide</a>, and <a href="https://developers.openai.com/plugins/deploy/connect-chatgpt">ChatGPT connection guide</a>.</p>
