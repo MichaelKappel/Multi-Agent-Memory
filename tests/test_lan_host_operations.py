@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
+from wsgiref.util import guess_scheme
 
 from scripts import serve_lan
 
@@ -136,10 +137,11 @@ class LanHostOperationsTests(unittest.TestCase):
 
     def test_wsgi_request_scheme_matches_the_actual_listener_transport(self):
         server = Mock()
-        server.base_environ = {}
+        server.base_environ = {"HTTPS": "on"}
         http_config = self.config()
         serve_lan.configure_wsgi_transport(server, http_config)
-        self.assertEqual("http", server.base_environ["wsgi.url_scheme"])
+        self.assertNotIn("HTTPS", server.base_environ)
+        self.assertEqual("http", guess_scheme(server.base_environ))
 
         tls_config = replace(
             http_config,
@@ -148,7 +150,8 @@ class LanHostOperationsTests(unittest.TestCase):
             tls_ca_file=self.root / "ca.pem",
         )
         serve_lan.configure_wsgi_transport(server, tls_config)
-        self.assertEqual("https", server.base_environ["wsgi.url_scheme"])
+        self.assertEqual("on", server.base_environ["HTTPS"])
+        self.assertEqual("https", guess_scheme(server.base_environ))
 
     @staticmethod
     def wsgi_application(environ, start_response):

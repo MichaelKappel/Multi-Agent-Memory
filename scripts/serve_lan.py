@@ -246,7 +246,10 @@ def configure_wsgi_transport(server: WSGIServer, config: LanHostConfig) -> None:
     base_environ = getattr(server, "base_environ", None)
     if not isinstance(base_environ, dict):
         raise ConfigurationError("wsgi_base_environment_unavailable")
-    base_environ["wsgi.url_scheme"] = config.api_scheme
+    if config.tls_enabled:
+        base_environ["HTTPS"] = "on"
+    else:
+        base_environ.pop("HTTPS", None)
 
 
 def create_servers(config: LanHostConfig, application: Callable | None = None):
