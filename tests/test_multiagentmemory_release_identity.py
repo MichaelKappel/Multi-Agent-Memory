@@ -569,7 +569,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
                 }
 
             def current_gate(identity, utc_date=None):
-                return activation_gate(identity, "2026-08-09")
+                return activation_gate(identity, "2026-08-29")
 
             base = [
                 "--base-url",
@@ -669,7 +669,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
             activation_gate = verify_static_site.live_activation_gate
 
             def current_gate(identity, utc_date=None):
-                return activation_gate(identity, "2026-08-09")
+                return activation_gate(identity, "2026-08-29")
 
             for name, retired_status, error_type in (
                 ("legacy-content", 200, None),
@@ -809,7 +809,7 @@ class MultiAgentMemoryReleaseIdentityTests(unittest.TestCase):
             activation_gate = verify_static_site.live_activation_gate
 
             def current_gate(identity, utc_date=None):
-                return activation_gate(identity, "2026-08-09")
+                return activation_gate(identity, "2026-08-29")
 
             cases = (
                 ("same-origin-redirect", 302, False, None),
@@ -1044,11 +1044,11 @@ class MultiAgentMemoryReleaseRunbookTests(unittest.TestCase):
             "### 3. Prove only the FTPS target",
             "### 4. Capture one target-bound prior state",
             "### 5. Stage only non-claim bytes",
-            "### 6. Prove the ten staged routes over canonical HTTPS",
+            "### 6. Prove the twelve staged routes over canonical HTTPS",
             "### 7. Requalify immediately before creating the tag",
             "### 8. Publish the exact annotated tag, then prove final identity",
             "### 9. Activate the six claim paths, then retire the old path",
-            "### 10. Prove all 16 canonical routes and the retired-route 404",
+            "### 10. Prove all 18 canonical routes and the retired-route 404",
             "### 11. Advance `main` last",
         )
         positions = [section.index(heading) for heading in step_headings]

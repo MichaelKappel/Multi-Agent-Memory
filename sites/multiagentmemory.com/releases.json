@@ -96,7 +96,7 @@
   "releases": [
     {
       "version": "1.0.0",
-      "activationDate": "2026-08-09",
+      "activationDate": "2026-08-29",
       "activationTimezone": "UTC",
       "status": "deployed",
       "title": "Evidence-bound release history and public edition catalog",

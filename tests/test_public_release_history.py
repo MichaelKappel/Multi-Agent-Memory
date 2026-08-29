@@ -116,7 +116,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
             list(release),
         )
         self.assertEqual("1.0.0", release["version"])
-        self.assertEqual("2026-08-09", release["activationDate"])
+        self.assertEqual("2026-08-29", release["activationDate"])
         self.assertEqual("UTC", release["activationTimezone"])
         self.assertEqual("deployed", release["status"])
         self.assertEqual(
@@ -198,7 +198,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
             for item in payload["publicEditionHistory"]["releases"]
         }
         self.assertEqual({"1.0.0"}, website_versions)
-        self.assertEqual({"2026-08-09"}, website_dates)
+        self.assertEqual({"2026-08-29"}, website_dates)
         self.assertEqual({"0.2.0", "0.1.0"}, edition_versions)
         self.assertEqual({"2026-08-04", "2026-07-09"}, edition_dates)
 
@@ -257,7 +257,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         item = by_type["ItemList"]["itemListElement"][0]
         self.assertEqual(1, item["position"])
         self.assertEqual("1.0.0", item["item"]["version"])
-        self.assertEqual("2026-08-09", item["item"]["datePublished"])
+        self.assertEqual("2026-08-29", item["item"]["datePublished"])
         self.assertEqual("deployed", item["item"]["additionalProperty"]["value"])
         self.assertEqual([SOURCE_TAG_URL], item["item"]["sameAs"])
         self.assertIn('aria-current="page">Releases</a>', text)
@@ -266,7 +266,7 @@ class PublicReleaseHistoryTests(unittest.TestCase):
         self.assertIn('data-release-status="deployed"', text)
         self.assertIn("Website version 1.0.0", text)
         self.assertIn("Deployed", text)
-        self.assertIn("August 9, 2026 (UTC)", text)
+        self.assertIn("August 29, 2026 (UTC)", text)
         self.assertIn("Public edition 0.2.0", text)
         self.assertIn("Public edition 0.1.0", text)
         self.assertIn(PUBLIC_EDITION_020_SHA, text)

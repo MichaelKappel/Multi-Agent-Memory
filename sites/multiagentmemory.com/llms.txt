@@ -24,7 +24,7 @@ Production release history:
 - Verified production release count: 1.
 - Human history: https://multiagentmemory.com/releases/
 - Machine ledger: https://multiagentmemory.com/releases.json
-- Latest production activation: 2026-08-09 (UTC).
+- Latest production activation: 2026-08-29 (UTC).
 - Latest release status: deployed.
 - Latest release: Evidence-bound release history and public edition catalog.
 - Public source evidence: https://github.com/MichaelKappel/Multi-Agent-Memory/tree/multiagentmemory-site-v1.0.0

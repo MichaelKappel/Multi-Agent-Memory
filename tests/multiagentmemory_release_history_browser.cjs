@@ -140,7 +140,7 @@ async function assertMachineLedger(context) {
   assert.equal(payload.releases.length, 1);
   const release = payload.releases[0];
   assert.equal(release.version, "1.0.0");
-  assert.equal(release.activationDate, "2026-08-09");
+  assert.equal(release.activationDate, "2026-08-29");
   assert.equal(release.activationTimezone, "UTC");
   assert.equal(release.status, "deployed");
   assert.equal(release.title, "Evidence-bound release history and public edition catalog");
@@ -194,8 +194,8 @@ async function assertReleaseSurface(page, context, scenario) {
   }
   await page.getByRole("heading", { name: "Evidence-bound release history and public edition catalog", exact: true }).waitFor();
   assert.equal((await record.locator(".release-deployment-status").textContent()).trim(), "Deployed");
-  assert.equal(await record.locator("time").getAttribute("datetime"), "2026-08-09");
-  assert.equal((await record.locator("time").textContent()).trim(), "August 9, 2026 (UTC)");
+  assert.equal(await record.locator("time").getAttribute("datetime"), "2026-08-29");
+  assert.equal((await record.locator("time").textContent()).trim(), "August 29, 2026 (UTC)");
   assert.equal(await record.locator(".release-evidence a").getAttribute("href"), sourceTagUrl);
 
   const structuredData = JSON.parse(await page.locator('script[type="application/ld+json"]').textContent());
@@ -204,7 +204,7 @@ async function assertReleaseSurface(page, context, scenario) {
   assert.equal(itemList.numberOfItems, 1);
   assert.equal(itemList.itemListElement.length, 1);
   assert.equal(itemList.itemListElement[0].item.version, "1.0.0");
-  assert.equal(itemList.itemListElement[0].item.datePublished, "2026-08-09");
+  assert.equal(itemList.itemListElement[0].item.datePublished, "2026-08-29");
   assert.equal(itemList.itemListElement[0].item.additionalProperty.value, "deployed");
   assert.deepEqual(itemList.itemListElement[0].item.sameAs, [sourceTagUrl]);
 

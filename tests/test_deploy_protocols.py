@@ -1436,10 +1436,10 @@ Password: multi-secret
             "activationDate": ledger["releases"][0]["activationDate"],
         }
         ready = ftp_deploy_static_site.release_activation_gate(
-            release_identity, "2026-08-09"
+            release_identity, "2026-08-29"
         )
         stale = ftp_deploy_static_site.release_activation_gate(
-            release_identity, "2026-08-10"
+            release_identity, "2026-08-30"
         )
 
         self.assertTrue(ready["checked"])
@@ -1447,7 +1447,7 @@ Password: multi-secret
         self.assertEqual("1.0.0", ready["releaseVersion"])
         self.assertTrue(stale["checked"])
         self.assertFalse(stale["ok"])
-        self.assertEqual("2026-08-09", stale["releaseActivationDate"])
+        self.assertEqual("2026-08-29", stale["releaseActivationDate"])
 
     def test_static_live_upload_rejects_stale_deployed_claim_before_connection(self):
         site_root = ROOT / "sites" / "multiagentmemory.com"
@@ -1540,7 +1540,7 @@ Password: multi-secret
 
     def test_static_release_dry_run_rechecks_utc_at_completion(self):
         gate = ftp_deploy_static_site.release_activation_gate
-        utc_dates = iter(("2026-08-09", "2026-08-10"))
+        utc_dates = iter(("2026-08-29", "2026-08-30"))
 
         def changing_gate(identity, utc_date=None):
             return gate(identity, next(utc_dates))
@@ -1567,7 +1567,7 @@ Password: multi-secret
         ftp = TruthOrderedFtp()
 
         def current_gate(identity, utc_date=None):
-            return gate(identity, "2026-08-09")
+            return gate(identity, "2026-08-29")
 
         with tempfile.TemporaryDirectory() as tmp:
             temporary = Path(tmp)
@@ -1648,7 +1648,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
                 capture_rollback=True,
             )
@@ -1862,7 +1862,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
                 capture_rollback=True,
             )
@@ -1882,7 +1882,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
                 omit_rollback=True,
             )
@@ -1914,7 +1914,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
                 capture_rollback=True,
             )
@@ -1940,7 +1940,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "final",
                 capture_rollback=True,
             )
@@ -1959,7 +1959,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
                 capture_rollback=True,
                 rollback_parent=missing_parent,
@@ -1984,7 +1984,7 @@ Password: multi-secret
             final_exit, final_report = self.stage_then_activate(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
             )
             self.assertEqual(0, final_exit)
             self.assertEqual(1, final_report["retiredDeleteAttemptedCount"])
@@ -2043,7 +2043,7 @@ Password: multi-secret
             final_exit, _final_report = self.stage_then_activate(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
             )
             self.assertEqual(0, final_exit)
             restore_event_offset = len(ftp.events)
@@ -2077,7 +2077,7 @@ Password: multi-secret
             exit_code, report = self.stage_then_activate(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
             )
 
         self.assertEqual(1, exit_code)
@@ -2103,7 +2103,7 @@ Password: multi-secret
             stage_exit, _stage_report = self.run_release_phase(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
             )
             self.assertEqual(0, stage_exit)
@@ -2113,7 +2113,7 @@ Password: multi-secret
             final_exit, final_report = self.run_release_phase(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "final",
             )
             final_events = ftp.events[before_final_events:]
@@ -2157,7 +2157,7 @@ Password: multi-secret
             final_exit, _final_report = self.stage_then_activate(
                 temporary,
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
             )
             self.assertEqual(0, final_exit)
             first_restore_path = sorted(
@@ -2195,7 +2195,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 failing_ftp,
-                lambda identity, utc_date=None: activation_gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: activation_gate(identity, "2026-08-29"),
                 "preactivation",
             )
 
@@ -2216,7 +2216,7 @@ Password: multi-secret
             exit_code, report = self.run_release_phase(
                 Path(tmp),
                 ftp,
-                lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                 "preactivation",
             )
 
@@ -2244,7 +2244,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-10" if gate_calls == 3 else "2026-08-09"
+            date = "2026-08-30" if gate_calls == 3 else "2026-08-29"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2263,7 +2263,7 @@ Password: multi-secret
         gate = ftp_deploy_static_site.release_activation_gate
 
         def current_gate(identity, utc_date=None):
-            return gate(identity, "2026-08-09")
+            return gate(identity, "2026-08-29")
 
         with tempfile.TemporaryDirectory() as tmp:
             temporary = Path(tmp)
@@ -2292,7 +2292,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-10" if gate_calls == 6 else "2026-08-09"
+            date = "2026-08-30" if gate_calls == 6 else "2026-08-29"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2315,7 +2315,7 @@ Password: multi-secret
                     exit_code, report = self.stage_then_activate(
                         Path(tmp),
                         ftp,
-                        lambda identity, utc_date=None: gate(identity, "2026-08-09"),
+                        lambda identity, utc_date=None: gate(identity, "2026-08-29"),
                     )
 
                 self.assertEqual(1, exit_code)
@@ -2338,7 +2338,7 @@ Password: multi-secret
         def staged_gate(identity, utc_date=None):
             nonlocal gate_calls
             gate_calls += 1
-            date = "2026-08-10" if gate_calls == 7 else "2026-08-09"
+            date = "2026-08-30" if gate_calls == 7 else "2026-08-29"
             return gate(identity, date)
 
         with tempfile.TemporaryDirectory() as tmp:
