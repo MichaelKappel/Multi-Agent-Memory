@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS matm_projects (
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_projects_project_workspace (project_id, workspace_id),
   KEY ix_matm_projects_workspace (workspace_id),
   CONSTRAINT fk_matm_projects_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -581,6 +582,36 @@ CREATE TABLE IF NOT EXISTS matm_agents (
   UNIQUE KEY ux_matm_agents_workspace_agent (workspace_id, agent_id),
   KEY ix_matm_agents_workspace (workspace_id),
   CONSTRAINT fk_matm_agents_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_outbound_mcp_project_policies (
+  project_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  mode VARCHAR(32) NOT NULL DEFAULT 'autonomous',
+  forced_by_human TINYINT(1) NOT NULL DEFAULT 0,
+  revision INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP NULL,
+  KEY ix_matm_outbound_mcp_project_policies_workspace (workspace_id),
+  CONSTRAINT fk_matm_outbound_mcp_project_policies_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_outbound_mcp_project_policies_project_workspace FOREIGN KEY (project_id, workspace_id) REFERENCES matm_projects (project_id, workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_outbound_mcp_servers (
+  server_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  owner_agent_id VARCHAR(128) NOT NULL,
+  config_json MEDIUMTEXT NOT NULL,
+  config_digest CHAR(64) NOT NULL,
+  approval_binding_json TEXT NULL,
+  approval_revision INT NOT NULL DEFAULT 0,
+  revision INT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_matm_outbound_mcp_servers_owner (workspace_id, project_id, owner_agent_id, created_at),
+  CONSTRAINT fk_matm_outbound_mcp_servers_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_outbound_mcp_servers_project_workspace FOREIGN KEY (project_id, workspace_id) REFERENCES matm_projects (project_id, workspace_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_uai_packages (

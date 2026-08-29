@@ -29,6 +29,14 @@ from .human_auth import (
     verify_password,
     verify_password_or_dummy,
 )
+from .outbound_mcp import (
+    APPROVAL_STATUSES,
+    PROJECT_POLICY_SCHEMA,
+    agent_policy_update_allowed,
+    config_digest as outbound_mcp_config_digest,
+    normalize_project_policy,
+    validate_server_config as validate_outbound_mcp_server_config,
+)
 from .connector_pairing import (
     AUTHORIZATION_CODE_TTL_SECONDS,
     CANONICAL_AGENT_DISPLAY_NAME,
@@ -84,7 +92,7 @@ from .uai_memory import (
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
-_SQLITE_SCHEMA_VERSION = 1
+_SQLITE_SCHEMA_VERSION = 3
 _MYSQL_SCHEMA_READY = set()
 _IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
 _IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
@@ -231,6 +239,35 @@ def _canonical_hash(value):
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _is_sql_duplicate_key_conflict(exc):
+    """Recognize only duplicate primary/unique-key failures used by CAS inserts."""
+    if isinstance(exc, sqlite3.IntegrityError):
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        duplicate_codes = {
+            getattr(sqlite3, "SQLITE_CONSTRAINT_PRIMARYKEY", 1555),
+            getattr(sqlite3, "SQLITE_CONSTRAINT_UNIQUE", 2067),
+        }
+        if error_code in duplicate_codes:
+            return True
+        message = str(exc)
+        return message.startswith("UNIQUE constraint failed:") or message.startswith(
+            "PRIMARY KEY constraint failed:"
+        )
+
+    module_name = exc.__class__.__module__
+    if module_name.startswith("pymysql.") or module_name.startswith(
+        "mysql.connector."
+    ):
+        error_number = getattr(exc, "errno", None)
+        if error_number is None and getattr(exc, "args", ()):
+            error_number = exc.args[0]
+        try:
+            return int(error_number) == 1062
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
 def _idempotency_conflict_response():
     return {
         "ok": False,
@@ -240,6 +277,7 @@ def _idempotency_conflict_response():
         "rawCredentialExposed": False,
         "rawPayloadExposed": False,
         "idempotencyKeyExposed": False,
+        "_httpStatus": "409 Conflict",
         "error": {
             "code": "idempotency_conflict",
             "title": "Idempotency conflict",
@@ -1599,6 +1637,9 @@ _CONNECTOR_RATE_BUCKETS = frozenset(
         "selfRegistration",
         "publicSafeSubmit",
         "search",
+        "outboundMcpRead",
+        "outboundMcpMutation",
+        "outboundMcpAuthorization",
     )
 )
 _CONNECTOR_RATE_CLEANUP_BATCH = 128
@@ -2774,6 +2815,8 @@ def _blank_store():
         "connectorCredentials": {},
         "connectorRotations": {},
         "connectorRateLimits": {},
+        "outboundMcpProjectPolicies": {},
+        "outboundMcpServers": {},
         "agents": {},
         "uaiMemoryPackages": {},
         "uaiMemoryRecords": {},
@@ -3061,7 +3104,7 @@ class FileStore(object):
         for project in data.get("projects", {}).values():
             if project.get("workspaceId") == workspace_id:
                 usage += _json_size(project)
-        for key in ("agents", "uaiMemoryPackages", "uaiMemoryRecords", "uaiCollaborationHeads", "uaiEditClaims"):
+        for key in ("agents", "outboundMcpProjectPolicies", "outboundMcpServers", "uaiMemoryPackages", "uaiMemoryRecords", "uaiCollaborationHeads", "uaiEditClaims"):
             for item in data.get(key, {}).values():
                 if item.get("workspaceId") == workspace_id:
                     usage += _json_size(item)
@@ -4073,6 +4116,326 @@ class FileStore(object):
             self.workspace_usage_bytes(data, workspace_id),
             candidate,
         )
+
+    @staticmethod
+    def _public_outbound_mcp_server(record):
+        if not record:
+            return None
+        approval = record.get("approvalBinding") or {}
+        public_approval = {
+            key: approval.get(key)
+            for key in (
+                "status",
+                "serverId",
+                "serverRevision",
+                "configDigest",
+                "policyRevision",
+                "approvalRevision",
+                "decisionReason",
+                "decidedAt",
+            )
+            if approval.get(key) is not None
+        }
+        return {
+            "schemaVersion": "multiagentmemory.outbound_mcp_server_record.v1",
+            "serverId": record.get("serverId"),
+            "workspaceId": record.get("workspaceId"),
+            "projectId": record.get("projectId"),
+            "ownerAgentId": record.get("ownerAgentId"),
+            "config": dict(record.get("config") or {}),
+            "configDigest": record.get("configDigest"),
+            "approvalBinding": public_approval or None,
+            "approvalRevision": int(record.get("approvalRevision") or 0),
+            "revision": int(record.get("revision") or 0),
+            "status": record.get("status") or "active",
+            "createdAt": record.get("createdAt"),
+            "updatedAt": record.get("updatedAt"),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
+    @staticmethod
+    def _outbound_mcp_project_active_data(data, workspace_id, project_id):
+        workspace = data.get("workspaces", {}).get(workspace_id) or {}
+        company = data.get("companies", {}).get(workspace.get("companyId")) or {}
+        project = data.get("projects", {}).get(project_id) or {}
+        return bool(
+            company.get("status", "active") == "active"
+            and workspace.get("status", "active") == "active"
+            and project.get("workspaceId") == workspace_id
+            and project.get("status", "active") == "active"
+        )
+
+    def outbound_mcp_project_active(self, workspace_id, project_id):
+        return self._outbound_mcp_project_active_data(
+            self._load(), workspace_id, project_id
+        )
+
+    def outbound_mcp_project_policy(self, workspace_id, project_id):
+        data = self._load()
+        if not self._outbound_mcp_project_active_data(
+            data, workspace_id, project_id
+        ):
+            return None
+        stored = data.setdefault("outboundMcpProjectPolicies", {}).get(project_id)
+        policy = normalize_project_policy(stored)
+        policy.update({"workspaceId": workspace_id, "projectId": project_id})
+        return policy
+
+    def set_outbound_mcp_project_policy(
+        self, workspace_id, project_id, mode, expected_revision,
+        forced_by_human=False, actor_id=None
+    ):
+        """Persist policy for the later human controller; agent routes do not call this."""
+        audit_actor = str(actor_id or "").strip()
+        if forced_by_human and not audit_actor:
+            return None, "outbound_mcp_human_actor_required"
+        audit_actor = audit_actor or "agent"
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ):
+                return None, "outbound_mcp_scope_forbidden"
+            current = normalize_project_policy(
+                data.setdefault("outboundMcpProjectPolicies", {}).get(project_id)
+            )
+            if int(expected_revision) != current["revision"]:
+                return None, "outbound_mcp_revision_conflict"
+            if not forced_by_human and not agent_policy_update_allowed(current, mode):
+                return None, "outbound_mcp_policy_forbidden"
+            policy = normalize_project_policy(
+                {
+                    "mode": mode,
+                    "forcedByHuman": bool(forced_by_human),
+                    "revision": current["revision"] + 1,
+                }
+            )
+            policy["updatedAt"] = utc_now()
+            policy["workspaceId"] = workspace_id
+            policy["projectId"] = project_id
+            data["outboundMcpProjectPolicies"][project_id] = policy
+            self.audit(
+                data,
+                "outbound_mcp.policy.update",
+                audit_actor,
+                project_id,
+                workspace_id,
+                {"projectId": project_id, "mode": policy["mode"], "revision": policy["revision"]},
+            )
+            self._save(data)
+            result = normalize_project_policy(policy)
+            result.update({"workspaceId": workspace_id, "projectId": project_id})
+            return result, None
+
+    def outbound_mcp_servers(self, workspace_id, project_id, owner_agent_id):
+        data = self._load()
+        if not self._outbound_mcp_project_active_data(
+            data, workspace_id, project_id
+        ):
+            return []
+        items = [
+            self._public_outbound_mcp_server(item)
+            for item in data.setdefault("outboundMcpServers", {}).values()
+            if item.get("workspaceId") == workspace_id
+            and item.get("projectId") == project_id
+            and item.get("ownerAgentId") == owner_agent_id
+        ]
+        items.sort(key=lambda item: (item.get("createdAt") or "", item.get("serverId") or ""))
+        return items
+
+    def outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, server_id):
+        data = self._load()
+        if not self._outbound_mcp_project_active_data(
+            data, workspace_id, project_id
+        ):
+            return None
+        record = data.setdefault("outboundMcpServers", {}).get(server_id)
+        if (
+            not record
+            or record.get("workspaceId") != workspace_id
+            or record.get("projectId") != project_id
+            or record.get("ownerAgentId") != owner_agent_id
+        ):
+            return None
+        return self._public_outbound_mcp_server(record)
+
+    def create_outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, config):
+        config = validate_outbound_mcp_server_config(config)
+        now = utc_now()
+        record = {
+            "serverId": "omcp-" + uuid.uuid4().hex,
+            "workspaceId": workspace_id,
+            "projectId": project_id,
+            "ownerAgentId": owner_agent_id,
+            "config": config,
+            "configDigest": outbound_mcp_config_digest(config),
+            "approvalBinding": None,
+            "approvalRevision": 0,
+            "revision": 1,
+            "status": "active",
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ) or not self.has_quota_for(workspace_id, record):
+                return None, "outbound_mcp_scope_forbidden"
+            data.setdefault("outboundMcpServers", {})[record["serverId"]] = record
+            self.audit(data, "outbound_mcp.server.create", owner_agent_id, record["serverId"], workspace_id, {"projectId": project_id, "configDigest": record["configDigest"], "revision": 1})
+            self._save(data)
+        return self._public_outbound_mcp_server(record), None
+
+    def update_outbound_mcp_server(
+        self, workspace_id, project_id, owner_agent_id, server_id, expected_revision, config
+    ):
+        config = validate_outbound_mcp_server_config(config)
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ):
+                return None, "outbound_mcp_scope_forbidden"
+            record = data.setdefault("outboundMcpServers", {}).get(server_id)
+            if not record or record.get("workspaceId") != workspace_id or record.get("projectId") != project_id or record.get("ownerAgentId") != owner_agent_id:
+                return None, "outbound_mcp_server_not_found"
+            if int(record.get("revision") or 0) != int(expected_revision):
+                return None, "outbound_mcp_revision_conflict"
+            record.update(
+                {
+                    "config": config,
+                    "configDigest": outbound_mcp_config_digest(config),
+                    "approvalBinding": None,
+                    "revision": int(expected_revision) + 1,
+                    "updatedAt": utc_now(),
+                }
+            )
+            self.audit(data, "outbound_mcp.server.update", owner_agent_id, server_id, workspace_id, {"projectId": project_id, "configDigest": record["configDigest"], "revision": record["revision"]})
+            self._save(data)
+        return self._public_outbound_mcp_server(record), None
+
+    def disable_outbound_mcp_server(
+        self, workspace_id, project_id, owner_agent_id, server_id, expected_revision
+    ):
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ):
+                return None, "outbound_mcp_scope_forbidden"
+            record = data.setdefault("outboundMcpServers", {}).get(server_id)
+            if not record or record.get("workspaceId") != workspace_id or record.get("projectId") != project_id or record.get("ownerAgentId") != owner_agent_id:
+                return None, "outbound_mcp_server_not_found"
+            if int(record.get("revision") or 0) != int(expected_revision):
+                return None, "outbound_mcp_revision_conflict"
+            record.update({"status": "disabled", "approvalBinding": None, "revision": int(expected_revision) + 1, "updatedAt": utc_now()})
+            self.audit(data, "outbound_mcp.server.disable", owner_agent_id, server_id, workspace_id, {"revision": record["revision"]})
+            self._save(data)
+        return self._public_outbound_mcp_server(record), None
+
+    def set_outbound_mcp_server_approval(
+        self, workspace_id, project_id, server_id, server_revision,
+        expected_config_digest, expected_policy_revision,
+        expected_approval_revision, human_actor_id, status="approved",
+        decision_reason=""
+    ):
+        actor_id = str(human_actor_id or "").strip()
+        if not actor_id:
+            return None, "outbound_mcp_human_actor_required"
+        if status not in APPROVAL_STATUSES:
+            return None, "outbound_mcp_approval_status_invalid"
+        reason = redact_text(str(decision_reason or ""))[:500]
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ):
+                return None, "outbound_mcp_scope_forbidden"
+            record = data.setdefault("outboundMcpServers", {}).get(server_id)
+            policy = normalize_project_policy(
+                data.setdefault("outboundMcpProjectPolicies", {}).get(project_id)
+            )
+            if not record or record.get("workspaceId") != workspace_id or record.get("projectId") != project_id:
+                return None, "outbound_mcp_server_not_found"
+            if record.get("status") != "active":
+                return None, "outbound_mcp_revision_conflict"
+            if (
+                int(record.get("revision") or 0) != int(server_revision)
+                or record.get("configDigest") != expected_config_digest
+                or policy["revision"] != int(expected_policy_revision)
+                or int(record.get("approvalRevision") or 0)
+                != int(expected_approval_revision)
+            ):
+                return None, "outbound_mcp_revision_conflict"
+            approval_revision = int(expected_approval_revision) + 1
+            now = utc_now()
+            binding = {
+                "status": status,
+                "serverId": server_id,
+                "serverRevision": int(server_revision),
+                "configDigest": expected_config_digest,
+                "policyRevision": int(expected_policy_revision),
+                "approvalRevision": approval_revision,
+                "humanActorId": actor_id,
+                "decisionReason": reason or None,
+                "decidedAt": now,
+            }
+            record["approvalBinding"] = binding
+            record["approvalRevision"] = approval_revision
+            record["updatedAt"] = now
+            self.audit(data, "outbound_mcp.server.approval", actor_id, server_id, workspace_id, {"projectId": project_id, "serverRevision": int(server_revision), "configDigest": expected_config_digest, "policyRevision": int(expected_policy_revision), "approvalRevision": approval_revision, "status": status, "decisionReason": reason or None})
+            self._save(data)
+            return self._public_outbound_mcp_server(record), None
+
+    def record_outbound_mcp_authorization_decision(
+        self, workspace_id, project_id, owner_agent_id, server_id,
+        server_revision, config_digest, policy_revision, tool_name,
+        arguments_digest, state, reason, server_enabled
+    ):
+        with _LOCK:
+            data = self._load()
+            if not self._outbound_mcp_project_active_data(
+                data, workspace_id, project_id
+            ):
+                return False
+            record = data.setdefault("outboundMcpServers", {}).get(server_id)
+            policy = normalize_project_policy(
+                data.setdefault("outboundMcpProjectPolicies", {}).get(project_id)
+            )
+            if (
+                not record
+                or record.get("workspaceId") != workspace_id
+                or record.get("projectId") != project_id
+                or record.get("ownerAgentId") != owner_agent_id
+                or int(record.get("revision") or 0) != int(server_revision)
+                or record.get("configDigest") != config_digest
+                or policy["revision"] != int(policy_revision)
+                or (record.get("status") == "active") != bool(server_enabled)
+            ):
+                return False
+            self.audit(
+                data,
+                "outbound_mcp.authorization.check",
+                owner_agent_id,
+                server_id,
+                workspace_id,
+                {
+                    "projectId": project_id,
+                    "serverRevision": int(server_revision),
+                    "configDigest": config_digest,
+                    "policyRevision": int(policy_revision),
+                    "toolName": tool_name,
+                    "argumentsDigest": arguments_digest,
+                    "state": state,
+                    "reason": reason,
+                    "serverEnabled": bool(server_enabled),
+                },
+            )
+            self._save(data)
+            return True
 
     def check_idempotency(self, workspace_id, key, operation, body):
         if not key:
@@ -10734,6 +11097,8 @@ class SQLiteStore(FileStore):
         "matm_storage_ledger",
         "matm_audit_log",
         "matm_idempotency",
+        "matm_outbound_mcp_servers",
+        "matm_outbound_mcp_project_policies",
         "matm_agents",
         "matm_agent_token_replacements",
         "matm_agent_tokens",
@@ -11033,6 +11398,8 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_projects_workspace ON matm_projects (workspace_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_projects_project_workspace
+              ON matm_projects (project_id, workspace_id);
 
             CREATE TABLE IF NOT EXISTS matm_scope_nodes (
               scope_node_id TEXT PRIMARY KEY,
@@ -11531,6 +11898,38 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_agents_workspace ON matm_agents (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_outbound_mcp_project_policies (
+              project_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              forced_by_human INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL DEFAULT 0,
+              updated_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id, workspace_id)
+                REFERENCES matm_projects (project_id, workspace_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS matm_outbound_mcp_servers (
+              server_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              owner_agent_id TEXT NOT NULL,
+              config_json TEXT NOT NULL,
+              config_digest TEXT NOT NULL,
+              approval_binding_json TEXT,
+              approval_revision INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id, workspace_id)
+                REFERENCES matm_projects (project_id, workspace_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_outbound_mcp_servers_owner
+              ON matm_outbound_mcp_servers (workspace_id, project_id, owner_agent_id, created_at);
 
             CREATE TABLE IF NOT EXISTS matm_uai_packages (
               package_id TEXT PRIMARY KEY,
@@ -12107,6 +12506,44 @@ class SQLiteStore(FileStore):
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
+        self._ensure_outbound_mcp_schema_columns(connection)
+
+    def _ensure_outbound_mcp_project_index(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        statement = (
+            "CREATE UNIQUE INDEX ux_matm_projects_project_workspace "
+            "ON matm_projects (project_id, workspace_id)"
+            if mysql
+            else "CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_projects_project_workspace "
+            "ON matm_projects (project_id, workspace_id)"
+        )
+        try:
+            connection.execute(statement)
+        except Exception as exc:
+            message = str(exc).lower()
+            acceptable = (
+                "duplicate" in message
+                or "already exists" in message
+                or "doesn't exist" in message
+                or "does not exist" in message
+                or "no such table" in message
+            )
+            if not acceptable:
+                raise
+
+    def _ensure_outbound_mcp_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        self._ensure_outbound_mcp_project_index(connection)
+        definition = "INT NOT NULL DEFAULT 0" if mysql else "INTEGER NOT NULL DEFAULT 0"
+        try:
+            connection.execute(
+                "ALTER TABLE matm_outbound_mcp_servers "
+                "ADD COLUMN approval_revision %s" % definition
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate column" not in message and "already exists" not in message:
+                raise
 
     def _ensure_company_master_schema_columns(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
@@ -12545,6 +12982,8 @@ class SQLiteStore(FileStore):
         for table in (
             "matm_projects",
             "matm_agents",
+            "matm_outbound_mcp_project_policies",
+            "matm_outbound_mcp_servers",
             "matm_uai_packages",
             "matm_uai_records",
             "matm_uai_record_revisions",
@@ -13722,6 +14161,275 @@ class SQLiteStore(FileStore):
             if attempt < len(SQL_READ_AFTER_WRITE_RETRY_DELAYS):
                 time.sleep(SQL_READ_AFTER_WRITE_RETRY_DELAYS[attempt])
         return False
+
+    def _outbound_mcp_server_from_row(self, row):
+        row = self._row_dict(row)
+        if not row:
+            return None
+        return {
+            "serverId": row["server_id"],
+            "workspaceId": row["workspace_id"],
+            "projectId": row["project_id"],
+            "ownerAgentId": row["owner_agent_id"],
+            "config": self._json_load(row["config_json"], {}),
+            "configDigest": row["config_digest"],
+            "approvalBinding": self._json_load(row["approval_binding_json"], None),
+            "approvalRevision": int(row.get("approval_revision") or 0),
+            "revision": int(row["revision"] or 0),
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def outbound_mcp_project_active(self, workspace_id, project_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT p.project_id FROM matm_projects p "
+                    "JOIN matm_workspaces w ON w.workspace_id = p.workspace_id "
+                    "JOIN matm_companies c ON c.company_id = w.company_id "
+                    "WHERE p.workspace_id = ? AND p.project_id = ? "
+                    "AND p.status = 'active' AND w.status = 'active' "
+                    "AND c.status = 'active'",
+                    (workspace_id, project_id),
+                ).fetchone()
+        return bool(row)
+
+    def outbound_mcp_project_policy(self, workspace_id, project_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute(
+                    "SELECT p.project_id, policy.mode, policy.forced_by_human, "
+                    "policy.revision, policy.updated_at "
+                    "FROM matm_projects p "
+                    "JOIN matm_workspaces w ON w.workspace_id = p.workspace_id "
+                    "JOIN matm_companies c ON c.company_id = w.company_id "
+                    "LEFT JOIN matm_outbound_mcp_project_policies policy "
+                    "ON policy.project_id = p.project_id "
+                    "AND policy.workspace_id = p.workspace_id "
+                    "WHERE p.workspace_id = ? AND p.project_id = ? "
+                    "AND p.status = 'active' AND w.status = 'active' "
+                    "AND c.status = 'active'",
+                    (workspace_id, project_id),
+                ).fetchone()
+        if not row:
+            return None
+        policy = normalize_project_policy(
+            {
+                "mode": row["mode"],
+                "forcedByHuman": self._bool(row["forced_by_human"]),
+                "revision": int(row["revision"] or 0),
+            }
+            if row["mode"] is not None
+            else None
+        )
+        policy.update({"workspaceId": workspace_id, "projectId": project_id})
+        return policy
+
+    def set_outbound_mcp_project_policy(
+        self, workspace_id, project_id, mode, expected_revision,
+        forced_by_human=False, actor_id=None
+    ):
+        audit_actor = str(actor_id or "").strip()
+        if forced_by_human and not audit_actor:
+            return None, "outbound_mcp_human_actor_required"
+        audit_actor = audit_actor or "agent"
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    project = connection.execute(
+                        "SELECT p.project_id FROM matm_projects p "
+                        "JOIN matm_workspaces w ON w.workspace_id = p.workspace_id "
+                        "JOIN matm_companies c ON c.company_id = w.company_id "
+                        "WHERE p.workspace_id = ? AND p.project_id = ? "
+                        "AND p.status = 'active' AND w.status = 'active' "
+                        "AND c.status = 'active'",
+                        (workspace_id, project_id),
+                    ).fetchone()
+                    if not project:
+                        return None, "outbound_mcp_scope_forbidden"
+                    row = connection.execute("SELECT * FROM matm_outbound_mcp_project_policies WHERE workspace_id = ? AND project_id = ?", (workspace_id, project_id)).fetchone()
+                    current = normalize_project_policy({"mode": row["mode"], "forcedByHuman": self._bool(row["forced_by_human"]), "revision": int(row["revision"] or 0)} if row else None)
+                    if current["revision"] != int(expected_revision):
+                        return None, "outbound_mcp_revision_conflict"
+                    if not forced_by_human and not agent_policy_update_allowed(current, mode):
+                        return None, "outbound_mcp_policy_forbidden"
+                    policy = normalize_project_policy({"mode": mode, "forcedByHuman": bool(forced_by_human), "revision": current["revision"] + 1})
+                    now = utc_now()
+                    if row:
+                        changed = connection.execute("UPDATE matm_outbound_mcp_project_policies SET mode = ?, forced_by_human = ?, revision = ?, updated_at = ? WHERE workspace_id = ? AND project_id = ? AND revision = ?", (policy["mode"], self._int_bool(policy["forcedByHuman"]), policy["revision"], now, workspace_id, project_id, int(expected_revision)))
+                    else:
+                        try:
+                            changed = connection.execute("INSERT INTO matm_outbound_mcp_project_policies (project_id, workspace_id, mode, forced_by_human, revision, updated_at) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM matm_outbound_mcp_project_policies WHERE workspace_id = ? AND project_id = ?)", (project_id, workspace_id, policy["mode"], self._int_bool(policy["forcedByHuman"]), policy["revision"], now, workspace_id, project_id))
+                        except Exception as exc:
+                            if _is_sql_duplicate_key_conflict(exc):
+                                return None, "outbound_mcp_revision_conflict"
+                            raise
+                    if changed.rowcount != 1:
+                        return None, "outbound_mcp_revision_conflict"
+                    self._record_audit_sql(connection, workspace_id, "outbound_mcp.policy.update", audit_actor, project_id, {"projectId": project_id, "mode": policy["mode"], "revision": policy["revision"]})
+        policy.update({"workspaceId": workspace_id, "projectId": project_id})
+        return policy, None
+
+    def outbound_mcp_servers(self, workspace_id, project_id, owner_agent_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                rows = list(connection.execute("SELECT s.* FROM matm_outbound_mcp_servers s JOIN matm_projects p ON p.project_id = s.project_id AND p.workspace_id = s.workspace_id JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE s.workspace_id = ? AND s.project_id = ? AND s.owner_agent_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active' ORDER BY s.created_at, s.server_id", (workspace_id, project_id, owner_agent_id)))
+        return [self._public_outbound_mcp_server(self._outbound_mcp_server_from_row(row)) for row in rows]
+
+    def outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, server_id):
+        with _LOCK:
+            with self._open_connection() as connection:
+                row = connection.execute("SELECT s.* FROM matm_outbound_mcp_servers s JOIN matm_projects p ON p.project_id = s.project_id AND p.workspace_id = s.workspace_id JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE s.workspace_id = ? AND s.project_id = ? AND s.owner_agent_id = ? AND s.server_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active'", (workspace_id, project_id, owner_agent_id, server_id)).fetchone()
+        return self._public_outbound_mcp_server(self._outbound_mcp_server_from_row(row))
+
+    def create_outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, config):
+        config = validate_outbound_mcp_server_config(config)
+        now = utc_now()
+        record = {"serverId": "omcp-" + uuid.uuid4().hex, "workspaceId": workspace_id, "projectId": project_id, "ownerAgentId": owner_agent_id, "config": config, "configDigest": outbound_mcp_config_digest(config), "approvalBinding": None, "approvalRevision": 0, "revision": 1, "status": "active", "createdAt": now, "updatedAt": now}
+        if not self.has_quota_for(workspace_id, record):
+            return None, "outbound_mcp_scope_forbidden"
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    project = connection.execute("SELECT p.project_id FROM matm_projects p JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE p.workspace_id = ? AND p.project_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active'", (workspace_id, project_id)).fetchone()
+                    if not project:
+                        return None, "outbound_mcp_scope_forbidden"
+                    connection.execute("INSERT INTO matm_outbound_mcp_servers (server_id, workspace_id, project_id, owner_agent_id, config_json, config_digest, approval_binding_json, approval_revision, revision, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (record["serverId"], workspace_id, project_id, owner_agent_id, self._json_dump(config), record["configDigest"], None, 0, 1, "active", now, now))
+                    self._record_audit_sql(connection, workspace_id, "outbound_mcp.server.create", owner_agent_id, record["serverId"], {"projectId": project_id, "configDigest": record["configDigest"], "revision": 1})
+        return self._public_outbound_mcp_server(record), None
+
+    def update_outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, server_id, expected_revision, config):
+        config = validate_outbound_mcp_server_config(config)
+        digest = outbound_mcp_config_digest(config)
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT s.* FROM matm_outbound_mcp_servers s JOIN matm_projects p ON p.project_id = s.project_id AND p.workspace_id = s.workspace_id JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE s.workspace_id = ? AND s.project_id = ? AND s.owner_agent_id = ? AND s.server_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active'", (workspace_id, project_id, owner_agent_id, server_id)).fetchone()
+                    if not row:
+                        return None, "outbound_mcp_server_not_found"
+                    if int(row["revision"] or 0) != int(expected_revision):
+                        return None, "outbound_mcp_revision_conflict"
+                    changed = connection.execute("UPDATE matm_outbound_mcp_servers SET config_json = ?, config_digest = ?, approval_binding_json = NULL, revision = ?, updated_at = ? WHERE server_id = ? AND revision = ?", (self._json_dump(config), digest, int(expected_revision) + 1, now, server_id, int(expected_revision)))
+                    if changed.rowcount != 1:
+                        return None, "outbound_mcp_revision_conflict"
+                    self._record_audit_sql(connection, workspace_id, "outbound_mcp.server.update", owner_agent_id, server_id, {"projectId": project_id, "configDigest": digest, "revision": int(expected_revision) + 1})
+                    row = connection.execute("SELECT * FROM matm_outbound_mcp_servers WHERE server_id = ?", (server_id,)).fetchone()
+        return self._public_outbound_mcp_server(self._outbound_mcp_server_from_row(row)), None
+
+    def disable_outbound_mcp_server(self, workspace_id, project_id, owner_agent_id, server_id, expected_revision):
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT s.* FROM matm_outbound_mcp_servers s JOIN matm_projects p ON p.project_id = s.project_id AND p.workspace_id = s.workspace_id JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE s.workspace_id = ? AND s.project_id = ? AND s.owner_agent_id = ? AND s.server_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active'", (workspace_id, project_id, owner_agent_id, server_id)).fetchone()
+                    if not row:
+                        return None, "outbound_mcp_server_not_found"
+                    if int(row["revision"] or 0) != int(expected_revision):
+                        return None, "outbound_mcp_revision_conflict"
+                    changed = connection.execute("UPDATE matm_outbound_mcp_servers SET status = 'disabled', approval_binding_json = NULL, revision = ?, updated_at = ? WHERE server_id = ? AND revision = ?", (int(expected_revision) + 1, now, server_id, int(expected_revision)))
+                    if changed.rowcount != 1:
+                        return None, "outbound_mcp_revision_conflict"
+                    self._record_audit_sql(connection, workspace_id, "outbound_mcp.server.disable", owner_agent_id, server_id, {"revision": int(expected_revision) + 1})
+                    row = connection.execute("SELECT * FROM matm_outbound_mcp_servers WHERE server_id = ?", (server_id,)).fetchone()
+        return self._public_outbound_mcp_server(self._outbound_mcp_server_from_row(row)), None
+
+    def set_outbound_mcp_server_approval(
+        self, workspace_id, project_id, server_id, server_revision,
+        expected_config_digest, expected_policy_revision,
+        expected_approval_revision, human_actor_id, status="approved",
+        decision_reason=""
+    ):
+        actor_id = str(human_actor_id or "").strip()
+        if not actor_id:
+            return None, "outbound_mcp_human_actor_required"
+        if status not in APPROVAL_STATUSES:
+            return None, "outbound_mcp_approval_status_invalid"
+        reason = redact_text(str(decision_reason or ""))[:500]
+        now = utc_now()
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute("SELECT s.* FROM matm_outbound_mcp_servers s JOIN matm_projects p ON p.project_id = s.project_id AND p.workspace_id = s.workspace_id JOIN matm_workspaces w ON w.workspace_id = p.workspace_id JOIN matm_companies c ON c.company_id = w.company_id WHERE s.workspace_id = ? AND s.project_id = ? AND s.server_id = ? AND p.status = 'active' AND w.status = 'active' AND c.status = 'active'", (workspace_id, project_id, server_id)).fetchone()
+                    if not row:
+                        return None, "outbound_mcp_server_not_found"
+                    policy_row = connection.execute(
+                        "SELECT mode, forced_by_human, revision "
+                        "FROM matm_outbound_mcp_project_policies "
+                        "WHERE workspace_id = ? AND project_id = ?",
+                        (workspace_id, project_id),
+                    ).fetchone()
+                    policy = normalize_project_policy(
+                        {
+                            "mode": policy_row["mode"],
+                            "forcedByHuman": self._bool(policy_row["forced_by_human"]),
+                            "revision": int(policy_row["revision"] or 0),
+                        }
+                        if policy_row
+                        else None
+                    )
+                    if row["status"] != "active":
+                        return None, "outbound_mcp_revision_conflict"
+                    if (
+                        int(row["revision"] or 0) != int(server_revision)
+                        or row["config_digest"] != expected_config_digest
+                        or policy["revision"] != int(expected_policy_revision)
+                        or int(row["approval_revision"] or 0)
+                        != int(expected_approval_revision)
+                    ):
+                        return None, "outbound_mcp_revision_conflict"
+                    approval_revision = int(expected_approval_revision) + 1
+                    binding = {"status": status, "serverId": server_id, "serverRevision": int(server_revision), "configDigest": expected_config_digest, "policyRevision": int(expected_policy_revision), "approvalRevision": approval_revision, "humanActorId": actor_id, "decisionReason": reason or None, "decidedAt": now}
+                    changed = connection.execute("UPDATE matm_outbound_mcp_servers SET approval_binding_json = ?, approval_revision = ?, updated_at = ? WHERE server_id = ? AND workspace_id = ? AND project_id = ? AND revision = ? AND config_digest = ? AND approval_revision = ? AND status = 'active'", (self._json_dump(binding), approval_revision, now, server_id, workspace_id, project_id, int(server_revision), expected_config_digest, int(expected_approval_revision)))
+                    if changed.rowcount != 1:
+                        return None, "outbound_mcp_revision_conflict"
+                    self._record_audit_sql(connection, workspace_id, "outbound_mcp.server.approval", actor_id, server_id, {"projectId": project_id, "serverRevision": int(server_revision), "configDigest": expected_config_digest, "policyRevision": int(expected_policy_revision), "approvalRevision": approval_revision, "status": status, "decisionReason": reason or None})
+                    row = connection.execute("SELECT * FROM matm_outbound_mcp_servers WHERE server_id = ?", (server_id,)).fetchone()
+        return self._public_outbound_mcp_server(self._outbound_mcp_server_from_row(row)), None
+
+    def record_outbound_mcp_authorization_decision(
+        self, workspace_id, project_id, owner_agent_id, server_id,
+        server_revision, config_digest, policy_revision, tool_name,
+        arguments_digest, state, reason, server_enabled
+    ):
+        with _LOCK:
+            with self._open_connection() as connection:
+                with connection:
+                    row = connection.execute(
+                        "SELECT s.revision, s.config_digest, s.status, "
+                        "policy.revision AS policy_revision "
+                        "FROM matm_outbound_mcp_servers s "
+                        "JOIN matm_projects p ON p.project_id = s.project_id "
+                        "AND p.workspace_id = s.workspace_id "
+                        "JOIN matm_workspaces w ON w.workspace_id = p.workspace_id "
+                        "JOIN matm_companies c ON c.company_id = w.company_id "
+                        "LEFT JOIN matm_outbound_mcp_project_policies policy "
+                        "ON policy.project_id = p.project_id "
+                        "AND policy.workspace_id = p.workspace_id "
+                        "WHERE s.workspace_id = ? AND s.project_id = ? "
+                        "AND s.owner_agent_id = ? AND s.server_id = ? "
+                        "AND p.status = 'active' AND w.status = 'active' "
+                        "AND c.status = 'active'",
+                        (workspace_id, project_id, owner_agent_id, server_id),
+                    ).fetchone()
+                    if (
+                        not row
+                        or int(row["revision"] or 0) != int(server_revision)
+                        or row["config_digest"] != config_digest
+                        or int(row["policy_revision"] or 0) != int(policy_revision)
+                        or (row["status"] == "active") != bool(server_enabled)
+                    ):
+                        return False
+                    self._record_audit_sql(
+                        connection,
+                        workspace_id,
+                        "outbound_mcp.authorization.check",
+                        owner_agent_id,
+                        server_id,
+                        {"projectId": project_id, "serverRevision": int(server_revision), "configDigest": config_digest, "policyRevision": int(policy_revision), "toolName": tool_name, "argumentsDigest": arguments_digest, "state": state, "reason": reason, "serverEnabled": bool(server_enabled)},
+                    )
+        return True
 
     def create_free_account(
         self,
@@ -17967,6 +18675,27 @@ class SQLiteStore(FileStore):
                         "status": row["status"],
                     }
 
+                for row in connection.execute(
+                    "SELECT * FROM matm_outbound_mcp_project_policies "
+                    "ORDER BY project_id"
+                ):
+                    data["outboundMcpProjectPolicies"][row["project_id"]] = {
+                        "schemaVersion": PROJECT_POLICY_SCHEMA,
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "mode": row["mode"],
+                        "forcedByHuman": self._bool(row["forced_by_human"]),
+                        "revision": int(row["revision"] or 0),
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_outbound_mcp_servers "
+                    "ORDER BY created_at, server_id"
+                ):
+                    record = self._outbound_mcp_server_from_row(row)
+                    data["outboundMcpServers"][record["serverId"]] = record
+
                 tag_rows = {}
                 for row in connection.execute("SELECT memory_id, tag FROM matm_memory_tags ORDER BY tag"):
                     tag_rows.setdefault(row["memory_id"], []).append(row["tag"])
@@ -18554,6 +19283,55 @@ class SQLiteStore(FileStore):
                                 agent.get("status") or "active",
                                 agent.get("registeredAt") or utc_now(),
                                 agent.get("lastSeenAt"),
+                            ),
+                        )
+
+                    for project_id, policy in data.get(
+                        "outboundMcpProjectPolicies", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_outbound_mcp_project_policies (
+                              project_id, workspace_id, mode, forced_by_human,
+                              revision, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                policy.get("projectId") or project_id,
+                                policy.get("workspaceId"),
+                                policy.get("mode") or "autonomous",
+                                self._int_bool(policy.get("forcedByHuman")),
+                                int(policy.get("revision") or 0),
+                                policy.get("updatedAt"),
+                            ),
+                        )
+
+                    for server_id, record in data.get(
+                        "outboundMcpServers", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_outbound_mcp_servers (
+                              server_id, workspace_id, project_id, owner_agent_id,
+                              config_json, config_digest, approval_binding_json,
+                              approval_revision, revision, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record.get("serverId") or server_id,
+                                record.get("workspaceId"),
+                                record.get("projectId"),
+                                record.get("ownerAgentId"),
+                                self._json_dump(record.get("config") or {}),
+                                record.get("configDigest"),
+                                self._json_dump(record.get("approvalBinding"))
+                                if record.get("approvalBinding")
+                                else None,
+                                int(record.get("approvalRevision") or 0),
+                                int(record.get("revision") or 1),
+                                record.get("status") or "active",
+                                record.get("createdAt") or utc_now(),
+                                record.get("updatedAt") or utc_now(),
                             ),
                         )
 
@@ -20187,7 +20965,9 @@ class SQLiteStore(FileStore):
                         "matm_meeting_reads", "matm_routing_decisions", "matm_meeting_messages", "matm_meeting_rooms",
                         "matm_sync_receipts", "matm_sync_revisions", "matm_sync_heads", "matm_sync_devices",
                         "matm_uai_record_revisions", "matm_uai_edit_claims", "matm_uai_collaboration_heads", "matm_uai_records", "matm_uai_packages",
-                        "matm_outbox_events", "matm_storage_ledger", "matm_audit_log", "matm_idempotency", "matm_agents", "matm_api_keys", "matm_memory_records",
+                        "matm_outbox_events", "matm_storage_ledger", "matm_audit_log", "matm_idempotency",
+                        "matm_outbound_mcp_servers", "matm_outbound_mcp_project_policies",
+                        "matm_agents", "matm_api_keys", "matm_memory_records",
                     ]
                     for table in workspace_tables:
                         connection.execute("DELETE FROM %s WHERE workspace_id IN (%s)" % (table, workspace_subquery), (company_id,))
@@ -24538,6 +25318,10 @@ class MySQLStore(SQLiteStore):
 
     def _ensure_schema(self, connection):
         schema = (Path(__file__).resolve().parents[1] / "docs" / "database-schema-canonical.sql").read_text(encoding="utf-8")
+        # Existing MySQL projects tables predate the composite key required by
+        # the outbound MCP foreign keys. Converge it before creating those
+        # tables; a brand-new database safely ignores the missing table here.
+        self._ensure_outbound_mcp_project_index(connection)
         connection.executescript(schema)
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
@@ -24546,4 +25330,5 @@ class MySQLStore(SQLiteStore):
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
+        self._ensure_outbound_mcp_schema_columns(connection)
         connection.commit()

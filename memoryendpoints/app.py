@@ -63,6 +63,7 @@ from .http import (
 from .human_access_ui import render_human_access_main
 from .human_operational import route_human_operational
 from .mcp_server import route_mcp
+from .outbound_mcp import route_outbound_mcp
 from .runtime import backend_error_code, configured_store_backend, store_backend_health
 from .security import evaluate_memory_firewall, governed_bearer_token, redact_text
 from .site_data import PUBLIC_ROUTES, agent_compatibility_contract, capability_matrix, connector_contract, manifest, openapi_spec, readiness_result, route_inventory, sync_capabilities
@@ -5348,6 +5349,7 @@ def _idempotency_replay_or_conflict(
         )
         return None
     if replay.get("status") == "idempotency_conflict":
+        replay.pop("_httpStatus", None)
         return json_response(start_response, replay, "409 Conflict", headers=headers)
     replay_status = replay.pop("_httpStatus", "200 OK")
     return json_response(start_response, replay, replay_status, headers=headers)
@@ -10699,6 +10701,9 @@ def _application_dispatch(environ, start_response):
             "not_found",
         )
     if path.startswith("/api/matm/"):
+        outbound_mcp = route_outbound_mcp(environ, start_response, path, _store)
+        if outbound_mcp is not None:
+            return outbound_mcp
         if (
             path.startswith("/api/matm/connector-pairings/")
             or _CONNECTOR_HUMAN_COMPANY_SELECTION_ROUTE.fullmatch(path)
