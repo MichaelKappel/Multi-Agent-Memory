@@ -4,9 +4,10 @@ import unittest
 from pathlib import Path
 
 from memoryendpoints.storage import FileStore, SQLiteStore
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
-class FileStoreSyncTests(unittest.TestCase):
+class FileStoreSyncTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def make_store(self, tmp):
         return FileStore(Path(tmp) / "matm.json")
 

@@ -2,8 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
-class MySQLStoreTests(unittest.TestCase):
+
+class MySQLStoreTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def test_open_connection_uses_db_context_manager_directly(self):
         from memoryendpoints.storage import MySQLStore
 

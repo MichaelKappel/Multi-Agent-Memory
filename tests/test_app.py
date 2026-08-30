@@ -24,6 +24,7 @@ from memoryendpoints.app import (
     _store,
 )
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -50,7 +51,7 @@ def call_app(path, method="GET", body=None, headers=None, query=""):
     return captured["status"], captured["headers"], text
 
 
-class MemoryEndpointsAppTests(unittest.TestCase):
+class MemoryEndpointsAppTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def setUp(self):
         temp_root = Path(__file__).resolve().parents[1] / "var" / "test-store"
         temp_root.mkdir(parents=True, exist_ok=True)
@@ -442,7 +443,8 @@ class MemoryEndpointsAppTests(unittest.TestCase):
         self.assertIn('name="companyLabel"', setup)
         self.assertIn('value="MEMORY-PC"', setup)
         self.assertIn('value="Local.User on MEMORY-PC"', setup)
-        self.assertIn('value="Multi-Agent-Memory"', setup)
+        checkout_root_name = Path(__file__).resolve().parents[1].name
+        self.assertIn('value="%s"' % checkout_root_name, setup)
         self.assertIn("editable labels", setup)
         self.assertIn("They do not replace authentication", setup)
 

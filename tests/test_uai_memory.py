@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app import application
 from memoryendpoints.uai_memory import VIRTUAL_UAI_STARTUP_ORDER
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
 def call_app(path, method="GET", body=None, token="", query="", idempotency_key=""):
@@ -83,7 +84,7 @@ Must not expose: credentials, private keys, private prompts, or customer data.
 """ % (label, role_content, suffix)
 
 
-class UaiMemoryIntegrationTests(unittest.TestCase):
+class UaiMemoryIntegrationTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def setUp(self):
         root = Path(__file__).resolve().parents[1] / "var" / "test-store" / ("uai-%s-%s" % (os.getpid(), self._testMethodName))
         shutil.rmtree(root, ignore_errors=True)

@@ -9,23 +9,16 @@ _MISSING = object()
 _TEST_CREDENTIAL_PEPPER = "test-only-governed-agent-provisioner-v1-" + ("p" * 64)
 
 
-@dataclass(frozen=True)
-class GovernedTestAgent:
-    agent_id: str
-    agent_bearer: str = field(repr=False)
+class DeterministicCredentialPepperEnvironment:
+    """Install the test-only credential pepper and restore the prior environment."""
 
-    @property
-    def auth_headers(self):
-        return {"HTTP_AUTHORIZATION": "Bearer " + self.agent_bearer}
-
-
-class GovernedAgentProvisioner:
-    """Exercise the production governed invitation flow for test principals."""
-
-    def __init__(self, call_app):
-        self._call_app = call_app
+    def __init__(self):
         self._previous_pepper = _MISSING
         self._installed = False
+
+    @property
+    def installed(self):
+        return self._installed
 
     def install(self):
         if not self._installed:
@@ -44,6 +37,54 @@ class GovernedAgentProvisioner:
         self._previous_pepper = _MISSING
         self._installed = False
 
+
+class DeterministicCredentialPepperMixin:
+    """Provide one deterministic credential-pepper environment per test class."""
+
+    @classmethod
+    def setUpClass(cls):
+        fixture = DeterministicCredentialPepperEnvironment().install()
+        cls._deterministic_credential_pepper_fixture = fixture
+        try:
+            super().setUpClass()
+        except Exception:
+            fixture.restore()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture = cls.__dict__.get("_deterministic_credential_pepper_fixture")
+        try:
+            super().tearDownClass()
+        finally:
+            if fixture is not None:
+                fixture.restore()
+
+
+@dataclass(frozen=True)
+class GovernedTestAgent:
+    agent_id: str
+    agent_bearer: str = field(repr=False)
+
+    @property
+    def auth_headers(self):
+        return {"HTTP_AUTHORIZATION": "Bearer " + self.agent_bearer}
+
+
+class GovernedAgentProvisioner:
+    """Exercise the production governed invitation flow for test principals."""
+
+    def __init__(self, call_app):
+        self._call_app = call_app
+        self._pepper_environment = DeterministicCredentialPepperEnvironment()
+
+    def install(self):
+        self._pepper_environment.install()
+        return self
+
+    def restore(self):
+        self._pepper_environment.restore()
+
     def provision(
         self,
         *,
@@ -56,7 +97,7 @@ class GovernedAgentProvisioner:
         grant_scope_type="workspace",
         grant_scope_id=None,
     ):
-        if not self._installed:
+        if not self._pepper_environment.installed:
             raise AssertionError("The deterministic test credential pepper is not installed.")
         scope_ids = {
             "company": company_id,

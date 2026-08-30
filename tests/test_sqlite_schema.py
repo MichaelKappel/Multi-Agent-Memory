@@ -12,6 +12,7 @@ from memoryendpoints.storage import (
     _is_sql_duplicate_key_conflict,
 )
 from memoryendpoints.outbound_mcp import SERVER_SCHEMA, config_digest
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
 class CountingSQLiteStore(SQLiteStore):
@@ -24,7 +25,9 @@ class CountingSQLiteStore(SQLiteStore):
         return super()._ensure_schema(connection)
 
 
-class SQLiteSchemaInitializationTests(unittest.TestCase):
+class SQLiteSchemaInitializationTests(
+    DeterministicCredentialPepperMixin, unittest.TestCase
+):
     def _user_version(self, path):
         with closing(sqlite3.connect(str(path))) as connection:
             return int(connection.execute("PRAGMA user_version").fetchone()[0])

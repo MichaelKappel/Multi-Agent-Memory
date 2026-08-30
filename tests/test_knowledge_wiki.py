@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
 from memoryendpoints.storage import SQLiteStore
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -35,7 +36,7 @@ def call_app(path, method="GET", body=None, headers=None, query=""):
     return captured["status"], captured["headers"], text
 
 
-class KnowledgeWikiTests(unittest.TestCase):
+class KnowledgeWikiTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def setUp(self):
         temp_root = Path(__file__).resolve().parents[1] / "var" / "test-knowledge-wiki"
         temp_root.mkdir(parents=True, exist_ok=True)

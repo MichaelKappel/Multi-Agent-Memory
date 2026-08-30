@@ -10,12 +10,13 @@ from memoryendpoints.storage import (
     _blank_store,
     _prune_coordination_data,
 )
+from tests.governed_test_support import DeterministicCredentialPepperMixin
 
 
 NOW = datetime.datetime(2026, 7, 13, 12, 0, tzinfo=datetime.timezone.utc)
 
 
-class RetentionPolicyTests(unittest.TestCase):
+class RetentionPolicyTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def test_file_audit_log_is_physically_pruned_after_seven_days(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "matm.json"
