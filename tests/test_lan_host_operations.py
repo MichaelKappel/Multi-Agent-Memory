@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from dataclasses import replace
@@ -86,9 +87,24 @@ class LanHostOperationsTests(unittest.TestCase):
         args.tls_cert_file = str(cert)
         args.tls_key_file = str(key)
         args.tls_ca_file = str(ca)
-        config = serve_lan.build_config(args)
+        with patch.object(serve_lan, "ipv4_is_locally_assigned", return_value=True):
+            config = serve_lan.build_config(args)
         self.assertTrue(config.tls_enabled)
         self.assertEqual("https://10.1.10.209:%s" % config.api_port, config.site_url)
+
+    def test_advertised_host_must_be_a_concrete_locally_assigned_address(self):
+        for advertised_host, assigned, expected in (
+            ("0.0.0.0", True, "advertise_host_private_required"),
+            ("10.1.10.209", False, "advertise_host_not_locally_assigned"),
+        ):
+            args = self.arguments()
+            args.advertise_host = advertised_host
+            with self.subTest(advertised_host=advertised_host):
+                with patch.object(
+                    serve_lan, "ipv4_is_locally_assigned", return_value=assigned
+                ):
+                    with self.assertRaisesRegex(serve_lan.ConfigurationError, expected):
+                        serve_lan.build_config(args)
 
     def test_configuration_rejects_unsafe_networks_ports_and_hostnames(self):
         cases = (
@@ -153,6 +169,63 @@ class LanHostOperationsTests(unittest.TestCase):
         self.assertEqual("on", server.base_environ["HTTPS"])
         self.assertEqual("https", guess_scheme(server.base_environ))
 
+    def test_health_probes_use_advertised_host_for_reachability_and_tls_identity(self):
+        class Response:
+            status = 200
+
+            def __init__(self, content_type, body):
+                self.content_type = content_type
+                self.body = body
+
+            def getheader(self, name):
+                return {
+                    "Content-Type": self.content_type,
+                    "Content-Length": str(len(self.body)),
+                }.get(name)
+
+            def read(self, _limit):
+                return self.body
+
+        api_connection = Mock()
+        api_connection.getresponse.return_value = Response(
+            "application/json", b'{"ok":true,"storeBackendVerified":true}'
+        )
+        docs_connection = Mock()
+        docs_connection.getresponse.return_value = Response(
+            "text/html", b"<!doctype html><title>LAN docs</title>"
+        )
+        config = replace(
+            self.config(),
+            advertise_host="10.1.10.209",
+            tls_cert_file=self.root / "server.pem",
+            tls_key_file=self.root / "server-key.pem",
+            tls_ca_file=self.root / "ca.pem",
+        )
+        context = Mock()
+        with (
+            patch.object(serve_lan.ssl, "create_default_context", return_value=context),
+            patch.object(
+                serve_lan.http.client, "HTTPSConnection", return_value=api_connection
+            ) as https_connection,
+            patch.object(
+                serve_lan.http.client, "HTTPConnection", return_value=docs_connection
+            ) as http_connection,
+        ):
+            self.assertTrue(serve_lan.probe_runtime(config)["ready"])
+            self.assertTrue(serve_lan.probe_docs(config)["ready"])
+
+        https_connection.assert_called_once_with(
+            "10.1.10.209",
+            config.api_port,
+            timeout=config.probe_timeout_seconds,
+            context=context,
+        )
+        http_connection.assert_called_once_with(
+            "10.1.10.209",
+            config.docs_port,
+            timeout=config.probe_timeout_seconds,
+        )
+
     @staticmethod
     def wsgi_application(environ, start_response):
         if environ.get("PATH_INFO") == "/api/version":
@@ -187,7 +260,12 @@ class LanHostOperationsTests(unittest.TestCase):
         supervisor = serve_lan.LanHostSupervisor(config, self.wsgi_application)
         supervisor.start()
         try:
-            snapshot = serve_lan.health_snapshot(config)
+            deadline = time.monotonic() + 8
+            while True:
+                snapshot = serve_lan.health_snapshot(config)
+                if snapshot["ok"] or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
             self.assertTrue(snapshot["ok"], snapshot)
             connection = serve_lan.http.client.HTTPConnection(
                 "127.0.0.1", config.api_port, timeout=1

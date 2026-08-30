@@ -84,6 +84,18 @@ def discover_lan_ipv4() -> str:
         probe.close()
 
 
+def ipv4_is_locally_assigned(address: ipaddress.IPv4Address) -> bool:
+    """Return whether the OS will bind a socket to this concrete IPv4 address."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((str(address), 0))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def _port(value: object, name: str) -> int:
     try:
         parsed = int(str(value))
@@ -141,8 +153,10 @@ def build_config(args: argparse.Namespace) -> LanHostConfig:
     if not (bind.is_unspecified or bind.is_loopback or bind.is_private):
         raise ConfigurationError("bind_host_private_required")
     advertise = _ipv4(args.advertise_host or discover_lan_ipv4(), "advertise_host")
-    if not (advertise.is_loopback or advertise.is_private):
+    if advertise.is_unspecified or not (advertise.is_loopback or advertise.is_private):
         raise ConfigurationError("advertise_host_private_required")
+    if not ipv4_is_locally_assigned(advertise):
+        raise ConfigurationError("advertise_host_not_locally_assigned")
     api_port = _port(args.api_port, "api_port")
     docs_port = _port(args.docs_port, "docs_port")
     if api_port == docs_port:
@@ -317,14 +331,16 @@ def probe_runtime(config: LanHostConfig) -> dict:
             context = ssl.create_default_context(cafile=str(config.tls_ca_file))
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             connection = http.client.HTTPSConnection(
-                "127.0.0.1",
+                config.advertise_host,
                 config.api_port,
                 timeout=config.probe_timeout_seconds,
                 context=context,
             )
         else:
             connection = http.client.HTTPConnection(
-                "127.0.0.1", config.api_port, timeout=config.probe_timeout_seconds
+                config.advertise_host,
+                config.api_port,
+                timeout=config.probe_timeout_seconds,
             )
         status, content_type, body, error = _read_response(connection, "/api/version")
         if error:
@@ -352,7 +368,9 @@ def probe_runtime(config: LanHostConfig) -> dict:
 
 def probe_docs(config: LanHostConfig) -> dict:
     connection = http.client.HTTPConnection(
-        "127.0.0.1", config.docs_port, timeout=config.probe_timeout_seconds
+        config.advertise_host,
+        config.docs_port,
+        timeout=config.probe_timeout_seconds,
     )
     try:
         status, content_type, _body, error = _read_response(connection, "/")
