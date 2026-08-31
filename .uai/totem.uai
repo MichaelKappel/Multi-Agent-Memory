@@ -75,3 +75,25 @@ Policy ID: `pre-publication-clean-slate-v1`.
 - One current router, API, schema, storage model, and client contract is the invariant. Redirects, HTTP 410 tombstones, obsolete-route recognizers, aliases, translators, inert handlers, compatibility constructors, migration branches, convergence routines, and superseded storage fallbacks are forbidden; a removed URL receives the ordinary current-router 404.
 - Dogfood data may be discarded or rebuilt against the current schema. Do not make the product carry migration logic solely to preserve pre-publication dogfood state.
 - Preserve immutable receipts and historical failure evidence as audit truth, never as a promise to support obsolete product behavior.
+
+## Canonical Source and GitHub Project Authority
+
+Policy ID: `canonical-source-singularity-v1`.
+
+- The public intranet and MultiAgentMemory.com documentation project is the GitHub repository `MichaelKappel/Multi-Agent-Memory`; its sole editable checkout on this computer is `E:\Multi-Agent-Memory`.
+- The private commercial project is the separate GitHub repository `MichaelKappel/MemoryEndpoints.com-Private`; its sole editable checkout on this computer is `E:\MemoryEndpoints.com`.
+- These are two independent GitHub projects with separate histories, origins, product boundaries, release pipelines, and deployment authority. Neither checkout is a subfolder, mirror, fallback, or working copy of the other.
+- The two canonical checkout paths above are the only writable source locations for these projects on this computer. A deployed runtime copy may exist only when required to run the service; it is immutable release output, never an editable project or source of truth.
+- Packages, extracted stages, content-addressed runtime releases, evidence, backups, rollback material, and build output are artifacts. They must never acquire a branch, become an editing workspace, or be presented as another project copy.
+- Release isolation must use Git objects or an immutable archive whenever possible. A verification step must not leave a clone or registered worktree behind; bounded temporary extraction is removed in the same completed operation.
+- The pre-release closure gate verifies both exact Git origins, each canonical path and HEAD, the intended source status, `git worktree list --porcelain`, known release roots, and exactly one registered writable checkout per project.
+
+## Duplicate Checkout Incident and Resolution
+
+Incident ID: `duplicate-source-checkout-lifecycle-failure`.
+
+- Release verification left four clean detached private worktrees across two release sessions. Public verification also left three clean detached test worktrees, while superseded registered LAN release worktrees could be mistaken for editable projects.
+- The root cause was a verification lifecycle without mandatory teardown and without a final repository-singularity gate. Successful testing therefore failed to prove successful cleanup.
+- The failure risk included wrong-tree edits, wrong-source packaging, ambiguous release evidence, stale deployments, avoidable disk consumption, and broken multi-agent ownership assumptions.
+- Remediation removed every inactive registered verification worktree through Git, pruned both worktree registries, removed superseded runtime and stale package copies, and preserved only the two canonical source checkouts plus the currently required running public runtime.
+- The permanent resolution is structural: one canonical checkout per GitHub project, immutable runtime artifacts, mandatory cleanup in the owning operation, exact post-cleanup readback, and a hard failure whenever extra registered source worktrees remain.

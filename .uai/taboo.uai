@@ -44,3 +44,16 @@ Policy ID: `pre-publication-clean-slate-v1`.
 - Do not collapse swarms into one global agent or writer lock. Parallel agents use distinct active names and distinct memory identities.
 - Do not treat a copied, moved, or renamed `.uai` path as a branch. A true branch has a new immutable identity and records its parent identity, parent digest, and full lineage.
 - Do not accept a mutation unless both the independent agent-name lease fence and memory-writer lease fence are current. Expired, superseded, delayed, reconnected, restarted, or rotated stale writers fail closed.
+
+## Repository Singularity Prohibitions
+
+Policy ID: `canonical-source-singularity-v1`.
+
+- Do not create or retain a second clone, registered worktree, copied source tree, alternate editing directory, or parallel source-of-truth location for either `MichaelKappel/Multi-Agent-Memory` or `MichaelKappel/MemoryEndpoints.com-Private` on this computer.
+- Do not treat a deployment stage, package, extracted archive, content-addressed release, evidence directory, backup, rollback artifact, cPanel copy, or running service directory as source code or as a project checkout.
+- Do not edit a running deployment directly, initialize Git inside a runtime artifact, or copy runtime changes back into either canonical repository.
+- Do not mix the two repositories' Git remotes, histories, `.uai` suites, secrets, release receipts, deployment authority, public documentation ownership, or commercial source boundaries.
+- Do not leave a temporary clone, worktree, source extraction, package build, test stage, or abandoned test-result directory behind when the operation that created it finishes.
+- Do not use duplicate project copies as a workaround for ownership, test isolation, packaging, release, rollback, or multi-agent coordination.
+- Do not declare a release or cleanup complete until Git lists exactly the canonical checkout for each project and known release roots contain only the explicitly required immutable running copy or retained public-safe evidence.
+- Do not reintroduce legacy support, dual source locations, compatibility copies, alternate truth, or any workflow that allows a stale copy to compete with the canonical GitHub project.
