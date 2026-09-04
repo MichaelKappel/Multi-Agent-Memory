@@ -146,7 +146,7 @@ function Test-McpChallenge {
         id = 'setup-probe'
         method = 'initialize'
         params = [ordered]@{
-            protocolVersion = '2025-11-25'
+            protocolVersion = '2026-07-28'
             capabilities = @{}
             clientInfo = [ordered]@{ name = 'setup-probe'; version = '1' }
         }

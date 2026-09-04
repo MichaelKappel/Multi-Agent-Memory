@@ -31,12 +31,8 @@ from .security import redact_text
 from .storage import _credential_pepper
 
 
-MCP_PROTOCOL_VERSION = "2025-11-25"
-MCP_SUPPORTED_PROTOCOL_VERSIONS = (
-    MCP_PROTOCOL_VERSION,
-    "2025-06-18",
-    "2025-03-26",
-)
+MCP_PROTOCOL_VERSION = "2026-07-28"
+MCP_SUPPORTED_PROTOCOL_VERSIONS = (MCP_PROTOCOL_VERSION,)
 MCP_SCOPES = ("memory:read", "memory:write")
 HUMAN_SESSION_COOKIE = "__Host-memoryendpoints-human"
 _MAX_JSON_BYTES = 64 * 1024
@@ -1565,7 +1561,13 @@ def _mcp(environ, start_response, store_factory):
             or not client_info.get("version").strip()
         ):
             return _json_response(start_response, "200 OK", _mcp_error(request_id, -32602, "Initialize parameters are incomplete or invalid."))
-        version = requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_PROTOCOL_VERSION
+        if requested not in MCP_SUPPORTED_PROTOCOL_VERSIONS:
+            return _json_response(
+                start_response,
+                "200 OK",
+                _mcp_error(request_id, -32602, "Unsupported MCP protocol version."),
+            )
+        version = requested
         result = {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},

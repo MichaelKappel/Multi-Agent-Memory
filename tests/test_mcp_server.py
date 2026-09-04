@@ -191,7 +191,7 @@ class McpServerTests(unittest.TestCase):
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2025-11-25",
+                    "protocolVersion": "2026-07-28",
                     "capabilities": {},
                     "clientInfo": {"name": "tunnel-test", "version": "1"},
                 },
@@ -199,7 +199,7 @@ class McpServerTests(unittest.TestCase):
             auth,
         )
         self.assertEqual("200 OK", status, initialized)
-        self.assertEqual("2025-11-25", initialized["result"]["protocolVersion"])
+        self.assertEqual("2026-07-28", initialized["result"]["protocolVersion"])
 
         rejected_resources = (
             OPENAI_TUNNEL_RESOURCE.replace(
@@ -421,11 +421,11 @@ class McpServerTests(unittest.TestCase):
         auth = {"HTTP_AUTHORIZATION": "Bearer " + tokens["access_token"]}
         status, _headers, initialized = self.json_call(
             "/mcp", "POST",
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}},
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2026-07-28", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}},
             auth,
         )
         self.assertEqual("200 OK", status, initialized)
-        self.assertEqual("2025-11-25", initialized["result"]["protocolVersion"])
+        self.assertEqual("2026-07-28", initialized["result"]["protocolVersion"])
         status, _headers, listed = self.json_call(
             "/mcp", "POST", {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, auth
         )
@@ -659,6 +659,30 @@ class McpServerTests(unittest.TestCase):
         )
         self.assertEqual("200 OK", status)
         self.assertEqual(-32602, invalid["error"]["code"])
+        for unsupported_version in ("2025-11-25", "2025-06-18", "2025-03-26"):
+            request = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": unsupported_version,
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"},
+                },
+            }
+            status, _headers, unsupported = self.json_call(
+                "/mcp", "POST", request, auth
+            )
+            self.assertEqual("200 OK", status)
+            self.assertEqual(-32602, unsupported["error"]["code"])
+            status, _headers, unsupported = self.json_call(
+                "/mcp",
+                "POST",
+                request,
+                {**auth, "HTTP_MCP_PROTOCOL_VERSION": unsupported_version},
+            )
+            self.assertEqual("400 Bad Request", status)
+            self.assertEqual(-32600, unsupported["error"]["code"])
         status, _headers, empty = self.json_call(
             "/mcp", "POST", {"jsonrpc": "2.0", "method": "tools/list", "params": {}}, auth
         )
