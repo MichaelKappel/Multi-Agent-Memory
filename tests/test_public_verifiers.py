@@ -25,6 +25,7 @@ def load_script(name):
 
 verify_memoryendpoints = load_script("verify_memoryendpoints")
 verify_static_site = load_script("verify_static_site")
+enterprise_readiness_audit = load_script("enterprise_readiness_audit")
 
 
 def create_sentinel_database(path, user_version, label):
@@ -523,6 +524,81 @@ print(json.dumps({
             "MEMORYENDPOINTS_CREDENTIAL_PEPPER",
             verify_memoryendpoints.WSGI_ISOLATION_ENVIRONMENT,
         )
+
+
+class EnterpriseReadinessIsolationTests(unittest.TestCase):
+    def test_unit_discovery_cannot_touch_parent_store_or_inherit_credentials(self):
+        with tempfile.TemporaryDirectory(prefix="readiness-isolation-test-") as temporary:
+            root = Path(temporary)
+            parent_root = root / "parent-live-var"
+            isolated_root = root / "isolated"
+            probe_root = root / "probe-tests"
+            parent_root.mkdir()
+            isolated_root.mkdir()
+            probe_root.mkdir()
+            parent_sqlite = parent_root / "matm_store.sqlite3"
+            parent_oauth = parent_root / "mcp_oauth.sqlite3"
+            create_sentinel_database(parent_sqlite, 97, "parent-matm")
+            create_sentinel_database(parent_oauth, 98, "parent-oauth")
+            before_sqlite = database_snapshot(parent_sqlite)
+            before_oauth = database_snapshot(parent_oauth)
+            (probe_root / "test_default_store_probe.py").write_text(
+                "import unittest\n"
+                "from memoryendpoints.storage import SQLiteStore\n\n"
+                "class DefaultStoreProbe(unittest.TestCase):\n"
+                "    def test_default_store_is_isolated(self):\n"
+                "        self.assertTrue(SQLiteStore().healthcheck())\n",
+                encoding="utf-8",
+            )
+            parent_environment = os.environ.copy()
+            parent_environment.update(
+                {
+                    "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+                    "MEMORYENDPOINTS_DATA_DIR": str(parent_root),
+                    "MEMORYENDPOINTS_SQLITE_PATH": str(parent_sqlite),
+                    "MEMORYENDPOINTS_STORE_PATH": str(parent_root / "matm_store.json"),
+                    "MEMORYENDPOINTS_MCP_OAUTH_PATH": str(parent_oauth),
+                    "MEMORYENDPOINTS_AGENT_TOKEN": "must-not-reach-child",
+                    "MEMORYENDPOINTS_COMPANY_MASTER_TOKEN": "must-not-reach-child",
+                    "MEMORYENDPOINTS_CREDENTIAL_PEPPER": "must-not-reach-child",
+                    "MEMORYENDPOINTS_INVITE_SECRET": "must-not-reach-child",
+                    "MEMORYENDPOINTS_MYSQL_PASSWORD": "must-not-reach-child",
+                    "DATABASE_URL": "mysql://must-not-reach-child",
+                }
+            )
+            baseline_environment = dict(parent_environment)
+            child_environment = enterprise_readiness_audit.isolated_readiness_environment(
+                isolated_root,
+                base_environment=parent_environment,
+            )
+            for name in (
+                "MEMORYENDPOINTS_AGENT_TOKEN",
+                "MEMORYENDPOINTS_COMPANY_MASTER_TOKEN",
+                "MEMORYENDPOINTS_CREDENTIAL_PEPPER",
+                "MEMORYENDPOINTS_INVITE_SECRET",
+                "MEMORYENDPOINTS_MYSQL_PASSWORD",
+                "DATABASE_URL",
+            ):
+                self.assertNotIn(name, child_environment)
+            completed = enterprise_readiness_audit.run_check(
+                "isolated_discovery_probe",
+                [
+                    sys.executable,
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    str(probe_root),
+                ],
+                environment=child_environment,
+            )
+            self.assertTrue(completed["ok"], completed)
+            self.assertEqual(baseline_environment, parent_environment)
+            self.assertEqual(before_sqlite, database_snapshot(parent_sqlite))
+            self.assertEqual(before_oauth, database_snapshot(parent_oauth))
+            isolated_sqlite = isolated_root / "data" / "readiness.sqlite3"
+            self.assertTrue(isolated_sqlite.exists())
+            self.assertNotEqual(parent_sqlite.resolve(), isolated_sqlite.resolve())
 
 
 if __name__ == "__main__":

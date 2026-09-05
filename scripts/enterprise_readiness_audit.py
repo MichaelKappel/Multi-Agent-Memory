@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,58 @@ REPORT_FRESHNESS_MODEL = (
     "tracked_reports_are_point_in_time_snapshots; "
     "--run-checks supplies current-worktree no-write evidence"
 )
+
+READINESS_ISOLATED_PATHS = {
+    "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+    "MEMORYENDPOINTS_DATA_DIR": "data",
+    "MEMORYENDPOINTS_SQLITE_PATH": "data/readiness.sqlite3",
+    "MEMORYENDPOINTS_STORE_PATH": "data/readiness.json",
+    "MEMORYENDPOINTS_MCP_OAUTH_PATH": "data/readiness-oauth.sqlite3",
+    "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH": "config/missing-credential-config.json",
+    "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH": "config/missing-mcp-host-config.json",
+    "MEMORYENDPOINTS_MYSQL_CONFIG_PATH": "config/missing-mysql-config.json",
+    "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH": "config/missing-admin-diagnostics.json",
+}
+READINESS_FORBIDDEN_ENVIRONMENT = {
+    "DATABASE_URL",
+    "MEMORYENDPOINTS_BASE_URL",
+    "MEMORYENDPOINTS_CA_BUNDLE",
+    "MEMORYENDPOINTS_SITE_URL",
+}
+READINESS_SECRET_MARKERS = (
+    "CREDENTIAL",
+    "INVITE",
+    "PASSWORD",
+    "SECRET",
+    "TOKEN",
+)
+
+
+def readiness_environment_name_allowed(name):
+    upper = str(name).upper()
+    return not (
+        upper in READINESS_FORBIDDEN_ENVIRONMENT
+        or upper.startswith("MEMORYENDPOINTS_MYSQL_")
+        or upper.startswith("MYSQL_")
+        or (
+            upper.startswith("MEMORYENDPOINTS_")
+            and any(marker in upper for marker in READINESS_SECRET_MARKERS)
+        )
+    )
+
+
+def isolated_readiness_environment(directory, base_environment=None):
+    """Return a no-live-state, no-inherited-credential environment for test checks."""
+    root = Path(directory).resolve()
+    source = os.environ if base_environment is None else base_environment
+    environment = {
+        name: source[name]
+        for name in source
+        if readiness_environment_name_allowed(name)
+    }
+    for name, relative in READINESS_ISOLATED_PATHS.items():
+        environment[name] = relative if name == "MEMORYENDPOINTS_STORE_BACKEND" else str(root / relative)
+    return environment
 
 
 def git_head_sha():
@@ -78,10 +131,11 @@ def stale_report_blocker(label, data, head_sha, candidate_paths):
     return None
 
 
-def run_check(name, command):
+def run_check(name, command, environment=None):
     completed = subprocess.run(
         command,
         cwd=str(ROOT),
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -153,8 +207,14 @@ def main(argv=None):
     if args.run_checks:
         dogfood_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-dogfood.json")
         mysql_temp = str(Path(tempfile.gettempdir()) / "memoryendpoints-readiness-mysql.json")
+        with tempfile.TemporaryDirectory(prefix="memoryendpoints-readiness-tests-") as test_directory:
+            unit_and_integration_check = run_check(
+                "unit_and_integration_tests",
+                [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                environment=isolated_readiness_environment(test_directory),
+            )
         checks = [
-            run_check("unit_and_integration_tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
+            unit_and_integration_check,
             run_check("wsgi_route_verifier", [sys.executable, "scripts/verify_memoryendpoints.py", "--wsgi", "--expect-git-head"]),
             run_check("multiagentmemory_static_site", [sys.executable, "scripts/verify_static_site.py"]),
             run_check("uai_memory_audit", [sys.executable, "scripts/audit_uai_memory.py"]),
