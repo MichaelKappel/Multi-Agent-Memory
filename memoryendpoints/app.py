@@ -48,6 +48,7 @@ from .connector_pairing import (
     validate_requested_scopes,
     validate_redirect_uri,
 )
+from .commons_api import route_commons
 from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_DESCRIPTION, SITE_NAME, SITE_URL, utc_now
 from .credential_guidance import (
     COMPANY_MASTER_DEFAULT_SECRET_PATH,
@@ -10624,6 +10625,21 @@ def route_protected(environ, start_response, path):
 def _application_dispatch(environ, start_response):
     path = environ.get("PATH_INFO", "/") or "/"
     method = environ.get("REQUEST_METHOD", "GET")
+    if not path.startswith("/api/matm/commons"):
+        supplied_token = _token(environ)
+        if supplied_token.startswith("me_agent_v1."):
+            supplied_principal = _store().authenticate(supplied_token)
+            if (
+                supplied_principal
+                and supplied_principal.get("commonsOnly") is True
+            ):
+                return problem(
+                    start_response,
+                    "403 Forbidden",
+                    "Commons-only credential",
+                    "This credential is restricted to canonical MATM Commons routes.",
+                    "commons_credential_scope_forbidden",
+                )
     if method == "GET" and (
         path in ("/human", "/agents", "/console", "/knowledge")
         or _is_knowledge_page_route(path)
@@ -10701,6 +10717,9 @@ def _application_dispatch(environ, start_response):
             "not_found",
         )
     if path.startswith("/api/matm/"):
+        commons = route_commons(environ, start_response, path, _store)
+        if commons is not None:
+            return commons
         outbound_mcp = route_outbound_mcp(environ, start_response, path, _store)
         if outbound_mcp is not None:
             return outbound_mcp

@@ -92,7 +92,7 @@ from .uai_memory import (
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
-_SQLITE_SCHEMA_VERSION = 3
+_SQLITE_SCHEMA_VERSION = 5
 _MYSQL_SCHEMA_READY = set()
 _IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
 _IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
@@ -1640,11 +1640,19 @@ _CONNECTOR_RATE_BUCKETS = frozenset(
         "outboundMcpRead",
         "outboundMcpMutation",
         "outboundMcpAuthorization",
+        "commonsEnrollment",
+        "commonsProjectEnrollment",
+        "commonsSourceRequest",
+        "commonsProjectRequest",
+        "commonsRead",
+        "commonsMutation",
+        "commonsBrowserSession",
     )
 )
 _CONNECTOR_RATE_CLEANUP_BATCH = 128
 _CONNECTOR_RATE_MAX_LIMIT = 10000
 _CONNECTOR_RATE_MAX_WINDOW_SECONDS = 86400
+_COMMONS_SOURCE_RATE_BUCKETS = ("commonsSourceRequest", "commonsEnrollment")
 HUMAN_AUDIT_LOG_RETENTION_DAYS = 7
 ACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 7
 UNACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 30
@@ -2657,6 +2665,7 @@ def _public_agent_principal(identity, grant, token_record):
         "memoryTransferFromTokenId": grant.get("memoryTransferFromTokenId"),
         "supersedesCredentialId": grant.get("supersedesTokenId"),
         "memoryTransferFromCredentialId": grant.get("memoryTransferFromTokenId"),
+        "commonsOnly": bool(grant.get("commonsOnly")),
         "canInvite": False,
         "canRevoke": False,
         "valuesRedacted": True,
@@ -2818,6 +2827,17 @@ def _blank_store():
         "outboundMcpProjectPolicies": {},
         "outboundMcpServers": {},
         "agents": {},
+        "commonsPolicies": {},
+        "commonsEnrollmentRequests": {},
+        "commonsAgentProfiles": {},
+        "commonsRooms": {},
+        "commonsMemberships": {},
+        "commonsMessages": {},
+        "commonsMessageRevisions": {},
+        "commonsWithdrawals": {},
+        "commonsAcknowledgements": {},
+        "commonsBrowserSessions": {},
+        "commonsIdempotency": {},
         "uaiMemoryPackages": {},
         "uaiMemoryRecords": {},
         "uaiMemoryRevisions": [],
@@ -2990,6 +3010,197 @@ class FileStore(object):
             now_epoch,
             allowed,
         )
+
+    def consume_commons_layered_rate_limit(
+        self,
+        source_bucket,
+        source_partition,
+        source_limit,
+        source_window_seconds,
+        project_bucket,
+        project_partition,
+        project_limit,
+        project_window_seconds,
+        maximum_live_source_partitions,
+        now=None,
+    ):
+        """Atomically admit a Commons source before spending shared capacity."""
+        if source_bucket not in _COMMONS_SOURCE_RATE_BUCKETS:
+            raise ValueError("commons_source_rate_bucket_invalid")
+        if project_bucket not in ("commonsProjectRequest", "commonsProjectEnrollment"):
+            raise ValueError("commons_project_rate_bucket_invalid")
+        source_limit, source_window_seconds = _connector_rate_policy(
+            source_bucket, source_limit, source_window_seconds
+        )
+        project_limit, project_window_seconds = _connector_rate_policy(
+            project_bucket, project_limit, project_window_seconds
+        )
+        if type(maximum_live_source_partitions) is not int or not (
+            1 <= maximum_live_source_partitions <= 50000
+        ):
+            raise ValueError("commons_rate_partition_capacity_invalid")
+        now_epoch = _connector_rate_now_epoch(now)
+        source_hash = _connector_rate_partition_hash(
+            source_bucket, source_partition
+        )
+        project_hash = _connector_rate_partition_hash(
+            project_bucket, project_partition
+        )
+        source_key = "%s:%s" % (source_bucket, source_hash)
+        project_key = "%s:%s" % (project_bucket, project_hash)
+
+        def state(record, limit, window):
+            if not record or int(record.get("expiresAtEpoch") or 0) <= now_epoch:
+                return 0, now_epoch, now_epoch + window
+            started = int(record.get("windowStartedAtEpoch") or now_epoch)
+            reset = started + window
+            if reset <= now_epoch:
+                return 0, now_epoch, now_epoch + window
+            return max(0, int(record.get("requestCount") or 0)), started, reset
+
+        with _LOCK:
+            data = self._load()
+            records = data.setdefault("connectorRateLimits", {})
+            expired_keys = sorted(
+                key
+                for key, item in records.items()
+                if int((item or {}).get("expiresAtEpoch") or 0) <= now_epoch
+                and key not in (source_key, project_key)
+            )
+            for key in expired_keys[:_CONNECTOR_RATE_CLEANUP_BATCH]:
+                records.pop(key, None)
+            source_count, source_started, source_reset = state(
+                records.get(source_key), source_limit, source_window_seconds
+            )
+            project_count, project_started, project_reset = state(
+                records.get(project_key), project_limit, project_window_seconds
+            )
+            source_is_live = bool(
+                records.get(source_key)
+                and int(records[source_key].get("expiresAtEpoch") or 0) > now_epoch
+            )
+            live_source_records = [
+                item
+                for item in records.values()
+                if (item or {}).get("bucket") in _COMMONS_SOURCE_RATE_BUCKETS
+                and int((item or {}).get("expiresAtEpoch") or 0) > now_epoch
+            ]
+            denied_layer = None
+            if not source_is_live and len(live_source_records) >= maximum_live_source_partitions:
+                denied_layer = "source_partition_capacity"
+                source_reset = min(
+                    int(item.get("expiresAtEpoch") or now_epoch + 1)
+                    for item in live_source_records
+                )
+            elif source_count >= source_limit:
+                denied_layer = "source"
+            elif project_count >= project_limit:
+                denied_layer = "project"
+            if denied_layer:
+                if expired_keys:
+                    self._save(data)
+                retry_after = max(
+                    1,
+                    (
+                        source_reset
+                        if denied_layer != "project"
+                        else project_reset
+                    )
+                    - now_epoch,
+                )
+                return {
+                    "allowed": False,
+                    "deniedLayer": denied_layer,
+                    "retryAfterSeconds": retry_after,
+                    "source": _connector_rate_result(
+                        source_bucket,
+                        source_hash,
+                        source_limit,
+                        source_window_seconds,
+                        source_count,
+                        source_reset,
+                        now_epoch,
+                        False,
+                    ),
+                    "project": _connector_rate_result(
+                        project_bucket,
+                        project_hash,
+                        project_limit,
+                        project_window_seconds,
+                        project_count,
+                        project_reset,
+                        now_epoch,
+                        denied_layer != "project",
+                    ),
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                    "rawPayloadExposed": False,
+                }
+            source_count += 1
+            project_count += 1
+            for key, bucket, partition_hash, count, limit, window, started, reset in (
+                (
+                    source_key,
+                    source_bucket,
+                    source_hash,
+                    source_count,
+                    source_limit,
+                    source_window_seconds,
+                    source_started,
+                    source_reset,
+                ),
+                (
+                    project_key,
+                    project_bucket,
+                    project_hash,
+                    project_count,
+                    project_limit,
+                    project_window_seconds,
+                    project_started,
+                    project_reset,
+                ),
+            ):
+                records[key] = {
+                    "bucket": bucket,
+                    "partitionHash": partition_hash,
+                    "windowStartedAtEpoch": started,
+                    "expiresAtEpoch": reset,
+                    "requestCount": count,
+                    "requestLimit": limit,
+                    "windowSeconds": window,
+                    "updatedAtEpoch": now_epoch,
+                    "valuesRedacted": True,
+                    "rawCredentialExposed": False,
+                }
+            self._save(data)
+        return {
+            "allowed": True,
+            "deniedLayer": None,
+            "retryAfterSeconds": 0,
+            "source": _connector_rate_result(
+                source_bucket,
+                source_hash,
+                source_limit,
+                source_window_seconds,
+                source_count,
+                source_reset,
+                now_epoch,
+                True,
+            ),
+            "project": _connector_rate_result(
+                project_bucket,
+                project_hash,
+                project_limit,
+                project_window_seconds,
+                project_count,
+                project_reset,
+                now_epoch,
+                True,
+            ),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
 
     def audit(self, data, action, actor, target, workspace_id=None, details=None):
         _prune_audit_log_data(data)
@@ -7375,6 +7586,10 @@ class FileStore(object):
                     or predecessor_grant.get("agentIdentityId") != identity.get("agentIdentityId")
                 ):
                     return _agent_access_error("referenced_agent_token_invalid")
+                if predecessor_grant.get("commonsOnly"):
+                    return _agent_access_error(
+                        "commons_credential_native_rotation_required"
+                    )
                 cursor_token = predecessor_token
                 seen_token_ids = set()
                 while cursor_token:
@@ -7407,6 +7622,9 @@ class FileStore(object):
                 "scopeId": invite.get("scopeId"),
                 "workspaceId": workspace_id,
                 "projectId": project_id,
+                "commonsOnly": bool(
+                    predecessor_grant and predecessor_grant.get("commonsOnly")
+                ),
                 "supersedesTokenId": request.get("supersedesTokenId"),
                 "memoryTransferFromTokenId": request.get("memoryTransferFromTokenId"),
                 "assignmentContext": _public_value(invite.get("assignmentContext") or {}),
@@ -7529,6 +7747,10 @@ class FileStore(object):
             predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
             if not predecessor or predecessor.get("revokedAt") or not predecessor_grant or predecessor_grant.get("companyId") != actor.get("companyId") or predecessor_grant.get("status") != "active":
                 return _agent_access_error("agent_token_replacement_predecessor_inactive")
+            if predecessor_grant.get("commonsOnly"):
+                return _agent_access_error(
+                    "commons_credential_native_rotation_required"
+                )
             if any(item.get("predecessorTokenId") == predecessor_credential_id and item.get("status") == "pending_activation" for item in data.get("agentAccessGrants", {}).values()):
                 return _agent_access_error("agent_token_replacement_pending")
             successor_id = _id("agenttoken")
@@ -7539,6 +7761,7 @@ class FileStore(object):
                 "grantId": grant_id, "companyId": actor["companyId"], "agentIdentityId": predecessor.get("agentIdentityId"),
                 "scopeType": predecessor_grant.get("scopeType"), "scopeId": predecessor_grant.get("scopeId"),
                 "workspaceId": predecessor_grant.get("workspaceId"), "projectId": predecessor_grant.get("projectId"),
+                "commonsOnly": bool(predecessor_grant.get("commonsOnly")),
                 "supersedesTokenId": predecessor_credential_id, "memoryTransferFromTokenId": predecessor_credential_id,
                 "status": "pending_activation", "createdAt": now,
                 "pendingExpiresAt": _expires_at(_bounded_ttl_seconds(expires_in_seconds, 900, 60, 60 * 60)),
@@ -7561,6 +7784,10 @@ class FileStore(object):
             predecessor_identity = data.get("agentIdentities", {}).get(predecessor.get("agentIdentityId")) if predecessor else None
             if not predecessor or not successor or not predecessor_grant or not successor_grant:
                 return _agent_access_error("agent_token_replacement_proof_invalid")
+            if predecessor_grant.get("commonsOnly") or successor_grant.get("commonsOnly"):
+                return _agent_access_error(
+                    "commons_credential_native_rotation_required"
+                )
             if successor_grant.get("predecessorTokenId") != predecessor.get("agentTokenId") or successor.get("agentIdentityId") != predecessor.get("agentIdentityId") or successor_grant.get("companyId") != predecessor_grant.get("companyId"):
                 return _agent_access_error("agent_token_replacement_mismatch")
             if successor_grant.get("status") == "active" and predecessor.get("revokedAt") and predecessor_grant.get("status") == "superseded":
@@ -7681,6 +7908,10 @@ class FileStore(object):
                 or not identity
             ):
                 return _agent_access_error("replacement_predecessor_inactive")
+            if predecessor_grant.get("commonsOnly"):
+                return _agent_access_error(
+                    "commons_credential_native_rotation_required"
+                )
             for existing in data.get("agentTokenReplacements", {}).values():
                 if existing.get("predecessorCredentialId") != predecessor_credential_id or existing.get("status") != "prepared":
                     continue
@@ -7709,6 +7940,7 @@ class FileStore(object):
                 "scopeId": predecessor_grant.get("scopeId"),
                 "workspaceId": predecessor_grant.get("workspaceId"),
                 "projectId": predecessor_grant.get("projectId"),
+                "commonsOnly": bool(predecessor_grant.get("commonsOnly")),
                 "supersedesTokenId": predecessor_credential_id,
                 "memoryTransferFromTokenId": predecessor_credential_id,
                 "status": "pending_activation",
@@ -7867,6 +8099,12 @@ class FileStore(object):
             successor, successor_grant, identity = self._verify_agent_credential_data(data, successor_token_proof)
             predecessor = data.get("agentTokens", {}).get(predecessor_credential_id)
             predecessor_grant = data.get("agentAccessGrants", {}).get(predecessor.get("grantId")) if predecessor else None
+            if (predecessor_grant or {}).get("commonsOnly") or (
+                successor_grant or {}
+            ).get("commonsOnly"):
+                return _agent_access_error(
+                    "commons_credential_native_rotation_required"
+                )
             if (
                 not successor
                 or not successor_grant
@@ -11070,6 +11308,17 @@ class FileStore(object):
 
 class SQLiteStore(FileStore):
     DELETE_ORDER = [
+        "matm_commons_idempotency",
+        "matm_commons_browser_sessions",
+        "matm_commons_acknowledgements",
+        "matm_commons_withdrawals",
+        "matm_commons_message_revisions",
+        "matm_commons_messages",
+        "matm_commons_memberships",
+        "matm_commons_rooms",
+        "matm_commons_enrollment_requests",
+        "matm_commons_agent_profiles",
+        "matm_commons_policies",
         "matm_connector_rotations",
         "matm_connector_credentials",
         "matm_connector_pairings",
@@ -11336,6 +11585,236 @@ class SQLiteStore(FileStore):
             allowed,
         )
 
+    def consume_commons_layered_rate_limit(
+        self,
+        source_bucket,
+        source_partition,
+        source_limit,
+        source_window_seconds,
+        project_bucket,
+        project_partition,
+        project_limit,
+        project_window_seconds,
+        maximum_live_source_partitions,
+        now=None,
+    ):
+        """Atomically admit a Commons source before spending shared capacity."""
+        if source_bucket not in _COMMONS_SOURCE_RATE_BUCKETS:
+            raise ValueError("commons_source_rate_bucket_invalid")
+        if project_bucket not in ("commonsProjectRequest", "commonsProjectEnrollment"):
+            raise ValueError("commons_project_rate_bucket_invalid")
+        source_limit, source_window_seconds = _connector_rate_policy(
+            source_bucket, source_limit, source_window_seconds
+        )
+        project_limit, project_window_seconds = _connector_rate_policy(
+            project_bucket, project_limit, project_window_seconds
+        )
+        if type(maximum_live_source_partitions) is not int or not (
+            1 <= maximum_live_source_partitions <= 50000
+        ):
+            raise ValueError("commons_rate_partition_capacity_invalid")
+        now_epoch = _connector_rate_now_epoch(now)
+        source_hash = _connector_rate_partition_hash(source_bucket, source_partition)
+        project_hash = _connector_rate_partition_hash(project_bucket, project_partition)
+        source_reset = now_epoch + source_window_seconds
+        project_reset = now_epoch + project_window_seconds
+
+        def row_state(row, window):
+            if not row:
+                return 0, now_epoch, now_epoch + window
+            expiry = int(self._sql_value(row, "expires_at_epoch", 0) or 0)
+            if expiry <= now_epoch:
+                return 0, now_epoch, now_epoch + window
+            started = int(
+                self._sql_value(row, "window_started_at_epoch", now_epoch)
+                or now_epoch
+            )
+            reset = started + window
+            if reset <= now_epoch:
+                return 0, now_epoch, now_epoch + window
+            return (
+                max(0, int(self._sql_value(row, "request_count", 0) or 0)),
+                started,
+                reset,
+            )
+
+        with self._open_connection() as connection:
+            with connection:
+                _connector_begin_immediate(connection)
+                if getattr(connection, "dialect", "sqlite") == "mysql":
+                    connection.execute(
+                        "DELETE FROM matm_connector_rate_limits WHERE "
+                        "expires_at_epoch <= ? ORDER BY expires_at_epoch LIMIT %d"
+                        % _CONNECTOR_RATE_CLEANUP_BATCH,
+                        (now_epoch,),
+                    )
+                else:
+                    connection.execute(
+                        "DELETE FROM matm_connector_rate_limits WHERE rowid IN ("
+                        "SELECT rowid FROM matm_connector_rate_limits WHERE "
+                        "expires_at_epoch <= ? ORDER BY expires_at_epoch LIMIT ?)",
+                        (now_epoch, _CONNECTOR_RATE_CLEANUP_BATCH),
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO matm_connector_rate_limits ("
+                    "bucket, partition_hash, window_started_at_epoch, expires_at_epoch, "
+                    "request_count, request_limit, window_seconds, updated_at_epoch) "
+                    "VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                    (
+                        project_bucket,
+                        project_hash,
+                        now_epoch,
+                        project_reset,
+                        project_limit,
+                        project_window_seconds,
+                        now_epoch,
+                    ),
+                )
+                project_row = _connector_select_for_update(
+                    connection,
+                    "SELECT * FROM matm_connector_rate_limits WHERE bucket = ? "
+                    "AND partition_hash = ?",
+                    (project_bucket, project_hash),
+                )
+                if not project_row:
+                    raise RuntimeError("commons_project_rate_row_unavailable")
+                source_row = _connector_select_for_update(
+                    connection,
+                    "SELECT * FROM matm_connector_rate_limits WHERE bucket = ? "
+                    "AND partition_hash = ?",
+                    (source_bucket, source_hash),
+                )
+                source_count, source_started, source_reset = row_state(
+                    source_row, source_window_seconds
+                )
+                project_count, project_started, project_reset = row_state(
+                    project_row, project_window_seconds
+                )
+                source_is_live = bool(
+                    source_row
+                    and int(self._sql_value(source_row, "expires_at_epoch", 0) or 0)
+                    > now_epoch
+                )
+                live_source_count = 0
+                if not source_is_live:
+                    placeholders = ",".join("?" for _ in _COMMONS_SOURCE_RATE_BUCKETS)
+                    live_row = connection.execute(
+                        "SELECT COUNT(*) AS item_count FROM matm_connector_rate_limits "
+                        "WHERE bucket IN (%s) AND expires_at_epoch > ?" % placeholders,
+                        tuple(_COMMONS_SOURCE_RATE_BUCKETS) + (now_epoch,),
+                    ).fetchone()
+                    live_source_count = int(
+                        self._sql_value(live_row, "item_count", 0) or 0
+                    )
+                denied_layer = None
+                if (
+                    not source_is_live
+                    and live_source_count >= maximum_live_source_partitions
+                ):
+                    denied_layer = "source_partition_capacity"
+                    placeholders = ",".join("?" for _ in _COMMONS_SOURCE_RATE_BUCKETS)
+                    earliest = connection.execute(
+                        "SELECT MIN(expires_at_epoch) AS reset_epoch FROM "
+                        "matm_connector_rate_limits WHERE bucket IN (%s) "
+                        "AND expires_at_epoch > ?" % placeholders,
+                        tuple(_COMMONS_SOURCE_RATE_BUCKETS) + (now_epoch,),
+                    ).fetchone()
+                    source_reset = int(
+                        self._sql_value(earliest, "reset_epoch", now_epoch + 1)
+                        or now_epoch + 1
+                    )
+                elif source_count >= source_limit:
+                    denied_layer = "source"
+                elif project_count >= project_limit:
+                    denied_layer = "project"
+                if not denied_layer:
+                    source_count += 1
+                    project_count += 1
+                    connection.execute(
+                        "INSERT OR IGNORE INTO matm_connector_rate_limits ("
+                        "bucket, partition_hash, window_started_at_epoch, "
+                        "expires_at_epoch, request_count, request_limit, "
+                        "window_seconds, updated_at_epoch) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                        (
+                            source_bucket,
+                            source_hash,
+                            source_started,
+                            source_reset,
+                            source_limit,
+                            source_window_seconds,
+                            now_epoch,
+                        ),
+                    )
+                    for bucket, partition_hash, count, limit, window, started, reset in (
+                        (
+                            source_bucket,
+                            source_hash,
+                            source_count,
+                            source_limit,
+                            source_window_seconds,
+                            source_started,
+                            source_reset,
+                        ),
+                        (
+                            project_bucket,
+                            project_hash,
+                            project_count,
+                            project_limit,
+                            project_window_seconds,
+                            project_started,
+                            project_reset,
+                        ),
+                    ):
+                        connection.execute(
+                            "UPDATE matm_connector_rate_limits SET "
+                            "window_started_at_epoch = ?, expires_at_epoch = ?, "
+                            "request_count = ?, request_limit = ?, window_seconds = ?, "
+                            "updated_at_epoch = ? WHERE bucket = ? AND partition_hash = ?",
+                            (
+                                started,
+                                reset,
+                                count,
+                                limit,
+                                window,
+                                now_epoch,
+                                bucket,
+                                partition_hash,
+                            ),
+                        )
+        allowed = denied_layer is None
+        retry_after = 0 if allowed else max(
+            1,
+            (project_reset if denied_layer == "project" else source_reset) - now_epoch,
+        )
+        return {
+            "allowed": allowed,
+            "deniedLayer": denied_layer,
+            "retryAfterSeconds": retry_after,
+            "source": _connector_rate_result(
+                source_bucket,
+                source_hash,
+                source_limit,
+                source_window_seconds,
+                source_count,
+                source_reset,
+                now_epoch,
+                allowed,
+            ),
+            "project": _connector_rate_result(
+                project_bucket,
+                project_hash,
+                project_limit,
+                project_window_seconds,
+                project_count,
+                project_reset,
+                now_epoch,
+                allowed or denied_layer != "project",
+            ),
+            "valuesRedacted": True,
+            "rawCredentialExposed": False,
+            "rawPayloadExposed": False,
+        }
+
     def _ensure_schema(self, connection):
         self._execute_sqlite_schema_script(
             connection,
@@ -11387,6 +11866,8 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_workspaces_company ON matm_workspaces (company_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sqlite_workspaces_workspace_company
+              ON matm_workspaces (workspace_id, company_id);
 
             CREATE TABLE IF NOT EXISTS matm_projects (
               project_id TEXT PRIMARY KEY,
@@ -11820,6 +12301,7 @@ class SQLiteStore(FileStore):
               project_id TEXT,
               supersedes_token_id TEXT,
               memory_transfer_from_token_id TEXT,
+              commons_only INTEGER NOT NULL DEFAULT 0,
               status TEXT NOT NULL,
               created_at TEXT NOT NULL,
               pending_expires_at TEXT,
@@ -11898,6 +12380,238 @@ class SQLiteStore(FileStore):
               FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_agents_workspace ON matm_agents (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_policies (
+              project_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              human_approval_required INTEGER NOT NULL DEFAULT 0,
+              revision INTEGER NOT NULL DEFAULT 0,
+              updated_by_credential_id TEXT,
+              updated_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_policies_workspace ON matm_commons_policies (workspace_id);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_enrollment_requests (
+              enrollment_request_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              agent_name TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              listed INTEGER NOT NULL DEFAULT 0,
+              implementation TEXT NOT NULL DEFAULT '',
+              capabilities_json TEXT NOT NULL,
+              profile_url TEXT NOT NULL DEFAULT '',
+              capability_url TEXT NOT NULL DEFAULT '',
+              availability TEXT NOT NULL DEFAULT '',
+              candidate_token_id TEXT NOT NULL UNIQUE,
+              candidate_token_hash TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              decided_at TEXT,
+              decided_by_credential_id TEXT,
+              activated_agent_identity_id TEXT,
+              activated_profile_id TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+              FOREIGN KEY (workspace_id, company_id) REFERENCES matm_workspaces (workspace_id, company_id),
+              FOREIGN KEY (project_id, workspace_id) REFERENCES matm_projects (project_id, workspace_id),
+              FOREIGN KEY (activated_agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+              FOREIGN KEY (activated_profile_id) REFERENCES matm_commons_agent_profiles (profile_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_enrollment_queue ON matm_commons_enrollment_requests (workspace_id, project_id, status, created_at, enrollment_request_id);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_enrollment_name ON matm_commons_enrollment_requests (workspace_id, project_id, agent_name, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_agent_profiles (
+              profile_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              agent_identity_id TEXT NOT NULL,
+              agent_token_id TEXT NOT NULL UNIQUE,
+              agent_id TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              listed INTEGER NOT NULL DEFAULT 0,
+              implementation TEXT NOT NULL DEFAULT '',
+              capabilities_json TEXT NOT NULL,
+              profile_url TEXT NOT NULL DEFAULT '',
+              capability_url TEXT NOT NULL DEFAULT '',
+              availability TEXT NOT NULL DEFAULT '',
+              credential_expires_at TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (workspace_id, project_id, agent_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+              FOREIGN KEY (agent_token_id) REFERENCES matm_agent_tokens (agent_token_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_profiles_public ON matm_commons_agent_profiles (workspace_id, project_id, listed, status, agent_id);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_rooms (
+              room_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              description TEXT NOT NULL,
+              visibility TEXT NOT NULL DEFAULT 'public',
+              membership_required INTEGER NOT NULL DEFAULT 1,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              updated_at TEXT,
+              UNIQUE (workspace_id, project_id, name),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_rooms_discovery ON matm_commons_rooms (workspace_id, project_id, status, room_id);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_memberships (
+              membership_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              state TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1,
+              joined_at TEXT,
+              left_at TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE (room_id, agent_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+              FOREIGN KEY (workspace_id, project_id, agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_memberships_scope_state ON matm_commons_memberships (workspace_id, project_id, room_id, state);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_messages (
+              message_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              author_agent_id TEXT NOT NULL,
+              reply_to_message_id TEXT,
+              current_revision INTEGER NOT NULL DEFAULT 1,
+              current_revision_id TEXT NOT NULL,
+              state TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              corrected_at TEXT,
+              withdrawn_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+              FOREIGN KEY (workspace_id, project_id, author_agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id),
+              FOREIGN KEY (reply_to_message_id) REFERENCES matm_commons_messages (message_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_messages_cursor ON matm_commons_messages (workspace_id, project_id, room_id, created_at, message_id);
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_messages_author ON matm_commons_messages (workspace_id, project_id, author_agent_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_message_revisions (
+              revision_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              revision_number INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              author_agent_id TEXT NOT NULL,
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE (message_id, revision_number),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+              FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+              FOREIGN KEY (workspace_id, project_id, author_agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_revisions_scope ON matm_commons_message_revisions (workspace_id, project_id, message_id, revision_number);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_withdrawals (
+              withdrawal_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              message_id TEXT NOT NULL UNIQUE,
+              withdrawn_by_agent_id TEXT NOT NULL,
+              revision_at_withdrawal INTEGER NOT NULL,
+              withdrawn_at TEXT NOT NULL,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+              FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+              FOREIGN KEY (workspace_id, project_id, withdrawn_by_agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_withdrawals_scope ON matm_commons_withdrawals (workspace_id, project_id, room_id, withdrawn_at);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_acknowledgements (
+              acknowledgement_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              room_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              acknowledged_revision INTEGER NOT NULL,
+              acknowledged_revision_id TEXT NOT NULL,
+              acknowledged_state TEXT NOT NULL,
+              acknowledged_withdrawal_id TEXT,
+              acknowledged_at TEXT NOT NULL,
+              UNIQUE (message_id, agent_id),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+              FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+              FOREIGN KEY (workspace_id, project_id, agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_ack_scope_agent ON matm_commons_acknowledgements (workspace_id, project_id, agent_id, acknowledged_at);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_browser_sessions (
+              browser_session_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              agent_token_id TEXT NOT NULL,
+              secret_hash TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL,
+              expires_at TEXT NOT NULL,
+              last_used_at TEXT,
+              revoked_at TEXT,
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+              FOREIGN KEY (workspace_id, project_id, agent_id)
+                REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id),
+              FOREIGN KEY (agent_token_id) REFERENCES matm_agent_tokens (agent_token_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_browser_sessions_scope ON matm_commons_browser_sessions (workspace_id, project_id, agent_id, status, expires_at);
+
+            CREATE TABLE IF NOT EXISTS matm_commons_idempotency (
+              idempotency_record_id TEXT PRIMARY KEY,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              principal_id TEXT NOT NULL,
+              operation TEXT NOT NULL,
+              idempotency_key_hash TEXT NOT NULL,
+              request_digest TEXT NOT NULL,
+              result_kind TEXT NOT NULL,
+              result_id TEXT NOT NULL,
+              status_code INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE (workspace_id, project_id, principal_id, operation, idempotency_key_hash),
+              FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+              FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_sqlite_commons_idempotency_scope ON matm_commons_idempotency (workspace_id, project_id, created_at);
 
             CREATE TABLE IF NOT EXISTS matm_outbound_mcp_project_policies (
               project_id TEXT PRIMARY KEY,
@@ -12507,6 +13221,48 @@ class SQLiteStore(FileStore):
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
         self._ensure_outbound_mcp_schema_columns(connection)
+        self._ensure_commons_schema_columns(connection)
+
+    def _ensure_commons_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        definition = "TINYINT(1) NOT NULL DEFAULT 0" if mysql else "INTEGER NOT NULL DEFAULT 0"
+        try:
+            connection.execute(
+                "ALTER TABLE matm_agent_access_grants ADD COLUMN commons_only %s"
+                % definition
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if not (
+                "duplicate column" in message
+                or "already exists" in message
+                or "duplicate column name" in message
+            ):
+                raise
+
+    def _ensure_commons_scope_indexes(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        statement = (
+            "CREATE UNIQUE INDEX ux_matm_workspaces_workspace_company "
+            "ON matm_workspaces (workspace_id, company_id)"
+            if mysql
+            else "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "ux_sqlite_workspaces_workspace_company "
+            "ON matm_workspaces (workspace_id, company_id)"
+        )
+        try:
+            connection.execute(statement)
+        except Exception as exc:
+            message = str(exc).lower()
+            acceptable = (
+                "duplicate" in message
+                or "already exists" in message
+                or "doesn't exist" in message
+                or "does not exist" in message
+                or "no such table" in message
+            )
+            if not acceptable:
+                raise
 
     def _ensure_outbound_mcp_project_index(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
@@ -18644,6 +19400,7 @@ class SQLiteStore(FileStore):
                         "projectId": row["project_id"],
                         "supersedesTokenId": row["supersedes_token_id"],
                         "memoryTransferFromTokenId": row["memory_transfer_from_token_id"],
+                        "commonsOnly": self._bool(row["commons_only"]),
                         "status": row["status"],
                         "createdAt": row["created_at"],
                         "pendingExpiresAt": row["pending_expires_at"],
@@ -18673,6 +19430,218 @@ class SQLiteStore(FileStore):
                         "displayName": row["display_name"],
                         "registeredAt": row["registered_at"],
                         "status": row["status"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_policies ORDER BY project_id"
+                ):
+                    data["commonsPolicies"][row["project_id"]] = {
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "humanApprovalRequired": self._bool(
+                            row["human_approval_required"]
+                        ),
+                        "revision": int(row["revision"] or 0),
+                        "updatedByCredentialId": row["updated_by_credential_id"],
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_enrollment_requests ORDER BY created_at, enrollment_request_id"
+                ):
+                    data["commonsEnrollmentRequests"][row["enrollment_request_id"]] = {
+                        "enrollmentRequestId": row["enrollment_request_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "companyId": row["company_id"],
+                        "agentName": row["agent_name"],
+                        "displayName": row["display_name"],
+                        "listed": self._bool(row["listed"]),
+                        "implementation": row["implementation"],
+                        "capabilities": self._json_load(row["capabilities_json"], []),
+                        "profileUrl": row["profile_url"],
+                        "capabilityUrl": row["capability_url"],
+                        "availability": row["availability"],
+                        "candidateTokenId": row["candidate_token_id"],
+                        "candidateTokenHash": row["candidate_token_hash"],
+                        "status": row["status"],
+                        "revision": int(row["revision"] or 1),
+                        "createdAt": row["created_at"],
+                        "expiresAt": row["expires_at"],
+                        "decidedAt": row["decided_at"],
+                        "decidedByCredentialId": row["decided_by_credential_id"],
+                        "activatedAgentIdentityId": row["activated_agent_identity_id"],
+                        "activatedProfileId": row["activated_profile_id"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_agent_profiles ORDER BY created_at, profile_id"
+                ):
+                    key = "%s:%s" % (row["project_id"], row["agent_id"])
+                    data["commonsAgentProfiles"][key] = {
+                        "profileId": row["profile_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "agentIdentityId": row["agent_identity_id"],
+                        "agentTokenId": row["agent_token_id"],
+                        "agentId": row["agent_id"],
+                        "displayName": row["display_name"],
+                        "listed": self._bool(row["listed"]),
+                        "implementation": row["implementation"],
+                        "capabilities": self._json_load(
+                            row["capabilities_json"], []
+                        ),
+                        "profileUrl": row["profile_url"],
+                        "capabilityUrl": row["capability_url"],
+                        "availability": row["availability"],
+                        "credentialExpiresAt": row["credential_expires_at"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_rooms ORDER BY created_at, room_id"
+                ):
+                    data["commonsRooms"][row["room_id"]] = {
+                        "roomId": row["room_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "name": row["name"],
+                        "description": row["description"],
+                        "visibility": row["visibility"],
+                        "membershipRequired": self._bool(
+                            row["membership_required"]
+                        ),
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_memberships ORDER BY created_at, membership_id"
+                ):
+                    key = "%s:%s" % (row["room_id"], row["agent_id"])
+                    data["commonsMemberships"][key] = {
+                        "membershipId": row["membership_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "roomId": row["room_id"],
+                        "agentId": row["agent_id"],
+                        "state": row["state"],
+                        "revision": int(row["revision"] or 0),
+                        "joinedAt": row["joined_at"],
+                        "leftAt": row["left_at"],
+                        "createdAt": row["created_at"],
+                        "updatedAt": row["updated_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_messages ORDER BY created_at, message_id"
+                ):
+                    data["commonsMessages"][row["message_id"]] = {
+                        "messageId": row["message_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "roomId": row["room_id"],
+                        "authorAgentId": row["author_agent_id"],
+                        "replyToMessageId": row["reply_to_message_id"],
+                        "currentRevision": int(row["current_revision"] or 1),
+                        "currentRevisionId": row["current_revision_id"],
+                        "state": row["state"],
+                        "createdAt": row["created_at"],
+                        "correctedAt": row["corrected_at"],
+                        "withdrawnAt": row["withdrawn_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_message_revisions ORDER BY message_id, revision_number"
+                ):
+                    data["commonsMessageRevisions"][row["revision_id"]] = {
+                        "revisionId": row["revision_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "roomId": row["room_id"],
+                        "messageId": row["message_id"],
+                        "revisionNumber": int(row["revision_number"] or 0),
+                        "kind": row["kind"],
+                        "authorAgentId": row["author_agent_id"],
+                        "content": row["content"],
+                        "createdAt": row["created_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_withdrawals ORDER BY withdrawn_at, withdrawal_id"
+                ):
+                    data["commonsWithdrawals"][row["message_id"]] = {
+                        "withdrawalId": row["withdrawal_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "roomId": row["room_id"],
+                        "messageId": row["message_id"],
+                        "withdrawnByAgentId": row["withdrawn_by_agent_id"],
+                        "revisionAtWithdrawal": int(
+                            row["revision_at_withdrawal"] or 0
+                        ),
+                        "withdrawnAt": row["withdrawn_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_acknowledgements ORDER BY acknowledged_at, acknowledgement_id"
+                ):
+                    key = "%s:%s" % (row["message_id"], row["agent_id"])
+                    data["commonsAcknowledgements"][key] = {
+                        "acknowledgementId": row["acknowledgement_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "roomId": row["room_id"],
+                        "messageId": row["message_id"],
+                        "agentId": row["agent_id"],
+                        "acknowledgedRevision": int(
+                            row["acknowledged_revision"] or 0
+                        ),
+                        "acknowledgedRevisionId": row[
+                            "acknowledged_revision_id"
+                        ],
+                        "acknowledgedState": row["acknowledged_state"],
+                        "acknowledgedWithdrawalId": row[
+                            "acknowledged_withdrawal_id"
+                        ],
+                        "acknowledgedAt": row["acknowledged_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_browser_sessions ORDER BY created_at, browser_session_id"
+                ):
+                    data["commonsBrowserSessions"][row["browser_session_id"]] = {
+                        "browserSessionId": row["browser_session_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "agentId": row["agent_id"],
+                        "agentTokenId": row["agent_token_id"],
+                        "secretHash": row["secret_hash"],
+                        "status": row["status"],
+                        "createdAt": row["created_at"],
+                        "expiresAt": row["expires_at"],
+                        "lastUsedAt": row["last_used_at"],
+                        "revokedAt": row["revoked_at"],
+                    }
+
+                for row in connection.execute(
+                    "SELECT * FROM matm_commons_idempotency ORDER BY created_at, idempotency_record_id"
+                ):
+                    data["commonsIdempotency"][row["idempotency_record_id"]] = {
+                        "idempotencyRecordId": row["idempotency_record_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "principalId": row["principal_id"],
+                        "operation": row["operation"],
+                        "idempotencyKeyHash": row["idempotency_key_hash"],
+                        "requestDigest": row["request_digest"],
+                        "resultKind": row["result_kind"],
+                        "resultId": row["result_id"],
+                        "statusCode": int(row["status_code"] or 0),
+                        "createdAt": row["created_at"],
                     }
 
                 for row in connection.execute(
@@ -19223,9 +20192,10 @@ class SQLiteStore(FileStore):
                             INSERT INTO matm_agent_access_grants (
                               grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id, project_id,
                               supersedes_token_id, memory_transfer_from_token_id, status, created_at,
+                              commons_only,
                               pending_expires_at, predecessor_token_id, activated_at, cancelled_at,
                               revoked_at, revoked_by_master_key_id
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 grant.get("grantId") or grant_id,
@@ -19239,6 +20209,7 @@ class SQLiteStore(FileStore):
                                 grant.get("memoryTransferFromTokenId"),
                                 grant.get("status") or "active",
                                 grant.get("createdAt") or utc_now(),
+                                self._int_bool(grant.get("commonsOnly")),
                                 grant.get("pendingExpiresAt"),
                                 grant.get("predecessorTokenId"),
                                 grant.get("activatedAt"),
@@ -19283,6 +20254,336 @@ class SQLiteStore(FileStore):
                                 agent.get("status") or "active",
                                 agent.get("registeredAt") or utc_now(),
                                 agent.get("lastSeenAt"),
+                            ),
+                        )
+
+                    for project_id, policy in data.get("commonsPolicies", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_policies (
+                              project_id, workspace_id, human_approval_required,
+                              revision, updated_by_credential_id, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                policy.get("projectId") or project_id,
+                                policy.get("workspaceId"),
+                                self._int_bool(policy.get("humanApprovalRequired")),
+                                int(policy.get("revision") or 0),
+                                policy.get("updatedByCredentialId"),
+                                policy.get("updatedAt"),
+                            ),
+                        )
+
+                    for enrollment_request_id, request in data.get(
+                        "commonsEnrollmentRequests", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_enrollment_requests (
+                              enrollment_request_id, workspace_id, project_id,
+                              company_id, agent_name, display_name, listed,
+                              implementation, capabilities_json, profile_url,
+                              capability_url, availability, candidate_token_id,
+                              candidate_token_hash, status, revision, created_at,
+                              expires_at, decided_at, decided_by_credential_id,
+                              activated_agent_identity_id, activated_profile_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                request.get("enrollmentRequestId")
+                                or enrollment_request_id,
+                                request.get("workspaceId"),
+                                request.get("projectId"),
+                                request.get("companyId"),
+                                request.get("agentName"),
+                                request.get("displayName"),
+                                self._int_bool(request.get("listed")),
+                                request.get("implementation") or "",
+                                self._json_dump(request.get("capabilities") or []),
+                                request.get("profileUrl") or "",
+                                request.get("capabilityUrl") or "",
+                                request.get("availability") or "",
+                                request.get("candidateTokenId"),
+                                request.get("candidateTokenHash"),
+                                request.get("status") or "pending",
+                                int(request.get("revision") or 1),
+                                request.get("createdAt") or utc_now(),
+                                request.get("expiresAt"),
+                                request.get("decidedAt"),
+                                request.get("decidedByCredentialId"),
+                                request.get("activatedAgentIdentityId"),
+                                request.get("activatedProfileId"),
+                            ),
+                        )
+
+                    for profile_id, profile in data.get(
+                        "commonsAgentProfiles", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_agent_profiles (
+                              profile_id, workspace_id, project_id, agent_identity_id,
+                              agent_token_id, agent_id, display_name, listed,
+                              implementation, capabilities_json, profile_url,
+                              capability_url, availability, credential_expires_at,
+                              status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                profile.get("profileId") or profile_id,
+                                profile.get("workspaceId"),
+                                profile.get("projectId"),
+                                profile.get("agentIdentityId"),
+                                profile.get("agentTokenId"),
+                                profile.get("agentId"),
+                                profile.get("displayName") or profile.get("agentId"),
+                                self._int_bool(profile.get("listed")),
+                                profile.get("implementation") or "",
+                                self._json_dump(profile.get("capabilities") or []),
+                                profile.get("profileUrl") or "",
+                                profile.get("capabilityUrl") or "",
+                                profile.get("availability") or "",
+                                profile.get("credentialExpiresAt"),
+                                profile.get("status") or "active",
+                                profile.get("createdAt") or utc_now(),
+                                profile.get("updatedAt"),
+                            ),
+                        )
+
+                    for room_id, room in data.get("commonsRooms", {}).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_rooms (
+                              room_id, workspace_id, project_id, name, description,
+                              visibility, membership_required, status, created_at,
+                              updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                room.get("roomId") or room_id,
+                                room.get("workspaceId"),
+                                room.get("projectId"),
+                                room.get("name") or "Commons",
+                                room.get("description") or "",
+                                room.get("visibility") or "public",
+                                self._int_bool(room.get("membershipRequired", True)),
+                                room.get("status") or "active",
+                                room.get("createdAt") or utc_now(),
+                                room.get("updatedAt"),
+                            ),
+                        )
+
+                    for membership_id, membership in data.get(
+                        "commonsMemberships", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_memberships (
+                              membership_id, workspace_id, project_id, room_id,
+                              agent_id, state, revision, joined_at, left_at,
+                              created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                membership.get("membershipId") or membership_id,
+                                membership.get("workspaceId"),
+                                membership.get("projectId"),
+                                membership.get("roomId"),
+                                membership.get("agentId"),
+                                membership.get("state") or "left",
+                                int(membership.get("revision") or 1),
+                                membership.get("joinedAt"),
+                                membership.get("leftAt"),
+                                membership.get("createdAt") or utc_now(),
+                                membership.get("updatedAt")
+                                or membership.get("createdAt")
+                                or utc_now(),
+                            ),
+                        )
+
+                    commons_messages = list(
+                        data.get("commonsMessages", {}).items()
+                    )
+                    commons_messages.sort(
+                        key=lambda item: (
+                            str(item[1].get("createdAt") or ""),
+                            str(item[1].get("messageId") or item[0]),
+                        )
+                    )
+                    for message_id, message in commons_messages:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_messages (
+                              message_id, workspace_id, project_id, room_id,
+                              author_agent_id, reply_to_message_id, current_revision,
+                              current_revision_id, state, created_at, corrected_at,
+                              withdrawn_at
+                            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                message.get("messageId") or message_id,
+                                message.get("workspaceId"),
+                                message.get("projectId"),
+                                message.get("roomId"),
+                                message.get("authorAgentId"),
+                                int(message.get("currentRevision") or 1),
+                                message.get("currentRevisionId"),
+                                message.get("state") or "active",
+                                message.get("createdAt") or utc_now(),
+                                message.get("correctedAt"),
+                                message.get("withdrawnAt"),
+                            ),
+                        )
+                    for message_id, message in commons_messages:
+                        if message.get("replyToMessageId"):
+                            connection.execute(
+                                "UPDATE matm_commons_messages SET reply_to_message_id = ? "
+                                "WHERE message_id = ?",
+                                (
+                                    message.get("replyToMessageId"),
+                                    message.get("messageId") or message_id,
+                                ),
+                            )
+
+                    commons_revisions = list(
+                        data.get("commonsMessageRevisions", {}).items()
+                    )
+                    commons_revisions.sort(
+                        key=lambda item: (
+                            str(item[1].get("messageId") or ""),
+                            int(item[1].get("revisionNumber") or 0),
+                            str(item[1].get("revisionId") or item[0]),
+                        )
+                    )
+                    for revision_id, revision in commons_revisions:
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_message_revisions (
+                              revision_id, workspace_id, project_id, room_id,
+                              message_id, revision_number, kind, author_agent_id,
+                              content, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                revision.get("revisionId") or revision_id,
+                                revision.get("workspaceId"),
+                                revision.get("projectId"),
+                                revision.get("roomId"),
+                                revision.get("messageId"),
+                                int(revision.get("revisionNumber") or 1),
+                                revision.get("kind") or "original",
+                                revision.get("authorAgentId"),
+                                revision.get("content") or "",
+                                revision.get("createdAt") or utc_now(),
+                            ),
+                        )
+
+                    for withdrawal_id, withdrawal in data.get(
+                        "commonsWithdrawals", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_withdrawals (
+                              withdrawal_id, workspace_id, project_id, room_id,
+                              message_id, withdrawn_by_agent_id,
+                              revision_at_withdrawal, withdrawn_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                withdrawal.get("withdrawalId") or withdrawal_id,
+                                withdrawal.get("workspaceId"),
+                                withdrawal.get("projectId"),
+                                withdrawal.get("roomId"),
+                                withdrawal.get("messageId"),
+                                withdrawal.get("withdrawnByAgentId"),
+                                int(withdrawal.get("revisionAtWithdrawal") or 1),
+                                withdrawal.get("withdrawnAt") or utc_now(),
+                            ),
+                        )
+
+                    for acknowledgement_id, acknowledgement in data.get(
+                        "commonsAcknowledgements", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_acknowledgements (
+                              acknowledgement_id, workspace_id, project_id, room_id,
+                              message_id, agent_id, acknowledged_revision,
+                              acknowledged_revision_id, acknowledged_state,
+                              acknowledged_withdrawal_id, acknowledged_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                acknowledgement.get("acknowledgementId")
+                                or acknowledgement_id,
+                                acknowledgement.get("workspaceId"),
+                                acknowledgement.get("projectId"),
+                                acknowledgement.get("roomId"),
+                                acknowledgement.get("messageId"),
+                                acknowledgement.get("agentId"),
+                                int(
+                                    acknowledgement.get("acknowledgedRevision") or 1
+                                ),
+                                acknowledgement.get("acknowledgedRevisionId"),
+                                acknowledgement.get("acknowledgedState") or "active",
+                                acknowledgement.get("acknowledgedWithdrawalId"),
+                                acknowledgement.get("acknowledgedAt") or utc_now(),
+                            ),
+                        )
+
+                    for browser_session_id, browser_session in data.get(
+                        "commonsBrowserSessions", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_browser_sessions (
+                              browser_session_id, workspace_id, project_id, agent_id,
+                              agent_token_id, secret_hash, status, created_at,
+                              expires_at, last_used_at, revoked_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                browser_session.get("browserSessionId")
+                                or browser_session_id,
+                                browser_session.get("workspaceId"),
+                                browser_session.get("projectId"),
+                                browser_session.get("agentId"),
+                                browser_session.get("agentTokenId"),
+                                browser_session.get("secretHash"),
+                                browser_session.get("status") or "active",
+                                browser_session.get("createdAt") or utc_now(),
+                                browser_session.get("expiresAt"),
+                                browser_session.get("lastUsedAt"),
+                                browser_session.get("revokedAt"),
+                            ),
+                        )
+
+                    for idempotency_record_id, record in data.get(
+                        "commonsIdempotency", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_commons_idempotency (
+                              idempotency_record_id, workspace_id, project_id,
+                              principal_id, operation, idempotency_key_hash,
+                              request_digest, result_kind, result_id, status_code,
+                              created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record.get("idempotencyRecordId")
+                                or idempotency_record_id,
+                                record.get("workspaceId"),
+                                record.get("projectId"),
+                                record.get("principalId"),
+                                record.get("operation"),
+                                record.get("idempotencyKeyHash"),
+                                record.get("requestDigest"),
+                                record.get("resultKind"),
+                                record.get("resultId"),
+                                int(record.get("statusCode") or 200),
+                                record.get("createdAt") or utc_now(),
                             ),
                         )
 
@@ -20323,7 +21624,8 @@ class SQLiteStore(FileStore):
                                    t.revoked_at AS token_revoked_at, g.grant_id, g.company_id,
                                    g.agent_identity_id AS grant_agent_identity_id,
                                    g.status AS grant_status, g.revoked_at AS grant_revoked_at,
-                                   g.supersedes_token_id AS ancestor_token_id
+                                   g.supersedes_token_id AS ancestor_token_id,
+                                   g.commons_only
                             FROM matm_agent_tokens t
                             JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
                             WHERE t.agent_token_id = ?
@@ -20340,6 +21642,10 @@ class SQLiteStore(FileStore):
                             or predecessor["grant_agent_identity_id"] != identity["agent_identity_id"]
                         ):
                             return _agent_access_error("referenced_agent_token_invalid")
+                        if predecessor["commons_only"]:
+                            return _agent_access_error(
+                                "commons_credential_native_rotation_required"
+                            )
                         original_grant_id = predecessor["grant_id"]
                         ancestor_token_id = predecessor["ancestor_token_id"]
                         seen_token_ids = {predecessor["agent_token_id"]}
@@ -20380,12 +21686,12 @@ class SQLiteStore(FileStore):
                         """
                         INSERT INTO matm_agent_access_grants (
                           grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
-                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, commons_only, status,
                           created_at, pending_expires_at, predecessor_token_id, activated_at,
                           cancelled_at, revoked_at, revoked_by_master_key_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (grant_id, invite["company_id"], identity["agent_identity_id"], invite["scope_type"], invite["scope_id"], target.get("workspaceId"), target.get("projectId"), request["supersedes_token_id"], request["memory_transfer_from_token_id"], grant_status, now, pending_expires_at, request["supersedes_token_id"], now, None, None, None),
+                        (grant_id, invite["company_id"], identity["agent_identity_id"], invite["scope_type"], invite["scope_id"], target.get("workspaceId"), target.get("projectId"), request["supersedes_token_id"], request["memory_transfer_from_token_id"], 1 if predecessor and predecessor["commons_only"] else 0, grant_status, now, pending_expires_at, request["supersedes_token_id"], now, None, None, None),
                     )
                     connection.execute(
                         "INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -20419,6 +21725,7 @@ class SQLiteStore(FileStore):
             "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "workspaceId": target.get("workspaceId"),
             "projectId": target.get("projectId"), "supersedesTokenId": request["supersedes_token_id"],
             "memoryTransferFromTokenId": request["memory_transfer_from_token_id"], "status": grant_status,
+            "commonsOnly": bool(predecessor and predecessor["commons_only"]),
             "publicGrantId": original_grant_id or grant_id,
         }
         token_record = {"agentTokenId": agent_token_id, "grantId": grant_id, "agentIdentityId": identity["agent_identity_id"]}
@@ -20442,7 +21749,7 @@ class SQLiteStore(FileStore):
                     row = connection.execute(
                         """
                         SELECT t.*, g.company_id, g.scope_type, g.scope_id, g.workspace_id, g.project_id,
-                               g.supersedes_token_id, g.memory_transfer_from_token_id, g.status AS grant_status,
+                               g.supersedes_token_id, g.memory_transfer_from_token_id, g.commons_only, g.status AS grant_status,
                                g.revoked_at AS grant_revoked_at, i.agent_id, i.agent_name, i.display_name,
                                i.status AS identity_status, c.status AS company_status
                         FROM matm_agent_tokens t
@@ -20485,6 +21792,7 @@ class SQLiteStore(FileStore):
             "grantId": row["grant_id"], "companyId": row["company_id"], "scopeType": row["scope_type"],
             "scopeId": row["scope_id"], "workspaceId": row["workspace_id"], "projectId": row["project_id"],
             "supersedesTokenId": row["supersedes_token_id"], "memoryTransferFromTokenId": row["memory_transfer_from_token_id"],
+            "commonsOnly": bool(row["commons_only"]),
             "publicGrantId": public_grant_id,
         }
         return _public_agent_principal(identity, grant, {"agentTokenId": row["agent_token_id"], "grantId": row["grant_id"]})
@@ -20960,6 +22268,12 @@ class SQLiteStore(FileStore):
                     connection.execute("DELETE FROM matm_memory_tags WHERE memory_id IN (SELECT memory_id FROM matm_memory_records WHERE workspace_id IN (%s))" % workspace_subquery, (company_id,))
                     connection.execute("DELETE FROM matm_memory_revisions WHERE memory_id IN (SELECT memory_id FROM matm_memory_records WHERE workspace_id IN (%s))" % workspace_subquery, (company_id,))
                     workspace_tables = [
+                        "matm_commons_idempotency", "matm_commons_browser_sessions",
+                        "matm_commons_acknowledgements", "matm_commons_withdrawals",
+                        "matm_commons_message_revisions", "matm_commons_messages",
+                        "matm_commons_memberships", "matm_commons_rooms",
+                        "matm_commons_enrollment_requests",
+                        "matm_commons_agent_profiles", "matm_commons_policies",
                         "matm_external_link_mentions", "matm_external_links", "matm_search_documents", "matm_crawl_sources",
                         "matm_review_queue", "matm_receipts", "matm_notifications", "matm_messages",
                         "matm_meeting_reads", "matm_routing_decisions", "matm_meeting_messages", "matm_meeting_rooms",
@@ -22272,6 +23586,10 @@ class SQLiteStore(FileStore):
                     predecessor = connection.execute("SELECT t.*, g.* FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (predecessor_credential_id,)).fetchone()
                     if not predecessor or predecessor["revoked_at"] or predecessor["company_id"] != actor.get("companyId") or predecessor["status"] != "active":
                         return _agent_access_error("agent_token_replacement_predecessor_inactive")
+                    if predecessor["commons_only"]:
+                        return _agent_access_error(
+                            "commons_credential_native_rotation_required"
+                        )
                     pending = connection.execute("SELECT grant_id FROM matm_agent_access_grants WHERE predecessor_token_id = ? AND status = 'pending_activation'", (predecessor_credential_id,)).fetchone()
                     if pending:
                         return _agent_access_error("agent_token_replacement_pending")
@@ -22280,12 +23598,12 @@ class SQLiteStore(FileStore):
                         """
                         INSERT INTO matm_agent_access_grants (
                           grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
-                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, commons_only, status,
                           created_at, pending_expires_at, predecessor_token_id, activated_at,
                           cancelled_at, revoked_at, revoked_by_master_key_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (grant_id, actor["companyId"], predecessor["agent_identity_id"], predecessor["scope_type"], predecessor["scope_id"], predecessor["workspace_id"], predecessor["project_id"], predecessor_credential_id, predecessor_credential_id, "pending_activation", now, expires_at, predecessor_credential_id, None, None, None, None),
+                        (grant_id, actor["companyId"], predecessor["agent_identity_id"], predecessor["scope_type"], predecessor["scope_id"], predecessor["workspace_id"], predecessor["project_id"], predecessor_credential_id, predecessor_credential_id, int(predecessor["commons_only"] or 0), "pending_activation", now, expires_at, predecessor_credential_id, None, None, None, None),
                     )
                     connection.execute("INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (successor_id, grant_id, predecessor["agent_identity_id"], successor_digest, now, None, None))
                     self._record_audit_sql(connection, predecessor["workspace_id"], "agent_token.replacement_prepare", actor.get("humanAccountId"), successor_id, {"predecessorCredentialId": predecessor_credential_id, "authorityId": actor.get("selectedAuthorityId")})
@@ -22295,7 +23613,7 @@ class SQLiteStore(FileStore):
         token_id, secret = _parse_governed_credential(token, "agent")
         if not token_id:
             return None
-        row = connection.execute("SELECT t.*, g.company_id, g.status AS grant_status, g.pending_expires_at, g.predecessor_token_id, g.workspace_id, g.scope_type, g.scope_id, g.revoked_at AS grant_revoked_at FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (token_id,)).fetchone()
+        row = connection.execute("SELECT t.*, g.company_id, g.status AS grant_status, g.pending_expires_at, g.predecessor_token_id, g.workspace_id, g.scope_type, g.scope_id, g.commons_only, g.revoked_at AS grant_revoked_at FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (token_id,)).fetchone()
         if not row:
             return None
         expected = _governed_credential_digest("agent", row["company_id"], token_id, secret)
@@ -22309,6 +23627,10 @@ class SQLiteStore(FileStore):
                     successor = self._verify_agent_credential_sql(connection, successor_token_proof)
                     if not successor or not successor["predecessor_token_id"]:
                         return _agent_access_error("agent_token_replacement_proof_invalid")
+                    if successor["commons_only"]:
+                        return _agent_access_error(
+                            "commons_credential_native_rotation_required"
+                        )
                     predecessor = connection.execute("SELECT t.*, g.status AS grant_status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?", (successor["predecessor_token_id"],)).fetchone()
                     if not predecessor or predecessor["agent_identity_id"] != successor["agent_identity_id"]:
                         return _agent_access_error("agent_token_replacement_mismatch")
@@ -22461,7 +23783,7 @@ class SQLiteStore(FileStore):
                         """
                         SELECT t.agent_token_id, t.grant_id AS predecessor_grant_id, t.agent_identity_id,
                                t.revoked_at AS token_revoked_at, g.company_id, g.scope_type, g.scope_id,
-                               g.workspace_id, g.project_id, g.status AS grant_status
+                               g.workspace_id, g.project_id, g.commons_only, g.status AS grant_status
                         FROM matm_agent_tokens t
                         JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id
                         WHERE t.agent_token_id = ?
@@ -22475,6 +23797,10 @@ class SQLiteStore(FileStore):
                         or predecessor["grant_status"] != "active"
                     ):
                         return _agent_access_error("replacement_predecessor_inactive")
+                    if predecessor["commons_only"]:
+                        return _agent_access_error(
+                            "commons_credential_native_rotation_required"
+                        )
                     pending = connection.execute(
                         "SELECT * FROM matm_agent_token_replacements WHERE predecessor_credential_id = ? AND status = 'prepared'",
                         (predecessor_credential_id,),
@@ -22500,10 +23826,10 @@ class SQLiteStore(FileStore):
                         """
                         INSERT INTO matm_agent_access_grants (
                           grant_id, company_id, agent_identity_id, scope_type, scope_id, workspace_id,
-                          project_id, supersedes_token_id, memory_transfer_from_token_id, status,
+                          project_id, supersedes_token_id, memory_transfer_from_token_id, commons_only, status,
                           created_at, pending_expires_at, predecessor_token_id, activated_at,
                           cancelled_at, revoked_at, revoked_by_master_key_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             successor_grant_id,
@@ -22515,6 +23841,7 @@ class SQLiteStore(FileStore):
                             predecessor["project_id"],
                             predecessor_credential_id,
                             predecessor_credential_id,
+                            int(predecessor["commons_only"] or 0),
                             "pending_activation",
                             now,
                             expires_at,
@@ -22664,7 +23991,7 @@ class SQLiteStore(FileStore):
                         return _agent_access_error("successor_token_proof_required")
                     successor = self._verify_agent_credential_sql(connection, successor_token_proof)
                     predecessor = connection.execute(
-                        "SELECT t.*, g.status AS grant_status FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?",
+                        "SELECT t.*, g.status AS grant_status, g.commons_only FROM matm_agent_tokens t JOIN matm_agent_access_grants g ON g.grant_id = t.grant_id WHERE t.agent_token_id = ?",
                         (predecessor_credential_id,),
                     ).fetchone()
                     if (
@@ -22677,6 +24004,10 @@ class SQLiteStore(FileStore):
                         or predecessor["grant_status"] != "active"
                     ):
                         return _agent_access_error("replacement_binding_invalid")
+                    if predecessor["commons_only"] or successor["commons_only"]:
+                        return _agent_access_error(
+                            "commons_credential_native_rotation_required"
+                        )
                     activated = connection.execute(
                         "UPDATE matm_agent_access_grants SET status = 'active', activated_at = ?, pending_expires_at = NULL WHERE grant_id = ? AND status = 'pending_activation'",
                         (now, row["successor_grant_id"]),
@@ -24976,6 +26307,262 @@ class _DbCursor(object):
         return self.cursor.rowcount
 
 
+_MYSQL_UTC_DATETIME_PARAMETER = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
+)
+
+
+def _sql_placeholder_positions(statement):
+    positions = []
+    quote = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = 0
+    while index < len(statement):
+        character = statement[index]
+        following = statement[index + 1] if index + 1 < len(statement) else ""
+        if line_comment:
+            if character in ("\r", "\n"):
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if character == "*" and following == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote and following == quote:
+                index += 2
+                continue
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+        elif character == "-" and following == "-":
+            line_comment = True
+            index += 2
+            continue
+        elif character == "/" and following == "*":
+            block_comment = True
+            index += 2
+            continue
+        elif character == "?":
+            positions.append(index)
+        index += 1
+    return positions
+
+
+def _mysql_qmark_sql(statement):
+    positions = set(_sql_placeholder_positions(statement))
+    if not positions:
+        return statement
+    return "".join(
+        "%s" if index in positions else character
+        for index, character in enumerate(statement)
+    )
+
+
+def _sql_parenthesized_segment(statement, opening_index):
+    depth = 0
+    quote = None
+    escaped = False
+    for index in range(opening_index, len(statement)):
+        character = statement[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return statement[opening_index + 1 : index], index + 1
+    return None, opening_index
+
+
+def _sql_csv_items(value):
+    items = []
+    started = 0
+    depth = 0
+    quote = None
+    escaped = False
+    for index, character in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            items.append(value[started:index].strip())
+            started = index + 1
+    items.append(value[started:].strip())
+    return items
+
+
+def _sql_top_level_keyword(statement, start, keywords):
+    keywords = tuple(item.upper() for item in keywords)
+    depth = 0
+    quote = None
+    escaped = False
+    index = start
+    while index < len(statement):
+        character = statement[index]
+        following = statement[index + 1] if index + 1 < len(statement) else ""
+        if quote:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote and following == quote:
+                index += 2
+                continue
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in ("'", '"', "`"):
+            quote = character
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            for keyword in keywords:
+                end = index + len(keyword)
+                if (
+                    statement[index:end].upper() == keyword
+                    and (index == 0 or not statement[index - 1].isalnum())
+                    and (end == len(statement) or not statement[end].isalnum())
+                ):
+                    return index
+        index += 1
+    return len(statement)
+
+
+def _mysql_datetime_parameter_indexes(statement):
+    """Return only placeholders structurally bound to ``*_at`` columns."""
+    placeholder_positions = _sql_placeholder_positions(statement)
+    indexes = set()
+
+    def placeholder_index(position):
+        return sum(1 for item in placeholder_positions if item < position)
+
+    insert = re.search(
+        r"\b(?:INSERT(?:\s+OR\s+(?:IGNORE|REPLACE))?|REPLACE)\s+INTO\s+"
+        r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)?`?[A-Za-z_][A-Za-z0-9_]*`?\s*\(",
+        statement,
+        re.IGNORECASE,
+    )
+    if insert:
+        columns_open = insert.end() - 1
+        columns_text, columns_end = _sql_parenthesized_segment(
+            statement, columns_open
+        )
+        values = re.search(r"\bVALUES\s*\(", statement[columns_end:], re.IGNORECASE)
+        if columns_text is not None and values:
+            values_open = columns_end + values.end() - 1
+            values_text, _values_end = _sql_parenthesized_segment(
+                statement, values_open
+            )
+            if values_text is not None:
+                columns = [
+                    item.strip().strip("`").split(".")[-1].lower()
+                    for item in _sql_csv_items(columns_text)
+                ]
+                expressions = _sql_csv_items(values_text)
+                running_index = placeholder_index(values_open + 1)
+                for column, expression in zip(columns, expressions):
+                    count = len(_sql_placeholder_positions(expression))
+                    if column.endswith("_at"):
+                        indexes.update(range(running_index, running_index + count))
+                    running_index += count
+        elif columns_text is not None:
+            selected = re.search(
+                r"\bSELECT\b", statement[columns_end:], re.IGNORECASE
+            )
+            if selected:
+                selected_start = columns_end + selected.end()
+                selected_end = _sql_top_level_keyword(
+                    statement,
+                    selected_start,
+                    ("FROM", "WHERE", "ON", "RETURNING"),
+                )
+                expressions = _sql_csv_items(
+                    statement[selected_start:selected_end]
+                )
+                columns = [
+                    item.strip().strip("`").split(".")[-1].lower()
+                    for item in _sql_csv_items(columns_text)
+                ]
+                running_index = placeholder_index(selected_start)
+                for column, expression in zip(columns, expressions):
+                    count = len(_sql_placeholder_positions(expression))
+                    if column.endswith("_at"):
+                        indexes.update(
+                            range(running_index, running_index + count)
+                        )
+                    running_index += count
+
+    direct_pattern = re.compile(
+        r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)?`?([A-Za-z_][A-Za-z0-9_]*_at)`?\s*"
+        r"(?:=|<>|!=|<=|>=|<|>)\s*(\?)",
+        re.IGNORECASE,
+    )
+    for match in direct_pattern.finditer(statement):
+        indexes.add(placeholder_index(match.start(2)))
+    between_pattern = re.compile(
+        r"(?:`?[A-Za-z_][A-Za-z0-9_]*`?\.)?`?([A-Za-z_][A-Za-z0-9_]*_at)`?\s+"
+        r"BETWEEN\s+(\?)\s+AND\s+(\?)",
+        re.IGNORECASE,
+    )
+    for match in between_pattern.finditer(statement):
+        indexes.add(placeholder_index(match.start(2)))
+        indexes.add(placeholder_index(match.start(3)))
+    return indexes
+
+
+def _mysql_datetime_params(statement, params):
+    if not isinstance(params, (list, tuple)):
+        return params
+    indexes = _mysql_datetime_parameter_indexes(statement)
+    if not indexes:
+        return params
+    converted = list(params)
+    for index in indexes:
+        if index >= len(converted):
+            continue
+        value = converted[index]
+        if type(value) is str and _MYSQL_UTC_DATETIME_PARAMETER.fullmatch(value):
+            converted[index] = datetime.datetime.fromisoformat(value[:-1])
+    return tuple(converted)
+
+
 class _DbConnection(object):
     def __init__(self, connection, dialect, cursor_options=None):
         self.connection = connection
@@ -24984,17 +26571,28 @@ class _DbConnection(object):
         self._depth = 0
         self._closed = False
 
-    def _sql(self, sql):
+    def _sql(self, sql, parameterized=False):
         out = sql
         if self.dialect == "mysql":
+            if parameterized:
+                # PyMySQL performs Python %-interpolation for bound arguments.
+                # Preserve trusted SQL LIKE/modulo literals while translating
+                # the repository's qmark placeholders to the driver style.
+                out = out.replace("%", "%%")
             out = out.replace("INSERT OR REPLACE INTO", "REPLACE INTO")
             out = out.replace("INSERT OR IGNORE INTO", "INSERT IGNORE INTO")
-            out = out.replace("?", "%s")
+            out = _mysql_qmark_sql(out)
         return out
 
     def execute(self, sql, params=None):
         cursor = self.connection.cursor(**self.cursor_options)
-        cursor.execute(self._sql(sql), params or ())
+        bound_params = params or ()
+        if self.dialect == "mysql":
+            bound_params = _mysql_datetime_params(sql, bound_params)
+        if bound_params:
+            cursor.execute(self._sql(sql, parameterized=True), bound_params)
+        else:
+            cursor.execute(self._sql(sql))
         return _DbCursor(cursor)
 
     def executescript(self, script):
@@ -25273,6 +26871,74 @@ class MySQLStore(SQLiteStore):
     def _ensure_schema_once(self, connection, config):
         schema_key = self._schema_cache_key(config)
         with _LOCK:
+            if schema_key in _MYSQL_SCHEMA_READY:
+                return
+        if getattr(connection, "dialect", None) == "mysql":
+            lock_digest = hashlib.sha256(
+                json.dumps(schema_key, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()[:32]
+            lock_name = "memoryendpoints-schema-" + lock_digest
+            try:
+                acquired = connection.execute(
+                    "SELECT GET_LOCK(?, 30) AS acquired", (lock_name,)
+                ).fetchone()
+            except BaseException:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                raise
+            if not acquired or int(acquired.get("acquired") or 0) != 1:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "MySQL schema convergence lock could not be acquired."
+                )
+            try:
+                with _LOCK:
+                    if schema_key not in _MYSQL_SCHEMA_READY:
+                        self._ensure_schema(connection)
+                        _MYSQL_SCHEMA_READY.add(schema_key)
+            except BaseException:
+                try:
+                    connection.execute(
+                        "SELECT RELEASE_LOCK(?) AS released", (lock_name,)
+                    )
+                except Exception:
+                    # Closing this connection also releases its advisory lock;
+                    # never replace the original schema-convergence failure.
+                    pass
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                raise
+            try:
+                released = connection.execute(
+                    "SELECT RELEASE_LOCK(?) AS released", (lock_name,)
+                ).fetchone()
+            except BaseException:
+                with _LOCK:
+                    _MYSQL_SCHEMA_READY.discard(schema_key)
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                raise
+            if not released or int(released.get("released") or 0) != 1:
+                with _LOCK:
+                    _MYSQL_SCHEMA_READY.discard(schema_key)
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "MySQL schema convergence lock could not be released."
+                )
+            return
+        with _LOCK:
             if schema_key not in _MYSQL_SCHEMA_READY:
                 self._ensure_schema(connection)
                 _MYSQL_SCHEMA_READY.add(schema_key)
@@ -25322,6 +26988,9 @@ class MySQLStore(SQLiteStore):
         # the outbound MCP foreign keys. Converge it before creating those
         # tables; a brand-new database safely ignores the missing table here.
         self._ensure_outbound_mcp_project_index(connection)
+        # Existing workspaces tables predate the composite tenant key used by
+        # Commons enrollment requests. Converge it before creating those FKs.
+        self._ensure_commons_scope_indexes(connection)
         connection.executescript(schema)
         self._ensure_knowledge_schema_columns(connection)
         self._ensure_external_link_mention_schema_columns(connection)
@@ -25331,4 +27000,5 @@ class MySQLStore(SQLiteStore):
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
         self._ensure_outbound_mcp_schema_columns(connection)
+        self._ensure_commons_schema_columns(connection)
         connection.commit()

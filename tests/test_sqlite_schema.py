@@ -154,6 +154,176 @@ class SQLiteSchemaInitializationTests(
                 }
             self.assertIn("approval_revision", columns)
 
+    def test_commons_schema_has_canonical_tables_indexes_and_foreign_keys(self):
+        expected_tables = {
+            "matm_commons_policies",
+            "matm_commons_enrollment_requests",
+            "matm_commons_agent_profiles",
+            "matm_commons_rooms",
+            "matm_commons_memberships",
+            "matm_commons_messages",
+            "matm_commons_message_revisions",
+            "matm_commons_withdrawals",
+            "matm_commons_acknowledgements",
+            "matm_commons_browser_sessions",
+            "matm_commons_idempotency",
+        }
+        expected_indexes = {
+            "ux_sqlite_workspaces_workspace_company",
+            "ix_sqlite_commons_enrollment_queue",
+            "ix_sqlite_commons_enrollment_name",
+            "ix_sqlite_commons_profiles_public",
+            "ix_sqlite_commons_rooms_discovery",
+            "ix_sqlite_commons_memberships_scope_state",
+            "ix_sqlite_commons_messages_cursor",
+            "ix_sqlite_commons_revisions_scope",
+            "ix_sqlite_commons_withdrawals_scope",
+            "ix_sqlite_commons_ack_scope_agent",
+            "ix_sqlite_commons_browser_sessions_scope",
+            "ix_sqlite_commons_idempotency_scope",
+        }
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "store.sqlite3"
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            with closing(sqlite3.connect(str(path))) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                indexes = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'index'"
+                    )
+                }
+                self.assertTrue(expected_tables.issubset(tables))
+                self.assertTrue(expected_indexes.issubset(indexes))
+                grant_columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(matm_agent_access_grants)"
+                    )
+                }
+                self.assertIn("commons_only", grant_columns)
+                request_columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(matm_commons_enrollment_requests)"
+                    )
+                }
+                self.assertTrue(
+                    {
+                        "candidate_token_id",
+                        "candidate_token_hash",
+                        "revision",
+                        "expires_at",
+                        "activated_profile_id",
+                    }.issubset(request_columns)
+                )
+                membership_parents = {
+                    row[2]
+                    for row in connection.execute(
+                        "PRAGMA foreign_key_list(matm_commons_memberships)"
+                    )
+                }
+                self.assertTrue(
+                    {"matm_commons_rooms", "matm_commons_agent_profiles"}.issubset(
+                        membership_parents
+                    )
+                )
+                enrollment_foreign_keys = list(
+                    connection.execute(
+                        "PRAGMA foreign_key_list(matm_commons_enrollment_requests)"
+                    )
+                )
+                grouped_foreign_keys = {}
+                for row in enrollment_foreign_keys:
+                    grouped_foreign_keys.setdefault((row[0], row[2]), []).append(
+                        (row[3], row[4])
+                    )
+                self.assertIn(
+                    [("company_id", "company_id"), ("workspace_id", "workspace_id")],
+                    [
+                        sorted(columns)
+                        for (_key, table), columns in grouped_foreign_keys.items()
+                        if table == "matm_workspaces"
+                    ],
+                )
+                self.assertIn(
+                    [("project_id", "project_id"), ("workspace_id", "workspace_id")],
+                    [
+                        sorted(columns)
+                        for (_key, table), columns in grouped_foreign_keys.items()
+                        if table == "matm_projects"
+                    ],
+                )
+                self.assertEqual(
+                    [], list(connection.execute("PRAGMA foreign_key_check"))
+                )
+
+        canonical = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "database-schema-canonical.sql"
+        ).read_text(encoding="utf-8")
+        for table in sorted(expected_tables):
+            self.assertIn("CREATE TABLE IF NOT EXISTS %s" % table, canonical)
+        self.assertIn("commons_only TINYINT(1) NOT NULL DEFAULT 0", canonical)
+        self.assertIn(
+            "UNIQUE KEY ux_matm_workspaces_workspace_company (workspace_id, company_id)",
+            canonical,
+        )
+        self.assertIn(
+            "FOREIGN KEY (workspace_id, company_id) REFERENCES matm_workspaces (workspace_id, company_id)",
+            canonical,
+        )
+        self.assertIn(
+            "FOREIGN KEY (project_id, workspace_id) REFERENCES matm_projects (project_id, workspace_id)",
+            canonical,
+        )
+
+    def test_v4_database_converges_missing_commons_schema_without_core_loss(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "store.sqlite3"
+            store = SQLiteStore(path)
+            account = store.create_free_account(
+                "Commons Upgrade", "Commons Upgrade", "Commons Upgrade"
+            )
+            workspace_id, project_id = account[0], account[5]
+            commons_tables = [
+                name
+                for name in SQLiteStore.DELETE_ORDER
+                if name.startswith("matm_commons_")
+            ]
+            with closing(sqlite3.connect(str(path))) as connection:
+                connection.execute("PRAGMA foreign_keys=OFF")
+                for table in commons_tables:
+                    connection.execute("DROP TABLE %s" % table)
+                connection.execute("PRAGMA user_version = 4")
+                connection.commit()
+
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            self.assertEqual(_SQLITE_SCHEMA_VERSION, self._user_version(path))
+            with closing(sqlite3.connect(str(path))) as connection:
+                self.assertEqual(
+                    (workspace_id, project_id),
+                    connection.execute(
+                        "SELECT w.workspace_id, p.project_id FROM matm_workspaces w "
+                        "JOIN matm_projects p ON p.workspace_id = w.workspace_id "
+                        "WHERE w.workspace_id = ? AND p.project_id = ?",
+                        (workspace_id, project_id),
+                    ).fetchone(),
+                )
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertTrue(set(commons_tables).issubset(tables))
+
     def test_mysql_upgrade_helper_converges_required_project_index(self):
         class FakeMySQLConnection:
             dialect = "mysql"
@@ -171,6 +341,16 @@ class SQLiteSchemaInitializationTests(
             [
                 "CREATE UNIQUE INDEX ux_matm_projects_project_workspace "
                 "ON matm_projects (project_id, workspace_id)"
+            ],
+            connection.statements,
+        )
+
+        connection = FakeMySQLConnection()
+        store._ensure_commons_scope_indexes(connection)
+        self.assertEqual(
+            [
+                "CREATE UNIQUE INDEX ux_matm_workspaces_workspace_company "
+                "ON matm_workspaces (workspace_id, company_id)"
             ],
             connection.statements,
         )

@@ -9,7 +9,7 @@ SECRET_PATTERNS = [
     ("credential_assignment", re.compile(r"\b(password|passwd|pwd|secret|api[_ -]?key|token)\b\s*[:=]\s*([^\s,;\"']{8,})", re.I)),
     (
         "governed_credential",
-        re.compile(r"\bme_(?:master|agent|invite|human|closure|hsession|csrf|accountsession|accountcsrf|masterproof|connector|paircode)(?:_v1)?\.[A-Za-z0-9_-]{3,160}\.[A-Za-z0-9_-]{20,}\b", re.I),
+        re.compile(r"\bme_(?:master|agent|invite|human|closure|hsession|csrf|accountsession|accountcsrf|masterproof|connector|paircode|commonsbrowser)(?:_v1)?\.[A-Za-z0-9_-]{3,160}\.[A-Za-z0-9_-]{20,}\b", re.I),
     ),
     (
         "invite_fragment",

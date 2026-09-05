@@ -63,6 +63,9 @@ class GovernedCredentialRedactionTests(unittest.TestCase):
         fixtures = (
             "me_master_v1.master-record.private-master-secret-value",
             "me_agent_v1.agent-record.private-agent-secret-value",
+            "me_commonsbrowser_v1."
+            + "commonsbrowser-record."
+            + "private-browser-session-secret-value",
             "me_invite_v1.invite-record.private-invite-secret-value",
             "me_human_v1.human-record.private-human-secret-value",
             "me_closure_v1.intent-record.private-closure-secret-value",

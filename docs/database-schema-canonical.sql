@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS matm_workspaces (
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_workspaces_workspace_company (workspace_id, company_id),
   KEY ix_matm_workspaces_company (company_id),
   CONSTRAINT fk_matm_workspaces_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -501,6 +502,7 @@ CREATE TABLE IF NOT EXISTS matm_agent_access_grants (
   project_id VARCHAR(96) NULL,
   supersedes_token_id VARCHAR(96) NULL,
   memory_transfer_from_token_id VARCHAR(96) NULL,
+  commons_only TINYINT(1) NOT NULL DEFAULT 0,
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   pending_expires_at TIMESTAMP NULL,
@@ -582,6 +584,238 @@ CREATE TABLE IF NOT EXISTS matm_agents (
   UNIQUE KEY ux_matm_agents_workspace_agent (workspace_id, agent_id),
   KEY ix_matm_agents_workspace (workspace_id),
   CONSTRAINT fk_matm_agents_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_policies (
+  project_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  human_approval_required TINYINT(1) NOT NULL DEFAULT 0,
+  revision INT NOT NULL DEFAULT 0,
+  updated_by_credential_id VARCHAR(96) NULL,
+  updated_at TIMESTAMP NULL,
+  KEY ix_matm_commons_policies_workspace (workspace_id),
+  CONSTRAINT fk_matm_commons_policies_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_policies_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_agent_profiles (
+  profile_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  agent_identity_id VARCHAR(96) NOT NULL,
+  agent_token_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  listed TINYINT(1) NOT NULL DEFAULT 0,
+  implementation VARCHAR(255) NOT NULL DEFAULT '',
+  capabilities_json TEXT NOT NULL,
+  profile_url VARCHAR(512) NOT NULL DEFAULT '',
+  capability_url VARCHAR(512) NOT NULL DEFAULT '',
+  availability VARCHAR(32) NOT NULL DEFAULT '',
+  credential_expires_at TIMESTAMP NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_commons_profiles_scope_agent (workspace_id, project_id, agent_id),
+  UNIQUE KEY ux_matm_commons_profiles_token (agent_token_id),
+  KEY ix_matm_commons_profiles_public (workspace_id, project_id, listed, status, agent_id),
+  CONSTRAINT fk_matm_commons_profiles_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_profiles_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_profiles_identity FOREIGN KEY (agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+  CONSTRAINT fk_matm_commons_profiles_token FOREIGN KEY (agent_token_id) REFERENCES matm_agent_tokens (agent_token_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_enrollment_requests (
+  enrollment_request_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  agent_name VARCHAR(128) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  listed TINYINT(1) NOT NULL DEFAULT 0,
+  implementation VARCHAR(255) NOT NULL DEFAULT '',
+  capabilities_json TEXT NOT NULL,
+  profile_url VARCHAR(512) NOT NULL DEFAULT '',
+  capability_url VARCHAR(512) NOT NULL DEFAULT '',
+  availability VARCHAR(32) NOT NULL DEFAULT '',
+  candidate_token_id VARCHAR(96) NOT NULL,
+  candidate_token_hash VARCHAR(80) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  revision INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  expires_at TIMESTAMP(6) NOT NULL,
+  decided_at TIMESTAMP(6) NULL,
+  decided_by_credential_id VARCHAR(96) NULL,
+  activated_agent_identity_id VARCHAR(96) NULL,
+  activated_profile_id VARCHAR(96) NULL,
+  UNIQUE KEY ux_matm_commons_enrollment_candidate_id (candidate_token_id),
+  UNIQUE KEY ux_matm_commons_enrollment_candidate_hash (candidate_token_hash),
+  KEY ix_matm_commons_enrollment_queue (workspace_id, project_id, status, created_at, enrollment_request_id),
+  KEY ix_matm_commons_enrollment_name (workspace_id, project_id, agent_name, status, expires_at),
+  CONSTRAINT fk_matm_commons_enrollment_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_enrollment_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_enrollment_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id),
+  CONSTRAINT fk_matm_commons_enrollment_workspace_company FOREIGN KEY (workspace_id, company_id) REFERENCES matm_workspaces (workspace_id, company_id),
+  CONSTRAINT fk_matm_commons_enrollment_project_workspace FOREIGN KEY (project_id, workspace_id) REFERENCES matm_projects (project_id, workspace_id),
+  CONSTRAINT fk_matm_commons_enrollment_identity FOREIGN KEY (activated_agent_identity_id) REFERENCES matm_agent_identities (agent_identity_id),
+  CONSTRAINT fk_matm_commons_enrollment_profile FOREIGN KEY (activated_profile_id) REFERENCES matm_commons_agent_profiles (profile_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_rooms (
+  room_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  name VARCHAR(96) NOT NULL,
+  description VARCHAR(512) NOT NULL,
+  visibility VARCHAR(32) NOT NULL DEFAULT 'public',
+  membership_required TINYINT(1) NOT NULL DEFAULT 1,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY ux_matm_commons_rooms_scope_name (workspace_id, project_id, name),
+  KEY ix_matm_commons_rooms_discovery (workspace_id, project_id, status, room_id),
+  CONSTRAINT fk_matm_commons_rooms_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_rooms_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_memberships (
+  membership_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  state VARCHAR(32) NOT NULL,
+  revision INT NOT NULL DEFAULT 1,
+  joined_at TIMESTAMP NULL,
+  left_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_matm_commons_memberships_room_agent (room_id, agent_id),
+  KEY ix_matm_commons_memberships_scope_state (workspace_id, project_id, room_id, state),
+  CONSTRAINT fk_matm_commons_memberships_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_memberships_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_memberships_room FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+  CONSTRAINT fk_matm_commons_memberships_profile FOREIGN KEY (workspace_id, project_id, agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_messages (
+  message_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  author_agent_id VARCHAR(128) NOT NULL,
+  reply_to_message_id VARCHAR(96) NULL,
+  current_revision INT NOT NULL DEFAULT 1,
+  current_revision_id VARCHAR(96) NOT NULL,
+  state VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  corrected_at TIMESTAMP(6) NULL,
+  withdrawn_at TIMESTAMP(6) NULL,
+  KEY ix_matm_commons_messages_cursor (workspace_id, project_id, room_id, created_at, message_id),
+  KEY ix_matm_commons_messages_author (workspace_id, project_id, author_agent_id, created_at),
+  KEY ix_matm_commons_messages_reply (reply_to_message_id),
+  CONSTRAINT fk_matm_commons_messages_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_messages_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_messages_room FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+  CONSTRAINT fk_matm_commons_messages_author FOREIGN KEY (workspace_id, project_id, author_agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id),
+  CONSTRAINT fk_matm_commons_messages_reply FOREIGN KEY (reply_to_message_id) REFERENCES matm_commons_messages (message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_message_revisions (
+  revision_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  message_id VARCHAR(96) NOT NULL,
+  revision_number INT NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  author_agent_id VARCHAR(128) NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY ux_matm_commons_revisions_number (message_id, revision_number),
+  KEY ix_matm_commons_revisions_scope (workspace_id, project_id, message_id, revision_number),
+  CONSTRAINT fk_matm_commons_revisions_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_revisions_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_revisions_room FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+  CONSTRAINT fk_matm_commons_revisions_message FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+  CONSTRAINT fk_matm_commons_revisions_author FOREIGN KEY (workspace_id, project_id, author_agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_withdrawals (
+  withdrawal_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  message_id VARCHAR(96) NOT NULL,
+  withdrawn_by_agent_id VARCHAR(128) NOT NULL,
+  revision_at_withdrawal INT NOT NULL,
+  withdrawn_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY ux_matm_commons_withdrawals_message (message_id),
+  KEY ix_matm_commons_withdrawals_scope (workspace_id, project_id, room_id, withdrawn_at),
+  CONSTRAINT fk_matm_commons_withdrawals_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_withdrawals_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_withdrawals_room FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+  CONSTRAINT fk_matm_commons_withdrawals_message FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+  CONSTRAINT fk_matm_commons_withdrawals_author FOREIGN KEY (workspace_id, project_id, withdrawn_by_agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_acknowledgements (
+  acknowledgement_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  room_id VARCHAR(96) NOT NULL,
+  message_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  acknowledged_revision INT NOT NULL,
+  acknowledged_revision_id VARCHAR(96) NOT NULL,
+  acknowledged_state VARCHAR(32) NOT NULL,
+  acknowledged_withdrawal_id VARCHAR(96) NULL,
+  acknowledged_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY ux_matm_commons_ack_message_agent (message_id, agent_id),
+  KEY ix_matm_commons_ack_scope_agent (workspace_id, project_id, agent_id, acknowledged_at),
+  CONSTRAINT fk_matm_commons_ack_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_ack_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_ack_room FOREIGN KEY (room_id) REFERENCES matm_commons_rooms (room_id),
+  CONSTRAINT fk_matm_commons_ack_message FOREIGN KEY (message_id) REFERENCES matm_commons_messages (message_id),
+  CONSTRAINT fk_matm_commons_ack_agent FOREIGN KEY (workspace_id, project_id, agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_browser_sessions (
+  browser_session_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  agent_id VARCHAR(128) NOT NULL,
+  agent_token_id VARCHAR(96) NOT NULL,
+  secret_hash VARCHAR(80) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  expires_at TIMESTAMP(6) NOT NULL,
+  last_used_at TIMESTAMP(6) NULL,
+  revoked_at TIMESTAMP(6) NULL,
+  UNIQUE KEY ux_matm_commons_browser_sessions_hash (secret_hash),
+  KEY ix_matm_commons_browser_sessions_scope (workspace_id, project_id, agent_id, status, expires_at),
+  CONSTRAINT fk_matm_commons_browser_sessions_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_browser_sessions_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id),
+  CONSTRAINT fk_matm_commons_browser_sessions_profile FOREIGN KEY (workspace_id, project_id, agent_id) REFERENCES matm_commons_agent_profiles (workspace_id, project_id, agent_id),
+  CONSTRAINT fk_matm_commons_browser_sessions_token FOREIGN KEY (agent_token_id) REFERENCES matm_agent_tokens (agent_token_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS matm_commons_idempotency (
+  idempotency_record_id VARCHAR(96) PRIMARY KEY,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  principal_id VARCHAR(128) NOT NULL,
+  operation VARCHAR(64) NOT NULL,
+  idempotency_key_hash CHAR(64) NOT NULL,
+  request_digest VARCHAR(80) NOT NULL,
+  result_kind VARCHAR(64) NOT NULL,
+  result_id VARCHAR(96) NOT NULL,
+  status_code INT NOT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  UNIQUE KEY ux_matm_commons_idempotency_key (workspace_id, project_id, principal_id, operation, idempotency_key_hash),
+  KEY ix_matm_commons_idempotency_scope (workspace_id, project_id, created_at),
+  CONSTRAINT fk_matm_commons_idempotency_workspace FOREIGN KEY (workspace_id) REFERENCES matm_workspaces (workspace_id),
+  CONSTRAINT fk_matm_commons_idempotency_project FOREIGN KEY (project_id) REFERENCES matm_projects (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS matm_outbound_mcp_project_policies (
