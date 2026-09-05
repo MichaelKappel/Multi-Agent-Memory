@@ -208,18 +208,29 @@ def _body(environ, settings, allowed_fields, schema_version):
         )
     limit = int(settings.get("requestByteLimit") or 24576)
     raw_length = environ.get("CONTENT_LENGTH")
-    if raw_length not in (None, ""):
-        try:
-            content_length = int(raw_length)
-        except (TypeError, ValueError):
-            raise CommonsContractError("content_length_invalid", "400 Bad Request")
-        if content_length < 0:
-            raise CommonsContractError("content_length_invalid", "400 Bad Request")
-        if content_length > limit:
-            raise CommonsContractError("request_too_large", "413 Payload Too Large")
-    raw = environ.get("wsgi.input").read(limit + 1)
-    if len(raw) > limit:
+    if not isinstance(raw_length, str) or not re.fullmatch(r"[0-9]+", raw_length):
+        raise CommonsContractError("content_length_invalid", "400 Bad Request")
+    if str(environ.get("HTTP_TRANSFER_ENCODING") or "").strip():
+        raise CommonsContractError("content_length_invalid", "400 Bad Request")
+    try:
+        content_length = int(raw_length)
+    except (TypeError, ValueError):
+        raise CommonsContractError("content_length_invalid", "400 Bad Request")
+    if content_length > limit:
         raise CommonsContractError("request_too_large", "413 Payload Too Large")
+    stream = environ.get("wsgi.input")
+    chunks = []
+    remaining = content_length
+    while remaining:
+        try:
+            chunk = stream.read(remaining)
+        except (AttributeError, OSError, TypeError, ValueError):
+            raise CommonsContractError("content_length_invalid", "400 Bad Request")
+        if type(chunk) is not bytes or not chunk or len(chunk) > remaining:
+            raise CommonsContractError("content_length_invalid", "400 Bad Request")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    raw = b"".join(chunks)
     try:
         decoded = raw.decode("utf-8", errors="strict")
         value = json.loads(decoded)

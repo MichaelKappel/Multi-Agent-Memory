@@ -24,6 +24,7 @@ from memoryendpoints.commons import (
 )
 from memoryendpoints.app import _store
 from memoryendpoints.commons_api import (
+    _body,
     _commons_request_requires_auth,
     _query,
     route_commons,
@@ -81,6 +82,132 @@ def browser_candidate(character):
 
 def idem(label):
     return (label + "-" + "i" * 80)[:72]
+
+
+class SocketLikeRequestBody:
+    """Return bounded short reads while retaining bytes after the request frame."""
+
+    def __init__(self, request_body, following_bytes=b"NEXT", chunk_size=7):
+        self._data = bytes(request_body) + bytes(following_bytes)
+        self._offset = 0
+        self._chunk_size = int(chunk_size)
+        self.read_sizes = []
+
+    def read(self, size):
+        self.read_sizes.append(size)
+        if self._offset >= len(self._data):
+            return b""
+        count = min(size, self._chunk_size, len(self._data) - self._offset)
+        result = self._data[self._offset : self._offset + count]
+        self._offset += count
+        return result
+
+    @property
+    def unread_bytes(self):
+        return self._data[self._offset :]
+
+
+class CommonsRequestBodyFramingTests(unittest.TestCase):
+    def test_declared_length_uses_bounded_short_reads_without_crossing_frame(self):
+        encoded = json.dumps(
+            {"schemaVersion": COMMONS_BROWSER_SESSION_SCHEMA},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        stream = SocketLikeRequestBody(
+            encoded, following_bytes=b"NEXT-REQUEST", chunk_size=3
+        )
+
+        body = _body(
+            {
+                "CONTENT_TYPE": "application/json",
+                "CONTENT_LENGTH": str(len(encoded)),
+                "wsgi.input": stream,
+            },
+            {"requestByteLimit": len(encoded) + 32},
+            {"schemaVersion"},
+            COMMONS_BROWSER_SESSION_SCHEMA,
+        )
+
+        self.assertEqual({"schemaVersion": COMMONS_BROWSER_SESSION_SCHEMA}, body)
+        expected_read_sizes = []
+        remaining = len(encoded)
+        while remaining:
+            expected_read_sizes.append(remaining)
+            remaining -= min(remaining, 3)
+        self.assertEqual(expected_read_sizes, stream.read_sizes)
+        self.assertEqual(b"NEXT-REQUEST", stream.unread_bytes)
+
+    def test_early_eof_is_a_closed_framing_error(self):
+        encoded = json.dumps(
+            {"schemaVersion": COMMONS_BROWSER_SESSION_SCHEMA},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        stream = SocketLikeRequestBody(encoded, following_bytes=b"", chunk_size=5)
+
+        with self.assertRaises(CommonsContractError) as raised:
+            _body(
+                {
+                    "CONTENT_TYPE": "application/json",
+                    "CONTENT_LENGTH": str(len(encoded) + 1),
+                    "wsgi.input": stream,
+                },
+                {"requestByteLimit": len(encoded) + 32},
+                {"schemaVersion"},
+                COMMONS_BROWSER_SESSION_SCHEMA,
+            )
+
+        self.assertEqual("content_length_invalid", raised.exception.code)
+        self.assertEqual("400 Bad Request", raised.exception.status)
+
+    def test_missing_invalid_and_oversized_lengths_never_read_input(self):
+        class UnreadableInput:
+            def read(self, _size):
+                raise AssertionError("invalid framing must be rejected before reading")
+
+        invalid_lengths = (
+            (None, "content_length_invalid", "400 Bad Request"),
+            ("", "content_length_invalid", "400 Bad Request"),
+            ("1.0", "content_length_invalid", "400 Bad Request"),
+            ("-1", "content_length_invalid", "400 Bad Request"),
+            ("65", "request_too_large", "413 Payload Too Large"),
+        )
+        for raw_length, code, status in invalid_lengths:
+            with self.subTest(raw_length=raw_length):
+                environ = {
+                    "CONTENT_TYPE": "application/json",
+                    "wsgi.input": UnreadableInput(),
+                }
+                if raw_length is not None:
+                    environ["CONTENT_LENGTH"] = raw_length
+                with self.assertRaises(CommonsContractError) as raised:
+                    _body(
+                        environ,
+                        {"requestByteLimit": 64},
+                        {"schemaVersion"},
+                        COMMONS_BROWSER_SESSION_SCHEMA,
+                    )
+                self.assertEqual(code, raised.exception.code)
+                self.assertEqual(status, raised.exception.status)
+
+    def test_transfer_encoding_is_rejected_before_reading(self):
+        class UnreadableInput:
+            def read(self, _size):
+                raise AssertionError("ambiguous framing must be rejected before reading")
+
+        with self.assertRaises(CommonsContractError) as raised:
+            _body(
+                {
+                    "CONTENT_TYPE": "application/json",
+                    "CONTENT_LENGTH": "2",
+                    "HTTP_TRANSFER_ENCODING": "chunked",
+                    "wsgi.input": UnreadableInput(),
+                },
+                {"requestByteLimit": 64},
+                {"schemaVersion"},
+                COMMONS_BROWSER_SESSION_SCHEMA,
+            )
+        self.assertEqual("content_length_invalid", raised.exception.code)
+        self.assertEqual("400 Bad Request", raised.exception.status)
 
 
 class CommonsApiContract:
