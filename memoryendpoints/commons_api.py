@@ -66,12 +66,50 @@ _ENROLLMENT_REQUEST_ROUTE = re.compile(
 _ENROLLMENT_DECISION_ROUTE = re.compile(
     r"^/api/matm/commons/enrollment-requests/(commonsenrollment-[0-9a-f]{24})/(approval|denial)$"
 )
+_PROTECTED_ENROLLMENT_REQUEST_ROUTE = re.compile(
+    r"^/api/matm/commons/enrollment-requests/[^/]+$"
+)
+_PROTECTED_ENROLLMENT_DECISION_ROUTE = re.compile(
+    r"^/api/matm/commons/enrollment-requests/[^/]+/(approval|denial)$"
+)
 _COMMONS_MESSAGE_ID = re.compile(r"^commonsmessage-[0-9a-f]{24}$")
 _COMMONS_REVISION_ID = re.compile(r"^commonsrevision-[0-9a-f]{24}$")
 _COMMONS_WITHDRAWAL_ID = re.compile(r"^commonswithdrawal-[0-9a-f]{24}$")
 _COMMONS_QUERY_BYTE_LIMIT = 2048
 _COMMONS_QUERY_FIELD_LIMIT = 4
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def _commons_request_requires_auth(path, method):
+    """Classify only recognized method/path pairs before parsing input."""
+    if method == "GET":
+        return bool(
+            path
+            in {
+                "/api/matm/commons/enrollments/current",
+                "/api/matm/commons/enrollment-requests",
+                "/api/matm/commons/policy",
+                "/api/matm/commons/me",
+                "/api/matm/commons/browser-sessions/current",
+            }
+            or _PROTECTED_ENROLLMENT_REQUEST_ROUTE.fullmatch(path)
+        )
+    if method != "POST":
+        return False
+    return bool(
+        path
+        in {
+            "/api/matm/commons/policy",
+            "/api/matm/commons/browser-sessions",
+            "/api/matm/commons/browser-sessions/revoke",
+            "/api/matm/commons/credentials/rotation",
+            "/api/matm/commons/credentials/revoke",
+        }
+        or _PROTECTED_ENROLLMENT_DECISION_ROUTE.fullmatch(path)
+        or _ROOM_MEMBERSHIP_ROUTE.fullmatch(path)
+        or _ROOM_MESSAGES_ROUTE.fullmatch(path)
+        or _MESSAGE_ACTION_ROUTE.fullmatch(path)
+    )
 
 
 def _exact_revision(value, allow_zero=False, maximum=2147483647):
@@ -562,6 +600,15 @@ def route_commons(environ, start_response, path, store_factory):
         return None
     method = str(environ.get("REQUEST_METHOD") or "GET").upper()
     initial_request_id = _request_id(path, method)
+    if (
+        _commons_request_requires_auth(path, method)
+        and not str(environ.get("HTTP_AUTHORIZATION") or "").strip()
+    ):
+        return _error(
+            start_response,
+            CommonsContractError("auth_required", "401 Unauthorized"),
+            initial_request_id,
+        )
     try:
         query = _query(environ, _allowed_query_fields(path, method))
     except CommonsContractError as exc:

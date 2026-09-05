@@ -46,6 +46,15 @@ ROUTES = [
     "/api/matm/readiness-result",
     "/api/matm/redacted-example-receipts",
     "/api/matm/agent-setup/free-account",
+    "/api/matm/commons/capabilities",
+    "/api/matm/commons/enrollments",
+    "/api/matm/commons/agents",
+    "/api/matm/commons/agents/{agentId}",
+    "/api/matm/commons/rooms",
+    "/api/matm/commons/rooms/{roomId}",
+    "/api/matm/commons/rooms/{roomId}/messages",
+    "/api/matm/commons/messages/{messageId}",
+    "/api/matm/commons/messages/{messageId}/revisions/{revisionNumber}",
     "/mcp/setup",
     "/mcp/setup/status",
     "/mcp/resources",
@@ -116,6 +125,63 @@ CONNECTOR_PUBLIC_PROBES = {
         "expectedStatuses": (405, 422),
         "contentType": "application/json",
         "kind": "safe_no_op",
+    },
+}
+
+COMMONS_PUBLIC_PROBES = {
+    "/api/matm/commons/capabilities": {
+        "path": "/api/matm/commons/capabilities",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (200,),
+    },
+    "/api/matm/commons/enrollments": {
+        "path": "/api/matm/commons/enrollments",
+        "method": "POST",
+        "body": b"{}",
+        "expectedStatuses": (422, 503),
+    },
+    "/api/matm/commons/agents": {
+        "path": "/api/matm/commons/agents",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (200, 503),
+    },
+    "/api/matm/commons/agents/{agentId}": {
+        "path": "/api/matm/commons/agents/commons-agent-verifier-missing",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (404, 503),
+    },
+    "/api/matm/commons/rooms": {
+        "path": "/api/matm/commons/rooms",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (200, 503),
+    },
+    "/api/matm/commons/rooms/{roomId}": {
+        "path": "/api/matm/commons/rooms/commonsroom-000000000000000000000000",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (404, 503),
+    },
+    "/api/matm/commons/rooms/{roomId}/messages": {
+        "path": "/api/matm/commons/rooms/commonsroom-000000000000000000000000/messages",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (404, 503),
+    },
+    "/api/matm/commons/messages/{messageId}": {
+        "path": "/api/matm/commons/messages/commonsmessage-000000000000000000000000",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (404, 503),
+    },
+    "/api/matm/commons/messages/{messageId}/revisions/{revisionNumber}": {
+        "path": "/api/matm/commons/messages/commonsmessage-000000000000000000000000/revisions/1",
+        "method": "GET",
+        "body": None,
+        "expectedStatuses": (404, 503),
     },
 }
 
@@ -346,7 +412,7 @@ def pattern_hits(patterns, text):
 
 
 def configured_site_identity_missing(route, body, canonical_redirect_accepted=False, site_name=SITE_NAME):
-    if route in CONNECTOR_PUBLIC_PROBES:
+    if route in CONNECTOR_PUBLIC_PROBES or route in COMMONS_PUBLIC_PROBES:
         return []
     if canonical_redirect_accepted or route in SITE_IDENTITY_OPTIONAL_ROUTES:
         return []
@@ -415,12 +481,17 @@ def main(argv=None):
     items = []
     observed_source_sha = None
     for route in ROUTES:
-        probe = CONNECTOR_PUBLIC_PROBES.get(route) or MCP_PUBLIC_PROBES.get(route) or {
-            "path": route,
-            "method": "GET",
-            "body": None,
-            "expectedStatuses": (200,),
-        }
+        probe = (
+            CONNECTOR_PUBLIC_PROBES.get(route)
+            or COMMONS_PUBLIC_PROBES.get(route)
+            or MCP_PUBLIC_PROBES.get(route)
+            or {
+                "path": route,
+                "method": "GET",
+                "body": None,
+                "expectedStatuses": (200,),
+            }
+        )
         if args.wsgi:
             status, body, headers = fetch_wsgi(
                 probe["path"], probe["method"], probe.get("body")
@@ -473,6 +544,7 @@ def main(argv=None):
         for item in items
         if item["status"] not in (
             CONNECTOR_PUBLIC_PROBES.get(item["route"])
+            or COMMONS_PUBLIC_PROBES.get(item["route"])
             or MCP_PUBLIC_PROBES.get(item["route"])
             or {
                 "expectedStatuses": (

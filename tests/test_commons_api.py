@@ -23,7 +23,11 @@ from memoryendpoints.commons import (
     COMMONS_WITHDRAWAL_SCHEMA,
 )
 from memoryendpoints.app import _store
-from memoryendpoints.commons_api import _query, route_commons
+from memoryendpoints.commons_api import (
+    _commons_request_requires_auth,
+    _query,
+    route_commons,
+)
 
 
 def call_app(
@@ -866,6 +870,80 @@ class CommonsApiContract:
                 self.assertEqual("400 Bad Request", captured["status"], payload)
                 self.assertEqual("query_invalid", payload["error"]["code"])
                 self.assertEqual([], factory_calls)
+
+    def test_missing_auth_precedes_input_and_storage_on_every_protected_shape(self):
+        protected = (
+            ("GET", "/api/matm/commons/enrollments/current"),
+            ("GET", "/api/matm/commons/enrollment-requests"),
+            ("GET", "/api/matm/commons/enrollment-requests/not-a-valid-id"),
+            ("POST", "/api/matm/commons/enrollment-requests/not-a-valid-id/approval"),
+            ("POST", "/api/matm/commons/enrollment-requests/not-a-valid-id/denial"),
+            ("GET", "/api/matm/commons/policy"),
+            ("POST", "/api/matm/commons/policy"),
+            ("GET", "/api/matm/commons/me"),
+            ("POST", "/api/matm/commons/rooms/not-a-valid-id/join"),
+            ("POST", "/api/matm/commons/rooms/not-a-valid-id/leave"),
+            ("POST", "/api/matm/commons/rooms/not-a-valid-id/messages"),
+            ("POST", "/api/matm/commons/messages/not-a-valid-id/corrections"),
+            ("POST", "/api/matm/commons/messages/not-a-valid-id/withdrawal"),
+            ("POST", "/api/matm/commons/messages/not-a-valid-id/acknowledgements"),
+            ("POST", "/api/matm/commons/browser-sessions"),
+            ("GET", "/api/matm/commons/browser-sessions/current"),
+            ("POST", "/api/matm/commons/browser-sessions/revoke"),
+            ("POST", "/api/matm/commons/credentials/rotation"),
+            ("POST", "/api/matm/commons/credentials/revoke"),
+        )
+
+        class UnreadableInput:
+            def read(self, _limit):
+                raise AssertionError("unauthenticated body must not be read")
+
+        for method, path in protected:
+            with self.subTest(method=method, path=path):
+                self.assertTrue(_commons_request_requires_auth(path, method))
+                captured = {}
+                factory_calls = []
+
+                def start_response(status, headers):
+                    captured.update(status=status, headers=dict(headers))
+
+                def forbidden_store_factory():
+                    factory_calls.append(True)
+                    raise AssertionError("unauthenticated request must not initialize storage")
+
+                response = b"".join(
+                    route_commons(
+                        {
+                            "REQUEST_METHOD": method,
+                            "PATH_INFO": path,
+                            "QUERY_STRING": "unsupported=tenant-canary",
+                            "CONTENT_TYPE": "text/plain",
+                            "CONTENT_LENGTH": "999999",
+                            "wsgi.input": UnreadableInput(),
+                            "REMOTE_ADDR": "127.0.0.1",
+                        },
+                        start_response,
+                        path,
+                        forbidden_store_factory,
+                    )
+                )
+                payload = json.loads(response)
+                self.assertEqual("401 Unauthorized", captured["status"])
+                self.assertEqual("auth_required", payload["error"]["code"])
+                self.assertEqual([], factory_calls)
+
+        self.assertFalse(
+            _commons_request_requires_auth("/api/matm/commons/agents", "GET")
+        )
+        self.assertFalse(
+            _commons_request_requires_auth("/api/matm/commons/enrollments", "POST")
+        )
+        self.assertFalse(
+            _commons_request_requires_auth("/api/matm/commons/policy", "DELETE")
+        )
+        self.assertFalse(
+            _commons_request_requires_auth("/api/matm/commons/not-a-route", "POST")
+        )
 
     def test_project_enrollment_budget_bounds_rotating_source_partitions(self):
         os.environ["MEMORYENDPOINTS_COMMONS_PROJECT_ENROLLMENTS_PER_HOUR"] = "2"
