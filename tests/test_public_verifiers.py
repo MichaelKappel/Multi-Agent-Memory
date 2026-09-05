@@ -1,5 +1,11 @@
+import hashlib
 import importlib.util
 import json
+import os
+import sqlite3
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +25,55 @@ def load_script(name):
 
 verify_memoryendpoints = load_script("verify_memoryendpoints")
 verify_static_site = load_script("verify_static_site")
+
+
+def create_sentinel_database(path, user_version, label):
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.execute("CREATE TABLE sentinel (label TEXT NOT NULL)")
+        connection.execute("INSERT INTO sentinel (label) VALUES (?)", (label,))
+        connection.execute("PRAGMA user_version = %d" % int(user_version))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def database_snapshot(path):
+    stat = path.stat()
+    connection = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True)
+    try:
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
+    return {
+        "bytes": path.read_bytes(),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "mtimeNs": stat.st_mtime_ns,
+        "userVersion": user_version,
+    }
+
+
+def verifier_environment(directory, matm_path, oauth_path):
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+            "MEMORYENDPOINTS_DATA_DIR": str(directory),
+            "MEMORYENDPOINTS_SQLITE_PATH": str(matm_path),
+            "MEMORYENDPOINTS_STORE_PATH": str(directory / "sentinel.json"),
+            "MEMORYENDPOINTS_MCP_OAUTH_PATH": str(oauth_path),
+            "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH": str(
+                directory / "sentinel-credential-config.json"
+            ),
+            "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH": str(
+                directory / "sentinel-mcp-host-config.json"
+            ),
+        }
+    )
+    environment.pop("MEMORYENDPOINTS_CREDENTIAL_PEPPER", None)
+    environment.pop("MEMORYENDPOINTS_MYSQL_URL", None)
+    environment.pop("DATABASE_URL", None)
+    return environment
 
 
 class PublicVerifierLeakContractTests(unittest.TestCase):
@@ -245,6 +300,229 @@ class PublicVerifierLeakContractTests(unittest.TestCase):
         self.assertGreater(item["leakHitCount"], 0)
         self.assertIn("python_traceback", item["leakRules"])
         self.assertIn("windows_local_path", item["leakRules"])
+
+
+class WsgiVerifierIsolationTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory(prefix="public-verifier-test-")
+        self.directory = Path(self.tempdir.name)
+        self.matm_path = self.directory / "live-matm.sqlite3"
+        self.oauth_path = self.directory / "live-oauth.sqlite3"
+        create_sentinel_database(self.matm_path, 5, "matm-sentinel")
+        create_sentinel_database(self.oauth_path, 7, "oauth-sentinel")
+        (self.directory / "sentinel.json").write_text(
+            '{"sentinel":true}\n', encoding="utf-8"
+        )
+        (self.directory / "sentinel-credential-config.json").write_text(
+            '{"sentinel":true}\n', encoding="utf-8"
+        )
+        (self.directory / "sentinel-mcp-host-config.json").write_text(
+            '{"sentinel":true}\n', encoding="utf-8"
+        )
+        self.before_names = sorted(path.name for path in self.directory.iterdir())
+        self.before_matm = database_snapshot(self.matm_path)
+        self.before_oauth = database_snapshot(self.oauth_path)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def run_python(self, arguments, timeout=180):
+        return subprocess.run(
+            [sys.executable] + list(arguments),
+            cwd=str(ROOT),
+            env=verifier_environment(
+                self.directory, self.matm_path, self.oauth_path
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+            timeout=timeout,
+        )
+
+    def assert_sentinels_unchanged(self):
+        self.assertEqual(self.before_matm, database_snapshot(self.matm_path))
+        self.assertEqual(self.before_oauth, database_snapshot(self.oauth_path))
+        self.assertEqual(
+            self.before_names,
+            sorted(path.name for path in self.directory.iterdir()),
+        )
+        for database in (self.matm_path, self.oauth_path):
+            for suffix in ("-wal", "-shm", "-journal", ".tmp", ".lock"):
+                self.assertFalse(Path(str(database) + suffix).exists())
+
+    def test_wsgi_subprocess_never_touches_configured_live_stores(self):
+        completed = self.run_python(
+            [str(ROOT / "scripts" / "verify_memoryendpoints.py"), "--wsgi"]
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        report = json.loads(completed.stdout)
+        self.assertTrue(report["ok"])
+        self.assertEqual("wsgi", report["mode"])
+        self.assertNotIn("memoryendpoints-verifier-", completed.stdout)
+        self.assertNotIn(str(self.directory), completed.stdout)
+        self.assert_sentinels_unchanged()
+
+    def test_forced_wsgi_failure_restores_environment_and_removes_temp_tree(self):
+        code = r'''
+import importlib.util
+import io
+import json
+import os
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("isolated_verifier", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+baseline = {key: os.environ.get(key) for key in module.WSGI_ISOLATION_ENVIRONMENT}
+original = module.fetch_wsgi
+observed = []
+
+def fail_after_store_probe(route, method="GET", body=None):
+    result = original(route, method, body)
+    observed.append(os.environ["MEMORYENDPOINTS_DATA_DIR"])
+    if route == "/api/version":
+        raise RuntimeError("forced_wsgi_probe_failure")
+    return result
+
+module.fetch_wsgi = fail_after_store_probe
+output = io.StringIO()
+with redirect_stdout(output):
+    result = module.main(["--wsgi"])
+report = json.loads(output.getvalue())
+restored = baseline == {
+    key: os.environ.get(key) for key in module.WSGI_ISOLATION_ENVIRONMENT
+}
+removed = bool(observed) and not Path(observed[-1]).exists()
+print(json.dumps({
+    "result": result,
+    "error": report.get("error", {}).get("code"),
+    "restored": restored,
+    "removed": removed,
+}))
+'''
+        completed = self.run_python(
+            ["-c", code, str(ROOT / "scripts" / "verify_memoryendpoints.py")]
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(
+            {
+                "result": 2,
+                "error": "wsgi_verifier_failed",
+                "restored": True,
+                "removed": True,
+            },
+            json.loads(completed.stdout),
+        )
+        self.assertEqual("", completed.stderr)
+        self.assert_sentinels_unchanged()
+
+    def test_http_mode_does_not_change_environment_or_stores(self):
+        code = r'''
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("http_verifier", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+baseline = {key: os.environ.get(key) for key in module.WSGI_ISOLATION_ENVIRONMENT}
+
+def stop_http_probe(*_args, **_kwargs):
+    raise RuntimeError("forced_http_probe_stop")
+
+module.fetch = stop_http_probe
+try:
+    module.main(["--base-url", "http://127.0.0.1:1"])
+    raised = False
+except RuntimeError as exc:
+    raised = str(exc) == "forced_http_probe_stop"
+restored = baseline == {
+    key: os.environ.get(key) for key in module.WSGI_ISOLATION_ENVIRONMENT
+}
+print(json.dumps({"raised": raised, "unchanged": restored}))
+'''
+        completed = self.run_python(
+            ["-c", code, str(ROOT / "scripts" / "verify_memoryendpoints.py")]
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(
+            {"raised": True, "unchanged": True}, json.loads(completed.stdout)
+        )
+        self.assert_sentinels_unchanged()
+
+    def test_cli_parses_before_runtime_import_and_preimport_fails_closed(self):
+        code = r'''
+import contextlib
+import importlib.util
+import io
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("ordered_verifier", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+forbidden = set(module.WSGI_FORBIDDEN_PREIMPORTS)
+clean_load = not forbidden.intersection(sys.modules)
+with contextlib.redirect_stderr(io.StringIO()):
+    try:
+        module.main(["--not-a-real-option"])
+    except SystemExit as exc:
+        parsed_first = exc.code == 2 and not forbidden.intersection(sys.modules)
+    else:
+        parsed_first = False
+import memoryendpoints.config
+captured = io.StringIO()
+with contextlib.redirect_stdout(captured):
+    result = module.main(["--wsgi"])
+report = json.loads(captured.getvalue())
+print(json.dumps({
+    "cleanLoad": clean_load,
+    "parsedFirst": parsed_first,
+    "preimportCode": result,
+    "preimportError": report.get("error", {}).get("code"),
+}))
+'''
+        completed = self.run_python(
+            ["-c", code, str(ROOT / "scripts" / "verify_memoryendpoints.py")]
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual(
+            {
+                "cleanLoad": True,
+                "parsedFirst": True,
+                "preimportCode": 2,
+                "preimportError": "wsgi_verifier_isolation_unavailable",
+            },
+            json.loads(completed.stdout),
+        )
+        self.assert_sentinels_unchanged()
+
+    def test_isolation_environment_is_exact_and_has_no_secret_setting(self):
+        self.assertEqual(
+            {
+                "MEMORYENDPOINTS_STORE_BACKEND",
+                "MEMORYENDPOINTS_DATA_DIR",
+                "MEMORYENDPOINTS_SQLITE_PATH",
+                "MEMORYENDPOINTS_STORE_PATH",
+                "MEMORYENDPOINTS_MCP_OAUTH_PATH",
+                "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH",
+                "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH",
+            },
+            set(verify_memoryendpoints.WSGI_ISOLATION_ENVIRONMENT),
+        )
+        self.assertNotIn(
+            "MEMORYENDPOINTS_CREDENTIAL_PEPPER",
+            verify_memoryendpoints.WSGI_ISOLATION_ENVIRONMENT,
+        )
 
 
 if __name__ == "__main__":

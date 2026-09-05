@@ -1,9 +1,12 @@
 import argparse
+from contextlib import contextmanager
 import io
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlparse
@@ -13,7 +16,59 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memoryendpoints.config import SITE_NAME  # noqa: E402
+
+DEFAULT_WSGI_SITE_NAME = "Private MATM Intranet"
+WSGI_ISOLATION_ENVIRONMENT = (
+    "MEMORYENDPOINTS_STORE_BACKEND",
+    "MEMORYENDPOINTS_DATA_DIR",
+    "MEMORYENDPOINTS_SQLITE_PATH",
+    "MEMORYENDPOINTS_STORE_PATH",
+    "MEMORYENDPOINTS_MCP_OAUTH_PATH",
+    "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH",
+    "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH",
+)
+WSGI_FORBIDDEN_PREIMPORTS = (
+    "app",
+    "memoryendpoints.app",
+    "memoryendpoints.config",
+    "memoryendpoints.storage",
+)
+
+
+class WsgiIsolationError(RuntimeError):
+    pass
+
+
+@contextmanager
+def isolated_wsgi_environment():
+    imported = [name for name in WSGI_FORBIDDEN_PREIMPORTS if name in sys.modules]
+    if imported:
+        raise WsgiIsolationError("wsgi_verifier_import_order_invalid")
+    saved = {key: os.environ.get(key) for key in WSGI_ISOLATION_ENVIRONMENT}
+    with tempfile.TemporaryDirectory(prefix="memoryendpoints-verifier-") as temporary:
+        root = Path(temporary)
+        overrides = {
+            "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+            "MEMORYENDPOINTS_DATA_DIR": str(root),
+            "MEMORYENDPOINTS_SQLITE_PATH": str(root / "verifier.sqlite3"),
+            "MEMORYENDPOINTS_STORE_PATH": str(root / "verifier.json"),
+            "MEMORYENDPOINTS_MCP_OAUTH_PATH": str(root / "mcp_oauth.sqlite3"),
+            "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH": str(
+                root / "missing-credential-config.json"
+            ),
+            "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH": str(
+                root / "missing-mcp-host-config.json"
+            ),
+        }
+        os.environ.update(overrides)
+        try:
+            yield
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 ROUTES = [
@@ -411,7 +466,12 @@ def pattern_hits(patterns, text):
     return [name for name, pattern in patterns if pattern.search(text)]
 
 
-def configured_site_identity_missing(route, body, canonical_redirect_accepted=False, site_name=SITE_NAME):
+def configured_site_identity_missing(
+    route,
+    body,
+    canonical_redirect_accepted=False,
+    site_name="MemoryEndpoints",
+):
     if route in CONNECTOR_PUBLIC_PROBES or route in COMMONS_PUBLIC_PROBES:
         return []
     if canonical_redirect_accepted or route in SITE_IDENTITY_OPTIONAL_ROUTES:
@@ -419,13 +479,13 @@ def configured_site_identity_missing(route, body, canonical_redirect_accepted=Fa
     return [] if site_name in body else ["configured site identity"]
 
 
-def expected_site_identity(wsgi=False, explicit=None):
+def expected_site_identity(wsgi=False, explicit=None, wsgi_site_name=None):
     if explicit is not None:
         value = explicit.strip()
         if not value:
             raise ValueError("expected site name must not be empty")
         return value
-    return SITE_NAME if wsgi else "MemoryEndpoints"
+    return (wsgi_site_name or DEFAULT_WSGI_SITE_NAME) if wsgi else "MemoryEndpoints"
 
 
 def apply_build_expectations(item, build, expected_source_sha, require_clean_build=False, git_head_available=True):
@@ -458,7 +518,7 @@ def apply_build_expectations(item, build, expected_source_sha, require_clean_bui
     return observed_source_sha
 
 
-def main(argv=None):
+def _parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8088")
     parser.add_argument("--json-out")
@@ -466,9 +526,21 @@ def main(argv=None):
     parser.add_argument("--expect-source-sha")
     parser.add_argument("--expect-git-head", action="store_true")
     parser.add_argument("--expect-site-name")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _verify(args, parser):
+    wsgi_site_name = None
+    if args.wsgi:
+        from memoryendpoints.config import SITE_NAME
+
+        wsgi_site_name = SITE_NAME
     try:
-        expected_site_name = expected_site_identity(args.wsgi, args.expect_site_name)
+        expected_site_name = expected_site_identity(
+            args.wsgi,
+            args.expect_site_name,
+            wsgi_site_name=wsgi_site_name,
+        )
     except ValueError as exc:
         parser.error(str(exc))
     expected_source_sha = args.expect_source_sha
@@ -583,6 +655,42 @@ def main(argv=None):
             handle.write("\n")
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ok"] else 1
+
+
+def _wsgi_failure(code, detail):
+    report = {
+        "schemaVersion": "memoryendpoints.verifier.v1",
+        "reportScope": "point_in_time_snapshot",
+        "mode": "wsgi",
+        "ok": False,
+        "failureCount": 1,
+        "error": {
+            "code": code,
+            "detail": detail,
+        },
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 2
+
+
+def main(argv=None):
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not args.wsgi:
+        return _verify(args, parser)
+    try:
+        with isolated_wsgi_environment():
+            return _verify(args, parser)
+    except WsgiIsolationError:
+        return _wsgi_failure(
+            "wsgi_verifier_isolation_unavailable",
+            "WSGI verification requires isolation before runtime import.",
+        )
+    except Exception:
+        return _wsgi_failure(
+            "wsgi_verifier_failed",
+            "WSGI verification could not be completed safely.",
+        )
 
 
 if __name__ == "__main__":
