@@ -2,6 +2,7 @@ import hashlib
 import datetime
 import multiprocessing
 import os
+import threading
 import unittest
 import uuid
 
@@ -10,6 +11,9 @@ from memoryendpoints.commons_storage import CommonsRepository
 from memoryendpoints.storage import (
     MySQLStore,
     _DbConnection,
+    _MYSQL_SCHEMA_METADATA_TABLE,
+    _MYSQL_SCHEMA_READY,
+    _MYSQL_SCHEMA_VERSION,
     _mysql_config_from_env,
 )
 from tests.governed_test_support import DeterministicCredentialPepperMixin
@@ -21,6 +25,81 @@ _MYSQL_TEST_DATABASE_FINGERPRINT = (
     "MEMORYENDPOINTS_COMMONS_MYSQL_TEST_DATABASE_SHA256"
 )
 _EXPECTED_MUTATION_ACK = "isolated-disposable-database"
+
+
+class _SchemaResult:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self):
+        return list(self.rows)
+
+
+class _SharedSchemaState:
+    def __init__(self, tables=None, metadata=None, views=None):
+        self.tables = set(tables or ())
+        self.views = set(views or ())
+        self.metadata = dict(metadata) if metadata else None
+        self.advisory_lock = threading.Lock()
+        self.mutex = threading.Lock()
+
+
+class _SchemaConnection:
+    dialect = "mysql"
+
+    def __init__(self, state, before_lock=None):
+        self.state = state
+        self.before_lock = before_lock
+        self.calls = []
+        self.closed = False
+        self.commits = 0
+
+    def execute(self, statement, params=None):
+        normalized = " ".join(statement.split())
+        self.calls.append((normalized, params))
+        if "GET_LOCK" in normalized:
+            if self.before_lock:
+                self.before_lock.set()
+            self.state.advisory_lock.acquire()
+            return _SchemaResult(({"acquired": 1},))
+        if "RELEASE_LOCK" in normalized:
+            self.state.advisory_lock.release()
+            return _SchemaResult(({"released": 1},))
+        if "FROM information_schema.tables" in normalized:
+            with self.state.mutex:
+                rows = tuple(
+                    {"object_name": table_name, "object_type": "BASE TABLE"}
+                    for table_name in sorted(self.state.tables)
+                ) + tuple(
+                    {"object_name": view_name, "object_type": "VIEW"}
+                    for view_name in sorted(self.state.views)
+                )
+            return _SchemaResult(rows)
+        if normalized.startswith("SELECT schema_version AS schema_version"):
+            with self.state.mutex:
+                rows = (dict(self.state.metadata),) if self.state.metadata else ()
+            return _SchemaResult(rows)
+        if normalized.startswith("CREATE TABLE matm_schema_metadata"):
+            with self.state.mutex:
+                self.state.tables.add(_MYSQL_SCHEMA_METADATA_TABLE)
+            return _SchemaResult(())
+        if normalized.startswith("INSERT INTO matm_schema_metadata"):
+            with self.state.mutex:
+                self.state.metadata = {
+                    "schema_version": params[1],
+                    "schema_digest": params[2],
+                }
+            return _SchemaResult(())
+        raise AssertionError("Unexpected schema test statement: %s" % normalized)
+
+    def commit(self):
+        self.commits += 1
+
+    def close(self):
+        self.closed = True
 
 
 class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
@@ -127,7 +206,7 @@ class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
             def __init__(self):
                 self.ensure_count = 0
 
-            def _ensure_schema(self, _connection):
+            def _ensure_mysql_schema_current(self, _connection):
                 self.ensure_count += 1
 
         store = Store()
@@ -153,6 +232,287 @@ class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
         self.assertNotIn(config["database"], serialized_calls)
         self.assertNotIn(config["user"], serialized_calls)
         self.assertNotIn(config["password"], serialized_calls)
+
+    def test_schema_classifier_initializes_only_an_empty_database_and_reads_back_exactly(
+        self,
+    ):
+        state = _SharedSchemaState()
+
+        class Store(MySQLStore):
+            def __init__(self):
+                self.ensure_count = 0
+
+            def _ensure_schema(self, connection):
+                self.ensure_count += 1
+                connection.calls.append(("SYNTHETIC CANONICAL DDL", None))
+                expected_tables, _expected_digest = self._mysql_expected_schema()
+                with connection.state.mutex:
+                    connection.state.tables.update(
+                        expected_tables - {_MYSQL_SCHEMA_METADATA_TABLE}
+                    )
+
+        store = Store()
+        config = {
+            "host": "127.0.0.1",
+            "port": "43397",
+            "database": "isolated-empty-schema-test",
+            "user": "isolated-test-user",
+            "password": "not-in-cache-key",
+            "unix_socket": "",
+        }
+        schema_key = store._schema_cache_key(config)
+        _MYSQL_SCHEMA_READY.discard(schema_key)
+        connection = _SchemaConnection(state)
+
+        store._ensure_schema_once(connection, config)
+
+        expected_tables, expected_digest = store._mysql_expected_schema()
+        self.assertEqual(1, store.ensure_count)
+        self.assertEqual(expected_tables, frozenset(state.tables))
+        self.assertEqual(
+            {
+                "schema_version": _MYSQL_SCHEMA_VERSION,
+                "schema_digest": expected_digest,
+            },
+            state.metadata,
+        )
+        statements = [statement for statement, _params in connection.calls]
+        first_classification = next(
+            index
+            for index, statement in enumerate(statements)
+            if "FROM information_schema.tables" in statement
+        )
+        first_ddl = statements.index("SYNTHETIC CANONICAL DDL")
+        metadata_ddl = next(
+            index
+            for index, statement in enumerate(statements)
+            if statement.startswith("CREATE TABLE matm_schema_metadata")
+        )
+        readbacks = [
+            index
+            for index, statement in enumerate(statements)
+            if "FROM information_schema.tables" in statement
+        ]
+        self.assertLess(first_classification, first_ddl)
+        self.assertLess(first_ddl, metadata_ddl)
+        self.assertEqual(2, len(readbacks))
+        self.assertLess(metadata_ddl, readbacks[-1])
+        self.assertEqual("SELECT RELEASE_LOCK(?) AS released", statements[-1])
+        self.assertIn(schema_key, _MYSQL_SCHEMA_READY)
+        _MYSQL_SCHEMA_READY.discard(schema_key)
+
+    def test_schema_classifier_rejects_incompatible_schemas_without_ddl(self):
+        store = MySQLStore()
+        expected_tables, expected_digest = store._mysql_expected_schema()
+        cases = (
+            (
+                "unversioned",
+                _SharedSchemaState({"matm_workspaces"}),
+                "non-empty and unversioned",
+            ),
+            (
+                "unknown",
+                _SharedSchemaState(
+                    expected_tables,
+                    {
+                        "schema_version": _MYSQL_SCHEMA_VERSION,
+                        "schema_digest": "0" * 64,
+                    },
+                ),
+                "does not match the exact supported schema",
+            ),
+            (
+                "view-only",
+                _SharedSchemaState(views={"unexpected_view"}),
+                "non-empty and unversioned",
+            ),
+            (
+                "extra-view",
+                _SharedSchemaState(
+                    expected_tables,
+                    {
+                        "schema_version": _MYSQL_SCHEMA_VERSION,
+                        "schema_digest": expected_digest,
+                    },
+                    views={"unexpected_view"},
+                ),
+                "does not match the exact supported schema",
+            ),
+            (
+                "missing-metadata-row",
+                _SharedSchemaState(expected_tables),
+                "metadata is not recognized",
+            ),
+            (
+                "malformed-version",
+                _SharedSchemaState(
+                    expected_tables,
+                    {
+                        "schema_version": "not-a-version",
+                        "schema_digest": expected_digest,
+                    },
+                ),
+                "metadata is not recognized",
+            ),
+            (
+                "incomplete",
+                _SharedSchemaState(
+                    expected_tables - {"matm_audit_log"},
+                    {
+                        "schema_version": _MYSQL_SCHEMA_VERSION,
+                        "schema_digest": expected_digest,
+                    },
+                ),
+                "does not match the exact supported schema",
+            ),
+            (
+                "newer",
+                _SharedSchemaState(
+                    expected_tables,
+                    {
+                        "schema_version": _MYSQL_SCHEMA_VERSION + 1,
+                        "schema_digest": expected_digest,
+                    },
+                ),
+                "newer than supported",
+            ),
+            (
+                "older",
+                _SharedSchemaState(
+                    expected_tables,
+                    {
+                        "schema_version": _MYSQL_SCHEMA_VERSION - 1,
+                        "schema_digest": expected_digest,
+                    },
+                ),
+                "requires a governed migration",
+            ),
+        )
+        for label, state, message in cases:
+            with self.subTest(label=label):
+                config = {
+                    "host": "127.0.0.1",
+                    "port": "43397",
+                    "database": "isolated-%s-schema-test" % label,
+                    "user": "isolated-test-user",
+                    "password": "not-in-cache-key",
+                    "unix_socket": "",
+                }
+                schema_key = store._schema_cache_key(config)
+                _MYSQL_SCHEMA_READY.discard(schema_key)
+                connection = _SchemaConnection(state)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    store._ensure_schema_once(connection, config)
+                statements = [statement for statement, _params in connection.calls]
+                self.assertFalse(
+                    any(
+                        statement.startswith(("CREATE ", "ALTER ", "INSERT "))
+                        for statement in statements
+                    )
+                )
+                self.assertEqual(
+                    "SELECT RELEASE_LOCK(?) AS released", statements[-1]
+                )
+                self.assertNotIn(schema_key, _MYSQL_SCHEMA_READY)
+
+    def test_waiting_mysql_initializer_reclassifies_after_advisory_lock(self):
+        state = _SharedSchemaState()
+        first_schema_started = threading.Event()
+        second_waiting = threading.Event()
+        allow_first_schema = threading.Event()
+
+        class Store(MySQLStore):
+            def __init__(self):
+                self.ensure_count = 0
+
+            def _ensure_schema(self, connection):
+                with connection.state.mutex:
+                    self.ensure_count += 1
+                first_schema_started.set()
+                if not allow_first_schema.wait(timeout=5):
+                    raise RuntimeError("timed out waiting for schema race")
+                expected_tables, _expected_digest = self._mysql_expected_schema()
+                with connection.state.mutex:
+                    connection.state.tables.update(
+                        expected_tables - {_MYSQL_SCHEMA_METADATA_TABLE}
+                    )
+
+        store = Store()
+        first_config = {
+            "host": "127.0.0.1",
+            "port": "43397",
+            "database": "isolated-schema-race-test",
+            "user": "isolated-test-user",
+            "password": "not-in-cache-key",
+            "unix_socket": "",
+        }
+        second_config = dict(
+            first_config,
+            host="mysql.internal.example",
+            user="alternate-isolated-user",
+            unix_socket="/isolated/mysql.sock",
+        )
+        first_schema_key = store._schema_cache_key(first_config)
+        second_schema_key = store._schema_cache_key(second_config)
+        self.assertNotEqual(first_schema_key, second_schema_key)
+        _MYSQL_SCHEMA_READY.discard(first_schema_key)
+        _MYSQL_SCHEMA_READY.discard(second_schema_key)
+        first_connection = _SchemaConnection(state)
+        second_connection = _SchemaConnection(state, before_lock=second_waiting)
+        errors = []
+
+        def initialize(connection, config):
+            try:
+                store._ensure_schema_once(connection, config)
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(
+            target=initialize, args=(first_connection, first_config)
+        )
+        second = threading.Thread(
+            target=initialize, args=(second_connection, second_config)
+        )
+        first.start()
+        self.assertTrue(first_schema_started.wait(timeout=5))
+        second.start()
+        self.assertTrue(second_waiting.wait(timeout=5))
+        allow_first_schema.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual([], errors)
+        self.assertEqual(1, store.ensure_count)
+        first_lock_name = next(
+            params[0]
+            for statement, params in first_connection.calls
+            if "GET_LOCK" in statement
+        )
+        second_lock_name = next(
+            params[0]
+            for statement, params in second_connection.calls
+            if "GET_LOCK" in statement
+        )
+        self.assertEqual(first_lock_name, second_lock_name)
+        self.assertEqual(
+            1,
+            sum(
+                "FROM information_schema.tables" in statement
+                for statement, _params in second_connection.calls
+            ),
+        )
+        self.assertFalse(
+            any(
+                statement.startswith(("CREATE ", "ALTER ", "INSERT "))
+                for statement, _params in second_connection.calls
+            )
+        )
+        self.assertIn(first_schema_key, _MYSQL_SCHEMA_READY)
+        self.assertIn(second_schema_key, _MYSQL_SCHEMA_READY)
+        _MYSQL_SCHEMA_READY.discard(first_schema_key)
+        _MYSQL_SCHEMA_READY.discard(second_schema_key)
 
     def test_schema_acquisition_failure_closes_without_running_schema(self):
         class Result:
@@ -185,7 +545,7 @@ class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
             def __init__(self):
                 self.ensure_count = 0
 
-            def _ensure_schema(self, _connection):
+            def _ensure_mysql_schema_current(self, _connection):
                 self.ensure_count += 1
 
         config = {
@@ -245,7 +605,7 @@ class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
             def __init__(self):
                 pass
 
-            def _ensure_schema(self, _connection):
+            def _ensure_mysql_schema_current(self, _connection):
                 raise OriginalSchemaError("original schema failure")
 
         store = Store()
@@ -300,7 +660,7 @@ class MySQLDatetimeParameterAdapterTests(unittest.TestCase):
             def __init__(self):
                 pass
 
-            def _ensure_schema(self, _connection):
+            def _ensure_mysql_schema_current(self, _connection):
                 pass
 
         config = {

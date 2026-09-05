@@ -95,6 +95,9 @@ from .uai_memory import (
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
 _SQLITE_SCHEMA_VERSION = 7
+_MYSQL_SCHEMA_VERSION = _SQLITE_SCHEMA_VERSION
+_MYSQL_SCHEMA_METADATA_TABLE = "matm_schema_metadata"
+_MYSQL_SCHEMA_KEY = "canonical"
 _MYSQL_SCHEMA_READY = set()
 _IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
 _IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
@@ -28426,16 +28429,134 @@ class MySQLStore(SQLiteStore):
             config.get("unix_socket") or "",
         )
 
+    @staticmethod
+    def _mysql_schema_source():
+        return (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "database-schema-canonical.sql"
+        ).read_text(encoding="utf-8")
+
+    def _mysql_expected_schema(self):
+        schema = self._mysql_schema_source()
+        table_names = frozenset(
+            re.findall(
+                r"^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)\s*\(",
+                schema,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+        ) | {_MYSQL_SCHEMA_METADATA_TABLE}
+        return table_names, hashlib.sha256(schema.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _mysql_schema_lock_name(config):
+        # GET_LOCK names are scoped to one MySQL server.  Bind the name only to
+        # the logical database so alternate users, host aliases, and TCP/socket
+        # connections to that same schema cannot initialize it concurrently.
+        database = str(config.get("database") or "").casefold()
+        lock_digest = hashlib.sha256(database.encode("utf-8")).hexdigest()[:32]
+        return "memoryendpoints-schema-" + lock_digest
+
+    def _classify_mysql_schema(self, connection):
+        rows = connection.execute(
+            "SELECT table_name AS object_name, table_type AS object_type "
+            "FROM information_schema.tables WHERE table_schema = DATABASE() "
+            "UNION ALL SELECT routine_name AS object_name, "
+            "routine_type AS object_type FROM information_schema.routines "
+            "WHERE routine_schema = DATABASE() "
+            "UNION ALL SELECT trigger_name AS object_name, 'TRIGGER' AS object_type "
+            "FROM information_schema.triggers WHERE trigger_schema = DATABASE() "
+            "UNION ALL SELECT event_name AS object_name, 'EVENT' AS object_type "
+            "FROM information_schema.events WHERE event_schema = DATABASE() "
+            "ORDER BY object_type, object_name"
+        ).fetchall()
+        table_names = frozenset(
+            str(row.get("object_name") or "")
+            for row in rows
+            if str(row.get("object_type") or "").upper() == "BASE TABLE"
+            and row.get("object_name")
+        )
+        non_table_objects = tuple(
+            row
+            for row in rows
+            if str(row.get("object_type") or "").upper() != "BASE TABLE"
+        )
+        if not rows:
+            return "empty"
+        if _MYSQL_SCHEMA_METADATA_TABLE not in table_names:
+            raise RuntimeError(
+                "MySQL schema is non-empty and unversioned; refusing automatic DDL."
+            )
+
+        metadata_rows = connection.execute(
+            "SELECT schema_version AS schema_version, schema_digest AS schema_digest "
+            "FROM matm_schema_metadata WHERE schema_key = ?",
+            (_MYSQL_SCHEMA_KEY,),
+        ).fetchall()
+        if len(metadata_rows) != 1:
+            raise RuntimeError("MySQL schema metadata is not recognized.")
+        metadata = metadata_rows[0]
+        version_text = str(metadata.get("schema_version") or "").strip()
+        if not re.fullmatch(r"[0-9]+", version_text):
+            raise RuntimeError("MySQL schema metadata is not recognized.")
+        version = int(version_text)
+        if version > _MYSQL_SCHEMA_VERSION:
+            raise RuntimeError(
+                "MySQL schema version %d is newer than supported version %d."
+                % (version, _MYSQL_SCHEMA_VERSION)
+            )
+        if version < _MYSQL_SCHEMA_VERSION:
+            raise RuntimeError(
+                "MySQL schema version %d is older than supported version %d "
+                "and requires a governed migration."
+                % (version, _MYSQL_SCHEMA_VERSION)
+            )
+
+        expected_tables, expected_digest = self._mysql_expected_schema()
+        if (
+            table_names != expected_tables
+            or non_table_objects
+            or str(metadata.get("schema_digest") or "") != expected_digest
+        ):
+            raise RuntimeError(
+                "MySQL schema version %d does not match the exact supported schema."
+                % _MYSQL_SCHEMA_VERSION
+            )
+        return "current"
+
+    def _record_mysql_schema_version(self, connection):
+        _expected_tables, schema_digest = self._mysql_expected_schema()
+        connection.execute(
+            "CREATE TABLE matm_schema_metadata ("
+            "schema_key VARCHAR(64) PRIMARY KEY, "
+            "schema_version INTEGER NOT NULL, "
+            "schema_digest CHAR(64) NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO matm_schema_metadata "
+            "(schema_key, schema_version, schema_digest) VALUES (?, ?, ?)",
+            (_MYSQL_SCHEMA_KEY, _MYSQL_SCHEMA_VERSION, schema_digest),
+        )
+        connection.commit()
+
+    def _ensure_mysql_schema_current(self, connection):
+        state = self._classify_mysql_schema(connection)
+        if state == "current":
+            return
+        self._ensure_schema(connection)
+        self._record_mysql_schema_version(connection)
+        if self._classify_mysql_schema(connection) != "current":
+            raise RuntimeError(
+                "MySQL schema initialization did not produce the exact supported schema."
+            )
+
     def _ensure_schema_once(self, connection, config):
         schema_key = self._schema_cache_key(config)
         with _LOCK:
             if schema_key in _MYSQL_SCHEMA_READY:
                 return
         if getattr(connection, "dialect", None) == "mysql":
-            lock_digest = hashlib.sha256(
-                json.dumps(schema_key, separators=(",", ":")).encode("utf-8")
-            ).hexdigest()[:32]
-            lock_name = "memoryendpoints-schema-" + lock_digest
+            lock_name = self._mysql_schema_lock_name(config)
             try:
                 acquired = connection.execute(
                     "SELECT GET_LOCK(?, 30) AS acquired", (lock_name,)
@@ -28455,10 +28576,9 @@ class MySQLStore(SQLiteStore):
                     "MySQL schema convergence lock could not be acquired."
                 )
             try:
+                self._ensure_mysql_schema_current(connection)
                 with _LOCK:
-                    if schema_key not in _MYSQL_SCHEMA_READY:
-                        self._ensure_schema(connection)
-                        _MYSQL_SCHEMA_READY.add(schema_key)
+                    _MYSQL_SCHEMA_READY.add(schema_key)
             except BaseException:
                 try:
                     connection.execute(
@@ -28541,7 +28661,7 @@ class MySQLStore(SQLiteStore):
         return wrapped
 
     def _ensure_schema(self, connection):
-        schema = (Path(__file__).resolve().parents[1] / "docs" / "database-schema-canonical.sql").read_text(encoding="utf-8")
+        schema = self._mysql_schema_source()
         # Existing MySQL projects tables predate the composite key required by
         # the outbound MCP foreign keys. Converge it before creating those
         # tables; a brand-new database safely ignores the missing table here.
