@@ -172,7 +172,7 @@ ROUTE_TABLE = [
     {"route": "/api/matm/access/agent-name-requests", "access": "protected", "methods": ["GET", "POST"], "purpose": "List governed name requests or create one with required public-safe idempotent retry semantics."},
     {"route": "/api/matm/access/agent-name-requests/{requestId}/decision", "access": "protected", "methods": ["POST"], "purpose": "Approve or deny a governed name request with required public-safe idempotent retry semantics."},
     {"route": "/api/matm/access/invites", "access": "protected", "methods": ["GET", "POST"], "purpose": "List invitation metadata or issue one non-replayable invitation URL once; issuance forbids Idempotency-Key."},
-    {"route": "/api/matm/access/invites/redeem", "access": "protected", "methods": ["POST"], "purpose": "Redeem a body-only one-time invitation and reveal one agent credential once; redemption forbids Idempotency-Key."},
+    {"route": "/api/matm/access/invites/redeem", "access": "protected", "methods": ["POST"], "purpose": "Redeem an invitation with a client-generated protected credential candidate; exact Idempotency-Key retries replay the same redacted receipt."},
     {"route": "/api/matm/access/invites/{inviteId}/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke an issued invitation with required public-safe idempotent retry semantics."},
     {"route": "/api/matm/access/agent-tokens", "access": "protected", "methods": ["GET"], "purpose": "List redacted governed agent-credential metadata for a company master."},
     {"route": "/api/matm/access/agent-tokens/{credentialId}/revoke", "access": "protected", "methods": ["POST"], "purpose": "Revoke an agent credential with required public-safe idempotent retry semantics."},
@@ -1611,12 +1611,19 @@ def openapi_spec():
         }
 
     def access_idempotent_mutation(
-        summary, description, success_code=200, parameters=None, body_required=True
+        summary,
+        description,
+        success_code=200,
+        parameters=None,
+        body_required=True,
+        security=None,
     ):
         return {
             "summary": summary,
             "description": description,
-            "security": [{"companyMasterBearer": []}],
+            "security": (
+                [{"companyMasterBearer": []}] if security is None else security
+            ),
             "parameters": list(parameters or ()) + [idempotency_parameter],
             "requestBody": {"required": bool(body_required), "content": json_type},
             "responses": {
@@ -1660,6 +1667,102 @@ def openapi_spec():
             "x-rawCredentialPersisted": False,
             "x-noRedirects": True,
         }
+
+    def agent_invite_redemption_operation():
+        operation = access_idempotent_mutation(
+            "Redeem an agent invitation safely",
+            "Consumes the invitation while registering a client-generated credential candidate. The client protects the candidate and Idempotency-Key before sending; exact retries replay the same redacted receipt and changed reuse conflicts. The service stores only credential and request verifiers and never returns the candidate.",
+            201,
+            security=[],
+        )
+        operation["requestBody"] = {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "schemaVersion",
+                            "inviteSecret",
+                            "candidateAgentTokenSecret",
+                        ],
+                        "properties": {
+                            "schemaVersion": {
+                                "type": "string",
+                                "const": "memoryendpoints.agent_invite_redemption.v1",
+                            },
+                            "inviteSecret": {
+                                "type": "string",
+                                "pattern": r"^me_invite_v1\.invite-[0-9a-f]{20}\.[A-Za-z0-9_-]{43}$",
+                            },
+                            "candidateAgentTokenSecret": {
+                                "type": "string",
+                                "pattern": r"^me_agent_v1\.agenttoken-[0-9a-f]{20}\.[A-Za-z0-9_-]{43}$",
+                            },
+                        },
+                    }
+                }
+            },
+        }
+        operation["responses"] = {
+            "201": {
+                "description": "Closed, redacted receipt. The raw candidate is never returned.",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": [
+                                "ok",
+                                "principal",
+                                "invite",
+                                "onboarding",
+                                "candidateCredentialAccepted",
+                                "credentialReturnedOnce",
+                                "idempotencySupported",
+                                "replaySafe",
+                                "valuesRedacted",
+                                "rawCredentialExposed",
+                                "rawPayloadExposed",
+                            ],
+                            "properties": {
+                                "ok": {"type": "boolean", "const": True},
+                                "principal": {"type": "object"},
+                                "invite": {"type": "object"},
+                                "onboarding": {"type": "object"},
+                                "candidateCredentialAccepted": {"type": "boolean", "const": True},
+                                "credentialReturnedOnce": {"type": "boolean", "const": False},
+                                "idempotencySupported": {"type": "boolean", "const": True},
+                                "replaySafe": {"type": "boolean", "const": True},
+                                "valuesRedacted": {"type": "boolean", "const": True},
+                                "rawCredentialExposed": {"type": "boolean", "const": False},
+                                "rawPayloadExposed": {"type": "boolean", "const": False},
+                            },
+                        }
+                    }
+                },
+            },
+            **{
+                code: safe_problem
+                for code in (
+                    "400",
+                    "401",
+                    "403",
+                    "404",
+                    "409",
+                    "410",
+                    "413",
+                    "415",
+                    "422",
+                    "429",
+                    "503",
+                )
+            },
+        }
+        operation["x-maximumJsonRequestBytes"] = 4096
+        operation["x-rateLimited"] = True
+        return operation
 
     paths = {
         "/.well-known/memoryendpoints-connector": {
@@ -2047,11 +2150,7 @@ def openapi_spec():
             ),
         },
         "/api/matm/access/invites/redeem": {
-            "post": access_one_time_mutation(
-                "Redeem a one-time agent invitation",
-                "Consumes the body-only invitation secret and returns one agent credential once. Idempotency-Key is forbidden; a successful response cannot be replayed.",
-                [],
-            ),
+            "post": agent_invite_redemption_operation(),
         },
         "/api/matm/access/invites/{inviteId}/revoke": {
             "post": access_idempotent_mutation(

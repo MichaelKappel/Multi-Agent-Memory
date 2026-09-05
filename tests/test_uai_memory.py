@@ -9,7 +9,10 @@ from pathlib import Path
 
 from app import application
 from memoryendpoints.uai_memory import VIRTUAL_UAI_STARTUP_ORDER
-from tests.governed_test_support import DeterministicCredentialPepperMixin
+from tests.governed_test_support import (
+    DeterministicCredentialPepperMixin,
+    governed_agent_redemption_material,
+)
 
 
 def call_app(path, method="GET", body=None, token="", query="", idempotency_key=""):
@@ -27,6 +30,8 @@ def call_app(path, method="GET", body=None, token="", query="", idempotency_key=
         "wsgi.input": io.BytesIO(raw),
         "CONTENT_LENGTH": str(len(raw)),
     }
+    if body is not None:
+        environ["CONTENT_TYPE"] = "application/json"
     if token:
         environ["HTTP_AUTHORIZATION"] = "Bearer " + token
     if idempotency_key:
@@ -145,14 +150,20 @@ class UaiMemoryIntegrationTests(DeterministicCredentialPepperMixin, unittest.Tes
         )
         self.assertEqual("201 Created", status)
         invite_secret = issued["inviteUrl"].split("#invite=", 1)[1]
+        redemption, redemption_key, candidate = governed_agent_redemption_material(
+            invite_secret
+        )
         status, redeemed = call_app(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
+            redemption,
+            idempotency_key=redemption_key,
         )
         self.assertEqual("201 Created", status)
         self.assertEqual(agent_id, redeemed["principal"]["agentId"])
-        return redeemed
+        self.assertNotIn("agentTokenSecret", redeemed)
+        self.assertTrue(redeemed["candidateCredentialAccepted"])
+        return dict(redeemed, agentTokenSecret=candidate)
 
     def create_package(self, setup, agent_id, agent_token):
         status, payload = call_app(

@@ -48,6 +48,29 @@ def call_api(path, method="GET", body=None, token=None, query="", extra_headers=
     return int(captured["status"].split(" ", 1)[0]), captured["headers"], json.loads(response_body)
 
 
+def call_api_raw(path, method="GET", body=None, token=None, query="", extra_headers=None):
+    raw = json.dumps(body).encode("utf-8") if body is not None else b""
+    captured = {}
+
+    def start_response(status, response_headers):
+        captured["status"] = status
+        captured["headers"] = dict(response_headers)
+
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "QUERY_STRING": query,
+        "wsgi.input": io.BytesIO(raw),
+        "CONTENT_LENGTH": str(len(raw)),
+    }
+    if token:
+        environ["HTTP_AUTHORIZATION"] = "Bearer " + token
+    for key, value in (extra_headers or {}).items():
+        environ[key] = value
+    response_body = b"".join(application(environ, start_response))
+    return int(captured["status"].split(" ", 1)[0]), captured["headers"], response_body
+
+
 class GovernedAgentAccessApiContract:
     backend = None
 
@@ -81,6 +104,7 @@ class GovernedAgentAccessApiContract:
         self.workspace_id = self.account["workspaceId"]
         self.project_id = self.account["projectId"]
         self.master_token = self.account["companyMasterTokenSecret"]
+        self._redemption_material = {}
 
     def tearDown(self):
         for key, value in self._saved_environment.items():
@@ -144,6 +168,27 @@ class GovernedAgentAccessApiContract:
         )
         self.assertEqual(
             set(_ACCESS_ONE_TIME_SECRET_POST_ROUTE_TEMPLATES), one_time
+        )
+
+        redemption = paths["/api/matm/access/invites/redeem"]["post"]
+        request_schema = redemption["requestBody"]["content"]["application/json"][
+            "schema"
+        ]
+        self.assertFalse(request_schema["additionalProperties"])
+        self.assertEqual(
+            {
+                "schemaVersion",
+                "inviteSecret",
+                "candidateAgentTokenSecret",
+            },
+            set(request_schema["required"]),
+        )
+        self.assertEqual(4096, redemption["x-maximumJsonRequestBytes"])
+        self.assertTrue(redemption["x-rateLimited"])
+        self.assertTrue(
+            {"400", "410", "413", "415", "429"}.issubset(
+                redemption["responses"]
+            )
         )
 
     def _request_body(
@@ -239,17 +284,54 @@ class GovernedAgentAccessApiContract:
         self.assertTrue(payload["invite"]["singleUse"])
         return payload, invite_secret
 
-    def _redeem(self, invite_secret, expected_status=201):
+    def _redemption_request(
+        self, invite_secret, candidate=None, idempotency_key=None
+    ):
+        if invite_secret in self._redemption_material and candidate is None and idempotency_key is None:
+            return self._redemption_material[invite_secret]
+        candidate = candidate or (
+            "me_agent_v1.agenttoken-%s.%s"
+            % (uuid.uuid4().hex[:20], secrets.token_urlsafe(32))
+        )
+        idempotency_key = idempotency_key or ("invite-redeem-" + uuid.uuid4().hex)
+        body = {
+            "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+            "inviteSecret": invite_secret,
+            "candidateAgentTokenSecret": candidate,
+        }
+        material = (body, idempotency_key, candidate)
+        self._redemption_material[invite_secret] = material
+        return material
+
+    def _redeem(
+        self,
+        invite_secret,
+        expected_status=201,
+        candidate=None,
+        idempotency_key=None,
+    ):
+        body, idempotency_key, candidate = self._redemption_request(
+            invite_secret, candidate, idempotency_key
+        )
         status, headers, payload = call_api(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
+            body,
+            extra_headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": idempotency_key,
+            },
         )
         self.assertEqual(expected_status, status, payload)
         if expected_status == 201:
             self.assertTrue(payload["ok"])
-            self.assertRegex(payload["agentTokenSecret"], r"^me_agent_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
-            self._assert_one_time_secret_headers(headers)
+            self.assertNotIn("agentTokenSecret", payload)
+            self.assertTrue(payload["candidateCredentialAccepted"])
+            self.assertFalse(payload["credentialReturnedOnce"])
+            self.assertTrue(payload["idempotencySupported"])
+            self.assertTrue(payload["replaySafe"])
+            self._assert_no_governed_credential(payload)
+            payload = dict(payload, agentTokenSecret=candidate)
         return payload
 
     def _provision_agent(self, **request_overrides):
@@ -365,6 +447,96 @@ class GovernedAgentAccessApiContract:
             "workspaceId": invite["onboardingWorkspaceId"],
             "entryRoomId": invite["onboardingEntryRoomId"],
         }
+
+    def _persisted_redemption_receipt(self, invite_id):
+        if self.backend == "sqlite":
+            with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+                value = connection.execute(
+                    "SELECT redemption_receipt_json FROM matm_agent_invites "
+                    "WHERE invite_id = ?",
+                    (invite_id,),
+                ).fetchone()[0]
+            return value
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        return json.dumps(
+            data["agentInvites"][invite_id]["redemptionReceipt"],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _replace_persisted_redemption_receipt(self, invite_id, receipt):
+        if self.backend == "sqlite":
+            encoded = (
+                json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+                if receipt is not None
+                else None
+            )
+            with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+                connection.execute(
+                    "UPDATE matm_agent_invites SET redemption_receipt_json = ? "
+                    "WHERE invite_id = ?",
+                    (encoded, invite_id),
+                )
+                connection.commit()
+            return
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        invite = data["agentInvites"][invite_id]
+        if receipt is None:
+            invite.pop("redemptionReceipt", None)
+        else:
+            invite["redemptionReceipt"] = receipt
+        self.store_path.write_text(
+            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        )
+
+    def _credential_and_audit_snapshot(self):
+        if self.backend == "sqlite":
+            with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+                snapshot = {}
+                for table, order_by in (
+                    ("matm_agent_access_grants", "grant_id"),
+                    ("matm_agent_tokens", "agent_token_id"),
+                    ("matm_audit_log", "audit_id"),
+                ):
+                    columns = [
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA table_info(%s)" % table
+                        )
+                    ]
+                    snapshot[table] = [
+                        dict(zip(columns, row))
+                        for row in connection.execute(
+                            "SELECT * FROM %s ORDER BY %s" % (table, order_by)
+                        )
+                    ]
+            return json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        return json.dumps(
+            {
+                "agentAccessGrants": data.get("agentAccessGrants", {}),
+                "agentTokens": data.get("agentTokens", {}),
+                "auditLog": data.get("auditLog", []),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _archive_entry_room(self, room_id):
+        if self.backend == "sqlite":
+            with closing(sqlite3.connect(str(self.sqlite_path))) as connection:
+                connection.execute(
+                    "UPDATE matm_meeting_rooms SET status = 'archived' "
+                    "WHERE room_id = ?",
+                    (room_id,),
+                )
+                connection.commit()
+            return
+        data = json.loads(self.store_path.read_text(encoding="utf-8"))
+        data["meetingRooms"][room_id]["status"] = "archived"
+        self.store_path.write_text(
+            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
     def _access_counts(self):
         if self.backend == "sqlite":
@@ -668,7 +840,7 @@ class GovernedAgentAccessApiContract:
         )
         self._assert_error(status, payload, 401, "invalid_token")
 
-    def test_redeem_replay_is_gone_and_does_not_duplicate_identity_or_inventory(self):
+    def test_redeem_exact_replay_is_safe_and_does_not_duplicate_inventory(self):
         request = self._request_access()
         self._approve(request["requestId"])
         issued, invite_secret = self._issue(request["requestId"])
@@ -679,13 +851,39 @@ class GovernedAgentAccessApiContract:
         )
         self.assertEqual(200, status, inventory_before)
 
-        status, _headers, replay = call_api(
+        replay = self._redeem(invite_secret)
+        self.assertEqual(redeemed, replay)
+        body, key, candidate = self._redemption_request(invite_secret)
+        changed = dict(
+            body,
+            candidateAgentTokenSecret=(
+                "me_agent_v1.agenttoken-%s.%s"
+                % (uuid.uuid4().hex[:20], secrets.token_urlsafe(32))
+            ),
+        )
+        status, _headers, conflict = call_api(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
+            changed,
+            extra_headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": key,
+            },
         )
-        self._assert_error(status, replay, 410, "invite_redeemed")
-        self.assertNotIn("agentTokenSecret", replay)
+        self._assert_error(status, conflict, 409, "idempotency_conflict")
+        status, _headers, different_key = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            body,
+            extra_headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": "invite-redeem-changed-"
+                + uuid.uuid4().hex
+            },
+        )
+        self._assert_error(status, different_key, 409, "idempotency_conflict")
+        status, _headers, me = call_api("/api/matm/me", token=candidate)
+        self.assertEqual(200, status, me)
 
         status, _headers, inventory_after = call_api(
             "/api/matm/access/agent-tokens", "GET", token=self.master_token
@@ -696,15 +894,184 @@ class GovernedAgentAccessApiContract:
         self._assert_not_persisted(self.master_token, invite_secret, redeemed["agentTokenSecret"])
         self.assertEqual(issued["invite"]["inviteId"], redeemed["invite"]["inviteId"])
 
+    def test_redemption_receipt_replays_after_revocation_state_change_and_reopen(self):
+        request = self._request_access(requested_name="durable-receipt-agent")
+        self._approve(request["requestId"])
+        issued, invite_secret = self._issue(request["requestId"])
+        body, key, candidate = self._redemption_request(invite_secret)
+        headers = {
+            "CONTENT_TYPE": "application/json",
+            "HTTP_IDEMPOTENCY_KEY": key,
+        }
+        status, _response_headers, first_body = call_api_raw(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            body,
+            extra_headers=headers,
+        )
+        self.assertEqual(201, status, first_body)
+        first = json.loads(first_body)
+        invite_id = issued["invite"]["inviteId"]
+        receipt_before = self._persisted_redemption_receipt(invite_id)
+        self.assertTrue(receipt_before)
+        self.assertNotIn(invite_secret, receipt_before)
+        self.assertNotIn(candidate, receipt_before)
+
+        credential_id = first["principal"]["credentialId"]
+        status, _response_headers, revoked = call_api(
+            "/api/matm/access/agent-tokens/%s/revoke" % credential_id,
+            "POST",
+            {},
+            self.master_token,
+            extra_headers={
+                "HTTP_IDEMPOTENCY_KEY": "durable-receipt-revoke-"
+                + uuid.uuid4().hex
+            },
+        )
+        self.assertEqual(200, status, revoked)
+        self._archive_entry_room(first["onboarding"]["entryRoom"]["roomId"])
+
+        # Every API call creates a fresh FileStore/SQLiteStore instance. This
+        # retry therefore proves reopen behavior as well as state independence.
+        status, _response_headers, replay_body = call_api_raw(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            body,
+            extra_headers=headers,
+        )
+        self.assertEqual(201, status, replay_body)
+        self.assertEqual(first_body, replay_body)
+        self.assertEqual(first, json.loads(replay_body))
+        self.assertEqual(
+            receipt_before, self._persisted_redemption_receipt(invite_id)
+        )
+
+        status, _response_headers, unavailable = call_api(
+            "/api/matm/me", token=candidate
+        )
+        self._assert_error(status, unavailable, 401, "invalid_token")
+        changed = dict(
+            body,
+            candidateAgentTokenSecret=(
+                "me_agent_v1.agenttoken-%s.%s"
+                % (uuid.uuid4().hex[:20], secrets.token_urlsafe(32))
+            ),
+        )
+        status, _response_headers, conflict = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            changed,
+            extra_headers=headers,
+        )
+        self._assert_error(status, conflict, 409, "idempotency_conflict")
+
+    def test_legacy_redeemed_row_without_valid_receipt_fails_closed(self):
+        for receipt_case, persisted_receipt in (
+            ("missing", None),
+            ("invalid", {"ok": True, "unexpected": "not-a-v1-receipt"}),
+        ):
+            with self.subTest(receipt_case=receipt_case):
+                request = self._request_access(
+                    requested_name="legacy-receipt-%s-agent" % receipt_case
+                )
+                self._approve(request["requestId"])
+                issued, invite_secret = self._issue(request["requestId"])
+                body, key, candidate = self._redemption_request(invite_secret)
+                headers = {
+                    "CONTENT_TYPE": "application/json",
+                    "HTTP_IDEMPOTENCY_KEY": key,
+                }
+                status, _response_headers, first = call_api_raw(
+                    "/api/matm/access/invites/redeem",
+                    "POST",
+                    body,
+                    extra_headers=headers,
+                )
+                self.assertEqual(201, status, first)
+
+                invite_id = issued["invite"]["inviteId"]
+                self._replace_persisted_redemption_receipt(
+                    invite_id, persisted_receipt
+                )
+                before = self._credential_and_audit_snapshot()
+
+                status, _response_headers, replay = call_api_raw(
+                    "/api/matm/access/invites/redeem",
+                    "POST",
+                    body,
+                    extra_headers=headers,
+                )
+                payload = json.loads(replay)
+                self._assert_error(
+                    status,
+                    payload,
+                    503,
+                    "invite_redemption_replay_unavailable",
+                )
+                self.assertNotIn(invite_secret.encode("utf-8"), replay)
+                self.assertNotIn(candidate.encode("utf-8"), replay)
+                self.assertEqual(before, self._credential_and_audit_snapshot())
+
+    def test_redemption_requires_json_bounds_body_and_rate_limits_source(self):
+        request = self._request_access()
+        self._approve(request["requestId"])
+        _issued, invite_secret = self._issue(request["requestId"])
+        body, key, _candidate = self._redemption_request(invite_secret)
+
+        status, _headers, wrong_type = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            body,
+            extra_headers={"HTTP_IDEMPOTENCY_KEY": key},
+        )
+        self._assert_error(status, wrong_type, 415, "json_content_type_required")
+
+        status, _headers, oversized = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            dict(body, unexpected="x" * 5000),
+            extra_headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": key,
+            },
+        )
+        self._assert_error(status, oversized, 413, "request_body_too_large")
+
+        for index in range(18):
+            status, _headers, rejected = call_api(
+                "/api/matm/access/invites/redeem",
+                "POST",
+                {
+                    "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+                    "inviteSecret": "invalid",
+                    "candidateAgentTokenSecret": "invalid",
+                },
+                extra_headers={
+                    "CONTENT_TYPE": "application/json",
+                    "HTTP_IDEMPOTENCY_KEY": "rate-test-%04d-0123456789" % index,
+                },
+            )
+            self._assert_error(
+                status, rejected, 422, "invite_redemption_request_invalid"
+            )
+        status, _headers, limited = call_api(
+            "/api/matm/access/invites/redeem",
+            "POST",
+            body,
+            extra_headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": "rate-test-terminal-0123456789",
+            },
+        )
+        self._assert_error(status, limited, 429, "rate_limited")
+
     def test_expired_and_revoked_invites_never_issue_agent_credentials(self):
         expired_request = self._request_access(requested_name="expiring-escape-agent")
         self._approve(expired_request["requestId"])
         expired_issue, expired_secret = self._issue(expired_request["requestId"], expires_in_seconds=60)
         self._expire_invite(expired_issue["invite"]["inviteId"])
-        status, _headers, expired = call_api(
-            "/api/matm/access/invites/redeem", "POST", {"inviteSecret": expired_secret}
-        )
-        self._assert_error(status, expired, 410, "invite_expired")
+        expired = self._redeem(expired_secret, expected_status=410)
+        self.assertEqual("invite_expired", expired["error"]["code"])
         expired_reissue, expired_reissue_secret = self._issue(expired_request["requestId"])
         self.assertNotEqual(
             expired_issue["invite"]["inviteId"],
@@ -731,10 +1098,8 @@ class GovernedAgentAccessApiContract:
         self.assertEqual(200, status, revoked)
         self.assertEqual("revoked", revoked["invite"]["status"])
         self._assert_no_governed_credential(revoked)
-        status, _headers, rejected = call_api(
-            "/api/matm/access/invites/redeem", "POST", {"inviteSecret": revoked_secret}
-        )
-        self._assert_error(status, rejected, 410, "invite_revoked")
+        rejected = self._redeem(revoked_secret, expected_status=410)
+        self.assertEqual("invite_revoked", rejected["error"]["code"])
 
     def test_access_retry_contract_and_lost_invite_response_recovery(self):
         request_body = self._request_body(requested_name="retry-contract-agent")
@@ -889,23 +1254,19 @@ class GovernedAgentAccessApiContract:
         second_invite_id = second_issue["invite"]["inviteId"]
         self.assertNotEqual(first_invite_id, second_invite_id)
         self.assertNotEqual(first_secret, second_secret)
-        status, _headers, old_secret_rejected = call_api(
-            "/api/matm/access/invites/redeem",
-            "POST",
-            {"inviteSecret": first_secret},
-        )
-        self._assert_error(status, old_secret_rejected, 401, "invalid_invite")
+        old_secret_rejected = self._redeem(first_secret, expected_status=401)
+        self.assertEqual("invalid_invite", old_secret_rejected["error"]["code"])
 
-        status, _headers, rejected_redeem_key = call_api(
+        redeem_body, _redeem_key, _candidate = self._redemption_request(
+            second_secret
+        )
+        status, _headers, missing_redeem_key = call_api(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": second_secret},
-            extra_headers={
-                "HTTP_IDEMPOTENCY_KEY": "redeem-secret-replay-forbidden"
-            },
+            redeem_body,
         )
         self._assert_error(
-            status, rejected_redeem_key, 422, "idempotency_key_not_allowed"
+            status, missing_redeem_key, 422, "idempotency_key_required"
         )
         redeemed = self._redeem(second_secret)
         credential_id = redeemed["principal"]["credentialId"]
@@ -1018,12 +1379,19 @@ class GovernedAgentAccessApiContract:
         )
         self.assertFalse(receipt["polling"]["pushClaimed"])
         self.assertFalse(receipt["credentialPersistence"]["sourceControlAllowed"])
-        self.assertTrue(
+        self.assertFalse(
             receipt["credentialPersistence"]["credentialReturnedOnce"]
         )
+        self.assertTrue(
+            receipt["credentialPersistence"]["clientGeneratedBeforeRedemption"]
+        )
+        self.assertTrue(receipt["credentialPersistence"]["exactRetrySupported"])
         self.assertEqual(
-            ".local-secrets/agents/%s.json" % principal["agentId"],
-            receipt["credentialPersistence"]["defaultRelativePath"],
+            "installer_managed_os_protected",
+            receipt["credentialPersistence"]["storage"],
+        )
+        self.assertNotIn(
+            "defaultRelativePath", receipt["credentialPersistence"]
         )
         self.assertNotIn(token, json.dumps(receipt, sort_keys=True))
         self.assertTrue(receipt["valuesRedacted"])
@@ -1043,21 +1411,22 @@ class GovernedAgentAccessApiContract:
         self.assertNotIn("onboardingEntryRoomId", persisted_invite)
         self._assert_no_governed_credential(inventory)
 
-        credential_document = {
-            "schemaVersion": receipt["credentialPersistence"]["schemaVersion"],
-            "baseUrl": receipt["credentialPersistence"]["serviceBaseUrl"],
-            "workspaceId": receipt["workspaceId"],
-            "agentId": receipt["agentId"],
-            "agentTokenSecret": token,
-        }
         self.assertEqual(
+            {
+                "schemaVersion",
+                "profileId",
+                "baseUrl",
+                "workspaceId",
+                "agentId",
+                "credentialProtection",
+                "protectedAgentToken",
+            },
             set(receipt["credentialPersistence"]["requiredFields"]),
-            set(credential_document),
         )
         status, _headers, me = call_api(
             receipt["credentialPersistence"]["scopeRefreshRoute"],
-            token=credential_document["agentTokenSecret"],
-            query="workspace_id=" + credential_document["workspaceId"],
+            token=token,
+            query="workspace_id=" + receipt["workspaceId"],
         )
         self.assertEqual(200, status, me)
         self.assertEqual(receipt["agentId"], me["principal"]["agentId"])
@@ -1229,13 +1598,9 @@ class GovernedAgentAccessApiContract:
         self.assertEqual(stale_room["roomId"], persisted_selection["entryRoomId"])
         self._remove_meeting_room(stale_room["roomId"])
         before_redeem_counts = self._access_counts()
-        status, _headers, rejected = call_api(
-            "/api/matm/access/invites/redeem",
-            "POST",
-            {"inviteSecret": invite_secret},
-        )
-        self._assert_error(
-            status, rejected, 409, "onboarding_entry_unavailable"
+        rejected = self._redeem(invite_secret, expected_status=409)
+        self.assertEqual(
+            "onboarding_entry_unavailable", rejected["error"]["code"]
         )
         self.assertEqual(before_redeem_counts, self._access_counts())
 
@@ -1536,7 +1901,7 @@ class GovernedAgentAccessApiContract:
         self.assertEqual(self.project_id, me["principal"]["resourceContext"]["projectId"])
         self.assertEqual(self.workspace_id, me["principal"]["resourceContext"]["workspaceId"])
 
-    def test_reusing_the_exact_same_invite_url_is_terminal(self):
+    def test_reusing_the_exact_same_invite_url_replays_the_same_receipt(self):
         request = self._request_access(requested_name="exact-url-replay-agent")
         self._approve(request["requestId"])
         issued, _invite_secret = self._issue(request["requestId"])
@@ -1548,11 +1913,8 @@ class GovernedAgentAccessApiContract:
 
         second_secret = parse_qs(urlsplit(exact_invite_url).fragment, strict_parsing=True)["invite"][0]
         self.assertEqual(first_secret, second_secret)
-        status, _headers, replay = call_api(
-            "/api/matm/access/invites/redeem", "POST", {"inviteSecret": second_secret}
-        )
-        self._assert_error(status, replay, 410, "invite_redeemed")
-        self.assertNotIn("agentTokenSecret", replay)
+        replay = self._redeem(second_secret)
+        self.assertEqual(first, replay)
         self.assertEqual(counts_after_first, self._access_counts())
         self._assert_not_persisted(first_secret, first["agentTokenSecret"])
 

@@ -96,6 +96,7 @@ from .storage import (
     mysql_config_diagnostics,
     mysql_connection_stage_diagnostics,
     normalize_project_id,
+    validate_agent_invite_redemption_body,
     validate_bootstrap_account_body,
 )
 from .uai_memory import virtual_uai_contract
@@ -178,6 +179,7 @@ _CONNECTOR_HUMAN_CANCEL_ROUTE = re.compile(
 )
 _CONNECTOR_MAX_JSON_RESPONSE_BYTES = 65536
 _CONNECTOR_MAX_JSON_REQUEST_BYTES = 32768
+_AGENT_INVITE_REDEMPTION_MAX_JSON_BYTES = 4096
 _CONNECTOR_JSON_HEADERS = (
     ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
     ("Pragma", "no-cache"),
@@ -1865,6 +1867,9 @@ def _access_problem(start_response, code, detail=None):
         "company_master_candidate_invalid": "422 Unprocessable Entity",
         "company_master_metadata_invalid": "422 Unprocessable Entity",
         "company_master_delegation_invalid": "422 Unprocessable Entity",
+        "invite_redemption_request_invalid": "422 Unprocessable Entity",
+        "json_content_type_required": "415 Unsupported Media Type",
+        "request_body_too_large": "413 Payload Too Large",
         "top_level_agent_master_credential_request_invalid": "422 Unprocessable Entity",
         "referenced_agent_token_invalid": "422 Unprocessable Entity",
         "agent_name_unavailable": "409 Conflict",
@@ -1876,6 +1881,7 @@ def _access_problem(start_response, code, detail=None):
         "invite_not_revocable": "409 Conflict",
         "agent_token_already_revoked": "409 Conflict",
         "idempotency_conflict": "409 Conflict",
+        "candidate_agent_token_conflict": "409 Conflict",
         "company_master_credential_exists": "409 Conflict",
         "company_master_credential_limit": "409 Conflict",
         "onboarding_workspace_required": "409 Conflict",
@@ -1887,6 +1893,7 @@ def _access_problem(start_response, code, detail=None):
         "invite_unavailable": "401 Unauthorized",
         "rate_limited": "429 Too Many Requests",
         "credential_system_not_configured": "503 Service Unavailable",
+        "invite_redemption_replay_unavailable": "503 Service Unavailable",
     }
     defaults = {
         "invalid_token": "A valid governed bearer credential is required.",
@@ -1909,8 +1916,13 @@ def _access_problem(start_response, code, detail=None):
         "workspace_not_found": "The selected workspace was not found in the authenticated company.",
         "idempotency_key_required": "A high-entropy Idempotency-Key header is required.",
         "idempotency_key_invalid": "The Idempotency-Key header is invalid.",
-        "idempotency_key_not_allowed": "One-time invitation issue and redemption operations do not accept Idempotency-Key because their raw secret responses are never persisted or replayed.",
-        "idempotency_conflict": "The Idempotency-Key was already used for a different company-master credential request.",
+        "idempotency_key_not_allowed": "One-time invitation issuance does not accept Idempotency-Key because its raw secret response is never persisted or replayed.",
+        "idempotency_conflict": "The Idempotency-Key was already bound to a different request.",
+        "invite_redemption_request_invalid": "Invitation redemption requires the exact v1 schema with one invitation and one client-generated agent credential candidate.",
+        "json_content_type_required": "Invitation redemption accepts only application/json.",
+        "request_body_too_large": "The invitation redemption body exceeds the published size limit.",
+        "candidate_agent_token_conflict": "The client-generated agent credential candidate is already registered or unavailable.",
+        "invite_redemption_replay_unavailable": "The committed invitation redemption receipt could not be reconstructed safely.",
         "company_master_candidate_invalid": "The candidate must be a newly generated company-master credential in the published v1 format.",
         "company_master_metadata_invalid": "The company-master label and principal name must be printable text from 1 through 80 characters.",
         "company_master_delegation_invalid": "The request must match the published company-master delegation v1 schema exactly.",
@@ -5828,13 +5840,13 @@ _ACCESS_IDEMPOTENCY_REQUIRED_POST_ROUTE_TEMPLATES = frozenset(
         "/api/matm/access/agent-name-requests",
         "/api/matm/access/agent-name-requests/{requestId}/decision",
         "/api/matm/access/invites/{inviteId}/revoke",
+        "/api/matm/access/invites/redeem",
         "/api/matm/access/agent-tokens/{credentialId}/revoke",
     }
 )
 _ACCESS_ONE_TIME_SECRET_POST_ROUTE_TEMPLATES = frozenset(
     {
         "/api/matm/access/invites",
-        "/api/matm/access/invites/redeem",
     }
 )
 _HUMAN_COMPANY_ROUTE = re.compile(
@@ -5882,6 +5894,27 @@ def _access_body(environ, start_response):
         return None, problem(start_response, "400 Bad Request", "Invalid JSON", "Request body must be JSON.", "invalid_json")
     if not isinstance(body, dict):
         return None, problem(start_response, "422 Unprocessable Entity", "Object required", "Access operations require a JSON object.", "access_object_required")
+    return body, None
+
+
+def _agent_invite_redemption_body(environ, start_response):
+    if not _connector_content_type_is_json(environ):
+        return None, _access_problem(start_response, "json_content_type_required")
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or "0")
+    except (TypeError, ValueError):
+        return None, _access_problem(start_response, "invite_redemption_request_invalid")
+    if length < 0 or length > _AGENT_INVITE_REDEMPTION_MAX_JSON_BYTES:
+        return None, _access_problem(start_response, "request_body_too_large")
+    raw = environ["wsgi.input"].read(length) if length else b""
+    if len(raw) > _AGENT_INVITE_REDEMPTION_MAX_JSON_BYTES:
+        return None, _access_problem(start_response, "request_body_too_large")
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeError, ValueError, RecursionError):
+        return None, _access_problem(start_response, "invite_redemption_request_invalid")
+    if type(body) is not dict:
+        return None, _access_problem(start_response, "invite_redemption_request_invalid")
     return body, None
 
 
@@ -6130,19 +6163,23 @@ def _agent_onboarding_receipt(invite, principal, persisted_onboarding):
             "pushClaimed": False,
         },
         "credentialPersistence": {
-            "schemaVersion": "memoryendpoints.agent_credential_file.v1",
+            "schemaVersion": "memoryendpoints.agent_credential_file.v2",
             "serviceBaseUrl": SITE_URL,
-            "defaultRelativePath": ".local-secrets/agents/%s.json" % agent_id,
+            "storage": "installer_managed_os_protected",
             "requiredFields": [
                 "schemaVersion",
+                "profileId",
                 "baseUrl",
                 "workspaceId",
                 "agentId",
-                "agentTokenSecret",
+                "credentialProtection",
+                "protectedAgentToken",
             ],
             "scopeRefreshRoute": "/api/matm/me",
             "sourceControlAllowed": False,
-            "credentialReturnedOnce": True,
+            "clientGeneratedBeforeRedemption": True,
+            "credentialReturnedOnce": False,
+            "exactRetrySupported": True,
         },
         "valuesRedacted": True,
         "rawCredentialExposed": False,
@@ -7676,13 +7713,34 @@ def route_access(environ, start_response, path):
     if path == "/api/matm/access/invites/redeem":
         if method != "POST":
             return problem(start_response, "405 Method Not Allowed", "Method not allowed", "Use POST to redeem an invitation.", "method_not_allowed", headers=[("Allow", "POST")])
-        if _idempotency_key(environ):
-            return _access_problem(start_response, "idempotency_key_not_allowed")
-        body, rejected = _access_body(environ, start_response)
+        idempotency_key, rejected = _validated_idempotency_key_or_problem(
+            environ, start_response
+        )
         if rejected:
             return rejected
         try:
-            result = store.redeem_agent_invite(body.get("inviteSecret"))
+            rate = store.consume_connector_rate_limit(
+                "agentInviteRedemption",
+                str(environ.get("REMOTE_ADDR") or "unknown"),
+                20,
+                600,
+            )
+        except (OSError, RuntimeError, ValueError):
+            return _access_problem(
+                start_response, "credential_system_not_configured"
+            )
+        if not rate.get("allowed"):
+            return _access_problem(start_response, "rate_limited")
+        body, rejected = _agent_invite_redemption_body(environ, start_response)
+        if rejected:
+            return rejected
+        body = validate_agent_invite_redemption_body(body)
+        if not body:
+            return _access_problem(
+                start_response, "invite_redemption_request_invalid"
+            )
+        try:
+            result = store.redeem_agent_invite(body, idempotency_key)
         except RuntimeError:
             return _access_problem(start_response, "credential_system_not_configured")
         if not result.get("ok"):
@@ -7692,17 +7750,22 @@ def route_access(environ, start_response, path):
         onboarding = _agent_onboarding_receipt(
             invite, principal, result.get("onboarding") or {}
         )
-        return one_time_secret_response(
+        return json_response(
             start_response,
             {
                 "ok": True,
-                "agentTokenSecret": result.get("agentToken"),
                 "principal": _public_auth_principal(principal),
                 "invite": invite,
                 "onboarding": onboarding,
+                "candidateCredentialAccepted": True,
+                "credentialReturnedOnce": False,
+                "idempotencySupported": True,
+                "replaySafe": True,
                 "valuesRedacted": True,
+                "rawCredentialExposed": False,
                 "rawPayloadExposed": False,
             },
+            "201 Created",
         )
 
     access_paths = (

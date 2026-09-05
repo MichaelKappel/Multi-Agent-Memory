@@ -1,3 +1,4 @@
+import inspect
 import sqlite3
 import tempfile
 import threading
@@ -218,6 +219,84 @@ class SQLiteSchemaInitializationTests(
                 canonical,
             )
 
+    def test_v6_database_converges_invite_redemption_replay_bindings(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "store.sqlite3"
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            with closing(sqlite3.connect(str(path))) as connection:
+                connection.execute(
+                    "DROP INDEX ux_sqlite_agent_invites_redemption_idempotency"
+                )
+                connection.execute(
+                    "ALTER TABLE matm_agent_invites DROP COLUMN redemption_idempotency_hash"
+                )
+                connection.execute(
+                    "ALTER TABLE matm_agent_invites DROP COLUMN redemption_request_digest"
+                )
+                connection.execute(
+                    "ALTER TABLE matm_agent_invites DROP COLUMN redemption_receipt_json"
+                )
+                connection.execute("PRAGMA user_version = 6")
+                connection.commit()
+
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            self.assertEqual(_SQLITE_SCHEMA_VERSION, self._user_version(path))
+            with closing(sqlite3.connect(str(path))) as connection:
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(matm_agent_invites)"
+                    )
+                }
+                indexes = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA index_list(matm_agent_invites)"
+                    )
+                }
+            self.assertTrue(
+                {
+                    "redemption_idempotency_hash",
+                    "redemption_request_digest",
+                    "redemption_receipt_json",
+                }.issubset(columns)
+            )
+            self.assertIn(
+                "ux_sqlite_agent_invites_redemption_idempotency", indexes
+            )
+            canonical = (
+                Path(__file__).resolve().parents[1]
+                / "docs"
+                / "database-schema-canonical.sql"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                "UNIQUE KEY ux_matm_agent_invites_redemption_idempotency",
+                canonical,
+            )
+            self.assertIn("redemption_receipt_json LONGTEXT NULL", canonical)
+
+    def test_current_v7_database_converges_missing_redemption_receipt_column(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "store.sqlite3"
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            with closing(sqlite3.connect(str(path))) as connection:
+                connection.execute(
+                    "ALTER TABLE matm_agent_invites DROP COLUMN redemption_receipt_json"
+                )
+                connection.commit()
+            self.assertEqual(_SQLITE_SCHEMA_VERSION, self._user_version(path))
+
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            self.assertEqual(_SQLITE_SCHEMA_VERSION, self._user_version(path))
+            with closing(sqlite3.connect(str(path))) as connection:
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(matm_agent_invites)"
+                    )
+                }
+            self.assertIn("redemption_receipt_json", columns)
+
     def test_commons_schema_has_canonical_tables_indexes_and_foreign_keys(self):
         expected_tables = {
             "matm_commons_policies",
@@ -417,6 +496,79 @@ class SQLiteSchemaInitializationTests(
                 "ON matm_workspaces (workspace_id, company_id)"
             ],
             connection.statements,
+        )
+
+        connection = FakeMySQLConnection()
+        store._ensure_agent_invite_redemption_schema_columns(connection)
+        self.assertEqual(
+            [
+                "ALTER TABLE matm_agent_invites ADD COLUMN "
+                "redemption_idempotency_hash CHAR(64) NULL",
+                "ALTER TABLE matm_agent_invites ADD COLUMN "
+                "redemption_request_digest CHAR(64) NULL",
+                "ALTER TABLE matm_agent_invites ADD COLUMN "
+                "redemption_receipt_json LONGTEXT NULL",
+                "CREATE UNIQUE INDEX "
+                "ux_matm_agent_invites_redemption_idempotency "
+                "ON matm_agent_invites (redemption_idempotency_hash)",
+            ],
+            connection.statements,
+        )
+
+    def test_mysql_invite_schema_convergence_accepts_only_exact_object_exists_codes(self):
+        class MySQLError(Exception):
+            pass
+
+        class ExistingObjectsConnection:
+            dialect = "mysql"
+
+            def execute(self, statement, _params=None):
+                normalized = " ".join(statement.split())
+                code = 1061 if normalized.startswith("CREATE UNIQUE INDEX") else 1060
+                raise MySQLError(code, "object already exists")
+
+        store = object.__new__(MySQLStore)
+        store._ensure_agent_invite_redemption_schema_columns(
+            ExistingObjectsConnection()
+        )
+
+        class UnexpectedFailureConnection:
+            dialect = "mysql"
+
+            def __init__(self, column_code=1060, index_code=1061):
+                self.column_code = column_code
+                self.index_code = index_code
+
+            def execute(self, statement, _params=None):
+                normalized = " ".join(statement.split())
+                code = (
+                    self.index_code
+                    if normalized.startswith("CREATE UNIQUE INDEX")
+                    else self.column_code
+                )
+                raise MySQLError(code, "duplicate-shaped failure")
+
+        for connection in (
+            UnexpectedFailureConnection(column_code=1061),
+            UnexpectedFailureConnection(column_code=1062),
+            UnexpectedFailureConnection(column_code="duplicate column"),
+            UnexpectedFailureConnection(index_code=1060),
+            UnexpectedFailureConnection(index_code=1062),
+        ):
+            with self.subTest(
+                column_code=connection.column_code,
+                index_code=connection.index_code,
+            ):
+                with self.assertRaises(MySQLError):
+                    store._ensure_agent_invite_redemption_schema_columns(
+                        connection
+                    )
+
+    def test_mysql_schema_convergence_calls_invite_redemption_upgrade(self):
+        source = inspect.getsource(MySQLStore._ensure_schema)
+        self.assertIn(
+            "self._ensure_agent_invite_redemption_schema_columns(connection)",
+            source,
         )
 
     def test_duplicate_key_classifier_is_backend_and_error_specific(self):

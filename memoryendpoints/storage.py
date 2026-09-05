@@ -94,7 +94,7 @@ from .uai_memory import (
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
-_SQLITE_SCHEMA_VERSION = 6
+_SQLITE_SCHEMA_VERSION = 7
 _MYSQL_SCHEMA_READY = set()
 _IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
 _IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
@@ -259,6 +259,60 @@ def _parse_governed_credential(token, expected_kind):
     if len(parts) != 3 or parts[0] != "me_%s_v1" % expected_kind or not parts[1] or not parts[2]:
         return None, None
     return parts[1], parts[2]
+
+
+_AGENT_INVITE_REDEMPTION_SCHEMA = "memoryendpoints.agent_invite_redemption.v1"
+_AGENT_INVITE_REDEMPTION_KEYS = frozenset(
+    ("schemaVersion", "inviteSecret", "candidateAgentTokenSecret")
+)
+
+
+def validate_agent_invite_redemption_body(body):
+    """Validate the canonical client-retained invitation redemption request."""
+    if type(body) is not dict or set(body) != _AGENT_INVITE_REDEMPTION_KEYS:
+        return None
+    if body.get("schemaVersion") != _AGENT_INVITE_REDEMPTION_SCHEMA:
+        return None
+    invite_id, invite_secret = _parse_governed_credential(
+        body.get("inviteSecret"), "invite"
+    )
+    agent_token_id, agent_secret = _parse_governed_credential(
+        body.get("candidateAgentTokenSecret"), "agent"
+    )
+    if (
+        not re.fullmatch(r"invite-[0-9a-f]{20}", str(invite_id or ""))
+        or not re.fullmatch(r"agenttoken-[0-9a-f]{20}", str(agent_token_id or ""))
+        or not re.fullmatch(r"[A-Za-z0-9_-]{43}", str(invite_secret or ""))
+        or not re.fullmatch(r"[A-Za-z0-9_-]{43}", str(agent_secret or ""))
+    ):
+        return None
+    return {
+        "schemaVersion": _AGENT_INVITE_REDEMPTION_SCHEMA,
+        "inviteSecret": body["inviteSecret"],
+        "candidateAgentTokenSecret": body["candidateAgentTokenSecret"],
+    }
+
+
+def agent_invite_redemption_request_digest(body):
+    normalized = validate_agent_invite_redemption_body(body)
+    if not normalized:
+        return ""
+    material = json.dumps(
+        normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    return hashlib.sha256(
+        b"memoryendpoints.agent-invite-redemption-request.v1\0" + material
+    ).hexdigest()
+
+
+def agent_invite_redemption_idempotency_digest(value):
+    key = str(value or "")
+    if not key:
+        return ""
+    return hashlib.sha256(
+        b"memoryendpoints.agent-invite-redemption-idempotency.v1\0"
+        + key.encode("utf-8")
+    ).hexdigest()
 
 
 _COMPANY_MASTER_DELEGATION_SCHEMA = "memoryendpoints.company_master_delegation.v1"
@@ -442,6 +496,17 @@ def _is_sql_duplicate_key_conflict(exc):
         except (TypeError, ValueError):
             return False
     return False
+
+
+def _mysql_error_number(exc):
+    """Return a MySQL numeric error code without trusting message text."""
+    error_number = getattr(exc, "errno", None)
+    if error_number is None and getattr(exc, "args", ()):
+        error_number = exc.args[0]
+    try:
+        return int(error_number)
+    except (TypeError, ValueError):
+        return None
 
 
 def _idempotency_conflict_response():
@@ -1825,6 +1890,7 @@ _CONNECTOR_RATE_BUCKETS = frozenset(
         "commonsBrowserSession",
         "bootstrapSourceRequest",
         "bootstrapCapabilityRequest",
+        "agentInviteRedemption",
     )
 )
 _CONNECTOR_RATE_CLEANUP_BATCH = 128
@@ -2586,6 +2652,94 @@ def _agent_access_error(code, **details):
     if details:
         result["details"] = _public_value(details)
     return result
+
+
+def _agent_invite_redemption_success(
+    invite,
+    identity,
+    grant,
+    token_record,
+    onboarding,
+    idempotent_replay,
+):
+    return {
+        "ok": True,
+        "invite": _public_agent_invite(invite),
+        "principal": _public_agent_principal(identity, grant, token_record),
+        "onboarding": onboarding,
+        "candidateCredentialAccepted": True,
+        "credentialReturnedOnce": False,
+        "idempotencySupported": True,
+        "replaySafe": True,
+        "_idempotentReplay": bool(idempotent_replay),
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+    }
+
+
+_AGENT_INVITE_REDEMPTION_RECEIPT_KEYS = frozenset(
+    (
+        "ok",
+        "invite",
+        "principal",
+        "onboarding",
+        "candidateCredentialAccepted",
+        "credentialReturnedOnce",
+        "idempotencySupported",
+        "replaySafe",
+        "valuesRedacted",
+        "rawCredentialExposed",
+        "rawPayloadExposed",
+    )
+)
+
+
+def _agent_invite_redemption_receipt(
+    invite,
+    identity,
+    grant,
+    token_record,
+    onboarding,
+):
+    """Freeze the first successful redemption's public-safe result."""
+    result = _agent_invite_redemption_success(
+        invite,
+        identity,
+        grant,
+        token_record,
+        onboarding,
+        False,
+    )
+    result.pop("_idempotentReplay", None)
+    return json.loads(
+        json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    )
+
+
+def _agent_invite_redemption_result_from_receipt(receipt, idempotent_replay):
+    """Return a validated receipt without re-evaluating current credential state."""
+    if type(receipt) is not dict or set(receipt) != _AGENT_INVITE_REDEMPTION_RECEIPT_KEYS:
+        return None
+    if (
+        receipt.get("ok") is not True
+        or receipt.get("candidateCredentialAccepted") is not True
+        or receipt.get("credentialReturnedOnce") is not False
+        or receipt.get("idempotencySupported") is not True
+        or receipt.get("replaySafe") is not True
+        or receipt.get("valuesRedacted") is not True
+        or receipt.get("rawCredentialExposed") is not False
+        or receipt.get("rawPayloadExposed") is not False
+        or type(receipt.get("invite")) is not dict
+        or type(receipt.get("principal")) is not dict
+        or type(receipt.get("onboarding")) is not dict
+    ):
+        return None
+    frozen = json.loads(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    )
+    frozen["_idempotentReplay"] = bool(idempotent_replay)
+    return frozen
 
 
 def _normalize_agent_access_name(value):
@@ -8554,21 +8708,62 @@ class FileStore(object):
                 "valuesRedacted": True,
             }
 
-    def redeem_agent_invite(self, invite_secret):
-        if not invite_secret:
-            return _agent_access_error("invite_unavailable")
-        invite_id, secret = _parse_governed_credential(invite_secret, "invite")
-        if not invite_id:
-            return _agent_access_error("invite_unavailable")
+    def redeem_agent_invite(self, redemption, idempotency_key):
+        redemption = validate_agent_invite_redemption_body(redemption)
+        request_digest = agent_invite_redemption_request_digest(redemption)
+        idempotency_digest = agent_invite_redemption_idempotency_digest(
+            idempotency_key
+        )
+        if not redemption or not request_digest or not idempotency_digest:
+            return _agent_access_error("invite_redemption_request_invalid")
+        invite_id, secret = _parse_governed_credential(
+            redemption["inviteSecret"], "invite"
+        )
+        agent_token_id, agent_secret = _parse_governed_credential(
+            redemption["candidateAgentTokenSecret"], "agent"
+        )
         with _LOCK:
             data = self._load()
+            for existing_invite_id, existing_invite in data.get(
+                "agentInvites", {}
+            ).items():
+                if not secrets.compare_digest(
+                    str(existing_invite.get("redemptionIdempotencyHash") or ""),
+                    idempotency_digest,
+                ):
+                    continue
+                if (
+                    existing_invite_id != invite_id
+                    or not secrets.compare_digest(
+                        str(existing_invite.get("redemptionRequestDigest") or ""),
+                        request_digest,
+                    )
+                ):
+                    return _agent_access_error("idempotency_conflict")
             invite = data.get("agentInvites", {}).get(invite_id)
             if invite:
                 expected = _governed_credential_digest("invite", invite.get("companyId"), invite_id, secret)
                 if not secrets.compare_digest(str(invite.get("secretHash") or ""), expected):
                     invite = None
             if invite and (invite.get("status") == "redeemed" or invite.get("redeemedAt")):
-                return _agent_access_error("invite_redeemed")
+                if not (
+                    secrets.compare_digest(
+                        str(invite.get("redemptionIdempotencyHash") or ""),
+                        idempotency_digest,
+                    )
+                    and secrets.compare_digest(
+                        str(invite.get("redemptionRequestDigest") or ""),
+                        request_digest,
+                    )
+                    and invite.get("agentTokenId") == agent_token_id
+                ):
+                    return _agent_access_error("idempotency_conflict")
+                receipt = _agent_invite_redemption_result_from_receipt(
+                    invite.get("redemptionReceipt"), True
+                )
+                if not receipt:
+                    return _agent_access_error("invite_redemption_replay_unavailable")
+                return receipt
             if invite and invite.get("status") == "revoked":
                 return _agent_access_error("invite_revoked")
             if invite and invite.get("status") == "expired":
@@ -8625,9 +8820,12 @@ class FileStore(object):
                     cursor_token = data.get("agentTokens", {}).get(ancestor_token_id) if ancestor_token_id else None
                     if ancestor_token_id and not cursor_token:
                         return _agent_access_error("referenced_agent_token_invalid")
+            if agent_token_id in data.get("agentTokens", {}):
+                return _agent_access_error("candidate_agent_token_conflict")
             grant_id = _id("grant")
-            agent_token_id = _id("agenttoken")
-            agent_token, agent_token_digest = _governed_credential("agent", invite.get("companyId"), agent_token_id)
+            agent_token_digest = _governed_credential_digest(
+                "agent", invite.get("companyId"), agent_token_id, agent_secret
+            )
             now = utc_now()
             workspace_id = self._agent_access_scope_workspace_data(data, invite.get("scopeType"), invite.get("scopeId"))
             project_id = invite.get("scopeId") if invite.get("scopeType") == "project" else None
@@ -8677,7 +8875,16 @@ class FileStore(object):
                         "revokedByMasterKeyId": invite.get("approvedByMasterKeyId"),
                     }
                 )
-            invite.update({"status": "redeemed", "redeemedAt": now, "grantId": grant_id, "agentTokenId": agent_token_id})
+            invite.update(
+                {
+                    "status": "redeemed",
+                    "redeemedAt": now,
+                    "grantId": grant_id,
+                    "agentTokenId": agent_token_id,
+                    "redemptionIdempotencyHash": idempotency_digest,
+                    "redemptionRequestDigest": request_digest,
+                }
+            )
             if workspace_id:
                 agent_key = "%s:%s" % (workspace_id, identity.get("agentId"))
                 data.setdefault("agents", {})[agent_key] = {
@@ -8687,20 +8894,20 @@ class FileStore(object):
                     "registeredAt": now,
                     "status": "active",
                 }
-            self.audit(data, "agent_invite.redeem", identity["agentId"], invite["inviteId"], workspace_id, {"grantId": grant_id, "agentTokenId": agent_token_id, "scopeType": grant["scopeType"], "scopeId": grant["scopeId"], "atomicReplacement": bool(predecessor_token), "supersedesTokenId": supersedes_token_id})
-            self._save(data)
             public_grant = dict(grant)
             if original_grant_id:
                 public_grant["publicGrantId"] = original_grant_id
-            return {
-                "ok": True,
-                "invite": _public_agent_invite(invite),
-                "principal": _public_agent_principal(identity, public_grant, token_record),
-                "agentToken": agent_token,
-                "onboarding": onboarding,
-                "credentialReturnedOnce": True,
-                "valuesRedacted": True,
-            }
+            receipt = _agent_invite_redemption_receipt(
+                invite,
+                identity,
+                public_grant,
+                token_record,
+                onboarding,
+            )
+            invite["redemptionReceipt"] = receipt
+            self.audit(data, "agent_invite.redeem", identity["agentId"], invite["inviteId"], workspace_id, {"grantId": grant_id, "agentTokenId": agent_token_id, "scopeType": grant["scopeType"], "scopeId": grant["scopeId"], "atomicReplacement": bool(predecessor_token), "supersedesTokenId": supersedes_token_id})
+            self._save(data)
+            return _agent_invite_redemption_result_from_receipt(receipt, False)
 
     def authenticate_agent_token(self, token, scope_type=None, scope_id=None):
         if not token:
@@ -12444,6 +12651,37 @@ class SQLiteStore(FileStore):
     def _ensure_sqlite_schema_current(self, connection):
         version = self._sqlite_user_version(connection)
         if version == _SQLITE_SCHEMA_VERSION:
+            # Schema v7 includes the immutable invitation-redemption receipt.
+            # Converge databases that reached v7 while that column was still
+            # being developed without changing or downgrading their version.
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(matm_agent_invites)"
+                )
+            }
+            indexes = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA index_list(matm_agent_invites)"
+                )
+            }
+            if {
+                "redemption_idempotency_hash",
+                "redemption_request_digest",
+                "redemption_receipt_json",
+            }.issubset(columns) and (
+                "ux_sqlite_agent_invites_redemption_idempotency" in indexes
+            ):
+                return
+            with _LOCK:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    self._ensure_agent_invite_redemption_schema_columns(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
             return
         if version > _SQLITE_SCHEMA_VERSION:
             raise RuntimeError(
@@ -13326,6 +13564,9 @@ class SQLiteStore(FileStore):
               revoked_by_master_key_id TEXT,
               grant_id TEXT,
               agent_token_id TEXT,
+              redemption_idempotency_hash TEXT,
+              redemption_request_digest TEXT,
+              redemption_receipt_json TEXT,
               assignment_context_json TEXT NOT NULL,
               onboarding_workspace_id TEXT NOT NULL,
               onboarding_entry_room_id TEXT NOT NULL,
@@ -14266,6 +14507,7 @@ class SQLiteStore(FileStore):
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
+        self._ensure_agent_invite_redemption_schema_columns(connection)
         self._ensure_outbound_mcp_schema_columns(connection)
         self._ensure_commons_schema_columns(connection)
 
@@ -14456,6 +14698,52 @@ class SQLiteStore(FileStore):
                 message = str(exc).lower()
                 if "duplicate column" not in message and "already exists" not in message:
                     raise
+
+    def _ensure_agent_invite_redemption_schema_columns(self, connection):
+        mysql = getattr(connection, "dialect", "") == "mysql"
+        additions = (
+            ("redemption_idempotency_hash", "CHAR(64) NULL" if mysql else "TEXT"),
+            ("redemption_request_digest", "CHAR(64) NULL" if mysql else "TEXT"),
+            ("redemption_receipt_json", "LONGTEXT NULL" if mysql else "TEXT"),
+        )
+        if mysql:
+            for column, definition in additions:
+                try:
+                    connection.execute(
+                        "ALTER TABLE matm_agent_invites ADD COLUMN %s %s"
+                        % (column, definition)
+                    )
+                except Exception as exc:
+                    if _mysql_error_number(exc) != 1060:
+                        raise
+        else:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(matm_agent_invites)"
+                )
+            }
+            for column, definition in additions:
+                if column not in columns:
+                    connection.execute(
+                        "ALTER TABLE matm_agent_invites ADD COLUMN %s %s"
+                        % (column, definition)
+                    )
+        if mysql:
+            try:
+                connection.execute(
+                    "CREATE UNIQUE INDEX ux_matm_agent_invites_redemption_idempotency "
+                    "ON matm_agent_invites (redemption_idempotency_hash)"
+                )
+            except Exception as exc:
+                if _mysql_error_number(exc) != 1061:
+                    raise
+        else:
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "ux_sqlite_agent_invites_redemption_idempotency "
+                "ON matm_agent_invites (redemption_idempotency_hash)"
+            )
 
     def _ensure_knowledge_schema_columns(self, connection):
         mysql = getattr(connection, "dialect", "") == "mysql"
@@ -20458,6 +20746,15 @@ class SQLiteStore(FileStore):
                         "revokedByMasterKeyId": row["revoked_by_master_key_id"],
                         "grantId": row["grant_id"],
                         "agentTokenId": row["agent_token_id"],
+                        "redemptionIdempotencyHash": row[
+                            "redemption_idempotency_hash"
+                        ],
+                        "redemptionRequestDigest": row[
+                            "redemption_request_digest"
+                        ],
+                        "redemptionReceipt": self._json_load(
+                            row["redemption_receipt_json"], None
+                        ),
                         "assignmentContext": self._json_load(row["assignment_context_json"], {}),
                         "onboardingWorkspaceId": row["onboarding_workspace_id"],
                         "onboardingEntryRoomId": row["onboarding_entry_room_id"],
@@ -21263,9 +21560,11 @@ class SQLiteStore(FileStore):
                               invite_id, request_id, company_id, agent_identity_id, token_hash,
                               scope_type, scope_id, status, created_at, expires_at, redeemed_at,
                               approved_by_master_key_id, revoked_at, revoked_by_master_key_id,
-                              grant_id, agent_token_id, assignment_context_json,
+                              grant_id, agent_token_id, redemption_idempotency_hash,
+                              redemption_request_digest, redemption_receipt_json,
+                              assignment_context_json,
                               onboarding_workspace_id, onboarding_entry_room_id
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 invite.get("inviteId") or invite_id,
@@ -21284,6 +21583,11 @@ class SQLiteStore(FileStore):
                                 invite.get("revokedByMasterKeyId"),
                                 invite.get("grantId"),
                                 invite.get("agentTokenId"),
+                                invite.get("redemptionIdempotencyHash"),
+                                invite.get("redemptionRequestDigest"),
+                                self._json_dump(invite.get("redemptionReceipt"))
+                                if invite.get("redemptionReceipt") is not None
+                                else None,
                                 self._json_dump(invite.get("assignmentContext") or {}),
                                 invite.get("onboardingWorkspaceId"),
                                 invite.get("onboardingEntryRoomId"),
@@ -22593,7 +22897,11 @@ class SQLiteStore(FileStore):
                                 created_at = ?, expires_at = ?, redeemed_at = NULL,
                                 approved_by_master_key_id = ?, revoked_at = NULL,
                                 revoked_by_master_key_id = NULL, grant_id = NULL,
-                                agent_token_id = NULL, assignment_context_json = ?,
+                                agent_token_id = NULL,
+                                redemption_idempotency_hash = NULL,
+                                redemption_request_digest = NULL,
+                                redemption_receipt_json = NULL,
+                                assignment_context_json = ?,
                                 onboarding_workspace_id = ?, onboarding_entry_room_id = ?
                             WHERE invite_id = ? AND request_id = ?
                               AND status IN ('revoked', 'expired')
@@ -22685,22 +22993,98 @@ class SQLiteStore(FileStore):
                         "onboardingEntryRoomId": onboarding.get("entryRoomId"),
                     }
         return {"ok": True, "request": self._agent_request_public_sql(dict(self._row_dict(request), invite_id=invite_id)), "invite": _public_agent_invite(invite), "inviteSecret": invite_secret, "credentialReturnedOnce": True, "valuesRedacted": True}
-    def redeem_agent_invite(self, invite_secret):
-        invite_id, secret = _parse_governed_credential(invite_secret, "invite")
-        if not invite_id:
-            return _agent_access_error("invite_unavailable")
+    def redeem_agent_invite(self, redemption, idempotency_key):
+        redemption = validate_agent_invite_redemption_body(redemption)
+        request_digest = agent_invite_redemption_request_digest(redemption)
+        idempotency_digest = agent_invite_redemption_idempotency_digest(
+            idempotency_key
+        )
+        if not redemption or not request_digest or not idempotency_digest:
+            return _agent_access_error("invite_redemption_request_invalid")
+        invite_id, secret = _parse_governed_credential(
+            redemption["inviteSecret"], "invite"
+        )
+        agent_token_id, agent_secret = _parse_governed_credential(
+            redemption["candidateAgentTokenSecret"], "agent"
+        )
         now = utc_now()
         with _LOCK:
             with self._open_connection() as connection:
                 with connection:
-                    invite = connection.execute("SELECT * FROM matm_agent_invites WHERE invite_id = ?", (invite_id,)).fetchone()
+                    mysql = getattr(connection, "dialect", "") == "mysql"
+                    if not mysql:
+                        # Serialize redemption before the first read so a second
+                        # SQLite worker observes the committed replay binding
+                        # instead of racing a stale issued-state snapshot.
+                        connection.execute("BEGIN IMMEDIATE")
+                    else:
+                        lock_name = (
+                            "matm-agent-invite-redeem-"
+                            + idempotency_digest[:32]
+                        )
+                        acquired = connection.execute(
+                            "SELECT GET_LOCK(?, 30) AS acquired", (lock_name,)
+                        ).fetchone()
+                        if not acquired or int(acquired.get("acquired") or 0) != 1:
+                            return _agent_access_error(
+                                "invite_redemption_replay_unavailable"
+                            )
+                    existing_binding_sql = (
+                        "SELECT invite_id, redemption_request_digest "
+                        "FROM matm_agent_invites "
+                        "WHERE redemption_idempotency_hash = ?"
+                        + (" FOR UPDATE" if mysql else "")
+                    )
+                    existing_binding = connection.execute(
+                        existing_binding_sql, (idempotency_digest,)
+                    ).fetchone()
+                    if existing_binding and (
+                        existing_binding["invite_id"] != invite_id
+                        or not secrets.compare_digest(
+                            str(
+                                existing_binding[
+                                    "redemption_request_digest"
+                                ]
+                                or ""
+                            ),
+                            request_digest,
+                        )
+                    ):
+                        return _agent_access_error("idempotency_conflict")
+                    invite_sql = (
+                        "SELECT * FROM matm_agent_invites WHERE invite_id = ?"
+                        + (" FOR UPDATE" if mysql else "")
+                    )
+                    invite = connection.execute(
+                        invite_sql, (invite_id,)
+                    ).fetchone()
                     if not invite:
                         return _agent_access_error("invite_unavailable")
                     expected = _governed_credential_digest("invite", invite["company_id"], invite_id, secret)
                     if not secrets.compare_digest(str(invite["token_hash"] or ""), expected):
                         return _agent_access_error("invite_unavailable")
                     if invite["status"] == "redeemed" or invite["redeemed_at"]:
-                        return _agent_access_error("invite_redeemed")
+                        if not (
+                            secrets.compare_digest(
+                                str(invite["redemption_idempotency_hash"] or ""),
+                                idempotency_digest,
+                            )
+                            and secrets.compare_digest(
+                                str(invite["redemption_request_digest"] or ""),
+                                request_digest,
+                            )
+                            and invite["agent_token_id"] == agent_token_id
+                        ):
+                            return _agent_access_error("idempotency_conflict")
+                        receipt = _agent_invite_redemption_result_from_receipt(
+                            self._json_load(invite["redemption_receipt_json"], None),
+                            True,
+                        )
+                        if not receipt:
+                            return _agent_access_error(
+                                "invite_redemption_replay_unavailable"
+                            )
+                        return receipt
                     if invite["status"] == "revoked":
                         return _agent_access_error("invite_revoked")
                     if invite["status"] == "expired":
@@ -22771,6 +23155,15 @@ class SQLiteStore(FileStore):
                                 return _agent_access_error("referenced_agent_token_invalid")
                             original_grant_id = ancestor["grant_id"]
                             ancestor_token_id = ancestor["ancestor_token_id"]
+                    target = self._agent_scope_details_sql(connection, invite["scope_type"], invite["scope_id"])
+                    if not target or target["companyId"] != invite["company_id"]:
+                        raise RuntimeError("Approved invite scope no longer belongs to its company.")
+                    existing_candidate = connection.execute(
+                        "SELECT agent_token_id FROM matm_agent_tokens WHERE agent_token_id = ?",
+                        (agent_token_id,),
+                    ).fetchone()
+                    if existing_candidate:
+                        return _agent_access_error("candidate_agent_token_conflict")
                     consumed = connection.execute(
                         "UPDATE matm_agent_invites SET status = 'redeemed', redeemed_at = ? WHERE invite_id = ? AND status = 'issued' AND redeemed_at IS NULL AND expires_at > ?",
                         (now, invite_id, now),
@@ -22778,12 +23171,10 @@ class SQLiteStore(FileStore):
                     if consumed.rowcount != 1:
                         current = connection.execute("SELECT status FROM matm_agent_invites WHERE invite_id = ?", (invite_id,)).fetchone()
                         return _agent_access_error("invite_redeemed" if current and current["status"] == "redeemed" else "invite_unavailable")
-                    target = self._agent_scope_details_sql(connection, invite["scope_type"], invite["scope_id"])
-                    if not target or target["companyId"] != invite["company_id"]:
-                        raise RuntimeError("Approved invite scope no longer belongs to its company.")
                     grant_id = _id("grant")
-                    agent_token_id = _id("agenttoken")
-                    agent_token, agent_digest = _governed_credential("agent", invite["company_id"], agent_token_id)
+                    agent_digest = _governed_credential_digest(
+                        "agent", invite["company_id"], agent_token_id, agent_secret
+                    )
                     grant_status = "active"
                     pending_expires_at = None
                     connection.execute(
@@ -22797,10 +23188,21 @@ class SQLiteStore(FileStore):
                         """,
                         (grant_id, invite["company_id"], identity["agent_identity_id"], invite["scope_type"], invite["scope_id"], target.get("workspaceId"), target.get("projectId"), request["supersedes_token_id"], request["memory_transfer_from_token_id"], 1 if predecessor and predecessor["commons_only"] else 0, grant_status, now, pending_expires_at, request["supersedes_token_id"], now, None, None, None),
                     )
-                    connection.execute(
-                        "INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (agent_token_id, grant_id, identity["agent_identity_id"], agent_digest, now, None, None),
-                    )
+                    try:
+                        connection.execute(
+                            "INSERT INTO matm_agent_tokens (agent_token_id, grant_id, agent_identity_id, token_hash, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (agent_token_id, grant_id, identity["agent_identity_id"], agent_digest, now, None, None),
+                        )
+                    except Exception as exc:
+                        if not _is_sql_duplicate_key_conflict(exc):
+                            raise
+                        # This INSERT targets a table whose only unique key is
+                        # agent_token_id. Roll back the invite consumption and
+                        # grant insert before returning the typed conflict.
+                        connection.rollback()
+                        return _agent_access_error(
+                            "candidate_agent_token_conflict"
+                        )
                     if predecessor:
                         revoked_token = connection.execute(
                             "UPDATE matm_agent_tokens SET revoked_at = ? WHERE agent_token_id = ? AND revoked_at IS NULL",
@@ -22812,7 +23214,77 @@ class SQLiteStore(FileStore):
                         )
                         if revoked_token.rowcount != 1 or revoked_grant.rowcount != 1:
                             raise RuntimeError("Concurrent invite replacement was denied.")
-                    connection.execute("UPDATE matm_agent_invites SET grant_id = ?, agent_token_id = ? WHERE invite_id = ?", (grant_id, agent_token_id, invite_id))
+                    identity_record = {
+                        "agentIdentityId": identity["agent_identity_id"],
+                        "agentId": identity["agent_id"],
+                        "agentName": identity["display_name"],
+                    }
+                    grant_record = {
+                        "grantId": grant_id,
+                        "companyId": invite["company_id"],
+                        "agentIdentityId": identity["agent_identity_id"],
+                        "scopeType": invite["scope_type"],
+                        "scopeId": invite["scope_id"],
+                        "workspaceId": target.get("workspaceId"),
+                        "projectId": target.get("projectId"),
+                        "supersedesTokenId": request["supersedes_token_id"],
+                        "memoryTransferFromTokenId": request[
+                            "memory_transfer_from_token_id"
+                        ],
+                        "status": grant_status,
+                        "commonsOnly": bool(
+                            predecessor and predecessor["commons_only"]
+                        ),
+                        "publicGrantId": original_grant_id or grant_id,
+                    }
+                    token_record = {
+                        "agentTokenId": agent_token_id,
+                        "grantId": grant_id,
+                        "agentIdentityId": identity["agent_identity_id"],
+                    }
+                    public_invite = {
+                        "inviteId": invite_id,
+                        "requestId": invite["request_id"],
+                        "companyId": invite["company_id"],
+                        "agentIdentityId": identity["agent_identity_id"],
+                        "agentId": identity["agent_id"],
+                        "agentName": identity["display_name"],
+                        "scopeType": invite["scope_type"],
+                        "scopeId": invite["scope_id"],
+                        "status": "redeemed",
+                        "createdAt": invite["created_at"],
+                        "expiresAt": invite["expires_at"],
+                        "redeemedAt": now,
+                        "grantId": grant_id,
+                        "agentTokenId": agent_token_id,
+                        "assignmentContext": self._json_load(
+                            invite["assignment_context_json"], {}
+                        ),
+                    }
+                    receipt = _agent_invite_redemption_receipt(
+                        public_invite,
+                        identity_record,
+                        grant_record,
+                        token_record,
+                        onboarding,
+                    )
+                    receipt_json = json.dumps(
+                        receipt,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    )
+                    connection.execute(
+                        "UPDATE matm_agent_invites SET grant_id = ?, agent_token_id = ?, redemption_idempotency_hash = ?, redemption_request_digest = ?, redemption_receipt_json = ? WHERE invite_id = ?",
+                        (
+                            grant_id,
+                            agent_token_id,
+                            idempotency_digest,
+                            request_digest,
+                            receipt_json,
+                            invite_id,
+                        ),
+                    )
                     if target.get("workspaceId"):
                         agent_row = connection.execute("SELECT agent_record_id FROM matm_agents WHERE workspace_id = ? AND agent_id = ?", (target["workspaceId"], identity["agent_id"])).fetchone()
                         if agent_row:
@@ -22823,25 +23295,7 @@ class SQLiteStore(FileStore):
                                 (self._agent_record_id(target["workspaceId"], identity["agent_id"]), target["workspaceId"], identity["agent_id"], identity["display_name"], "active", now, now),
                             )
                     self._record_audit_sql(connection, target.get("workspaceId"), "agent_invite.redeem", identity["agent_id"], invite_id, {"grantId": grant_id, "agentTokenId": agent_token_id, "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "atomicReplacement": bool(predecessor), "supersedesTokenId": request["supersedes_token_id"]})
-        identity_record = {"agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"], "agentName": identity["display_name"]}
-        grant_record = {
-            "grantId": grant_id, "companyId": invite["company_id"], "agentIdentityId": identity["agent_identity_id"],
-            "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "workspaceId": target.get("workspaceId"),
-            "projectId": target.get("projectId"), "supersedesTokenId": request["supersedes_token_id"],
-            "memoryTransferFromTokenId": request["memory_transfer_from_token_id"], "status": grant_status,
-            "commonsOnly": bool(predecessor and predecessor["commons_only"]),
-            "publicGrantId": original_grant_id or grant_id,
-        }
-        token_record = {"agentTokenId": agent_token_id, "grantId": grant_id, "agentIdentityId": identity["agent_identity_id"]}
-        public_invite = {
-            "inviteId": invite_id, "requestId": invite["request_id"], "companyId": invite["company_id"],
-            "agentIdentityId": identity["agent_identity_id"], "agentId": identity["agent_id"], "agentName": identity["display_name"],
-            "scopeType": invite["scope_type"], "scopeId": invite["scope_id"], "status": "redeemed",
-            "createdAt": invite["created_at"], "expiresAt": invite["expires_at"], "redeemedAt": now,
-            "grantId": grant_id, "agentTokenId": agent_token_id,
-            "assignmentContext": self._json_load(invite["assignment_context_json"], {}),
-        }
-        return {"ok": True, "invite": _public_agent_invite(public_invite), "principal": _public_agent_principal(identity_record, grant_record, token_record), "agentToken": agent_token, "onboarding": onboarding, "credentialReturnedOnce": True, "valuesRedacted": True}
+        return _agent_invite_redemption_result_from_receipt(receipt, False)
 
     def authenticate_agent_token(self, token, scope_type=None, scope_id=None):
         agent_token_id, secret = _parse_governed_credential(token, "agent")
@@ -28103,6 +28557,7 @@ class MySQLStore(SQLiteStore):
         self._ensure_human_account_schema_columns(connection)
         self._ensure_human_operational_schema_columns(connection)
         self._ensure_agent_replacement_schema_columns(connection)
+        self._ensure_agent_invite_redemption_schema_columns(connection)
         self._ensure_outbound_mcp_schema_columns(connection)
         self._ensure_commons_schema_columns(connection)
         connection.commit()

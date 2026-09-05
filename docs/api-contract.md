@@ -324,15 +324,15 @@ agent credential is denied and the route never selects a workspace implicitly.
 
 ### Governed agent access retry contract
 
-Company-master access mutations separate public-safe replay from one-time
-secret delivery:
+Company-master access mutations distinguish non-replayable invitation issuance
+from replay-safe, client-held credential activation:
 
 | Route | Purpose |
 | --- | --- |
 | `/api/matm/access/agent-name-requests` | List governed requests or create a public-safe, retryable request. |
 | `/api/matm/access/agent-name-requests/{requestId}/decision` | Approve or deny one pending request. |
 | `/api/matm/access/invites` | List redacted invitation metadata or issue one show-once invitation. |
-| `/api/matm/access/invites/redeem` | Consume one invitation and reveal its agent credential once. |
+| `/api/matm/access/invites/redeem` | Activate one client-generated, pre-protected agent credential candidate and return only a replay-safe redacted receipt. |
 | `/api/matm/access/invites/{inviteId}/revoke` | Revoke one unredeemed invitation. |
 | `/api/matm/access/agent-tokens` | List redacted governed agent-credential metadata. |
 | `/api/matm/access/agent-tokens/{credentialId}/revoke` | Revoke one governed agent credential. |
@@ -343,17 +343,62 @@ secret delivery:
 | `POST /api/matm/access/agent-name-requests/{requestId}/decision` | Required | Retry the exact decision and key; the final public decision metadata is replayed. |
 | `POST /api/matm/access/invites` | Forbidden | Never retry blindly. `GET /api/matm/access/invites` exposes the current invite ID, request ID, status, scope, and expiry without its secret. Revoke an uncertain issued invite with an idempotency key, then issue a replacement from the same approved request. |
 | `POST /api/matm/access/invites/{inviteId}/revoke` | Required | Retry the exact invite ID and key; the revoked metadata response is replayed. |
-| `POST /api/matm/access/invites/redeem` | Forbidden | The agent credential is returned once and cannot be replayed. Do not resend expecting the credential after an unknown outcome; use company-master credential inventory and the governed replacement flow. |
+| `POST /api/matm/access/invites/redeem` | Required | Protect the candidate credential and stable key before the first request. Retry only the exact body and key; the same redacted receipt is replayed without a second activation. |
 | `POST /api/matm/access/agent-tokens/{credentialId}/revoke` | Required | Retry the exact credential ID and key; the revoked metadata response is replayed. A different key after revocation receives `agent_token_already_revoked`. |
 
-Invite issue and redemption reject an `Idempotency-Key` with
-`idempotency_key_not_allowed`; this prevents clients from assuming that raw
-invitation or agent-credential material is stored for replay. The server stores
-only one-way verifiers. Reissue is permitted only after the prior invite is
-revoked or expired, creates a globally new invite ID and secret, and invalidates
-the retired secret. A still-issued or redeemed invitation cannot be reissued.
-Current invitation metadata remains listable for recovery, while the audit
-record retains the retired invite ID and its replacement linkage.
+Invite issuance rejects an `Idempotency-Key` with
+`idempotency_key_not_allowed`; its show-once invitation URL is not replayable.
+Redemption has one canonical v1 request. Before the first network attempt, the
+client generates a complete high-entropy agent credential candidate and
+protects that candidate together with a stable high-entropy idempotency key:
+
+```http
+POST /api/matm/access/invites/redeem
+Content-Type: application/json
+Idempotency-Key: <stable key protected before the first attempt>
+```
+
+```json
+{
+  "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+  "inviteSecret": "me_invite_v1.<invite-id>.<secret>",
+  "candidateAgentTokenSecret": "me_agent_v1.<credential-id>.<secret>"
+}
+```
+
+The server atomically consumes the invitation and registers the candidate. It
+rejects non-JSON media types, bodies larger than 4096 bytes, and source-rate
+limit excess before redemption dispatch. Rate-limited callers receive `429`
+and must retain the same protected candidate and idempotency key for a bounded
+later retry.
+
+It persists only one-way credential verification material, request/key digests,
+and redacted metadata. The server never returns the raw credential. A `201`
+response is a public-safe receipt with `candidateCredentialAccepted=true`,
+`credentialReturnedOnce=false`, `idempotencySupported=true`,
+`replaySafe=true`, `valuesRedacted=true`, and
+`rawCredentialExposed=false`. The client uses its protected local candidate for
+the subsequent `/api/matm/me` verification.
+
+An exact retry with the same body and key returns the same public receipt with
+no duplicate activation or audit effect. Reusing that key with a changed body,
+or reusing the invitation with a changed key or candidate, returns
+`409 idempotency_conflict` without mutation. No body-only request or
+server-returned credential compatibility shape exists for v1.
+
+The optional human browser redemption page durably stages only AES-GCM
+ciphertext in IndexedDB under a non-extractable WebCrypto key before sending
+the first request. It never places invitation, candidate credential, or
+idempotency material in plaintext local/session storage. If that secure store
+is unavailable, it sends no request; after a lost response or reload it reuses
+the exact staged material. This browser workflow is not a recovery or fallback
+path for a no-human service.
+
+Reissue is permitted only after the prior invite is revoked or expired, creates
+a globally new invite ID and secret, and invalidates the retired secret. A
+still-issued or redeemed invitation cannot be reissued. Current invitation
+metadata remains listable for recovery, while the audit record retains the
+retired invite ID and its replacement linkage.
 
 ### GET `/api/matm/connector-contract`
 
@@ -925,14 +970,24 @@ access operations additionally publish an explicit `x-idempotency` policy:
 Idempotency-Key: <STABLE_UNIQUE_KEY_FOR_THIS_REQUEST_BODY>
 ```
 
-Exact retries return the original public-safe response status and body with `idempotentReplay=true`. Reusing the same key with a different body returns `409 Conflict` and `safeNoOp=true`.
+Except where a route-specific contract freezes the complete response body,
+exact retries return the original public-safe response status and body with
+`idempotentReplay=true`. Canonical v1 invitation redemption is that explicit
+exception: it replays the byte-equivalent immutable redacted receipt rather
+than changing the receipt to mark the replay. Reusing the same key with a
+different body returns `409 Conflict` and `safeNoOp=true`.
 
-Governed access-plane mutations follow the route-specific table above. In
-particular, one-time invitation issue and redemption forbid the header because
-their raw secret responses are never persisted or replayed. The deprecated
-exact company-master LocalEndpoint registration transition described below
-keeps the header optional for compatibility; connector self-registration still
-requires it.
+Governed access-plane mutations follow the route-specific table above.
+One-time invitation issuance forbids the header because its raw invitation
+secret is never persisted or replayed. Canonical v1 redemption instead requires
+the client to protect one generated agent-credential candidate and one stable
+`Idempotency-Key` before the first request. An exact body-and-key retry returns
+the immutable redacted receipt from the first activation; reusing the key with
+a changed payload returns `409 idempotency_conflict` without mutation. The
+server never returns the raw agent credential. The deprecated exact
+company-master LocalEndpoint registration transition described below keeps the
+header optional for compatibility; connector self-registration still requires
+it.
 
 The compatibility free-account setup route does not support replay because
 replay would require storing or regenerating a one-time raw secret. Connector

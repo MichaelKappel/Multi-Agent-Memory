@@ -2,10 +2,14 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import re
+import secrets
 import tempfile
 import unittest
+import uuid
 
 from memoryendpoints.config import utc_now
+from memoryendpoints.site_data import openapi_spec
 from memoryendpoints.storage import FileStore, SQLiteStore
 
 
@@ -21,6 +25,7 @@ class AgentInviteContractMixin(object):
         os.environ["MEMORYENDPOINTS_CREDENTIAL_PEPPER"] = TEST_PEPPER
         self.tempdir = tempfile.TemporaryDirectory()
         self.store = self.store_class(Path(self.tempdir.name) / ("store" + self.suffix))
+        self._redemptions = {}
         setup = self.store.create_free_account("Escape.GamesFor.me", "GamesFor.me", "mental Hospital")
         self.workspace_id, self.master_key_id, self.master_token, _account_id, self.company_id, self.project_id = setup[:6]
 
@@ -67,6 +72,26 @@ class AgentInviteContractMixin(object):
             "tokens": len(data["agentTokens"]),
         }
 
+    def _redeem(self, invite_secret, candidate=None, idempotency_key=None):
+        if invite_secret in self._redemptions and candidate is None and idempotency_key is None:
+            body, idempotency_key, candidate = self._redemptions[invite_secret]
+        else:
+            candidate = candidate or (
+                "me_agent_v1.agenttoken-%s.%s"
+                % (secrets.token_hex(10), secrets.token_urlsafe(32))
+            )
+            idempotency_key = idempotency_key or ("redeem-" + uuid.uuid4().hex)
+            body = {
+                "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+                "inviteSecret": invite_secret,
+                "candidateAgentTokenSecret": candidate,
+            }
+            self._redemptions[invite_secret] = (body, idempotency_key, candidate)
+        result = self.store.redeem_agent_invite(body, idempotency_key)
+        if result.get("ok"):
+            result = dict(result, agentToken=candidate)
+        return result
+
     def _add_sibling_project(self):
         project_id = "project-sibling"
         if isinstance(self.store, SQLiteStore):
@@ -106,20 +131,20 @@ class AgentInviteContractMixin(object):
     def test_fresh_invite_redeems_once_and_exact_replay_is_terminal(self):
         _requested, _approved, invitation = self._issue()
         secret = invitation["inviteSecret"]
-        first = self.store.redeem_agent_invite(secret)
+        first = self._redeem(secret)
         self.assertTrue(first["ok"], first)
         counts_after_first = self._counts()
 
-        replay = self.store.redeem_agent_invite(secret)
-        self.assertFalse(replay["ok"])
-        self.assertEqual("invite_redeemed", replay["status"])
+        replay = self._redeem(secret)
+        self.assertTrue(replay["ok"])
+        self.assertTrue(replay["_idempotentReplay"])
         self.assertEqual(counts_after_first, self._counts())
         self.assertEqual({"identities": 1, "grants": 1, "tokens": 1}, counts_after_first)
         self.assertIsNotNone(self.store.authenticate(first["agentToken"], self.workspace_id))
 
     def test_invite_replacement_is_atomically_active_and_never_delivers_a_pending_token(self):
         _requested, _approved, invitation = self._issue()
-        predecessor = self.store.redeem_agent_invite(invitation["inviteSecret"])
+        predecessor = self._redeem(invitation["inviteSecret"])
         self.assertTrue(predecessor["ok"], predecessor)
         predecessor_secret = predecessor["agentToken"]
         predecessor_credential_id = predecessor["principal"]["credentialId"]
@@ -129,7 +154,7 @@ class AgentInviteContractMixin(object):
             supersedes_token_id=predecessor_credential_id,
             memory_transfer_from_token_id=predecessor_credential_id,
         )
-        replacement = self.store.redeem_agent_invite(replacement_invitation["inviteSecret"])
+        replacement = self._redeem(replacement_invitation["inviteSecret"])
         self.assertTrue(replacement["ok"], replacement)
         self.assertEqual("active", replacement["principal"]["credentialStatus"])
         self.assertEqual(immutable_grant_id, replacement["principal"]["grantId"])
@@ -171,18 +196,150 @@ class AgentInviteContractMixin(object):
         self.assertEqual("revoked", predecessor_state["grant_status"])
         self.assertIsNotNone(predecessor_state["grant_revoked_at"])
 
-        replay = self.store.redeem_agent_invite(replacement_invitation["inviteSecret"])
-        self.assertFalse(replay["ok"])
-        self.assertEqual("invite_redeemed", replay["status"])
+        replay = self._redeem(replacement_invitation["inviteSecret"])
+        self.assertTrue(replay["ok"])
+        self.assertTrue(replay["_idempotentReplay"])
+        self.assertEqual(replacement["principal"], replay["principal"])
+        self.assertEqual(replacement["invite"], replay["invite"])
+        self.assertEqual(replacement["onboarding"], replay["onboarding"])
+
+    def test_concurrent_different_invites_same_candidate_has_one_typed_conflict(self):
+        _requested, _approved, first_invitation = self._issue(
+            name="candidate-race-first"
+        )
+        _requested, _approved, second_invitation = self._issue(
+            name="candidate-race-second"
+        )
+        candidate = "me_agent_v1.agenttoken-%s.%s" % (
+            secrets.token_hex(10),
+            secrets.token_urlsafe(32),
+        )
+
+        def redemption(invitation):
+            body = {
+                "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+                "inviteSecret": invitation["inviteSecret"],
+                "candidateAgentTokenSecret": candidate,
+            }
+            return self.store.redeem_agent_invite(
+                body, "candidate-race-" + uuid.uuid4().hex
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    redemption, (first_invitation, second_invitation)
+                )
+            )
+
+        self.assertEqual(1, sum(1 for result in results if result["ok"]))
+        conflicts = [result for result in results if not result["ok"]]
+        self.assertEqual(1, len(conflicts), results)
+        self.assertEqual("candidate_agent_token_conflict", conflicts[0]["status"])
+        self.assertEqual({"identities": 2, "grants": 1, "tokens": 1}, self._counts())
+
+        invitation_ids = {
+            first_invitation["invite"]["inviteId"],
+            second_invitation["invite"]["inviteId"],
+        }
+        if isinstance(self.store, SQLiteStore):
+            with self.store._open_connection() as connection:
+                statuses = {
+                    row["invite_id"]: row["status"]
+                    for row in connection.execute(
+                        "SELECT invite_id, status FROM matm_agent_invites "
+                        "WHERE invite_id IN (?, ?)",
+                        tuple(sorted(invitation_ids)),
+                    )
+                }
+        else:
+            data = self.store._load()
+            statuses = {
+                invite_id: data["agentInvites"][invite_id]["status"]
+                for invite_id in invitation_ids
+            }
+        self.assertEqual(["issued", "redeemed"], sorted(statuses.values()))
+        self.assertIsNotNone(
+            self.store.authenticate(candidate, self.workspace_id)
+        )
 
     def test_concurrent_redemption_has_exactly_one_winner(self):
         _requested, _approved, invitation = self._issue(name="concurrent-agent")
         secret = invitation["inviteSecret"]
+        candidate = "me_agent_v1.agenttoken-%s.%s" % (
+            secrets.token_hex(10),
+            secrets.token_urlsafe(32),
+        )
+        body = {
+            "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+            "inviteSecret": secret,
+            "candidateAgentTokenSecret": candidate,
+        }
+        key = "concurrent-redeem-" + uuid.uuid4().hex
         with ThreadPoolExecutor(max_workers=8) as executor:
-            results = list(executor.map(lambda _index: self.store.redeem_agent_invite(secret), range(8)))
-        self.assertEqual(1, sum(1 for result in results if result["ok"]))
-        self.assertTrue(all(result["ok"] or result["status"] == "invite_redeemed" for result in results))
+            results = list(
+                executor.map(
+                    lambda _index: self.store.redeem_agent_invite(body, key),
+                    range(8),
+                )
+            )
+        self.assertEqual(8, sum(1 for result in results if result["ok"]))
+        self.assertEqual(7, sum(1 for result in results if result["_idempotentReplay"]))
         self.assertEqual({"identities": 1, "grants": 1, "tokens": 1}, self._counts())
+
+    def test_changed_candidate_or_idempotency_key_conflicts_without_effect(self):
+        _requested, _approved, invitation = self._issue(name="conflict-agent")
+        secret = invitation["inviteSecret"]
+        first = self._redeem(secret)
+        body, key, candidate = self._redemptions[secret]
+        counts = self._counts()
+
+        changed_candidate = dict(
+            body,
+            candidateAgentTokenSecret=(
+                "me_agent_v1.agenttoken-%s.%s"
+                % (secrets.token_hex(10), secrets.token_urlsafe(32))
+            ),
+        )
+        conflict = self.store.redeem_agent_invite(changed_candidate, key)
+        self.assertEqual("idempotency_conflict", conflict["status"])
+        different_key = self.store.redeem_agent_invite(
+            body, "different-redeem-" + uuid.uuid4().hex
+        )
+        self.assertEqual("idempotency_conflict", different_key["status"])
+        self.assertEqual(counts, self._counts())
+        self.assertIsNotNone(self.store.authenticate(candidate, self.workspace_id))
+        self.assertEqual(first["principal"], self._redeem(secret)["principal"])
+
+    def test_idempotency_key_cannot_be_rebound_to_another_invitation(self):
+        _requested, _approved, first_invitation = self._issue(
+            name="first-key-bound-agent"
+        )
+        first = self._redeem(first_invitation["inviteSecret"])
+        _body, key, _candidate_secret = self._redemptions[
+            first_invitation["inviteSecret"]
+        ]
+        _requested, _approved, second_invitation = self._issue(
+            name="second-key-bound-agent"
+        )
+        counts = self._counts()
+        second_body = {
+            "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+            "inviteSecret": second_invitation["inviteSecret"],
+            "candidateAgentTokenSecret": (
+                "me_agent_v1.agenttoken-%s.%s"
+                % (secrets.token_hex(10), secrets.token_urlsafe(32))
+            ),
+        }
+        conflict = self.store.redeem_agent_invite(second_body, key)
+        self.assertEqual("idempotency_conflict", conflict["status"])
+        self.assertEqual(counts, self._counts())
+        self.assertIsNotNone(
+            self.store.authenticate(first["agentToken"], self.workspace_id)
+        )
+
+        second = self._redeem(second_invitation["inviteSecret"])
+        self.assertTrue(second["ok"], second)
 
     def test_workspace_scope_excludes_company_and_includes_descendants(self):
         sibling_project = self._add_sibling_project()
@@ -191,7 +348,7 @@ class AgentInviteContractMixin(object):
         self.assertTrue(goal["ok"], goal)
         self.assertTrue(task["ok"], task)
         _requested, _approved, invitation = self._issue(name="workspace-agent")
-        redeemed = self.store.redeem_agent_invite(invitation["inviteSecret"])
+        redeemed = self._redeem(invitation["inviteSecret"])
         principal = redeemed["principal"]
         self.assertFalse(self.store.auth_allows_scope(principal, "company", self.company_id))
         self.assertTrue(self.store.auth_allows_scope(principal, "workspace", self.workspace_id))
@@ -223,26 +380,26 @@ class AgentInviteContractMixin(object):
         self.assertTrue(task_room_created, task_room)
 
         _r, _a, project_invite = self._issue("project-agent", "project", self.project_id)
-        project_principal = self.store.redeem_agent_invite(project_invite["inviteSecret"])["principal"]
+        project_principal = self._redeem(project_invite["inviteSecret"])["principal"]
         self.assertTrue(self.store.auth_allows_scope(project_principal, "goal", "goal-one"))
         self.assertTrue(self.store.auth_allows_scope(project_principal, "task", "task-one"))
         self.assertFalse(self.store.auth_allows_scope(project_principal, "project", sibling_project))
         self.assertFalse(self.store.auth_allows_scope(project_principal, "workspace", self.workspace_id))
 
         _r, _a, goal_invite = self._issue("goal-agent", "goal", "goal-one")
-        goal_principal = self.store.redeem_agent_invite(goal_invite["inviteSecret"])["principal"]
+        goal_principal = self._redeem(goal_invite["inviteSecret"])["principal"]
         self.assertTrue(self.store.auth_allows_scope(goal_principal, "goal", "goal-one"))
         self.assertTrue(self.store.auth_allows_scope(goal_principal, "task", "task-one"))
         self.assertFalse(self.store.auth_allows_scope(goal_principal, "project", self.project_id))
 
         _r, _a, task_invite = self._issue("task-agent", "task", "task-one")
-        task_principal = self.store.redeem_agent_invite(task_invite["inviteSecret"])["principal"]
+        task_principal = self._redeem(task_invite["inviteSecret"])["principal"]
         self.assertTrue(self.store.auth_allows_scope(task_principal, "task", "task-one"))
         self.assertFalse(self.store.auth_allows_scope(task_principal, "goal", "goal-one"))
 
     def test_master_only_management_and_immediate_revocation(self):
         requested, _approved, invitation = self._issue()
-        redeemed = self.store.redeem_agent_invite(invitation["inviteSecret"])
+        redeemed = self._redeem(invitation["inviteSecret"])
         agent_token = redeemed["agentToken"]
         agent_token_id = redeemed["principal"]["agentTokenId"]
         denied = self.store.issue_agent_invite(agent_token, requested["request"]["requestId"])
@@ -255,7 +412,7 @@ class AgentInviteContractMixin(object):
 
     def test_credentials_are_hmac_digests_and_raw_values_are_never_persisted(self):
         _requested, _approved, invitation = self._issue()
-        redeemed = self.store.redeem_agent_invite(invitation["inviteSecret"])
+        redeemed = self._redeem(invitation["inviteSecret"])
         raw_values = [self.master_token, invitation["inviteSecret"], redeemed["agentToken"]]
         if isinstance(self.store, SQLiteStore):
             with self.store._open_connection() as connection:
@@ -289,7 +446,7 @@ class AgentInviteContractMixin(object):
 
     def test_human_authorized_two_phase_replacement_never_requires_predecessor_proof(self):
         _requested, _approved, invitation = self._issue()
-        predecessor = self.store.redeem_agent_invite(invitation["inviteSecret"])
+        predecessor = self._redeem(invitation["inviteSecret"])
         predecessor_secret = predecessor["agentToken"]
         predecessor_id = predecessor["principal"]["credentialId"]
         human_session = self._human_authority_session()
@@ -321,6 +478,67 @@ class AgentInviteContractMixin(object):
         self.assertTrue(cancelled["ok"], cancelled)
         self.assertIsNotNone(self.store.authenticate(successor_secret, self.workspace_id))
         self.assertIsNone(self.store.authenticate(cancelled_candidate["successorTokenSecret"], self.workspace_id))
+
+
+class AgentInviteOpenAPIPatternTests(unittest.TestCase):
+    @staticmethod
+    def _redemption_properties():
+        return openapi_spec()["paths"]["/api/matm/access/invites/redeem"]["post"][
+            "requestBody"
+        ]["content"]["application/json"]["schema"]["properties"]
+
+    def test_redemption_secret_patterns_match_canonical_values(self):
+        properties = self._redemption_properties()
+        cases = {
+            "inviteSecret": "me_invite_v1.invite-%s.%s" % ("0" * 20, "A" * 43),
+            "candidateAgentTokenSecret": "me_agent_v1.agenttoken-%s.%s"
+            % ("f" * 20, "_" * 43),
+        }
+
+        for property_name, canonical_value in cases.items():
+            with self.subTest(property_name=property_name):
+                advertised_pattern = properties[property_name]["pattern"]
+                compiled_pattern = re.compile(advertised_pattern)
+                self.assertIsNotNone(compiled_pattern.fullmatch(canonical_value))
+
+    def test_redemption_secret_patterns_reject_near_misses(self):
+        properties = self._redemption_properties()
+        cases = {
+            "inviteSecret": {
+                "canonical": "me_invite_v1.invite-%s.%s" % ("a" * 20, "Z" * 43),
+                "invalid": (
+                    "me_invite_v1\\.invite-%s.%s" % ("a" * 20, "Z" * 43),
+                    "me_invite_v1Xinvite-%s.%s" % ("a" * 20, "Z" * 43),
+                    "me_invite_v1.invite-%s.%s" % ("A" * 20, "Z" * 43),
+                    "me_invite_v1.invite-%s.%s" % ("a" * 19, "Z" * 43),
+                    "me_invite_v1.invite-%s.%s" % ("a" * 20, "Z" * 42),
+                    "me_invite_v1.invite-%s.%s!" % ("a" * 20, "Z" * 42),
+                ),
+            },
+            "candidateAgentTokenSecret": {
+                "canonical": "me_agent_v1.agenttoken-%s.%s"
+                % ("b" * 20, "-" * 43),
+                "invalid": (
+                    "me_agent_v1\\.agenttoken-%s.%s" % ("b" * 20, "-" * 43),
+                    "me_agent_v1Xagenttoken-%s.%s" % ("b" * 20, "-" * 43),
+                    "me_agent_v1.agenttoken-%s.%s" % ("B" * 20, "-" * 43),
+                    "me_agent_v1.agenttoken-%s.%s" % ("b" * 21, "-" * 43),
+                    "me_agent_v1.agenttoken-%s.%s" % ("b" * 20, "-" * 44),
+                    "me_agent_v1.agenttoken-%s.%s+" % ("b" * 20, "-" * 42),
+                ),
+            },
+        }
+
+        for property_name, values in cases.items():
+            advertised_pattern = properties[property_name]["pattern"]
+            compiled_pattern = re.compile(advertised_pattern)
+            self.assertIsNotNone(compiled_pattern.fullmatch(values["canonical"]))
+            for invalid_value in values["invalid"]:
+                with self.subTest(
+                    property_name=property_name,
+                    invalid_value=invalid_value,
+                ):
+                    self.assertIsNone(compiled_pattern.fullmatch(invalid_value))
 
 
 class FileStoreAgentInviteTests(AgentInviteContractMixin, unittest.TestCase):

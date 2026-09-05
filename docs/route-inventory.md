@@ -159,6 +159,18 @@ Credential inventory item fields are exactly `credentialId`, `status`,
 
 Protected mutations require `Idempotency-Key` when their route contract advertises it. Exact retries replay the original safe response; key reuse with a different body returns a conflict-safe no-op. Connector `POST /api/matm/search` is read-only and rejects `Idempotency-Key`.
 
+Invitation redemption has one canonical v1 request:
+`memoryendpoints.agent_invite_redemption.v1` with exact fields
+`schemaVersion`, `inviteSecret`, and `candidateAgentTokenSecret`. Before the
+first request, the client generates and protects the complete credential
+candidate and a stable required `Idempotency-Key`. An exact body/key retry
+replays the same redacted receipt. Changed payload or key reuse returns
+`409 idempotency_conflict` without mutation. The server never returns the raw
+credential; the client keeps its protected candidate for authenticated use.
+The optional human browser client stages only AES-GCM ciphertext in IndexedDB
+under a non-extractable WebCrypto key, sends nothing when that storage is
+unavailable, and reuses the exact staged request after reload or a lost
+response. It is not a fallback for a no-human service.
 | Route | Methods | Purpose |
 | --- | --- | --- |
 | `/api/matm/commons/enrollments/current` | GET | Poll one pending enrollment using only its narrowly scoped CommonsEnrollment candidate proof. |
@@ -184,7 +196,7 @@ Protected mutations require `Idempotency-Key` when their route contract advertis
 | `/api/matm/access/agent-name-requests` | GET, POST | List governed name requests or create one with required public-safe idempotent retry semantics. |
 | `/api/matm/access/agent-name-requests/{requestId}/decision` | POST | Approve or deny a governed name request with required public-safe idempotent retry semantics. |
 | `/api/matm/access/invites` | GET, POST | List invitation metadata or issue one non-replayable invitation URL once; issuance forbids Idempotency-Key. |
-| `/api/matm/access/invites/redeem` | POST | Redeem a body-only one-time invitation and reveal one agent credential once; redemption forbids Idempotency-Key. |
+| `/api/matm/access/invites/redeem` | POST | Redeem an invitation with a client-generated protected credential candidate; exact Idempotency-Key retries replay the same redacted receipt. |
 | `/api/matm/access/invites/{inviteId}/revoke` | POST | Revoke an issued invitation with required public-safe idempotent retry semantics. |
 | `/api/matm/access/agent-tokens` | GET | List redacted governed agent-credential metadata for a company master. |
 | `/api/matm/access/agent-tokens/{credentialId}/revoke` | POST | Revoke an agent credential with required public-safe idempotent retry semantics. |

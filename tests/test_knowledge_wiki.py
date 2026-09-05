@@ -9,7 +9,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from app import application
 from memoryendpoints.storage import SQLiteStore
-from tests.governed_test_support import DeterministicCredentialPepperMixin
+from tests.governed_test_support import (
+    DeterministicCredentialPepperMixin,
+    governed_agent_redemption_material,
+)
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -29,6 +32,8 @@ def call_app(path, method="GET", body=None, headers=None, query=""):
         "wsgi.input": io.BytesIO(raw),
         "CONTENT_LENGTH": str(len(raw)),
     }
+    if body is not None:
+        environ["CONTENT_TYPE"] = "application/json"
     for key, value in (headers or {}).items():
         environ[key] = value
     chunks = application(environ, start_response)
@@ -103,15 +108,21 @@ class KnowledgeWikiTests(DeterministicCredentialPepperMixin, unittest.TestCase):
         )
         self.assertEqual("201 Created", status, text)
         invite_secret = json.loads(text)["inviteUrl"].split("#invite=", 1)[1]
+        redemption, redemption_key, candidate = governed_agent_redemption_material(
+            invite_secret
+        )
         status, _headers, text = call_app(
             "/api/matm/access/invites/redeem",
             method="POST",
-            body={"inviteSecret": invite_secret},
+            headers={"HTTP_IDEMPOTENCY_KEY": redemption_key},
+            body=redemption,
         )
         self.assertEqual("201 Created", status, text)
         redeemed = json.loads(text)
         self.assertEqual(agent_id.lower(), redeemed["principal"]["agentId"])
-        return redeemed
+        self.assertNotIn("agentTokenSecret", redeemed)
+        self.assertTrue(redeemed["candidateCredentialAccepted"])
+        return dict(redeemed, agentTokenSecret=candidate)
 
     def setup_workspace_with_agent(self):
         setup, master_headers = self.setup_workspace()

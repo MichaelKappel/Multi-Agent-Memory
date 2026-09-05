@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from app import application
 from memoryendpoints.config import SITE_URL
+from tests.governed_test_support import governed_agent_redemption_material
 
 
 ORIGIN = SITE_URL.rstrip("/")
@@ -367,15 +368,21 @@ class HumanAccountCompanyLifecycleContract:
         )
         self.assertEqual(201, status)
         invite_secret = parse_qs(urlsplit(issued["inviteUrl"]).fragment, strict_parsing=True)["invite"][0]
+        redemption, redemption_key, candidate = governed_agent_redemption_material(
+            invite_secret
+        )
         status, _headers, redeemed = call_api(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
+            redemption,
+            extra_headers={"HTTP_IDEMPOTENCY_KEY": redemption_key},
         )
         self.assertEqual(201, status)
+        self.assertNotIn("agentTokenSecret", redeemed)
+        self.assertTrue(redeemed["candidateCredentialAccepted"])
         return {
             "inviteSecret": invite_secret,
-            "agentTokenSecret": redeemed["agentTokenSecret"],
+            "agentTokenSecret": candidate,
             "principal": redeemed["principal"],
         }
 

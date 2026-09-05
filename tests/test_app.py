@@ -26,6 +26,7 @@ from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
 from tests.governed_test_support import (
     DeterministicCredentialPepperMixin,
     IsolatedTestRuntimeEnvironment,
+    governed_agent_redemption_material,
 )
 
 
@@ -146,15 +147,24 @@ class MemoryEndpointsAppTests(DeterministicCredentialPepperMixin, unittest.TestC
         self.assertEqual("201 Created", status, text)
         issued = json.loads(text)
         invite_secret = issued["inviteUrl"].split("#invite=", 1)[1]
+        redemption, redemption_key, candidate = governed_agent_redemption_material(
+            invite_secret
+        )
         status, _headers, text = call_app(
             "/api/matm/access/invites/redeem",
             method="POST",
-            body={"inviteSecret": invite_secret},
+            headers={
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": redemption_key,
+            },
+            body=redemption,
         )
         self.assertEqual("201 Created", status, text)
         redeemed = json.loads(text)
         self.assertEqual(agent_id.lower(), redeemed["principal"]["agentId"])
-        return redeemed
+        self.assertNotIn("agentTokenSecret", redeemed)
+        self.assertTrue(redeemed["candidateCredentialAccepted"])
+        return dict(redeemed, agentTokenSecret=candidate)
 
     def agent_auth_via_invite(
         self,

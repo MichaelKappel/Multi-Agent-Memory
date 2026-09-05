@@ -1,6 +1,19 @@
 (function () {
   var capturedHumanInviteSecret = "";
   var capturedHumanInviteState = "absent";
+  var capturedHumanInviteNeedsScrub = false;
+
+  function scrubCapturedHumanInviteFragment() {
+    var location = window.location || {};
+    if (
+      capturedHumanInviteNeedsScrub
+      && window.history
+      && typeof window.history.replaceState === "function"
+    ) {
+      window.history.replaceState(null, "", (location.pathname || "/agent-setup") + (location.search || ""));
+    }
+    capturedHumanInviteNeedsScrub = false;
+  }
 
   (function captureAndScrubHumanInvite() {
     var location = window.location || {};
@@ -8,29 +21,31 @@
       return;
     }
     var rawFragment = String(location.hash || "").replace(/^#/, "");
-    if (window.history && typeof window.history.replaceState === "function") {
-      window.history.replaceState(null, "", (location.pathname || "/agent-setup") + (location.search || ""));
-    }
+    capturedHumanInviteNeedsScrub = true;
     var parts = rawFragment.split("&");
     if (parts.length !== 1) {
       capturedHumanInviteState = "invalid";
+      scrubCapturedHumanInviteFragment();
       return;
     }
     var separator = parts[0].indexOf("=");
     if (separator < 1 || parts[0].slice(0, separator) !== "invite") {
       capturedHumanInviteState = "invalid";
+      scrubCapturedHumanInviteFragment();
       return;
     }
     try {
       var candidate = decodeURIComponent(parts[0].slice(separator + 1));
       if (!candidate || candidate.length > 4096 || /[\u0000-\u0020\u007f]/.test(candidate)) {
         capturedHumanInviteState = "invalid";
+        scrubCapturedHumanInviteFragment();
         return;
       }
       capturedHumanInviteSecret = candidate;
       capturedHumanInviteState = "ready";
     } catch (_error) {
       capturedHumanInviteState = "invalid";
+      scrubCapturedHumanInviteFragment();
     }
   }());
 
@@ -603,6 +618,351 @@
     var redemptionTokenContinue = redemptionRoot.querySelector("[data-human-invite-token-continue]");
     var redemptionTokenClear = redemptionRoot.querySelector("[data-human-invite-token-clear]");
     var redemptionState = capturedHumanInviteState;
+    var redemptionCandidateToken = "";
+    var redemptionIdempotencyKey = "";
+    var redemptionDurableStageReady = false;
+    var redemptionStoreName = "multiagentmemory-agent-redemption-v1";
+    var redemptionStoreVersion = 1;
+    var redemptionObjectStore = "secure-redemption";
+    var redemptionKeyRecordId = "active-key";
+    var redemptionStageRecordId = "active-stage";
+    var redemptionStageSchema = "multiagentmemory.browser_redemption_stage.v1";
+    var redemptionAdditionalDataText = "MultiAgentMemory browser redemption\u0000" + window.location.origin + "\u0000/api/matm/access/invites/redeem";
+
+    function redemptionRandomBytes(length) {
+      var cryptoApi = window.crypto || window.msCrypto;
+      if (!cryptoApi || typeof cryptoApi.getRandomValues !== "function") {
+        throw new Error("Secure browser randomness is unavailable.");
+      }
+      var value = new Uint8Array(length);
+      cryptoApi.getRandomValues(value);
+      return value;
+    }
+
+    function redemptionHex(value) {
+      return Array.prototype.map.call(value, function (item) {
+        return item.toString(16).padStart(2, "0");
+      }).join("");
+    }
+
+    function redemptionBase64url(value) {
+      var binary = "";
+      Array.prototype.forEach.call(value, function (item) {
+        binary += String.fromCharCode(item);
+      });
+      return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function prepareRedemptionMaterial() {
+      if (!redemptionCandidateToken) {
+        redemptionCandidateToken = "me_agent_v1.agenttoken-" + redemptionHex(redemptionRandomBytes(10)) + "." + redemptionBase64url(redemptionRandomBytes(32));
+      }
+      if (!redemptionIdempotencyKey) {
+        redemptionIdempotencyKey = "invite-redeem-" + redemptionBase64url(redemptionRandomBytes(32));
+      }
+    }
+
+    function redemptionStorageProblem(message) {
+      var error = new Error(message || "Secure durable browser storage is unavailable. Use the managed installer; no redemption request was sent.");
+      error.code = "secure_redemption_storage_unavailable";
+      error.installerRequired = true;
+      return error;
+    }
+
+    function redemptionCryptoApi() {
+      var cryptoApi = window.crypto || window.msCrypto;
+      if (
+        !window.indexedDB
+        || !cryptoApi
+        || !cryptoApi.subtle
+        || typeof cryptoApi.subtle.generateKey !== "function"
+        || typeof cryptoApi.subtle.encrypt !== "function"
+        || typeof cryptoApi.subtle.decrypt !== "function"
+        || typeof window.TextEncoder !== "function"
+        || typeof window.TextDecoder !== "function"
+      ) {
+        throw redemptionStorageProblem();
+      }
+      return cryptoApi;
+    }
+
+    function openRedemptionStore() {
+      return new Promise(function (resolve, reject) {
+        var request;
+        try {
+          redemptionCryptoApi();
+          request = window.indexedDB.open(redemptionStoreName, redemptionStoreVersion);
+        } catch (_error) {
+          reject(redemptionStorageProblem());
+          return;
+        }
+        request.onupgradeneeded = function () {
+          var database = request.result;
+          if (!database.objectStoreNames.contains(redemptionObjectStore)) {
+            database.createObjectStore(redemptionObjectStore, {keyPath: "id"});
+          }
+        };
+        request.onsuccess = function () {
+          resolve(request.result);
+        };
+        request.onerror = function () {
+          reject(redemptionStorageProblem());
+        };
+        request.onblocked = function () {
+          reject(redemptionStorageProblem());
+        };
+      });
+    }
+
+    function closeRedemptionStore(database) {
+      if (database && typeof database.close === "function") {
+        database.close();
+      }
+    }
+
+    function redemptionTransaction(database, mode, operation) {
+      return new Promise(function (resolve, reject) {
+        var transaction;
+        var result;
+        try {
+          transaction = database.transaction(redemptionObjectStore, mode);
+          result = operation(transaction.objectStore(redemptionObjectStore));
+        } catch (_error) {
+          reject(redemptionStorageProblem());
+          return;
+        }
+        transaction.oncomplete = function () {
+          resolve(result);
+        };
+        transaction.onerror = function () {
+          reject(redemptionStorageProblem());
+        };
+        transaction.onabort = function () {
+          reject(redemptionStorageProblem());
+        };
+      });
+    }
+
+    function readRedemptionRecords(database) {
+      return new Promise(function (resolve, reject) {
+        var transaction;
+        var keyRequest;
+        var stageRequest;
+        try {
+          transaction = database.transaction(redemptionObjectStore, "readonly");
+          var store = transaction.objectStore(redemptionObjectStore);
+          keyRequest = store.get(redemptionKeyRecordId);
+          stageRequest = store.get(redemptionStageRecordId);
+        } catch (_error) {
+          reject(redemptionStorageProblem());
+          return;
+        }
+        transaction.oncomplete = function () {
+          resolve({keyRecord: keyRequest.result, stageRecord: stageRequest.result});
+        };
+        transaction.onerror = function () {
+          reject(redemptionStorageProblem());
+        };
+        transaction.onabort = function () {
+          reject(redemptionStorageProblem());
+        };
+      });
+    }
+
+    function validateRedemptionMaterial(material) {
+      if (
+        !material
+        || Object.keys(material).sort().join(",") !== "candidateAgentTokenSecret,idempotencyKey,inviteSecret,schemaVersion"
+        || material.schemaVersion !== "memoryendpoints.agent_invite_redemption.v1"
+        || typeof material.inviteSecret !== "string"
+        || !/^me_invite_v1\.[A-Za-z0-9_-]{3,160}\.[A-Za-z0-9_-]{32,128}$/.test(material.inviteSecret)
+        || typeof material.candidateAgentTokenSecret !== "string"
+        || !/^me_agent_v1\.[A-Za-z0-9_-]{3,160}\.[A-Za-z0-9_-]{32,128}$/.test(material.candidateAgentTokenSecret)
+        || typeof material.idempotencyKey !== "string"
+        || material.idempotencyKey.length < 16
+        || material.idempotencyKey.length > 200
+        || /[^\x21-\x7e]/.test(material.idempotencyKey)
+      ) {
+        throw redemptionStorageProblem("Protected browser redemption state is invalid. Use the managed installer; no redemption request was sent.");
+      }
+      return material;
+    }
+
+    function loadDurableRedemptionMaterial() {
+      var database;
+      var cryptoApi;
+      try {
+        cryptoApi = redemptionCryptoApi();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return openRedemptionStore().then(function (opened) {
+        database = opened;
+        return readRedemptionRecords(database);
+      }).then(function (records) {
+        closeRedemptionStore(database);
+        database = null;
+        if (!records.keyRecord && !records.stageRecord) {
+          return null;
+        }
+        var key = records.keyRecord && records.keyRecord.key;
+        var stage = records.stageRecord;
+        if (
+          !key
+          || !stage
+          || Object.keys(records.keyRecord).sort().join(",") !== "id,key,schemaVersion"
+          || records.keyRecord.id !== redemptionKeyRecordId
+          || records.keyRecord.schemaVersion !== redemptionStageSchema
+          || key.extractable !== false
+          || !key.algorithm
+          || key.algorithm.name !== "AES-GCM"
+          || !Array.isArray(key.usages)
+          || key.usages.indexOf("decrypt") === -1
+          || Object.keys(stage).sort().join(",") !== "algorithm,ciphertext,id,iv,keyId,schemaVersion"
+          || stage.id !== redemptionStageRecordId
+          || stage.schemaVersion !== redemptionStageSchema
+          || stage.keyId !== redemptionKeyRecordId
+          || stage.algorithm !== "AES-GCM"
+          || !Array.isArray(stage.iv)
+          || stage.iv.length !== 12
+          || !Array.isArray(stage.ciphertext)
+          || !stage.ciphertext.length
+        ) {
+          throw redemptionStorageProblem("Protected browser redemption state is incomplete. Use the managed installer; no redemption request was sent.");
+        }
+        return cryptoApi.subtle.decrypt(
+          {
+            name: "AES-GCM",
+            iv: new Uint8Array(stage.iv),
+            additionalData: new window.TextEncoder().encode(redemptionAdditionalDataText),
+          },
+          key,
+          new Uint8Array(stage.ciphertext)
+        ).then(function (plaintext) {
+          var material;
+          try {
+            material = JSON.parse(new window.TextDecoder().decode(plaintext));
+          } catch (_error) {
+            throw redemptionStorageProblem("Protected browser redemption state cannot be opened. Use the managed installer; no redemption request was sent.");
+          }
+          return validateRedemptionMaterial(material);
+        });
+      }).catch(function (error) {
+        closeRedemptionStore(database);
+        throw error && error.installerRequired ? error : redemptionStorageProblem();
+      });
+    }
+
+    function writeDurableRedemptionMaterial(inviteSecret) {
+      var database;
+      var cryptoApi;
+      var encryptionKey;
+      var iv;
+      var material;
+      try {
+        cryptoApi = redemptionCryptoApi();
+        prepareRedemptionMaterial();
+        material = validateRedemptionMaterial({
+          schemaVersion: "memoryendpoints.agent_invite_redemption.v1",
+          inviteSecret: inviteSecret,
+          candidateAgentTokenSecret: redemptionCandidateToken,
+          idempotencyKey: redemptionIdempotencyKey,
+        });
+        iv = redemptionRandomBytes(12);
+      } catch (error) {
+        return Promise.reject(error && error.installerRequired ? error : redemptionStorageProblem());
+      }
+      return cryptoApi.subtle.generateKey(
+        {name: "AES-GCM", length: 256},
+        false,
+        ["encrypt", "decrypt"]
+      ).then(function (key) {
+        if (key.extractable !== false) {
+          throw redemptionStorageProblem();
+        }
+        encryptionKey = key;
+        return cryptoApi.subtle.encrypt(
+          {
+            name: "AES-GCM",
+            iv: iv,
+            additionalData: new window.TextEncoder().encode(redemptionAdditionalDataText),
+          },
+          key,
+          new window.TextEncoder().encode(JSON.stringify(material))
+        );
+      }).then(function (ciphertext) {
+        return openRedemptionStore().then(function (opened) {
+          database = opened;
+          return redemptionTransaction(database, "readwrite", function (store) {
+            store.put({
+              id: redemptionKeyRecordId,
+              schemaVersion: redemptionStageSchema,
+              key: encryptionKey,
+            });
+            store.put({
+              id: redemptionStageRecordId,
+              schemaVersion: redemptionStageSchema,
+              keyId: redemptionKeyRecordId,
+              algorithm: "AES-GCM",
+              iv: Array.prototype.slice.call(new Uint8Array(iv)),
+              ciphertext: Array.prototype.slice.call(new Uint8Array(ciphertext)),
+            });
+          });
+        });
+      }).then(function () {
+        closeRedemptionStore(database);
+        database = null;
+        return loadDurableRedemptionMaterial();
+      }).then(function (readback) {
+        if (
+          !readback
+          || readback.inviteSecret !== material.inviteSecret
+          || readback.candidateAgentTokenSecret !== material.candidateAgentTokenSecret
+          || readback.idempotencyKey !== material.idempotencyKey
+        ) {
+          throw redemptionStorageProblem();
+        }
+        return readback;
+      }).catch(function (error) {
+        closeRedemptionStore(database);
+        throw error && error.installerRequired ? error : redemptionStorageProblem();
+      });
+    }
+
+    function clearDurableRedemptionMaterial() {
+      var database;
+      return openRedemptionStore().then(function (opened) {
+        database = opened;
+        return redemptionTransaction(database, "readwrite", function (store) {
+          store.clear();
+        });
+      }).then(function () {
+        closeRedemptionStore(database);
+        database = null;
+        redemptionDurableStageReady = false;
+      }).catch(function (error) {
+        closeRedemptionStore(database);
+        throw error && error.installerRequired ? error : redemptionStorageProblem();
+      });
+    }
+
+    function adoptDurableRedemptionMaterial(material) {
+      redemptionCandidateToken = material.candidateAgentTokenSecret;
+      redemptionIdempotencyKey = material.idempotencyKey;
+      capturedHumanInviteSecret = material.inviteSecret;
+      capturedHumanInviteState = "ready";
+      redemptionDurableStageReady = true;
+    }
+
+    function requireDurableRedemptionMaterial() {
+      return loadDurableRedemptionMaterial().then(function (material) {
+        if (!material) {
+          throw redemptionStorageProblem();
+        }
+        adoptDurableRedemptionMaterial(material);
+        return material;
+      });
+    }
 
     function setRedemptionStatus(message, isError) {
       if (!redemptionStatus) {
@@ -621,6 +981,8 @@
 
     function clearRedemptionSecrets() {
       capturedHumanInviteSecret = "";
+      redemptionCandidateToken = "";
+      redemptionIdempotencyKey = "";
       if (redemptionToken) {
         redemptionToken.value = "";
         redemptionToken.type = "password";
@@ -656,16 +1018,95 @@
       return error;
     }
 
-    if (redemptionState === "ready") {
+    function showDurableRedemptionReady(resuming) {
+      redemptionState = "ready";
       redemptionForm.hidden = false;
-      setRedemptionStatus("Invitation fragment secured and removed from the address bar. Redeem it once when you are ready to save the bound credential.", false);
-    } else if (redemptionState === "invalid") {
-      lockRedemption("terminal", "Invalid invitation link");
-      setRedemptionStatus("This invitation URL is malformed. Ask the human approver to revoke it and issue a new invitation.", true);
+      redemptionForm.setAttribute("aria-busy", "false");
+      redemptionSubmit.disabled = false;
+      redemptionSubmit.textContent = resuming ? "Resume exact redemption" : "Redeem invitation once";
+      setRedemptionStatus(
+        resuming
+          ? "Protected redemption state was recovered after the page restarted. Resume the exact request when ready."
+          : "The invitation, credential candidate, and exact-retry key are encrypted in durable browser storage. Redeem when ready.",
+        false
+      );
     }
 
+    function requireManagedInstaller(error) {
+      redemptionState = "installer_required";
+      redemptionDurableStageReady = false;
+      clearRedemptionSecrets();
+      scrubCapturedHumanInviteFragment();
+      if (redemptionForm) {
+        redemptionForm.hidden = false;
+      }
+      lockRedemption("installer_required", "Managed installer required");
+      setRedemptionStatus(
+        (error && error.message) || "Secure durable browser storage is unavailable. Use the managed installer; no redemption request was sent.",
+        true
+      );
+    }
+
+    function initializeDurableRedemption() {
+      var fragmentInvite = capturedHumanInviteState === "ready" ? capturedHumanInviteSecret : "";
+      redemptionState = "initializing";
+      redemptionDurableStageReady = false;
+      if (redemptionForm) {
+        redemptionForm.hidden = true;
+        redemptionForm.setAttribute("aria-busy", "true");
+      }
+      if (redemptionResult) {
+        redemptionResult.hidden = true;
+      }
+      if (redemptionSubmit) {
+        redemptionSubmit.disabled = true;
+        redemptionSubmit.textContent = "Securing invitation…";
+      }
+      setRedemptionStatus("Checking protected browser recovery state before enabling redemption…", false);
+      return loadDurableRedemptionMaterial().then(function (existing) {
+        if (existing) {
+          if (fragmentInvite && existing.inviteSecret !== fragmentInvite) {
+            scrubCapturedHumanInviteFragment();
+            capturedHumanInviteSecret = "";
+            lockRedemption("installer_required", "Managed installer required");
+            setRedemptionStatus("A different protected redemption is already pending. Use the managed installer to reconcile it; no redemption request was sent.", true);
+            return;
+          }
+          adoptDurableRedemptionMaterial(existing);
+          scrubCapturedHumanInviteFragment();
+          showDurableRedemptionReady(true);
+          return;
+        }
+        if (!fragmentInvite) {
+          scrubCapturedHumanInviteFragment();
+          if (capturedHumanInviteState === "invalid") {
+            lockRedemption("terminal", "Invalid invitation link");
+            setRedemptionStatus("This invitation URL is malformed. Ask the human approver to revoke it and issue a new invitation.", true);
+            return;
+          }
+          redemptionState = "absent";
+          if (redemptionForm) {
+            redemptionForm.hidden = true;
+            redemptionForm.setAttribute("aria-busy", "false");
+          }
+          setRedemptionStatus("Open the complete human-approved invitation URL to continue.", false);
+          return;
+        }
+        return writeDurableRedemptionMaterial(fragmentInvite).then(function (material) {
+          adoptDurableRedemptionMaterial(material);
+          scrubCapturedHumanInviteFragment();
+          showDurableRedemptionReady(false);
+        });
+      }).catch(function (error) {
+        requireManagedInstaller(error);
+      });
+    }
+
+    initializeDurableRedemption();
+
     window.addEventListener("pagehide", function () {
-      redemptionState = "cleared";
+      redemptionState = "suspended";
+      redemptionDurableStageReady = false;
       clearRedemptionSecrets();
     });
 
@@ -673,18 +1114,11 @@
       if (!event.persisted) {
         return;
       }
-      redemptionState = "cleared";
-      clearRedemptionSecrets();
-      if (redemptionForm) {
-        redemptionForm.hidden = true;
-      }
-      if (redemptionResult) {
-        redemptionResult.hidden = true;
-      }
-      setRedemptionStatus("One-time invitation state was cleared when this page left view. Ask the human approver to inspect the invitation status before taking another action.", true);
-      if (redemptionHeading) {
-        redemptionHeading.focus();
-      }
+      initializeDurableRedemption().then(function () {
+        if (redemptionHeading) {
+          redemptionHeading.focus();
+        }
+      });
     });
 
     if (redemptionTokenToggle && redemptionToken) {
@@ -728,23 +1162,38 @@
           setRedemptionStatus("Confirm that the one-time agent credential is saved before continuing.", true);
           return;
         }
-        redemptionState = "cleared";
-        clearRedemptionSecrets();
-        window.location.assign("/console");
+        redemptionTokenContinue.disabled = true;
+        setRedemptionStatus("Retiring protected browser recovery state…", false);
+        clearDurableRedemptionMaterial().then(function () {
+          redemptionState = "cleared";
+          clearRedemptionSecrets();
+          window.location.assign("/console");
+        }).catch(function (error) {
+          redemptionTokenContinue.disabled = false;
+          setRedemptionStatus(error.message + " The credential remains visible and protected recovery state was not discarded.", true);
+        });
       });
     }
 
     if (redemptionTokenClear) {
       redemptionTokenClear.addEventListener("click", function () {
-        redemptionState = "cleared";
-        clearRedemptionSecrets();
-        if (redemptionResult) {
-          redemptionResult.hidden = true;
-        }
-        setRedemptionStatus("The one-time agent credential was cleared from this page.", false);
-        if (redemptionHeading) {
-          redemptionHeading.focus();
-        }
+        redemptionTokenClear.disabled = true;
+        setRedemptionStatus("Retiring protected browser recovery state…", false);
+        clearDurableRedemptionMaterial().then(function () {
+          redemptionState = "cleared";
+          clearRedemptionSecrets();
+          if (redemptionResult) {
+            redemptionResult.hidden = true;
+          }
+          setRedemptionStatus("The one-time agent credential and protected browser recovery state were cleared.", false);
+          redemptionTokenClear.disabled = false;
+          if (redemptionHeading) {
+            redemptionHeading.focus();
+          }
+        }).catch(function (error) {
+          redemptionTokenClear.disabled = false;
+          setRedemptionStatus(error.message + " The credential remains visible and protected recovery state was not discarded.", true);
+        });
       });
     }
 
@@ -760,14 +1209,27 @@
         redemptionSubmit.textContent = "Redeeming invitation…";
         redemptionForm.setAttribute("aria-busy", "true");
         setRedemptionStatus("Redeeming the single-use invitation…", false);
-        var invitationForRequest = capturedHumanInviteSecret;
-        window.fetch("/api/matm/access/invites/redeem", {
-          method: "POST",
-          headers: {"Accept": "application/json", "Content-Type": "application/json"},
-          body: JSON.stringify({inviteSecret: invitationForRequest}),
-          cache: "no-store",
-          credentials: "same-origin",
-          referrerPolicy: "no-referrer",
+        requireDurableRedemptionMaterial().then(function (material) {
+          if (!redemptionDurableStageReady) {
+            throw redemptionStorageProblem();
+          }
+          var redemptionRequest = {
+            schemaVersion: "memoryendpoints.agent_invite_redemption.v1",
+            inviteSecret: material.inviteSecret,
+            candidateAgentTokenSecret: material.candidateAgentTokenSecret,
+          };
+          return window.fetch("/api/matm/access/invites/redeem", {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+              "Idempotency-Key": material.idempotencyKey,
+            },
+            body: JSON.stringify(redemptionRequest),
+            cache: "no-store",
+            credentials: "same-origin",
+            referrerPolicy: "no-referrer",
+          });
         }).then(function (response) {
           return response.text().then(function (text) {
             var payload;
@@ -782,14 +1244,24 @@
             return payload;
           });
         }).then(function (payload) {
-          capturedHumanInviteSecret = "";
           var principal = payload.principal || {};
           var grant = principal.grant || {};
           var context = principal.resourceContext || {};
-          if (!payload.agentTokenSecret || principal.credentialType !== "agent_token" || grant.immutable !== true) {
+          var expectedCredentialId = redemptionCandidateToken.split(".")[1];
+          if (
+            Object.prototype.hasOwnProperty.call(payload, "agentTokenSecret")
+            || payload.candidateCredentialAccepted !== true
+            || payload.credentialReturnedOnce !== false
+            || payload.idempotencySupported !== true
+            || payload.replaySafe !== true
+            || payload.rawCredentialExposed !== false
+            || principal.credentialType !== "agent_token"
+            || principal.credentialId !== expectedCredentialId
+            || grant.immutable !== true
+          ) {
             throw redemptionProblem({}, "Invitation redemption could not be verified, so its outcome is unknown.");
           }
-          redemptionToken.value = payload.agentTokenSecret;
+          redemptionToken.value = redemptionCandidateToken;
           redemptionResult.hidden = false;
           redemptionState = "redeemed_unsaved";
           redemptionForm.hidden = true;
@@ -797,24 +1269,42 @@
           setRedemptionText("[data-human-invite-agent-scope]", (grant.scopeType || "scope") + " · " + (grant.scopeId || "not provided"));
           setRedemptionText("[data-human-invite-workspace-id]", context.workspaceId);
           setRedemptionText("[data-human-invite-project-id]", context.projectId || ((payload.onboarding || {}).projectId));
-          setRedemptionStatus("Invitation redeemed. Save the one-time bound agent credential before leaving or refreshing this page.", false);
+          setRedemptionStatus("Invitation redeemed. Save the one-time bound agent credential. Encrypted recovery state remains available across a restart until you confirm that it is saved or explicitly clear it.", false);
           if (redemptionResultHeading) {
             redemptionResultHeading.focus();
           }
         }).catch(function (error) {
-          capturedHumanInviteSecret = "";
-          clearRedemptionSecrets();
           if (redemptionResult) {
             redemptionResult.hidden = true;
           }
-          var terminalCodes = ["invalid_invite", "invite_expired", "invite_redeemed", "invite_revoked"];
-          if (terminalCodes.indexOf(error.code) !== -1) {
-            lockRedemption("terminal", "Invitation unavailable");
-            setRedemptionStatus(error.message || "This invitation is no longer available.", true);
+          if (error && error.installerRequired) {
+            requireManagedInstaller(error);
             return;
           }
-          lockRedemption("outcome_unknown", "Redemption outcome unknown");
-          setRedemptionStatus((error.message || "Invitation redemption could not be confirmed.") + " Do not retry from this page; ask the human approver to inspect inventory.", true);
+          var safeTerminalCodes = ["invalid_invite", "invite_expired", "invite_revoked"];
+          if (safeTerminalCodes.indexOf(error.code) !== -1) {
+            lockRedemption("terminal", "Invitation unavailable");
+            clearDurableRedemptionMaterial().then(function () {
+              clearRedemptionSecrets();
+              setRedemptionStatus(error.message || "This invitation is no longer available.", true);
+            }).catch(function (cleanupError) {
+              requireManagedInstaller(cleanupError);
+            });
+            return;
+          }
+          var recoveryRequiredCodes = ["invite_unavailable", "invite_redemption_replay_unavailable", "idempotency_conflict", "candidate_agent_token_conflict"];
+          if (recoveryRequiredCodes.indexOf(error.code) !== -1) {
+            redemptionDurableStageReady = false;
+            clearRedemptionSecrets();
+            lockRedemption("installer_required", "Managed installer required");
+            setRedemptionStatus((error.message || "This redemption requires reconciliation.") + " Encrypted recovery state was retained for the managed installer; no changed retry will be sent.", true);
+            return;
+          }
+          redemptionState = "ready";
+          redemptionSubmit.disabled = false;
+          redemptionSubmit.textContent = "Retry exact redemption";
+          redemptionForm.setAttribute("aria-busy", "false");
+          setRedemptionStatus((error.message || "Invitation redemption could not be confirmed.") + " The same encrypted candidate and retry key remain available after a tab or browser restart for an exact retry.", true);
         });
       });
     }

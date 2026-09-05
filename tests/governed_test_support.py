@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import os
 import tempfile
@@ -125,6 +127,30 @@ class IsolatedTestRuntimeMixin:
                 fixture.restore()
 
 
+def governed_agent_redemption_material(invite_secret):
+    """Return one deterministic client-retained candidate and exact retry key."""
+    invite_secret = str(invite_secret or "")
+    token_id = hashlib.sha256(
+        ("governed-test-agent-token-id\0" + invite_secret).encode("utf-8")
+    ).hexdigest()[:20]
+    token_secret = base64.urlsafe_b64encode(
+        hashlib.sha256(
+            ("governed-test-agent-token-secret\0" + invite_secret).encode("utf-8")
+        ).digest()
+    ).decode("ascii").rstrip("=")
+    candidate = "me_agent_v1.agenttoken-%s.%s" % (token_id, token_secret)
+    idempotency_key = "governed-test-invite-redeem-" + hashlib.sha256(
+        ("governed-test-invite-redeem-key\0" + invite_secret).encode("utf-8")
+    ).hexdigest()
+    return (
+        {
+            "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+            "inviteSecret": invite_secret,
+            "candidateAgentTokenSecret": candidate,
+        },
+        idempotency_key,
+        candidate,
+    )
 
 
 class DeterministicCredentialPepperEnvironment:
@@ -292,17 +318,27 @@ class GovernedAgentProvisioner:
             raise AssertionError("The governed invitation fragment was malformed.")
         invite_secret = fragment["invite"][0]
 
+        redemption, redemption_key, agent_bearer = (
+            governed_agent_redemption_material(invite_secret)
+        )
+
         redeemed = self._json_call(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
-            {},
+            redemption,
+            {
+                "CONTENT_TYPE": "application/json",
+                "HTTP_IDEMPOTENCY_KEY": redemption_key,
+            },
             "201 Created",
             "agent invitation redemption",
         )
         principal = redeemed.get("principal") or {}
         agent_id = str(principal.get("agentId") or "").strip()
-        agent_bearer = redeemed.get("agentTokenSecret") or ""
+        if "agentTokenSecret" in redeemed:
+            raise AssertionError("The governed redemption returned a credential secret.")
+        if not redeemed.get("candidateCredentialAccepted"):
+            raise AssertionError("The governed redemption did not accept the client candidate.")
         if not agent_id or not agent_bearer:
             raise AssertionError("The governed invitation redemption returned no canonical agent principal.")
         return GovernedTestAgent(agent_id=agent_id, agent_bearer=agent_bearer)

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import secrets
 import shutil
 import sys
 import time
@@ -197,14 +198,33 @@ def provision_workspace_agent(
             "valuesRedacted": True,
         }
 
-    return call_with_retries(
+    candidate = "me_agent_v1.agenttoken-%s.%s" % (
+        secrets.token_hex(10),
+        secrets.token_urlsafe(32),
+    )
+    idempotency_key = "dogfood-invite-redeem-" + secrets.token_urlsafe(24)
+    redemption_status, redeemed = call_with_retries(
         transport,
         "/api/matm/access/invites/redeem",
         method="POST",
-        body={"inviteSecret": invite_secret},
+        headers={"HTTP_IDEMPOTENCY_KEY": idempotency_key},
+        body={
+            "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+            "inviteSecret": invite_secret,
+            "candidateAgentTokenSecret": candidate,
+        },
         retry_statuses=("500",),
         attempts=LIVE_WRITE_ATTEMPTS,
     )
+    if not ok_status(redemption_status):
+        return redemption_status, redeemed
+    if "agentTokenSecret" in redeemed:
+        return "500 Credential Contract Violation", {
+            "ok": False,
+            "error": {"code": "redemption_returned_credential"},
+            "valuesRedacted": True,
+        }
+    return redemption_status, dict(redeemed, agentTokenSecret=candidate)
 
 
 def retryable_status(status, prefixes):

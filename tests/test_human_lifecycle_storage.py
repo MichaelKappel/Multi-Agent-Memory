@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from memoryendpoints.storage import FileStore, SQLiteStore
+from tests.governed_test_support import governed_agent_redemption_material
 
 
 TEST_PEPPER = "human-lifecycle-test-pepper-0123456789-abcdefghijklmnopqrstuvwxyz"
@@ -188,8 +189,13 @@ class HumanLifecycleStorageMixin(object):
         request_id = request["request"]["requestId"]
         self.store.decide_agent_access_request(self.master_secret, request_id, "approved")
         invite = self.store.issue_agent_invite(self.master_secret, request_id)
-        agent = self.store.redeem_agent_invite(invite["inviteSecret"])
-        agent_secret = agent["agentToken"]
+        redemption, redemption_key, agent_secret = governed_agent_redemption_material(
+            invite["inviteSecret"]
+        )
+        agent = self.store.redeem_agent_invite(redemption, redemption_key)
+        self.assertNotIn("agentToken", agent)
+        self.assertNotIn("agentTokenSecret", agent)
+        self.assertTrue(agent["candidateCredentialAccepted"])
 
         intent = self._intent("soft_delete")
         deleted = self.store.soft_delete_company(self.session_secret, intent["intentSecret"], "GamesFor.me")

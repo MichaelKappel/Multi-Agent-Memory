@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app import application
 from memoryendpoints.app import _store
+from tests.governed_test_support import governed_agent_redemption_material
 
 
 def call_api(path, method="GET", body=None, token=None, query="", idempotency_key=None):
@@ -25,6 +26,8 @@ def call_api(path, method="GET", body=None, token=None, query="", idempotency_ke
         "wsgi.input": io.BytesIO(raw),
         "CONTENT_LENGTH": str(len(raw)),
     }
+    if body is not None:
+        environ["CONTENT_TYPE"] = "application/json"
     if token:
         environ["HTTP_AUTHORIZATION"] = "Bearer " + token
     if idempotency_key:
@@ -145,13 +148,19 @@ class EscapeGamesNpcMemoryTests(unittest.TestCase):
         )
         self.assertEqual(201, status, issued)
         invite_secret = issued["inviteUrl"].split("#invite=", 1)[1]
+        redemption, redemption_key, candidate = governed_agent_redemption_material(
+            invite_secret
+        )
         status, redeemed = call_api(
             "/api/matm/access/invites/redeem",
             "POST",
-            {"inviteSecret": invite_secret},
+            redemption,
+            idempotency_key=redemption_key,
         )
         self.assertEqual(201, status, redeemed)
-        return redeemed
+        self.assertNotIn("agentTokenSecret", redeemed)
+        self.assertTrue(redeemed["candidateCredentialAccepted"])
+        return dict(redeemed, agentTokenSecret=candidate)
 
     def _create_room(self, setup, scope, scope_id, parent_scope_type, parent_scope_id, idem, token=None, agent_id=None):
         body = {

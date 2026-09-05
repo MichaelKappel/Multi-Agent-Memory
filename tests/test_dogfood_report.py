@@ -13,7 +13,15 @@ class FakeTransport(object):
         self.calls = []
 
     def call(self, path, method="GET", body=None, headers=None, query=""):
-        self.calls.append({"path": path, "query": query, "method": method, "headers": headers or {}})
+        self.calls.append(
+            {
+                "path": path,
+                "query": query,
+                "method": method,
+                "headers": headers or {},
+                "body": body,
+            }
+        )
         if self.responses:
             return self.responses.pop(0)
         return "200 OK", {"ok": True, "items": [], "valuesRedacted": True}
@@ -77,7 +85,6 @@ class DogfoodReportTests(unittest.TestCase):
 
     def test_workspace_agent_provisioning_uses_governed_invite_flow(self):
         master = "me_master_v1.master-current.secret-current"
-        agent = "me_agent_v1.agent-current.secret-current"
         transport = FakeTransport(
             [
                 ("201 Created", {"ok": True, "request": {"requestId": "request-1"}}),
@@ -93,7 +100,10 @@ class DogfoodReportTests(unittest.TestCase):
                     "201 Created",
                     {
                         "ok": True,
-                        "agentTokenSecret": agent,
+                        "candidateCredentialAccepted": True,
+                        "credentialReturnedOnce": False,
+                        "idempotencySupported": True,
+                        "replaySafe": True,
                         "principal": {
                             "credentialType": "agent_token",
                             "agentId": "dogfood-primary-current",
@@ -114,7 +124,24 @@ class DogfoodReportTests(unittest.TestCase):
         )
 
         self.assertEqual("201 Created", status)
-        self.assertEqual(agent, payload["agentTokenSecret"])
+        redemption = transport.calls[3]
+        self.assertEqual(
+            {
+                "schemaVersion",
+                "inviteSecret",
+                "candidateAgentTokenSecret",
+            },
+            set(redemption["body"]),
+        )
+        self.assertEqual(
+            redemption["body"]["candidateAgentTokenSecret"],
+            payload["agentTokenSecret"],
+        )
+        self.assertRegex(
+            payload["agentTokenSecret"],
+            r"^me_agent_v1\.agenttoken-[0-9a-f]{20}\.[A-Za-z0-9_-]{43}$",
+        )
+        self.assertTrue(redemption["headers"]["HTTP_IDEMPOTENCY_KEY"])
         self.assertEqual(
             [
                 "/api/matm/access/agent-name-requests",

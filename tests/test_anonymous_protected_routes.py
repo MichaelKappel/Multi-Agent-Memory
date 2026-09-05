@@ -11,6 +11,7 @@ from memoryendpoints.site_data import PROTECTED_ROUTES, ROUTE_TABLE
 from tests.governed_test_support import (
     IsolatedTestRuntimeEnvironment,
     IsolatedTestRuntimeMixin,
+    governed_agent_redemption_material,
 )
 
 
@@ -79,7 +80,12 @@ def concrete_path(route):
 
 
 def call_anonymously(route, method):
-    raw = json.dumps(BODY).encode("utf-8") if method in ("POST", "PUT", "PATCH") else b""
+    body = BODY
+    redemption_key = ""
+    if route == "/api/matm/access/invites/redeem":
+        invite = "me_invite_v1.invite-" + ("a" * 20) + "." + ("b" * 43)
+        body, redemption_key, _candidate = governed_agent_redemption_material(invite)
+    raw = json.dumps(body).encode("utf-8") if method in ("POST", "PUT", "PATCH") else b""
     captured = {}
 
     def start_response(status, response_headers):
@@ -95,6 +101,8 @@ def call_anonymously(route, method):
         "wsgi.input": io.BytesIO(raw),
     }
     environ.update(HEADERS)
+    if redemption_key:
+        environ["HTTP_IDEMPOTENCY_KEY"] = redemption_key
     response_body = b"".join(application(environ, start_response)).decode("utf-8")
     return captured["status"], captured["headers"], response_body
 
