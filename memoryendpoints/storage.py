@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 import hashlib
 import hmac
 import datetime
@@ -10,6 +11,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 import uuid
 from urllib.parse import unquote, urlparse
 
@@ -92,7 +94,7 @@ from .uai_memory import (
 
 _LOCK = threading.RLock()
 SQL_READ_AFTER_WRITE_RETRY_DELAYS = (0.05, 0.15, 0.35)
-_SQLITE_SCHEMA_VERSION = 5
+_SQLITE_SCHEMA_VERSION = 6
 _MYSQL_SCHEMA_READY = set()
 _IDEMPOTENCY_PENDING_MARKER = "memoryendpoints.idempotency_pending.v1"
 _IDEMPOTENCY_CLAIM_WAIT_SECONDS = 30.0
@@ -109,6 +111,109 @@ def _time_ordered_id(prefix):
 
 def _hash(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+_BOOTSTRAP_ACCOUNT_RESPONSE_SCHEMA = "memoryendpoints.bootstrap_account.v1"
+_BOOTSTRAP_CAPABILITY_DOMAIN = b"memoryendpoints.bootstrap-account-capability.v1\0"
+_BOOTSTRAP_IDEMPOTENCY_DOMAIN = b"memoryendpoints.bootstrap-account-idempotency.v1\0"
+_BOOTSTRAP_REQUEST_DOMAIN = b"memoryendpoints.bootstrap-account-request.v1\0"
+_CANONICAL_B64URL_32_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+class BootstrapAccountError(RuntimeError):
+    """Typed, public-safe failure from the hidden account bootstrap transaction."""
+
+    def __init__(self, code):
+        self.code = str(code)
+        super().__init__(self.code)
+
+
+def _canonical_b64url_32(value):
+    raw = str(value or "")
+    if not _CANONICAL_B64URL_32_PATTERN.fullmatch(raw):
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode((raw + "=").encode("ascii"))
+    except (ValueError, TypeError):
+        return None
+    if len(decoded) != 32:
+        return None
+    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    return decoded if hmac.compare_digest(canonical, raw) else None
+
+
+def bootstrap_capability_digest(value):
+    decoded = _canonical_b64url_32(value)
+    if decoded is None:
+        return None
+    return hashlib.sha256(_BOOTSTRAP_CAPABILITY_DOMAIN + decoded).hexdigest()
+
+
+def bootstrap_idempotency_digest(value):
+    decoded = _canonical_b64url_32(value)
+    if decoded is None:
+        return None
+    return hashlib.sha256(_BOOTSTRAP_IDEMPOTENCY_DOMAIN + decoded).hexdigest()
+
+
+def bootstrap_request_digest(body):
+    canonical = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    return hashlib.sha256(_BOOTSTRAP_REQUEST_DOMAIN + canonical).hexdigest()
+
+
+def _bootstrap_stable_id(prefix, capability_digest):
+    material = ("memoryendpoints.bootstrap-account-id.v1\0%s\0%s" % (
+        prefix,
+        capability_digest,
+    )).encode("utf-8")
+    return "%s-%s" % (prefix, hashlib.sha256(material).hexdigest()[:20])
+
+
+def _bootstrap_account_ids(capability_digest, master_key_id, human_credential_id):
+    return {
+        "accountId": _bootstrap_stable_id("account", capability_digest),
+        "companyId": _bootstrap_stable_id("company", capability_digest),
+        "workspaceId": _bootstrap_stable_id("workspace", capability_digest),
+        "projectId": _bootstrap_stable_id("project", capability_digest),
+        "companyMasterCredentialId": master_key_id,
+        "humanOwnerCredentialId": human_credential_id,
+    }
+
+
+def _bootstrap_account_response(ids):
+    return {
+        "schemaVersion": _BOOTSTRAP_ACCOUNT_RESPONSE_SCHEMA,
+        "ok": True,
+        "accountId": ids["accountId"],
+        "companyId": ids["companyId"],
+        "workspaceId": ids["workspaceId"],
+        "projectId": ids["projectId"],
+        "companyMasterCredentialId": ids["companyMasterCredentialId"],
+        "humanOwnerCredentialId": ids["humanOwnerCredentialId"],
+        "candidateCredentialsAccepted": True,
+        "credentialValuesReturned": False,
+        "idempotencySupported": True,
+        "valuesRedacted": True,
+        "rawCredentialExposed": False,
+        "rawPayloadExposed": False,
+        "idempotencyKeyExposed": False,
+    }
+
+
+def _bootstrap_claim_time_active(expires_at):
+    raw = str(expires_at or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", raw):
+        return False
+    try:
+        expiry = datetime.datetime.fromisoformat(raw[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return datetime.datetime.now(datetime.timezone.utc) < expiry
 
 
 def _credential_pepper():
@@ -173,6 +278,77 @@ def _parse_delegated_company_master_candidate(token):
     if not re.fullmatch(r"[A-Za-z0-9_-]{43}", secret):
         return None, None
     return master_key_id, secret
+
+
+_BOOTSTRAP_ACCOUNT_REQUEST_SCHEMA = "memoryendpoints.bootstrap_account_request.v1"
+_BOOTSTRAP_ACCOUNT_REQUEST_KEYS = frozenset(
+    (
+        "schemaVersion",
+        "companyLabel",
+        "workspaceLabel",
+        "projectLabel",
+        "candidateCompanyMasterTokenSecret",
+        "candidateHumanOwnerRecoverySecret",
+    )
+)
+
+
+def validate_bootstrap_account_body(body):
+    """Validate the exact secret-bearing bootstrap request without coercion."""
+    if type(body) is not dict or set(body) != _BOOTSTRAP_ACCOUNT_REQUEST_KEYS:
+        return None
+    if body.get("schemaVersion") != _BOOTSTRAP_ACCOUNT_REQUEST_SCHEMA:
+        return None
+    normalized = {"schemaVersion": _BOOTSTRAP_ACCOUNT_REQUEST_SCHEMA}
+    for field in ("companyLabel", "workspaceLabel", "projectLabel"):
+        value = body.get(field)
+        if type(value) is not str or not 1 <= len(value) <= 80:
+            return None
+        if unicodedata.normalize("NFC", value) != value:
+            return None
+        if value != " ".join(value.split()):
+            return None
+        if any(unicodedata.category(character).startswith("C") for character in value):
+            return None
+        if redact_text(value) != value:
+            return None
+        normalized[field] = value
+
+    master_token = body.get("candidateCompanyMasterTokenSecret")
+    human_token = body.get("candidateHumanOwnerRecoverySecret")
+    if type(master_token) is not str or type(human_token) is not str:
+        return None
+    master_key_id, master_secret = _parse_delegated_company_master_candidate(
+        master_token
+    )
+    human_credential_id, human_secret = _parse_governed_credential(
+        human_token, "human"
+    )
+    if (
+        not master_key_id
+        or not human_credential_id
+        or not re.fullmatch(r"humancred-[0-9a-f]{20}", human_credential_id)
+    ):
+        return None
+    master_secret_bytes = _canonical_b64url_32(master_secret)
+    human_secret_bytes = _canonical_b64url_32(human_secret)
+    if (
+        master_secret_bytes is None
+        or human_secret_bytes is None
+        or hmac.compare_digest(master_secret_bytes, human_secret_bytes)
+    ):
+        return None
+    normalized.update(
+        {
+            "candidateCompanyMasterTokenSecret": master_token,
+            "candidateHumanOwnerRecoverySecret": human_token,
+            "companyMasterCredentialId": master_key_id,
+            "humanOwnerCredentialId": human_credential_id,
+            "companyMasterSecret": master_secret,
+            "humanOwnerSecret": human_secret,
+        }
+    )
+    return normalized
 
 
 def _company_master_delegation_text(value, fallback):
@@ -1647,12 +1823,18 @@ _CONNECTOR_RATE_BUCKETS = frozenset(
         "commonsRead",
         "commonsMutation",
         "commonsBrowserSession",
+        "bootstrapSourceRequest",
+        "bootstrapCapabilityRequest",
     )
 )
 _CONNECTOR_RATE_CLEANUP_BATCH = 128
 _CONNECTOR_RATE_MAX_LIMIT = 10000
 _CONNECTOR_RATE_MAX_WINDOW_SECONDS = 86400
-_COMMONS_SOURCE_RATE_BUCKETS = ("commonsSourceRequest", "commonsEnrollment")
+_COMMONS_SOURCE_RATE_BUCKETS = (
+    "commonsSourceRequest",
+    "commonsEnrollment",
+    "bootstrapSourceRequest",
+)
 HUMAN_AUDIT_LOG_RETENTION_DAYS = 7
 ACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 7
 UNACKNOWLEDGED_DIRECT_MESSAGE_RETENTION_DAYS = 30
@@ -2824,6 +3006,7 @@ def _blank_store():
         "connectorCredentials": {},
         "connectorRotations": {},
         "connectorRateLimits": {},
+        "bootstrapAccountSetups": {},
         "outboundMcpProjectPolicies": {},
         "outboundMcpServers": {},
         "agents": {},
@@ -2881,6 +3064,67 @@ def _normalize_store(data):
     return data
 
 
+@contextmanager
+def _bootstrap_file_process_lock(path, timeout_seconds=30.0):
+    """Hold one path-scoped advisory lock across the bootstrap FileStore CAS."""
+    lock_path = Path(str(path) + ".bootstrap-account.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+b")
+    acquired = False
+    deadline = time.monotonic() + float(timeout_seconds)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() < 1:
+                handle.write(b"\0")
+                handle.flush()
+                os.fsync(handle.fileno())
+            while not acquired:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise BootstrapAccountError(
+                            "bootstrap_account_unavailable"
+                        )
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            while not acquired:
+                try:
+                    fcntl.flock(
+                        handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                    acquired = True
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise BootstrapAccountError(
+                            "bootstrap_account_unavailable"
+                        )
+                    time.sleep(0.05)
+        yield
+    finally:
+        if acquired:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
 class _ClosingConnection(object):
     def __init__(self, connection):
         self.connection = connection
@@ -2929,7 +3173,11 @@ class FileStore(object):
             parent = self.path.parent
             if not parent.exists():
                 parent.mkdir(parents=True)
-            tmp = str(self.path) + ".tmp"
+            tmp = "%s.tmp.%s.%s" % (
+                self.path,
+                os.getpid(),
+                uuid.uuid4().hex,
+            )
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(data, handle, indent=2, sort_keys=True)
             try:
@@ -3025,9 +3273,52 @@ class FileStore(object):
         now=None,
     ):
         """Atomically admit a Commons source before spending shared capacity."""
+        arguments = (
+            source_bucket,
+            source_partition,
+            source_limit,
+            source_window_seconds,
+            project_bucket,
+            project_partition,
+            project_limit,
+            project_window_seconds,
+            maximum_live_source_partitions,
+        )
+        if source_bucket == "bootstrapSourceRequest":
+            # Bootstrap is a machine-only, cross-process setup surface. Keep
+            # its persisted source and capability counters under the same
+            # path-scoped lock as the later one-account CAS. The lock order is
+            # always the in-process RLock followed by the OS advisory lock.
+            with _LOCK:
+                with _bootstrap_file_process_lock(self.path):
+                    return self._consume_commons_layered_rate_limit_locked(
+                        *arguments, now=now
+                    )
+        return self._consume_commons_layered_rate_limit_locked(
+            *arguments, now=now
+        )
+
+    def _consume_commons_layered_rate_limit_locked(
+        self,
+        source_bucket,
+        source_partition,
+        source_limit,
+        source_window_seconds,
+        project_bucket,
+        project_partition,
+        project_limit,
+        project_window_seconds,
+        maximum_live_source_partitions,
+        now=None,
+    ):
+        """Apply one FileStore layered-rate mutation under caller locking."""
         if source_bucket not in _COMMONS_SOURCE_RATE_BUCKETS:
             raise ValueError("commons_source_rate_bucket_invalid")
-        if project_bucket not in ("commonsProjectRequest", "commonsProjectEnrollment"):
+        if project_bucket not in (
+            "commonsProjectRequest",
+            "commonsProjectEnrollment",
+            "bootstrapCapabilityRequest",
+        ):
             raise ValueError("commons_project_rate_bucket_invalid")
         source_limit, source_window_seconds = _connector_rate_policy(
             source_bucket, source_limit, source_window_seconds
@@ -3048,6 +3339,11 @@ class FileStore(object):
         )
         source_key = "%s:%s" % (source_bucket, source_hash)
         project_key = "%s:%s" % (project_bucket, project_hash)
+        source_capacity_buckets = (
+            ("bootstrapSourceRequest",)
+            if source_bucket == "bootstrapSourceRequest"
+            else ("commonsSourceRequest", "commonsEnrollment")
+        )
 
         def state(record, limit, window):
             if not record or int(record.get("expiresAtEpoch") or 0) <= now_epoch:
@@ -3082,7 +3378,7 @@ class FileStore(object):
             live_source_records = [
                 item
                 for item in records.values()
-                if (item or {}).get("bucket") in _COMMONS_SOURCE_RATE_BUCKETS
+                if (item or {}).get("bucket") in source_capacity_buckets
                 and int((item or {}).get("expiresAtEpoch") or 0) > now_epoch
             ]
             denied_layer = None
@@ -5157,6 +5453,730 @@ class FileStore(object):
         )
         self._save(data)
         return workspace_id, key_id, token, account_id, company_id, project_id, human_recovery_secret
+
+    def _bootstrap_sql_invariants(
+        self,
+        connection,
+        setup,
+        ids,
+        membership_id,
+        master_token_digest,
+        human_token_digest,
+    ):
+        if not setup or self._sql_value(setup, "status") != "complete":
+            return False
+        setup_columns = {
+            "accountId": "account_id",
+            "companyId": "company_id",
+            "workspaceId": "workspace_id",
+            "projectId": "project_id",
+            "companyMasterCredentialId": "company_master_credential_id",
+            "humanOwnerCredentialId": "human_owner_credential_id",
+        }
+        if any(
+            self._sql_value(setup, column) != ids[key]
+            for key, column in setup_columns.items()
+        ):
+            return False
+        row = connection.execute(
+            """
+            SELECT a.account_id, c.company_id, ac.membership_id,
+                   w.workspace_id, p.project_id, mk.master_key_id,
+                   mk.token_hash AS master_token_hash,
+                   hc.human_credential_id,
+                   hc.token_hash AS human_token_hash
+            FROM matm_accounts a
+            JOIN matm_account_companies ac
+              ON ac.account_id = a.account_id AND ac.membership_id = ?
+            JOIN matm_companies c
+              ON c.company_id = ac.company_id
+            JOIN matm_workspaces w
+              ON w.company_id = c.company_id
+            JOIN matm_projects p
+              ON p.workspace_id = w.workspace_id
+            JOIN matm_company_master_keys mk
+              ON mk.company_id = c.company_id
+             AND mk.master_key_id = ?
+            JOIN matm_human_owner_credentials hc
+              ON hc.company_id = c.company_id
+             AND hc.human_credential_id = ?
+            WHERE a.account_id = ? AND c.company_id = ?
+              AND w.workspace_id = ? AND p.project_id = ?
+            """,
+            (
+                membership_id,
+                ids["companyMasterCredentialId"],
+                ids["humanOwnerCredentialId"],
+                ids["accountId"],
+                ids["companyId"],
+                ids["workspaceId"],
+                ids["projectId"],
+            ),
+        ).fetchone()
+        return bool(
+            row
+            and hmac.compare_digest(
+                str(self._sql_value(row, "master_token_hash") or ""),
+                master_token_digest,
+            )
+            and hmac.compare_digest(
+                str(self._sql_value(row, "human_token_hash") or ""),
+                human_token_digest,
+            )
+        )
+
+    def _bootstrap_sql_replay_or_conflict(
+        self,
+        connection,
+        capability_digest,
+        idempotency_digest,
+        request_digest,
+        ids,
+        membership_id,
+        master_token_digest,
+        human_token_digest,
+    ):
+        setup = connection.execute(
+            "SELECT * FROM matm_bootstrap_account_setups "
+            "WHERE capability_digest_sha256 = ?",
+            (capability_digest,),
+        ).fetchone()
+        if setup:
+            if not (
+                hmac.compare_digest(
+                    str(self._sql_value(setup, "idempotency_digest_sha256") or ""),
+                    idempotency_digest,
+                )
+                and hmac.compare_digest(
+                    str(self._sql_value(setup, "request_digest_sha256") or ""),
+                    request_digest,
+                )
+            ):
+                raise BootstrapAccountError("bootstrap_account_conflict")
+            if not self._bootstrap_sql_invariants(
+                connection,
+                setup,
+                ids,
+                membership_id,
+                master_token_digest,
+                human_token_digest,
+            ):
+                raise BootstrapAccountError("bootstrap_account_unavailable")
+            return _bootstrap_account_response(ids)
+        reused = connection.execute(
+            "SELECT capability_digest_sha256 FROM matm_bootstrap_account_setups "
+            "WHERE idempotency_digest_sha256 = ?",
+            (idempotency_digest,),
+        ).fetchone()
+        if reused:
+            raise BootstrapAccountError("bootstrap_account_conflict")
+        return None
+
+    def _create_bootstrap_account_sql(
+        self,
+        body,
+        capability_digest,
+        idempotency_digest,
+        request_digest,
+        capability_expires_at,
+    ):
+        normalized = validate_bootstrap_account_body(body)
+        if normalized is None:
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(capability_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(idempotency_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(request_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+
+        ids = _bootstrap_account_ids(
+            capability_digest,
+            normalized["companyMasterCredentialId"],
+            normalized["humanOwnerCredentialId"],
+        )
+        membership_id = _bootstrap_stable_id("membership", capability_digest)
+        master_token_digest = _governed_credential_digest(
+            "master",
+            ids["companyId"],
+            ids["companyMasterCredentialId"],
+            normalized["companyMasterSecret"],
+        )
+        human_token_digest = _governed_credential_digest(
+            "human",
+            ids["companyId"],
+            ids["humanOwnerCredentialId"],
+            normalized["humanOwnerSecret"],
+        )
+        created_at = utc_now()
+        try:
+            with _LOCK:
+                with self._open_connection() as connection:
+                    _connector_begin_immediate(connection)
+                    if not _bootstrap_claim_time_active(capability_expires_at):
+                        raise BootstrapAccountError(
+                            "bootstrap_account_unavailable"
+                        )
+                    select_sql = (
+                        "SELECT * FROM matm_bootstrap_account_setups "
+                        "WHERE capability_digest_sha256 = ?"
+                    )
+                    if getattr(connection, "dialect", "sqlite") == "mysql":
+                        select_sql += " FOR UPDATE"
+                    setup = connection.execute(
+                        select_sql, (capability_digest,)
+                    ).fetchone()
+                    if setup:
+                        return self._bootstrap_sql_replay_or_conflict(
+                            connection,
+                            capability_digest,
+                            idempotency_digest,
+                            request_digest,
+                            ids,
+                            membership_id,
+                            master_token_digest,
+                            human_token_digest,
+                        )
+                    reused = connection.execute(
+                        "SELECT capability_digest_sha256 FROM "
+                        "matm_bootstrap_account_setups "
+                        "WHERE idempotency_digest_sha256 = ?",
+                        (idempotency_digest,),
+                    ).fetchone()
+                    if reused:
+                        raise BootstrapAccountError("bootstrap_account_conflict")
+
+                    collision_checks = (
+                        (
+                            "SELECT account_id AS item_id FROM matm_accounts "
+                            "WHERE account_id = ?",
+                            (ids["accountId"],),
+                        ),
+                        (
+                            "SELECT company_id AS item_id FROM matm_companies "
+                            "WHERE company_id = ?",
+                            (ids["companyId"],),
+                        ),
+                        (
+                            "SELECT membership_id AS item_id FROM matm_account_companies "
+                            "WHERE membership_id = ?",
+                            (membership_id,),
+                        ),
+                        (
+                            "SELECT workspace_id AS item_id FROM matm_workspaces "
+                            "WHERE workspace_id = ?",
+                            (ids["workspaceId"],),
+                        ),
+                        (
+                            "SELECT project_id AS item_id FROM matm_projects "
+                            "WHERE project_id = ?",
+                            (ids["projectId"],),
+                        ),
+                        (
+                            "SELECT master_key_id AS item_id FROM matm_company_master_keys "
+                            "WHERE master_key_id = ? OR token_hash = ?",
+                            (
+                                ids["companyMasterCredentialId"],
+                                master_token_digest,
+                            ),
+                        ),
+                        (
+                            "SELECT human_credential_id AS item_id FROM "
+                            "matm_human_owner_credentials "
+                            "WHERE human_credential_id = ? OR token_hash = ?",
+                            (ids["humanOwnerCredentialId"], human_token_digest),
+                        ),
+                    )
+                    if any(
+                        connection.execute(sql, params).fetchone()
+                        for sql, params in collision_checks
+                    ):
+                        raise BootstrapAccountError("bootstrap_account_conflict")
+
+                    connection.execute(
+                        """
+                        INSERT INTO matm_bootstrap_account_setups (
+                          capability_digest_sha256, idempotency_digest_sha256,
+                          request_digest_sha256, status, account_id, company_id,
+                          workspace_id, project_id, company_master_credential_id,
+                          human_owner_credential_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            capability_digest,
+                            idempotency_digest,
+                            request_digest,
+                            "pending",
+                            ids["accountId"],
+                            ids["companyId"],
+                            ids["workspaceId"],
+                            ids["projectId"],
+                            ids["companyMasterCredentialId"],
+                            ids["humanOwnerCredentialId"],
+                            created_at,
+                        ),
+                    )
+                    connection.execute(
+                        "INSERT INTO matm_accounts "
+                        "(account_id, label, status, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            ids["accountId"],
+                            normalized["companyLabel"] + " Account",
+                            "active",
+                            created_at,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_companies (
+                          company_id, label, status,
+                          top_level_agent_master_credential_enabled,
+                          created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ids["companyId"],
+                            normalized["companyLabel"],
+                            "active",
+                            self._int_bool(True),
+                            created_at,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_account_companies (
+                          membership_id, account_id, company_id, role, status,
+                          created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            membership_id,
+                            ids["accountId"],
+                            ids["companyId"],
+                            "owner",
+                            "active",
+                            created_at,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_workspaces (
+                          workspace_id, company_id, label, plan,
+                          storage_limit_bytes, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ids["workspaceId"],
+                            ids["companyId"],
+                            normalized["workspaceLabel"],
+                            PLAN_FREE_AGENT,
+                            PUBLIC_STORAGE_BYTES,
+                            "active",
+                            created_at,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_projects (
+                          project_id, workspace_id, label, status,
+                          created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ids["projectId"],
+                            ids["workspaceId"],
+                            normalized["projectLabel"],
+                            "active",
+                            created_at,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_company_master_keys (
+                          master_key_id, company_id, token_hash, label,
+                          principal_name, issuance_kind, issued_by_master_key_id,
+                          issued_by_agent_token_id, delegated_for_workspace_id,
+                          created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ids["companyMasterCredentialId"],
+                            ids["companyId"],
+                            master_token_digest,
+                            "Initial company master",
+                            "account-owner",
+                            "bootstrap",
+                            None,
+                            None,
+                            None,
+                            created_at,
+                            None,
+                            None,
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO matm_human_owner_credentials (
+                          human_credential_id, company_id, token_hash,
+                          principal_name, created_at, last_used_at, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            ids["humanOwnerCredentialId"],
+                            ids["companyId"],
+                            human_token_digest,
+                            "account-owner",
+                            created_at,
+                            None,
+                            None,
+                        ),
+                    )
+                    self._ensure_default_meeting_rooms_sql(
+                        connection, ids["workspaceId"]
+                    )
+                    self._record_audit_sql(
+                        connection,
+                        ids["workspaceId"],
+                        "workspace.create_bootstrap_account",
+                        "bootstrap-account-capability",
+                        ids["accountId"],
+                        {
+                            "accountId": ids["accountId"],
+                            "companyId": ids["companyId"],
+                            "accountCompanyMembershipId": membership_id,
+                            "projectId": ids["projectId"],
+                            "companyMasterCredentialId": ids[
+                                "companyMasterCredentialId"
+                            ],
+                            "humanOwnerCredentialId": ids[
+                                "humanOwnerCredentialId"
+                            ],
+                        },
+                    )
+                    updated = connection.execute(
+                        "UPDATE matm_bootstrap_account_setups "
+                        "SET status = 'complete' "
+                        "WHERE capability_digest_sha256 = ? AND status = 'pending'",
+                        (capability_digest,),
+                    )
+                    if updated.rowcount != 1:
+                        raise BootstrapAccountError(
+                            "bootstrap_account_unavailable"
+                        )
+                    completed = connection.execute(
+                        "SELECT * FROM matm_bootstrap_account_setups "
+                        "WHERE capability_digest_sha256 = ?",
+                        (capability_digest,),
+                    ).fetchone()
+                    if not self._bootstrap_sql_invariants(
+                        connection,
+                        completed,
+                        ids,
+                        membership_id,
+                        master_token_digest,
+                        human_token_digest,
+                    ):
+                        raise BootstrapAccountError(
+                            "bootstrap_account_unavailable"
+                        )
+                    connection.commit()
+        except BootstrapAccountError:
+            raise
+        except Exception as exc:
+            if not _is_sql_duplicate_key_conflict(exc):
+                raise
+            try:
+                with self._open_connection() as connection:
+                    replay = self._bootstrap_sql_replay_or_conflict(
+                        connection,
+                        capability_digest,
+                        idempotency_digest,
+                        request_digest,
+                        ids,
+                        membership_id,
+                        master_token_digest,
+                        human_token_digest,
+                    )
+                    if replay is not None:
+                        return replay
+            except BootstrapAccountError:
+                raise
+            raise BootstrapAccountError("bootstrap_account_conflict")
+        return _bootstrap_account_response(ids)
+
+    @staticmethod
+    def _bootstrap_file_invariants(
+        data,
+        setup,
+        ids,
+        membership_id,
+        master_token_digest,
+        human_token_digest,
+    ):
+        if setup.get("status") != "complete":
+            return False
+        if any(setup.get(key) != value for key, value in ids.items()):
+            return False
+        account = data.get("accounts", {}).get(ids["accountId"]) or {}
+        company = data.get("companies", {}).get(ids["companyId"]) or {}
+        membership = data.get("accountCompanies", {}).get(membership_id) or {}
+        workspace = data.get("workspaces", {}).get(ids["workspaceId"]) or {}
+        project = data.get("projects", {}).get(ids["projectId"]) or {}
+        master = data.get("companyMasterKeys", {}).get(
+            ids["companyMasterCredentialId"]
+        ) or {}
+        human = data.get("humanOwnerCredentials", {}).get(
+            ids["humanOwnerCredentialId"]
+        ) or {}
+        return bool(
+            account.get("accountId") == ids["accountId"]
+            and company.get("companyId") == ids["companyId"]
+            and membership.get("membershipId") == membership_id
+            and membership.get("accountId") == ids["accountId"]
+            and membership.get("companyId") == ids["companyId"]
+            and workspace.get("workspaceId") == ids["workspaceId"]
+            and workspace.get("companyId") == ids["companyId"]
+            and project.get("projectId") == ids["projectId"]
+            and project.get("workspaceId") == ids["workspaceId"]
+            and master.get("masterKeyId") == ids["companyMasterCredentialId"]
+            and master.get("companyId") == ids["companyId"]
+            and hmac.compare_digest(
+                str(master.get("tokenHash") or ""), master_token_digest
+            )
+            and human.get("humanCredentialId") == ids["humanOwnerCredentialId"]
+            and human.get("companyId") == ids["companyId"]
+            and hmac.compare_digest(
+                str(human.get("tokenHash") or ""), human_token_digest
+            )
+        )
+
+    def create_bootstrap_account(
+        self,
+        body,
+        capability_digest,
+        idempotency_digest,
+        request_digest,
+        capability_expires_at,
+    ):
+        with _LOCK:
+            with _bootstrap_file_process_lock(self.path):
+                return self._create_bootstrap_account_file_locked(
+                    body,
+                    capability_digest,
+                    idempotency_digest,
+                    request_digest,
+                    capability_expires_at,
+                )
+
+    def _create_bootstrap_account_file_locked(
+        self,
+        body,
+        capability_digest,
+        idempotency_digest,
+        request_digest,
+        capability_expires_at,
+    ):
+        """Atomically accept client-custodied account credentials exactly once."""
+        normalized = validate_bootstrap_account_body(body)
+        if normalized is None:
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(capability_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(idempotency_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(request_digest or "")):
+            raise BootstrapAccountError("bootstrap_account_request_invalid")
+
+        ids = _bootstrap_account_ids(
+            capability_digest,
+            normalized["companyMasterCredentialId"],
+            normalized["humanOwnerCredentialId"],
+        )
+        membership_id = _bootstrap_stable_id("membership", capability_digest)
+        master_token_digest = _governed_credential_digest(
+            "master",
+            ids["companyId"],
+            ids["companyMasterCredentialId"],
+            normalized["companyMasterSecret"],
+        )
+        human_token_digest = _governed_credential_digest(
+            "human",
+            ids["companyId"],
+            ids["humanOwnerCredentialId"],
+            normalized["humanOwnerSecret"],
+        )
+
+        with _LOCK:
+            if not _bootstrap_claim_time_active(capability_expires_at):
+                raise BootstrapAccountError("bootstrap_account_unavailable")
+            data = self._load()
+            setups = data.setdefault("bootstrapAccountSetups", {})
+            existing = setups.get(capability_digest)
+            if existing:
+                if not (
+                    hmac.compare_digest(
+                        str(existing.get("idempotencyDigestSha256") or ""),
+                        idempotency_digest,
+                    )
+                    and hmac.compare_digest(
+                        str(existing.get("requestDigestSha256") or ""),
+                        request_digest,
+                    )
+                ):
+                    raise BootstrapAccountError("bootstrap_account_conflict")
+                if not self._bootstrap_file_invariants(
+                    data,
+                    existing,
+                    ids,
+                    membership_id,
+                    master_token_digest,
+                    human_token_digest,
+                ):
+                    raise BootstrapAccountError("bootstrap_account_unavailable")
+                return _bootstrap_account_response(ids)
+
+            if any(
+                hmac.compare_digest(
+                    str(item.get("idempotencyDigestSha256") or ""),
+                    idempotency_digest,
+                )
+                for item in setups.values()
+                if isinstance(item, dict)
+            ):
+                raise BootstrapAccountError("bootstrap_account_conflict")
+            graph_collisions = (
+                ids["accountId"] in data.get("accounts", {})
+                or ids["companyId"] in data.get("companies", {})
+                or membership_id in data.get("accountCompanies", {})
+                or ids["workspaceId"] in data.get("workspaces", {})
+                or ids["projectId"] in data.get("projects", {})
+            )
+            master_collisions = any(
+                key_id == ids["companyMasterCredentialId"]
+                or hmac.compare_digest(
+                    str(item.get("tokenHash") or ""), master_token_digest
+                )
+                for key_id, item in data.get("companyMasterKeys", {}).items()
+                if isinstance(item, dict)
+            )
+            human_collisions = any(
+                credential_id == ids["humanOwnerCredentialId"]
+                or hmac.compare_digest(
+                    str(item.get("tokenHash") or ""), human_token_digest
+                )
+                for credential_id, item in data.get(
+                    "humanOwnerCredentials", {}
+                ).items()
+                if isinstance(item, dict)
+            )
+            if graph_collisions or master_collisions or human_collisions:
+                raise BootstrapAccountError("bootstrap_account_conflict")
+
+            created_at = utc_now()
+            data["accounts"][ids["accountId"]] = {
+                "accountId": ids["accountId"],
+                "label": normalized["companyLabel"] + " Account",
+                "status": "active",
+                "createdAt": created_at,
+                "valuesRedacted": True,
+            }
+            data["companies"][ids["companyId"]] = {
+                "companyId": ids["companyId"],
+                "label": normalized["companyLabel"],
+                "status": "active",
+                "historyRetentionDays": 7,
+                "topLevelAgentMasterCredentialEnabled": True,
+                "softDeletedAt": None,
+                "preDeleteStatus": None,
+                "createdAt": created_at,
+                "valuesRedacted": True,
+            }
+            data["accountCompanies"][membership_id] = {
+                "membershipId": membership_id,
+                "accountId": ids["accountId"],
+                "companyId": ids["companyId"],
+                "role": "owner",
+                "status": "active",
+                "createdAt": created_at,
+                "valuesRedacted": True,
+            }
+            data["workspaces"][ids["workspaceId"]] = {
+                "workspaceId": ids["workspaceId"],
+                "primaryAccountId": ids["accountId"],
+                "companyId": ids["companyId"],
+                "primaryProjectId": ids["projectId"],
+                "label": normalized["workspaceLabel"],
+                "plan": PLAN_FREE_AGENT,
+                "storageLimitBytes": PUBLIC_STORAGE_BYTES,
+                "createdAt": created_at,
+                "status": "active",
+            }
+            data["projects"][ids["projectId"]] = {
+                "projectId": ids["projectId"],
+                "workspaceId": ids["workspaceId"],
+                "label": normalized["projectLabel"],
+                "status": "active",
+                "createdAt": created_at,
+                "valuesRedacted": True,
+            }
+            data["companyMasterKeys"][ids["companyMasterCredentialId"]] = {
+                "masterKeyId": ids["companyMasterCredentialId"],
+                "companyId": ids["companyId"],
+                "tokenHash": master_token_digest,
+                "label": "Initial company master",
+                "principalName": "account-owner",
+                "issuanceKind": "bootstrap",
+                "issuedByMasterKeyId": None,
+                "issuedByAgentTokenId": None,
+                "delegatedForWorkspaceId": None,
+                "createdAt": created_at,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            data["humanOwnerCredentials"][ids["humanOwnerCredentialId"]] = {
+                "humanCredentialId": ids["humanOwnerCredentialId"],
+                "companyId": ids["companyId"],
+                "tokenHash": human_token_digest,
+                "principalName": "account-owner",
+                "createdAt": created_at,
+                "lastUsedAt": None,
+                "revokedAt": None,
+            }
+            self._ensure_default_meeting_rooms(data, ids["workspaceId"])
+            setup = {
+                "capabilityDigestSha256": capability_digest,
+                "idempotencyDigestSha256": idempotency_digest,
+                "requestDigestSha256": request_digest,
+                "status": "complete",
+                "createdAt": created_at,
+            }
+            setup.update(ids)
+            setups[capability_digest] = setup
+            self.audit(
+                data,
+                "workspace.create_bootstrap_account",
+                "bootstrap-account-capability",
+                ids["accountId"],
+                ids["workspaceId"],
+                {
+                    "accountId": ids["accountId"],
+                    "companyId": ids["companyId"],
+                    "accountCompanyMembershipId": membership_id,
+                    "projectId": ids["projectId"],
+                    "companyMasterCredentialId": ids[
+                        "companyMasterCredentialId"
+                    ],
+                    "humanOwnerCredentialId": ids["humanOwnerCredentialId"],
+                },
+            )
+            self._save(data)
+        return _bootstrap_account_response(ids)
 
     def authenticate(self, token, workspace_id=None):
         """Authenticate only governed company-master or immutable agent credentials."""
@@ -11307,7 +12327,10 @@ class FileStore(object):
 
 
 class SQLiteStore(FileStore):
+    create_bootstrap_account = FileStore._create_bootstrap_account_sql
+
     DELETE_ORDER = [
+        "matm_bootstrap_account_setups",
         "matm_commons_idempotency",
         "matm_commons_browser_sessions",
         "matm_commons_acknowledgements",
@@ -11601,7 +12624,11 @@ class SQLiteStore(FileStore):
         """Atomically admit a Commons source before spending shared capacity."""
         if source_bucket not in _COMMONS_SOURCE_RATE_BUCKETS:
             raise ValueError("commons_source_rate_bucket_invalid")
-        if project_bucket not in ("commonsProjectRequest", "commonsProjectEnrollment"):
+        if project_bucket not in (
+            "commonsProjectRequest",
+            "commonsProjectEnrollment",
+            "bootstrapCapabilityRequest",
+        ):
             raise ValueError("commons_project_rate_bucket_invalid")
         source_limit, source_window_seconds = _connector_rate_policy(
             source_bucket, source_limit, source_window_seconds
@@ -11618,6 +12645,11 @@ class SQLiteStore(FileStore):
         project_hash = _connector_rate_partition_hash(project_bucket, project_partition)
         source_reset = now_epoch + source_window_seconds
         project_reset = now_epoch + project_window_seconds
+        source_capacity_buckets = (
+            ("bootstrapSourceRequest",)
+            if source_bucket == "bootstrapSourceRequest"
+            else ("commonsSourceRequest", "commonsEnrollment")
+        )
 
         def row_state(row, window):
             if not row:
@@ -11697,11 +12729,11 @@ class SQLiteStore(FileStore):
                 )
                 live_source_count = 0
                 if not source_is_live:
-                    placeholders = ",".join("?" for _ in _COMMONS_SOURCE_RATE_BUCKETS)
+                    placeholders = ",".join("?" for _ in source_capacity_buckets)
                     live_row = connection.execute(
                         "SELECT COUNT(*) AS item_count FROM matm_connector_rate_limits "
                         "WHERE bucket IN (%s) AND expires_at_epoch > ?" % placeholders,
-                        tuple(_COMMONS_SOURCE_RATE_BUCKETS) + (now_epoch,),
+                        tuple(source_capacity_buckets) + (now_epoch,),
                     ).fetchone()
                     live_source_count = int(
                         self._sql_value(live_row, "item_count", 0) or 0
@@ -11712,12 +12744,12 @@ class SQLiteStore(FileStore):
                     and live_source_count >= maximum_live_source_partitions
                 ):
                     denied_layer = "source_partition_capacity"
-                    placeholders = ",".join("?" for _ in _COMMONS_SOURCE_RATE_BUCKETS)
+                    placeholders = ",".join("?" for _ in source_capacity_buckets)
                     earliest = connection.execute(
                         "SELECT MIN(expires_at_epoch) AS reset_epoch FROM "
                         "matm_connector_rate_limits WHERE bucket IN (%s) "
                         "AND expires_at_epoch > ?" % placeholders,
-                        tuple(_COMMONS_SOURCE_RATE_BUCKETS) + (now_epoch,),
+                        tuple(source_capacity_buckets) + (now_epoch,),
                     ).fetchone()
                     source_reset = int(
                         self._sql_value(earliest, "reset_epoch", now_epoch + 1)
@@ -11853,6 +12885,20 @@ class SQLiteStore(FileStore):
             );
             CREATE INDEX IF NOT EXISTS ix_sqlite_account_companies_account ON matm_account_companies (account_id);
             CREATE INDEX IF NOT EXISTS ix_sqlite_account_companies_company ON matm_account_companies (company_id);
+
+            CREATE TABLE IF NOT EXISTS matm_bootstrap_account_setups (
+              capability_digest_sha256 TEXT PRIMARY KEY,
+              idempotency_digest_sha256 TEXT NOT NULL UNIQUE,
+              request_digest_sha256 TEXT NOT NULL,
+              status TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              company_id TEXT NOT NULL,
+              workspace_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              company_master_credential_id TEXT NOT NULL,
+              human_owner_credential_id TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
 
             CREATE TABLE IF NOT EXISTS matm_workspaces (
               workspace_id TEXT PRIMARY KEY,
@@ -19240,6 +20286,34 @@ class SQLiteStore(FileStore):
                     if row["updated_at"]:
                         data["accountCompanies"][row["membership_id"]]["updatedAt"] = row["updated_at"]
 
+                for row in connection.execute(
+                    "SELECT * FROM matm_bootstrap_account_setups "
+                    "ORDER BY created_at, capability_digest_sha256"
+                ):
+                    data["bootstrapAccountSetups"][
+                        row["capability_digest_sha256"]
+                    ] = {
+                        "capabilityDigestSha256": row[
+                            "capability_digest_sha256"
+                        ],
+                        "idempotencyDigestSha256": row[
+                            "idempotency_digest_sha256"
+                        ],
+                        "requestDigestSha256": row["request_digest_sha256"],
+                        "status": row["status"],
+                        "accountId": row["account_id"],
+                        "companyId": row["company_id"],
+                        "workspaceId": row["workspace_id"],
+                        "projectId": row["project_id"],
+                        "companyMasterCredentialId": row[
+                            "company_master_credential_id"
+                        ],
+                        "humanOwnerCredentialId": row[
+                            "human_owner_credential_id"
+                        ],
+                        "createdAt": row["created_at"],
+                    }
+
                 for row in connection.execute("SELECT * FROM matm_workspaces ORDER BY created_at, workspace_id"):
                     data["workspaces"][row["workspace_id"]] = {
                         "workspaceId": row["workspace_id"],
@@ -19971,6 +21045,36 @@ class SQLiteStore(FileStore):
                                 membership.get("status") or "active",
                                 membership.get("createdAt") or utc_now(),
                                 membership.get("updatedAt"),
+                            ),
+                        )
+
+                    for capability_digest, setup in data.get(
+                        "bootstrapAccountSetups", {}
+                    ).items():
+                        connection.execute(
+                            """
+                            INSERT INTO matm_bootstrap_account_setups (
+                              capability_digest_sha256,
+                              idempotency_digest_sha256,
+                              request_digest_sha256, status, account_id,
+                              company_id, workspace_id, project_id,
+                              company_master_credential_id,
+                              human_owner_credential_id, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                setup.get("capabilityDigestSha256")
+                                or capability_digest,
+                                setup.get("idempotencyDigestSha256"),
+                                setup.get("requestDigestSha256"),
+                                setup.get("status") or "complete",
+                                setup.get("accountId"),
+                                setup.get("companyId"),
+                                setup.get("workspaceId"),
+                                setup.get("projectId"),
+                                setup.get("companyMasterCredentialId"),
+                                setup.get("humanOwnerCredentialId"),
+                                setup.get("createdAt") or utc_now(),
                             ),
                         )
 

@@ -1,6 +1,12 @@
 # Route Inventory
 
-The route table below mirrors `memoryendpoints.site_data.ROUTE_TABLE`. The test suite fails when a code route is missing from this document or the companion API reference. The machine-readable inventory at `/api/matm/route-inventory` remains authoritative for the deployed private-intranet revision.
+The public and protected route tables below mirror
+`memoryendpoints.site_data.ROUTE_TABLE`. The short-lived machine-bootstrap
+boundary is documented separately because it is deliberately absent from
+public discovery and the machine-readable inventory. The test suite fails when
+a discoverable code route is missing from this document or the companion API
+reference. The machine-readable inventory at `/api/matm/route-inventory`
+remains authoritative for the deployed private-intranet revision.
 
 Public routes are readable without a durable credential. Connector request,
 body-only authorization-code claim, and exchange routes instead require
@@ -83,6 +89,28 @@ credentials; compatibility setup does not replay or persist a raw key. New
 LocalEndpoint integrations use `memoryendpoints.connector_pairing.v1` with a
 provisional workspace and pending grant so cancellation, expiry, or a secure
 store failure before activation leaves no durable hierarchy.
+
+`MEMORYENDPOINTS_FREE_ACCOUNT_ENABLED=false` hides the compatibility
+free-account route before it reads a setup body or opens storage. Invalid
+boolean values also fail closed. A controlled machine bootstrap uses the
+separate non-discoverable boundary below; both deployment phases keep the
+ordinary free-account route disabled.
+
+## Ephemeral Hidden Bootstrap Boundary
+
+| Route | Methods | Purpose |
+| --- | --- | --- |
+| `/api/matm/agent-setup/bootstrap-account` | POST only while an exact short-lived capability is active | Atomically create one account hierarchy from client-custodied company-master and human-recovery credential candidates. |
+
+This route is intentionally omitted from `ROUTE_TABLE`, OpenAPI, public route
+inventory, CORS, and discovery documents. Every hidden bootstrap case returns
+the same generic 404 response unless an all-or-none capability configuration is valid, the
+request uses the canonical HTTPS origin and Host with no query or cross-origin
+context, and `Authorization: Bootstrap <capability>` proves the exact
+short-lived capability. Disabled, expired, malformed, unauthorized,
+wrong-method, query-bearing, cross-origin, and `OPTIONS` requests all return the
+same `404` before reading a body or opening storage. Its exact wire and
+configuration contract is in [api-contract.md](api-contract.md#post-apimatmagent-setupbootstrap-account-hidden).
 
 Connector v1 approval URLs contain only `publicRequestRef` (`pairref_` plus 43
 base64url characters). The link already carries that reference: the human does

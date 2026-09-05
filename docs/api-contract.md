@@ -140,7 +140,117 @@ default JSON file directly, or downloads the exact filename as a fallback that
  top-level agent may run `scripts/recover_memoryendpoints_company_master.py` with
  its governed `MEMORYENDPOINTS_AGENT_TOKEN`; lower-scoped agents ask a top-level
  agent or human administrator. No agent scans outside the project or requests,
- echoes, or logs the raw value.
+echoes, or logs the raw value.
+
+`MEMORYENDPOINTS_FREE_ACCOUNT_ENABLED` defaults to true for the public
+private-intranet edition. Exact false values hide both `GET` and `POST` before
+request-body or storage access; malformed values also fail closed. A staged
+machine-only rollout sets this value to false and uses the separate hidden,
+short-lived bootstrap boundary below.
+
+### POST `/api/matm/agent-setup/bootstrap-account` (hidden)
+
+This is an ephemeral machine-only account bootstrap, not a public setup or
+discovery route. It is deliberately absent from OpenAPI, CORS, the public route
+table, and the machine-readable route inventory. A first stage supplies the
+exact all-or-none environment tuple below for no more than 600 seconds; a
+second stage omits all four bootstrap keys. Both stages set
+`MEMORYENDPOINTS_FREE_ACCOUNT_ENABLED=false`.
+
+- `MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ENABLED=true`
+- `MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_CAPABILITY_DIGEST_SHA256=<lowercase 64-hex digest>`
+- `MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ISSUED_AT=<exact YYYY-MM-DDTHH:MM:SSZ>`
+- `MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT=<exact YYYY-MM-DDTHH:MM:SSZ>`
+
+The issue instant must precede the expiry instant and their difference must be
+at most 600 seconds. Missing, partial, false, malformed, not-yet-active, or
+expired configuration is unavailable. The configured digest is SHA-256 over
+the ASCII domain `memoryendpoints.bootstrap-account-capability.v1` followed by
+a NUL byte and the raw 32 capability bytes. The request proves those bytes as
+an exact canonical 43-character unpadded base64url value:
+
+```http
+Authorization: Bootstrap <43-character capability>
+Idempotency-Key: <43-character idempotency value>
+Content-Type: application/json
+```
+
+The request must use the configured HTTPS origin and exact Host, have no query
+string, no transfer encoding, and no cross-origin browser context. `POST` is
+the only method. Every disabled, expired, boundary-invalid, unauthorized,
+wrong-method, query-bearing, cross-origin, or `OPTIONS` request returns the
+same hidden `404` before body or storage access and never includes an
+`Access-Control-Allow-*` header.
+
+After capability authentication, `Content-Length` must be canonical and at
+most 4096. The body is strict duplicate-free UTF-8 JSON with exactly these six
+keys; caller key order and whitespace need not match the digest encoding:
+
+```json
+{
+  "schemaVersion": "memoryendpoints.bootstrap_account_request.v1",
+  "companyLabel": "Example Company",
+  "workspaceLabel": "Example Workspace",
+  "projectLabel": "Example Project",
+  "candidateCompanyMasterTokenSecret": "me_master_v1.masterkey-<20 lowercase hex>.<43-character secret>",
+  "candidateHumanOwnerRecoverySecret": "me_human_v1.humancred-<20 lowercase hex>.<43-character secret>"
+}
+```
+
+Each label is required, already NFC-normalized, trimmed and single-spaced,
+contains 1 through 80 characters, and contains no control or credential-like
+material. Both credential candidates are complete existing governed-v1 token
+shapes whose secret components decode to distinct 32-byte values. The client
+must generate and durably retain both full candidates before sending the
+request. The service never returns or stores either raw value. The request
+digest is SHA-256 over the ASCII domain
+`memoryendpoints.bootstrap-account-request.v1`, a NUL byte, and the exact
+validated object encoded as compact sort-key UTF-8 JSON followed by LF. The
+idempotency digest uses
+`memoryendpoints.bootstrap-account-idempotency.v1`, a NUL byte, and the raw
+32 idempotency bytes.
+
+Success is always `201 Created`, including an exact replay, and contains only
+this stable public allowlist:
+
+```json
+{
+  "schemaVersion": "memoryendpoints.bootstrap_account.v1",
+  "ok": true,
+  "accountId": "account-...",
+  "companyId": "company-...",
+  "workspaceId": "workspace-...",
+  "projectId": "project-...",
+  "companyMasterCredentialId": "masterkey-...",
+  "humanOwnerCredentialId": "humancred-...",
+  "candidateCredentialsAccepted": true,
+  "credentialValuesReturned": false,
+  "idempotencySupported": true,
+  "valuesRedacted": true,
+  "rawCredentialExposed": false,
+  "rawPayloadExposed": false,
+  "idempotencyKeyExposed": false
+}
+```
+
+`candidateCredentialsAccepted` is immutable creation-time evidence that both
+client candidates were validated and their verifier rows committed; it is not
+a current credential-state assertion. The capability is the global claim key.
+Its first successful transaction atomically creates one account, company,
+owner membership, free 200 MB workspace, project, both verifier-only
+credentials, default rooms, one content-free audit row, and one completed
+setup record containing only digests, timestamps, and the six public IDs.
+Exact capability, idempotency, and body retry returns the same response bytes
+without a second effect or audit. Reusing any binding differently, or colliding
+with a graph or candidate credential, returns `409` with no effect. Backend,
+pepper, or invariant uncertainty returns `503` and never falls back. Authenticated
+invalid input returns `400`, oversize returns `413`, and fixed source-first
+10-per-600-second plus capability-wide 20-per-600-second admission returns
+`429` with `Retry-After`; at most 128 live source partitions are retained.
+
+Production uses the canonical MySQL/MariaDB transaction and schema. FileStore
+and SQLite implement the same contract only for deterministic local testing;
+they are not a production fallback.
 
 ### GET, POST `/api/matm/access/company-master-credentials`
 

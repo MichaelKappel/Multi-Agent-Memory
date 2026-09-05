@@ -49,7 +49,18 @@ from .connector_pairing import (
     validate_redirect_uri,
 )
 from .commons_api import route_commons
-from .config import COMPANION_DOCS_URL, GITHUB_REPO_URL, PUBLIC_STORAGE_BYTES, ROOT, SITE_DESCRIPTION, SITE_NAME, SITE_URL, utc_now
+from .config import (
+    COMPANION_DOCS_URL,
+    GITHUB_REPO_URL,
+    PUBLIC_STORAGE_BYTES,
+    ROOT,
+    SITE_DESCRIPTION,
+    SITE_NAME,
+    SITE_URL,
+    bootstrap_account_runtime_config,
+    free_account_runtime_config,
+    utc_now,
+)
 from .credential_guidance import (
     COMPANY_MASTER_DEFAULT_SECRET_PATH,
     company_master_storage_guidance,
@@ -77,10 +88,15 @@ from .storage import (
     MySQLStore,
     NPC_MEETING_SCOPE_TYPES,
     SQLiteStore,
+    BootstrapAccountError,
+    bootstrap_capability_digest,
+    bootstrap_idempotency_digest,
+    bootstrap_request_digest,
     credential_system_available,
     mysql_config_diagnostics,
     mysql_connection_stage_diagnostics,
     normalize_project_id,
+    validate_bootstrap_account_body,
 )
 from .uai_memory import virtual_uai_contract
 
@@ -167,6 +183,15 @@ _CONNECTOR_JSON_HEADERS = (
     ("Pragma", "no-cache"),
     ("Referrer-Policy", "no-referrer"),
     ("X-Frame-Options", "DENY"),
+)
+_BOOTSTRAP_ACCOUNT_ROUTE = "/api/matm/agent-setup/bootstrap-account"
+_BOOTSTRAP_ACCOUNT_MAX_REQUEST_BYTES = 4096
+_BOOTSTRAP_ACCOUNT_HEADERS = (
+    ("Cache-Control", "no-store, no-cache, must-revalidate, private"),
+    ("Pragma", "no-cache"),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+    ("Cross-Origin-Resource-Policy", "same-origin"),
 )
 
 
@@ -5199,7 +5224,209 @@ def route_admin_mysql_diagnostics(environ, start_response):
     return json_response(start_response, payload)
 
 
+def _bootstrap_account_hidden(start_response):
+    return problem(
+        start_response,
+        "404 Not Found",
+        "Not found",
+        "The requested route does not exist.",
+        "not_found",
+        headers=list(_BOOTSTRAP_ACCOUNT_HEADERS),
+    )
+
+
+def _bootstrap_account_problem(start_response, code, retry_after=None):
+    contracts = {
+        "bootstrap_account_request_invalid": (
+            "400 Bad Request",
+            "Invalid bootstrap request",
+            "The bootstrap request does not match the required contract.",
+        ),
+        "bootstrap_account_request_too_large": (
+            "413 Content Too Large",
+            "Bootstrap request too large",
+            "The bootstrap request exceeds the fixed request-size limit.",
+        ),
+        "bootstrap_account_conflict": (
+            "409 Conflict",
+            "Bootstrap conflict",
+            "The bootstrap capability, idempotency binding, request, or candidate credential conflicts with existing state.",
+        ),
+        "bootstrap_account_rate_limited": (
+            "429 Too Many Requests",
+            "Bootstrap rate limited",
+            "The bounded bootstrap request allowance is exhausted.",
+        ),
+        "bootstrap_account_unavailable": (
+            "503 Service Unavailable",
+            "Bootstrap unavailable",
+            "The bootstrap transaction could not be completed safely.",
+        ),
+    }
+    status, title, detail = contracts.get(
+        code, contracts["bootstrap_account_unavailable"]
+    )
+    headers = list(_BOOTSTRAP_ACCOUNT_HEADERS)
+    if retry_after is not None:
+        headers.append(("Retry-After", str(max(1, int(retry_after)))))
+    return problem(
+        start_response,
+        status,
+        title,
+        detail,
+        code,
+        headers=headers,
+    )
+
+
+def _bootstrap_account_same_origin(environ):
+    configured = urlsplit(os.environ.get("MEMORYENDPOINTS_SITE_URL", SITE_URL))
+    if configured.scheme.lower() != "https" or not configured.netloc:
+        return False
+    if str(environ.get("wsgi.url_scheme") or "").lower() != "https":
+        return False
+    if str(environ.get("HTTP_HOST") or "").lower() != configured.netloc.lower():
+        return False
+    origin = str(environ.get("HTTP_ORIGIN") or "")
+    expected_origin = "https://" + configured.netloc
+    if origin and origin.lower() != expected_origin.lower():
+        return False
+    fetch_site = str(environ.get("HTTP_SEC_FETCH_SITE") or "").lower()
+    return fetch_site in ("", "none", "same-origin")
+
+
+def _bootstrap_account_json(environ):
+    if environ.get("HTTP_TRANSFER_ENCODING"):
+        return None, "bootstrap_account_request_invalid"
+    content_type = str(environ.get("CONTENT_TYPE") or "")
+    if not re.fullmatch(
+        r"application/json(?:\s*;\s*charset=utf-8)?",
+        content_type,
+        re.IGNORECASE,
+    ):
+        return None, "bootstrap_account_request_invalid"
+    content_length = str(environ.get("CONTENT_LENGTH") or "")
+    if not re.fullmatch(r"[0-9]{1,4}", content_length):
+        return None, "bootstrap_account_request_invalid"
+    length = int(content_length)
+    if content_length != str(length):
+        return None, "bootstrap_account_request_invalid"
+    if length > _BOOTSTRAP_ACCOUNT_MAX_REQUEST_BYTES:
+        return None, "bootstrap_account_request_too_large"
+    if length <= 0:
+        return None, "bootstrap_account_request_invalid"
+    try:
+        raw = environ["wsgi.input"].read(length)
+    except Exception:
+        return None, "bootstrap_account_request_invalid"
+    if type(raw) is not bytes:
+        return None, "bootstrap_account_request_invalid"
+    if len(raw) != length:
+        return None, "bootstrap_account_request_invalid"
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None, "bootstrap_account_request_invalid"
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate_json_key")
+            value[key] = item
+        return value
+
+    try:
+        body = json.loads(text, object_pairs_hook=unique_object)
+    except (TypeError, ValueError):
+        return None, "bootstrap_account_request_invalid"
+    if validate_bootstrap_account_body(body) is None:
+        return None, "bootstrap_account_request_invalid"
+    return body, None
+
+
+def route_bootstrap_account(environ, start_response):
+    config = bootstrap_account_runtime_config()
+    if (
+        not config.get("available")
+        or environ.get("REQUEST_METHOD") != "POST"
+        or environ.get("QUERY_STRING")
+        or not _bootstrap_account_same_origin(environ)
+    ):
+        return _bootstrap_account_hidden(start_response)
+
+    authorization = str(environ.get("HTTP_AUTHORIZATION") or "")
+    matched = re.fullmatch(r"Bootstrap ([A-Za-z0-9_-]{43})", authorization)
+    capability_digest = (
+        bootstrap_capability_digest(matched.group(1)) if matched else None
+    )
+    if not capability_digest or not hmac.compare_digest(
+        capability_digest, str(config.get("capabilityDigestSha256") or "")
+    ):
+        return _bootstrap_account_hidden(start_response)
+
+    idempotency_digest = bootstrap_idempotency_digest(
+        environ.get("HTTP_IDEMPOTENCY_KEY")
+    )
+    if not idempotency_digest:
+        return _bootstrap_account_problem(
+            start_response, "bootstrap_account_request_invalid"
+        )
+    body, error_code = _bootstrap_account_json(environ)
+    if error_code:
+        return _bootstrap_account_problem(start_response, error_code)
+    request_digest = bootstrap_request_digest(body)
+
+    try:
+        store = _store()
+        source = str(environ.get("REMOTE_ADDR") or "unknown")[:128]
+        rate = store.consume_commons_layered_rate_limit(
+            "bootstrapSourceRequest",
+            source,
+            10,
+            600,
+            "bootstrapCapabilityRequest",
+            capability_digest,
+            20,
+            600,
+            128,
+        )
+        if not rate.get("allowed"):
+            return _bootstrap_account_problem(
+                start_response,
+                "bootstrap_account_rate_limited",
+                rate.get("retryAfterSeconds") or 1,
+            )
+        result = store.create_bootstrap_account(
+            body,
+            capability_digest,
+            idempotency_digest,
+            request_digest,
+            config.get("expiresAt"),
+        )
+    except BootstrapAccountError as exc:
+        return _bootstrap_account_problem(start_response, exc.code)
+    except Exception:
+        return _bootstrap_account_problem(
+            start_response, "bootstrap_account_unavailable"
+        )
+    return json_response(
+        start_response,
+        result,
+        "201 Created",
+        headers=list(_BOOTSTRAP_ACCOUNT_HEADERS),
+    )
+
+
 def route_setup(environ, start_response, path="/api/matm/agent-setup/free-account"):
+    if not free_account_runtime_config().get("enabled"):
+        return problem(
+            start_response,
+            "404 Not Found",
+            "Not found",
+            "The requested route does not exist.",
+            "not_found",
+        )
     method = environ["REQUEST_METHOD"]
     if method == "GET":
         return json_response(
@@ -10625,6 +10852,8 @@ def route_protected(environ, start_response, path):
 def _application_dispatch(environ, start_response):
     path = environ.get("PATH_INFO", "/") or "/"
     method = environ.get("REQUEST_METHOD", "GET")
+    if path == _BOOTSTRAP_ACCOUNT_ROUTE:
+        return route_bootstrap_account(environ, start_response)
     if not path.startswith("/api/matm/commons"):
         supplied_token = _token(environ)
         if supplied_token.startswith("me_agent_v1."):
@@ -10652,7 +10881,11 @@ def _application_dispatch(environ, start_response):
     mcp_response = route_mcp(environ, start_response, path, _store)
     if mcp_response is not None:
         return mcp_response
-    cors_api_route = path.startswith("/api/") and not path.startswith("/api/matm/human/")
+    cors_api_route = (
+        path.startswith("/api/")
+        and not path.startswith("/api/matm/human/")
+        and path != _BOOTSTRAP_ACCOUNT_ROUTE
+    )
     if cors_api_route:
         start_response = _cors_start_response(environ, start_response)
         if method == "OPTIONS":

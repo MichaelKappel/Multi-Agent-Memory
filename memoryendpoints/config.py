@@ -1,4 +1,6 @@
 import os
+import datetime
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -46,6 +48,124 @@ def _strict_bounded_int_environment(name, default, minimum, maximum):
     if not minimum <= parsed <= maximum:
         return int(default), False
     return parsed, True
+
+
+def free_account_runtime_config():
+    """Return the fail-closed public free-account activation setting."""
+    enabled, valid = _strict_boolean_environment(
+        "MEMORYENDPOINTS_FREE_ACCOUNT_ENABLED", True
+    )
+    return {
+        "enabled": bool(enabled and valid),
+        "valid": bool(valid),
+        "valuesRedacted": True,
+    }
+
+
+_BOOTSTRAP_ACCOUNT_ENVIRONMENT = (
+    "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ENABLED",
+    "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_CAPABILITY_DIGEST_SHA256",
+    "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ISSUED_AT",
+    "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT",
+)
+_BOOTSTRAP_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _strict_utc_instant(value):
+    raw = str(value or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", raw):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw[:-1] + "+00:00")
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != datetime.timedelta(0):
+        return None
+    if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") != raw:
+        return None
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def bootstrap_account_runtime_config(now=None):
+    """Return the short-lived, all-or-none hidden account-bootstrap boundary."""
+    supplied = {
+        name: os.environ.get(name)
+        for name in _BOOTSTRAP_ACCOUNT_ENVIRONMENT
+        if name in os.environ
+    }
+    if not supplied:
+        return {
+            "enabled": False,
+            "configured": False,
+            "available": False,
+            "blockers": [],
+            "valuesRedacted": True,
+        }
+
+    blockers = []
+    if set(supplied) != set(_BOOTSTRAP_ACCOUNT_ENVIRONMENT):
+        blockers.append("bootstrap_account_config_incomplete")
+    enabled, enabled_valid = _strict_boolean_environment(
+        "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ENABLED", False
+    )
+    if not enabled_valid or enabled is not True:
+        blockers.append("bootstrap_account_enabled_config_invalid")
+    digest = str(
+        os.environ.get(
+            "MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_CAPABILITY_DIGEST_SHA256"
+        )
+        or ""
+    )
+    if not _BOOTSTRAP_SHA256_PATTERN.fullmatch(digest):
+        blockers.append("bootstrap_account_capability_digest_invalid")
+    issued_at = _strict_utc_instant(
+        os.environ.get("MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_ISSUED_AT")
+    )
+    expires_at = _strict_utc_instant(
+        os.environ.get("MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT")
+    )
+    if issued_at is None:
+        blockers.append("bootstrap_account_issued_at_invalid")
+    if expires_at is None:
+        blockers.append("bootstrap_account_expires_at_invalid")
+    if issued_at is not None and expires_at is not None:
+        lifetime = (expires_at - issued_at).total_seconds()
+        if not 0 < lifetime <= 600:
+            blockers.append("bootstrap_account_lifetime_invalid")
+    current = now
+    if current is None:
+        current = datetime.datetime.now(datetime.timezone.utc)
+    elif isinstance(current, str):
+        current = _strict_utc_instant(current)
+    if isinstance(current, datetime.datetime) and current.tzinfo is not None:
+        current = current.astimezone(datetime.timezone.utc)
+    else:
+        current = None
+    active = bool(
+        not blockers
+        and current is not None
+        and issued_at <= current < expires_at
+    )
+    if not blockers and not active:
+        blockers.append("bootstrap_account_capability_inactive")
+    return {
+        "enabled": bool(enabled is True and enabled_valid),
+        "configured": True,
+        "available": bool(not blockers and active),
+        "capabilityDigestSha256": digest if not blockers else "",
+        "issuedAt": (
+            issued_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if issued_at is not None
+            else None
+        ),
+        "expiresAt": (
+            expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if expires_at is not None
+            else None
+        ),
+        "blockers": blockers,
+        "valuesRedacted": True,
+    }
 
 
 def commons_runtime_config():

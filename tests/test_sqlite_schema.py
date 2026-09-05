@@ -154,6 +154,70 @@ class SQLiteSchemaInitializationTests(
                 }
             self.assertIn("approval_revision", columns)
 
+    def test_v5_database_converges_hidden_bootstrap_claim_schema(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "store.sqlite3"
+            store = SQLiteStore(path)
+            account = store.create_free_account(
+                "Bootstrap Upgrade", "Bootstrap Upgrade", "Bootstrap Upgrade"
+            )
+            workspace_id = account[0]
+            with closing(sqlite3.connect(str(path))) as connection:
+                connection.execute("DROP TABLE matm_bootstrap_account_setups")
+                connection.execute("PRAGMA user_version = 5")
+                connection.commit()
+
+            self.assertTrue(SQLiteStore(path).healthcheck())
+            self.assertEqual(_SQLITE_SCHEMA_VERSION, self._user_version(path))
+            with closing(sqlite3.connect(str(path))) as connection:
+                columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(matm_bootstrap_account_setups)"
+                    )
+                }
+                indexes = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA index_list(matm_bootstrap_account_setups)"
+                    )
+                }
+                readback = connection.execute(
+                    "SELECT workspace_id FROM matm_workspaces WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchone()
+            self.assertEqual(
+                {
+                    "capability_digest_sha256",
+                    "idempotency_digest_sha256",
+                    "request_digest_sha256",
+                    "status",
+                    "account_id",
+                    "company_id",
+                    "workspace_id",
+                    "project_id",
+                    "company_master_credential_id",
+                    "human_owner_credential_id",
+                    "created_at",
+                },
+                columns,
+            )
+            self.assertTrue(indexes)
+            self.assertEqual((workspace_id,), readback)
+            canonical = (
+                Path(__file__).resolve().parents[1]
+                / "docs"
+                / "database-schema-canonical.sql"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                "CREATE TABLE IF NOT EXISTS matm_bootstrap_account_setups",
+                canonical,
+            )
+            self.assertIn(
+                "UNIQUE KEY ux_matm_bootstrap_account_setups_idempotency",
+                canonical,
+            )
+
     def test_commons_schema_has_canonical_tables_indexes_and_foreign_keys(self):
         expected_tables = {
             "matm_commons_policies",

@@ -37,6 +37,21 @@ CREATE TABLE IF NOT EXISTS matm_account_companies (
   CONSTRAINT fk_matm_account_companies_company FOREIGN KEY (company_id) REFERENCES matm_companies (company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS matm_bootstrap_account_setups (
+  capability_digest_sha256 CHAR(64) PRIMARY KEY,
+  idempotency_digest_sha256 CHAR(64) NOT NULL,
+  request_digest_sha256 CHAR(64) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  account_id VARCHAR(96) NOT NULL,
+  company_id VARCHAR(96) NOT NULL,
+  workspace_id VARCHAR(96) NOT NULL,
+  project_id VARCHAR(96) NOT NULL,
+  company_master_credential_id VARCHAR(96) NOT NULL,
+  human_owner_credential_id VARCHAR(96) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY ux_matm_bootstrap_account_setups_idempotency (idempotency_digest_sha256)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matm_workspaces (
   workspace_id VARCHAR(96) PRIMARY KEY,
   company_id VARCHAR(96) NOT NULL,
