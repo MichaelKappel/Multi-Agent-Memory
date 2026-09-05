@@ -106,13 +106,18 @@ Update the intended version, activation date, changes, milestones, and canonical
 ```powershell
 py -3 scripts\render_multiagentmemory_release_history.py --write
 py -3 scripts\render_multiagentmemory_release_history.py --check
-py -3 -m unittest tests.test_public_release_history tests.test_multiagentmemory_release_identity tests.test_deploy_protocols tests.test_static_site
-py -3 -m unittest discover -s tests
+py -3 scripts\run_isolated_tests.py tests.test_public_release_history tests.test_multiagentmemory_release_identity tests.test_deploy_protocols tests.test_static_site
+py -3 scripts\run_isolated_tests.py
 py -3 scripts\verify_static_site.py --json-out var\reports\multiagentmemory-static-site-verification.json
 py -3 scripts\secret_scan.py --json-out var\reports\secret-scan-report.json
 py -3 scripts\audit_repository_boundary.py --json-out var\reports\repository-boundary-audit.json
 git diff --check
 ```
+
+The release gate must use the isolated runner so tests cannot discover
+credentials or writable stores through the operator profile, canonical
+checkout, or a runtime-linked `var` directory. Its pre-import environment
+boundary is not a general sandbox for deliberately hard-coded external paths.
 
 Commit the complete accepted source change locally. Do not create a tag and do not push the commit. Set the exact identity variables and prove the worktree is clean:
 

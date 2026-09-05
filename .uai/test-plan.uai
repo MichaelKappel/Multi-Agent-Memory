@@ -7,12 +7,12 @@ Verification status: active operational memory; verify by running the commands n
 Memory scope: local test gates, integration proof, report refresh order, and completion-blocking verification.
 Public-safe status: safe for source control; contains no credential values.
 Update route: update this local file when required verification changes; submit durable public-safe test summaries to https://memoryendpoints.com/api/matm/memory-events/submit when authenticated.
-Source of truth: `tests/`, `scripts/verify_memoryendpoints.py`, `scripts/dogfood_memoryendpoints.py`, `scripts/enterprise_readiness_audit.py`, and `docs/verification.md`.
-Next action for agents: run the full local gate after material code, documentation, or memory changes and write fresh point-in-time reports under ignored `var/reports/`.
+Source of truth: `tests/`, `scripts/run_isolated_tests.py`, `scripts/verify_memoryendpoints.py`, `scripts/dogfood_memoryendpoints.py`, `scripts/enterprise_readiness_audit.py`, and `docs/verification.md`.
+Next action for agents: run the full local gate through `scripts/run_isolated_tests.py` after material code, documentation, or memory changes and write fresh point-in-time reports under ignored `var/reports/`.
 Must not expose: raw API keys, bearer tokens, FTP credentials, database passwords, private keys, raw one-time keys, private handoff payloads, raw logs, or local runtime database contents.
 
 Current local gate:
-- `python -m unittest discover -s tests`
+- `python scripts\run_isolated_tests.py`
 - `python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out var\reports\local-route-verification.json`
 - `python scripts\verify_static_site.py --json-out var\reports\multiagentmemory-static-site-verification.json`
 - `python scripts\audit_uai_memory.py --json-out var\reports\uai-memory-audit.json`
@@ -22,6 +22,7 @@ Current local gate:
 - `python scripts\enterprise_readiness_audit.py --run-checks --json-out var\reports\enterprise-readiness-audit.json`
 - `git diff --check`
 - Deploy dry-run evidence must match the package report and remain a no-upload safe no-op before any live deploy claim.
+- Raw full unittest discovery from the canonical checkout is forbidden. The isolated runner must establish OS-temporary home, config, data, SQLite, file-store, OAuth, and temp paths before application imports; reject repository/runtime paths; and pass no ambient service credentials to the child.
 
 External evidence refresh:
 - GitHub Actions is not a completion gate and must not be retried unless the human explicitly re-enables it.

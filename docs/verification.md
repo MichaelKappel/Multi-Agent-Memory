@@ -7,7 +7,7 @@ This project uses repeatable local checks and bounded live checks. Passing local
 Run from the repository root:
 
 ```powershell
-python -m unittest discover -s tests
+python scripts\run_isolated_tests.py
 python scripts\verify_memoryendpoints.py --wsgi --expect-git-head --json-out var\reports\local-route-verification.json
 python scripts\verify_static_site.py --json-out var\reports\multiagentmemory-static-site-verification.json
 python scripts\audit_uai_memory.py --json-out var\reports\uai-memory-audit.json
@@ -17,6 +17,13 @@ python scripts\secret_scan.py --json-out var\reports\secret-scan-report.json
 python scripts\enterprise_readiness_audit.py --run-checks --json-out var\reports\enterprise-readiness-audit.json
 git diff --check
 ```
+
+The isolated runner creates a new OS-temporary home, config, data, SQLite,
+file-store, OAuth, and temp boundary before the test child imports application
+code. It rejects repository or runtime paths and does not pass ambient service
+credentials. Do not replace it with raw full unittest discovery from a
+canonical or runtime-linked checkout. This is pre-import environment isolation,
+not a sandbox against a test that deliberately opens a hard-coded external path.
 
 Expected current local state:
 

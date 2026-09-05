@@ -732,7 +732,7 @@ def build_current_implementation_audit():
         "",
         "## Evidence Gathered",
         "",
-        "- Unit/integration suite passes through `python -m unittest discover -s tests`.",
+        "- Unit/integration suite passes through `python scripts\\run_isolated_tests.py`.",
         "- WSGI route verifier passes for %s required public routes, current source SHA, and zero public leak hits."
         % local_routes.get("routeCount"),
         "- Static MultiAgentMemory.com source verifier passes locally with zero public leak hits.",

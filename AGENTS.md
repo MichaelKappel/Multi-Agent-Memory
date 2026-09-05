@@ -47,7 +47,7 @@ repository or deployment.
 Run:
 
 ```powershell
-python -m unittest discover -s tests
+python scripts\run_isolated_tests.py
 python scripts\verify_memoryendpoints.py --wsgi
 python scripts\package_memoryendpoints.py --check-only
 python scripts\secret_scan.py
@@ -55,6 +55,11 @@ python scripts\audit_uai_memory.py
 python scripts\verify_static_site.py
 python scripts\enterprise_readiness_audit.py --run-checks
 ```
+
+Always use `scripts/run_isolated_tests.py` for the full local suite. Raw full
+discovery from a canonical or runtime-linked checkout is forbidden because an
+unisolated test must never resolve a writable store, credential-discovery home,
+or temporary path inside repository or live runtime state.
 
 ## Deployment
 

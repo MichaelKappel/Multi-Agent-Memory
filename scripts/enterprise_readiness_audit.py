@@ -1,9 +1,11 @@
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 
@@ -24,43 +26,74 @@ READINESS_ISOLATED_PATHS = {
     "MEMORYENDPOINTS_MYSQL_CONFIG_PATH": "config/missing-mysql-config.json",
     "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH": "config/missing-admin-diagnostics.json",
 }
-READINESS_FORBIDDEN_ENVIRONMENT = {
-    "DATABASE_URL",
-    "MEMORYENDPOINTS_BASE_URL",
-    "MEMORYENDPOINTS_CA_BUNDLE",
-    "MEMORYENDPOINTS_SITE_URL",
+READINESS_INHERITED_ENVIRONMENT = {
+    "COMSPEC",
+    "ComSpec",
+    "LANG",
+    "LC_ALL",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONHASHSEED",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "SystemDrive",
+    "SystemRoot",
+    "TZ",
+    "WINDIR",
+    "windir",
 }
-READINESS_SECRET_MARKERS = (
-    "CREDENTIAL",
-    "INVITE",
-    "PASSWORD",
-    "SECRET",
-    "TOKEN",
-)
 
 
 def readiness_environment_name_allowed(name):
-    upper = str(name).upper()
-    return not (
-        upper in READINESS_FORBIDDEN_ENVIRONMENT
-        or upper.startswith("MEMORYENDPOINTS_MYSQL_")
-        or upper.startswith("MYSQL_")
-        or (
-            upper.startswith("MEMORYENDPOINTS_")
-            and any(marker in upper for marker in READINESS_SECRET_MARKERS)
-        )
-    )
+    return str(name) in READINESS_INHERITED_ENVIRONMENT
 
 
 def isolated_readiness_environment(directory, base_environment=None):
-    """Return a no-live-state, no-inherited-credential environment for test checks."""
+    """Return a pre-import isolated environment for the official test child."""
     root = Path(directory).resolve()
+    home = root / "home"
+    appdata = home / "AppData" / "Roaming"
+    localappdata = home / "AppData" / "Local"
+    programdata = root / "program-data"
+    temporary = root / "tmp"
+    for path in (home, appdata, localappdata, programdata, temporary):
+        path.mkdir(parents=True, exist_ok=True)
     source = os.environ if base_environment is None else base_environment
     environment = {
         name: source[name]
         for name in source
         if readiness_environment_name_allowed(name)
     }
+    home_drive, home_path = os.path.splitdrive(str(home))
+    environment.update(
+        {
+            "ALLUSERSPROFILE": str(programdata),
+            "APPDATA": str(appdata),
+            "HOME": str(home),
+            "HOMEDRIVE": home_drive,
+            "HOMEPATH": home_path or str(home),
+            "LOCALAPPDATA": str(localappdata),
+            "PROGRAMDATA": str(programdata),
+            "TEMP": str(temporary),
+            "TMP": str(temporary),
+            "TMPDIR": str(temporary),
+            "USERPROFILE": str(home),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+        }
+    )
     for name, relative in READINESS_ISOLATED_PATHS.items():
         environment[name] = relative if name == "MEMORYENDPOINTS_STORE_BACKEND" else str(root / relative)
     return environment
@@ -131,27 +164,67 @@ def stale_report_blocker(label, data, head_sha, candidate_paths):
     return None
 
 
-def run_check(name, command, environment=None):
-    completed = subprocess.run(
+def run_content_free_process(command, cwd=ROOT, environment=None):
+    """Drain child output in constant memory and retain only count/hash metadata."""
+    process = subprocess.Popen(
         command,
-        cwd=str(ROOT),
+        cwd=str(cwd),
         env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
         shell=False,
+    )
+    diagnostics = {}
+
+    def drain(name, stream):
+        digest = hashlib.sha256()
+        byte_count = 0
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            byte_count += len(chunk)
+            digest.update(chunk)
+        diagnostics[name] = {
+            "present": byte_count > 0,
+            "byteCount": byte_count,
+            "sha256": digest.hexdigest(),
+            "contentRetained": False,
+        }
+
+    streams = {"stdout": process.stdout, "stderr": process.stderr}
+    threads = [
+        threading.Thread(target=drain, args=(name, stream), daemon=True)
+        for name, stream in streams.items()
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        returncode = process.wait()
+        for thread in threads:
+            thread.join()
+    finally:
+        for stream in streams.values():
+            stream.close()
+    return returncode, diagnostics
+
+
+def run_check(name, command, environment=None):
+    returncode, diagnostics = run_content_free_process(
+        command,
+        cwd=str(ROOT),
+        environment=environment,
     )
     result = {
         "name": name,
         "command": " ".join("python" if part == sys.executable else part for part in command),
-        "exitCode": completed.returncode,
-        "ok": completed.returncode == 0,
-        "outputCaptured": completed.returncode != 0,
+        "exitCode": returncode,
+        "ok": returncode == 0,
+        "outputCaptured": returncode != 0,
         "valuesRedacted": True,
     }
-    if completed.returncode != 0:
-        result["stdoutTail"] = completed.stdout[-1200:]
-        result["stderrTail"] = completed.stderr[-1200:]
+    if returncode != 0:
+        result["failureOutput"] = diagnostics
     return result
 
 
@@ -210,7 +283,7 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix="memoryendpoints-readiness-tests-") as test_directory:
             unit_and_integration_check = run_check(
                 "unit_and_integration_tests",
-                [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                [sys.executable, "scripts/run_isolated_tests.py"],
                 environment=isolated_readiness_environment(test_directory),
             )
         checks = [

@@ -4,7 +4,7 @@
 
 ## Verification
 
-- [ ] `python -m unittest discover -s tests`
+- [ ] `python scripts/run_isolated_tests.py`
 - [ ] `python scripts/verify_memoryendpoints.py --wsgi`
 - [ ] `python scripts/secret_scan.py`
 - [ ] `python scripts/package_memoryendpoints.py --check-only`

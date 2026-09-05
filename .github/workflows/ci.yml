@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Run unit tests
-        run: python -m unittest discover -s tests
+        run: python scripts/run_isolated_tests.py
 
       - name: Verify WSGI routes
         run: python scripts/verify_memoryendpoints.py --wsgi --expect-source-sha "$GITHUB_SHA"

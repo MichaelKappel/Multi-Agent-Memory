@@ -12,7 +12,7 @@ Purpose: durable public-safe best-practice memory distilled from local strategy 
 
 ## Testing And Verification
 
-- Keep the local test suite fast, hermetic, and runnable with `python -m unittest discover -s tests`.
+- Keep the local test suite fast, hermetic, and runnable with `python scripts\run_isolated_tests.py`.
 - Preserve layered verification: unit/integration tests, WSGI route verification, live public-route verification, package verification, `.uai` audit, secret scan, enterprise readiness audit, and deployment reports.
 - Separate local proof from live proof. Local WSGI checks prove current code behavior; live public-route and live dogfood checks prove the deployed surface; `/api/version` SHA verification proves whether that deployed surface is the expected Git commit.
 - Treat dogfooding as an integration test, not as marketing evidence. It must exercise workspace creation, agent registration, memory submit/search/review, meeting-room coordination and promotion, current-message delivery, acknowledgement, receipt readback, agent audit-access denial, redaction, and local `.uai` continuity.

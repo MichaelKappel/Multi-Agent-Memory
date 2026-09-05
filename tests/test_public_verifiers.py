@@ -26,6 +26,7 @@ def load_script(name):
 verify_memoryendpoints = load_script("verify_memoryendpoints")
 verify_static_site = load_script("verify_static_site")
 enterprise_readiness_audit = load_script("enterprise_readiness_audit")
+run_isolated_tests = load_script("run_isolated_tests")
 
 
 def create_sentinel_database(path, user_version, label):
@@ -527,6 +528,23 @@ print(json.dumps({
 
 
 class EnterpriseReadinessIsolationTests(unittest.TestCase):
+    def test_every_official_full_suite_entrypoint_uses_isolated_runner(self):
+        for relative in (
+            "AGENTS.md",
+            ".uai/test-plan.uai",
+            ".github/workflows/ci.yml",
+            ".github/pull_request_template.md",
+            "README.md",
+            "docs/verification.md",
+            "docs/deployment.md",
+            "docs/long-term-memory/enterprise-engineering-best-practices.md",
+            "scripts/build_readiness_reports.py",
+        ):
+            with self.subTest(relative=relative):
+                text = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("run_isolated_tests.py", text)
+                self.assertNotIn("unittest discover" + " -s tests", text)
+
     def test_unit_discovery_cannot_touch_parent_store_or_inherit_credentials(self):
         with tempfile.TemporaryDirectory(prefix="readiness-isolation-test-") as temporary:
             root = Path(temporary)
@@ -553,6 +571,13 @@ class EnterpriseReadinessIsolationTests(unittest.TestCase):
             parent_environment = os.environ.copy()
             parent_environment.update(
                 {
+                    "HOME": str(parent_root / "home"),
+                    "USERPROFILE": str(parent_root / "profile"),
+                    "APPDATA": str(parent_root / "appdata"),
+                    "LOCALAPPDATA": str(parent_root / "localappdata"),
+                    "PROGRAMDATA": str(parent_root / "programdata"),
+                    "TEMP": str(parent_root / "temp"),
+                    "TMP": str(parent_root / "tmp"),
                     "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
                     "MEMORYENDPOINTS_DATA_DIR": str(parent_root),
                     "MEMORYENDPOINTS_SQLITE_PATH": str(parent_sqlite),
@@ -563,6 +588,11 @@ class EnterpriseReadinessIsolationTests(unittest.TestCase):
                     "MEMORYENDPOINTS_CREDENTIAL_PEPPER": "must-not-reach-child",
                     "MEMORYENDPOINTS_INVITE_SECRET": "must-not-reach-child",
                     "MEMORYENDPOINTS_MYSQL_PASSWORD": "must-not-reach-child",
+                    "MEMORYENDPOINTS_API_KEY": "must-not-reach-child",
+                    "OPENAI_API_KEY": "must-not-reach-child",
+                    "GITHUB_TOKEN": "must-not-reach-child",
+                    "FUTURE_SERVICE_CREDENTIAL": "must-not-reach-child",
+                    "pAtH": "must-not-reach-child",
                     "DATABASE_URL": "mysql://must-not-reach-child",
                 }
             )
@@ -577,9 +607,33 @@ class EnterpriseReadinessIsolationTests(unittest.TestCase):
                 "MEMORYENDPOINTS_CREDENTIAL_PEPPER",
                 "MEMORYENDPOINTS_INVITE_SECRET",
                 "MEMORYENDPOINTS_MYSQL_PASSWORD",
+                "MEMORYENDPOINTS_API_KEY",
+                "OPENAI_API_KEY",
+                "GITHUB_TOKEN",
+                "FUTURE_SERVICE_CREDENTIAL",
+                "pAtH",
                 "DATABASE_URL",
             ):
                 self.assertNotIn(name, child_environment)
+            for name in (
+                "HOME",
+                "USERPROFILE",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "PROGRAMDATA",
+                "TEMP",
+                "TMP",
+                "TMPDIR",
+                "XDG_CACHE_HOME",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+            ):
+                self.assertTrue(
+                    run_isolated_tests._is_within(
+                        child_environment[name], isolated_root
+                    ),
+                    name,
+                )
             completed = enterprise_readiness_audit.run_check(
                 "isolated_discovery_probe",
                 [
@@ -599,6 +653,151 @@ class EnterpriseReadinessIsolationTests(unittest.TestCase):
             isolated_sqlite = isolated_root / "data" / "readiness.sqlite3"
             self.assertTrue(isolated_sqlite.exists())
             self.assertNotEqual(parent_sqlite.resolve(), isolated_sqlite.resolve())
+
+    def test_failed_check_records_only_content_free_output_diagnostics(self):
+        with tempfile.TemporaryDirectory(prefix="readiness-failure-test-") as temporary:
+            root = Path(temporary)
+            script = root / "failure_probe.py"
+            script.write_text(
+                "import sys\n"
+                "print('stdout-private-canary-C:/private/credential.json')\n"
+                "print('stderr-private-canary-token-value', file=sys.stderr)\n"
+                "raise SystemExit(7)\n",
+                encoding="utf-8",
+            )
+            result = enterprise_readiness_audit.run_check(
+                "failure_probe",
+                [sys.executable, str(script)],
+                environment=enterprise_readiness_audit.isolated_readiness_environment(
+                    root / "environment"
+                ),
+            )
+            serialized = json.dumps(result, sort_keys=True)
+            self.assertFalse(result["ok"])
+            self.assertEqual(7, result["exitCode"])
+            self.assertNotIn("stdout-private-canary", serialized)
+            self.assertNotIn("stderr-private-canary", serialized)
+            self.assertNotIn("stdoutTail", result)
+            self.assertNotIn("stderrTail", result)
+            for stream in ("stdout", "stderr"):
+                diagnostic = result["failureOutput"][stream]
+                self.assertTrue(diagnostic["present"])
+                self.assertGreater(diagnostic["byteCount"], 0)
+                self.assertRegex(diagnostic["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_isolated_runner_rejects_repository_and_parent_store_paths(self):
+        with tempfile.TemporaryDirectory(prefix="isolated-runner-test-") as temporary:
+            isolated_root = Path(temporary)
+            environment = enterprise_readiness_audit.isolated_readiness_environment(
+                isolated_root
+            )
+            self.assertTrue(
+                run_isolated_tests.validate_isolated_test_environment(
+                    environment,
+                    isolated_root,
+                )
+            )
+            for unsafe_path in (
+                ROOT / "var" / "matm_store.sqlite3",
+                isolated_root.parent / "outside.sqlite3",
+            ):
+                unsafe = dict(environment)
+                unsafe["MEMORYENDPOINTS_SQLITE_PATH"] = str(unsafe_path)
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "unsafe_test_store_path|repository_test_store_path",
+                ):
+                    run_isolated_tests.validate_isolated_test_environment(
+                        unsafe,
+                        isolated_root,
+                    )
+            unsafe_home = dict(environment)
+            unsafe_home["HOME"] = str(ROOT / "var" / "test-home")
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "unsafe_test_store_path|repository_test_store_path",
+            ):
+                run_isolated_tests.validate_isolated_test_environment(
+                    unsafe_home,
+                    isolated_root,
+                )
+
+    def test_isolated_runner_child_preserves_parent_store(self):
+        with tempfile.TemporaryDirectory(prefix="isolated-runner-parent-") as temporary:
+            root = Path(temporary)
+            parent_root = root / "parent"
+            probe_root = root / "probe"
+            parent_root.mkdir()
+            probe_root.mkdir()
+            parent_sqlite = parent_root / "matm_store.sqlite3"
+            create_sentinel_database(parent_sqlite, 91, "runner-parent")
+            before = database_snapshot(parent_sqlite)
+            (probe_root / "test_runner_probe.py").write_text(
+                "import unittest\n"
+                "from memoryendpoints.storage import SQLiteStore\n\n"
+                "class RunnerProbe(unittest.TestCase):\n"
+                "    def test_default_store_is_isolated(self):\n"
+                "        self.assertTrue(SQLiteStore().healthcheck())\n",
+                encoding="utf-8",
+            )
+            parent_environment = os.environ.copy()
+            parent_environment.update(
+                {
+                    "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+                    "MEMORYENDPOINTS_DATA_DIR": str(parent_root),
+                    "MEMORYENDPOINTS_SQLITE_PATH": str(parent_sqlite),
+                    "MEMORYENDPOINTS_STORE_PATH": str(parent_root / "matm_store.json"),
+                }
+            )
+            result, diagnostics = run_isolated_tests.run_isolated_unittest(
+                ["discover", "-s", str(probe_root)],
+                base_environment=parent_environment,
+            )
+            self.assertEqual(0, result)
+            self.assertIn("stdout", diagnostics)
+            self.assertIn("stderr", diagnostics)
+            self.assertEqual(before, database_snapshot(parent_sqlite))
+
+    def test_direct_runner_never_emits_failing_child_output(self):
+        with tempfile.TemporaryDirectory(prefix="isolated-runner-failure-") as temporary:
+            root = Path(temporary)
+            probe_root = root / "probe"
+            probe_root.mkdir()
+            (probe_root / "test_failure_canary.py").write_text(
+                "import sys\n"
+                "import unittest\n\n"
+                "class FailureCanary(unittest.TestCase):\n"
+                "    def test_failure_output_is_not_forwarded(self):\n"
+                "        print('stdout-direct-runner-private-canary')\n"
+                "        print('stderr-direct-runner-private-canary', file=sys.stderr)\n"
+                "        self.fail('failure-direct-runner-private-canary')\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "run_isolated_tests.py"),
+                    "discover",
+                    "-s",
+                    str(probe_root),
+                ],
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False,
+            )
+            self.assertEqual(1, completed.returncode)
+            serialized = completed.stdout + completed.stderr
+            self.assertNotIn("direct-runner-private-canary", serialized)
+            report = json.loads(completed.stdout)
+            self.assertFalse(report["ok"])
+            self.assertTrue(report["valuesRedacted"])
+            for stream in ("stdout", "stderr"):
+                diagnostic = report["output"][stream]
+                self.assertFalse(diagnostic["contentRetained"])
+                self.assertGreater(diagnostic["byteCount"], 0)
+                self.assertRegex(diagnostic["sha256"], r"^[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":

@@ -180,7 +180,7 @@ MySQL/MariaDB storage is selected with `MEMORYENDPOINTS_STORE_BACKEND=mysql` plu
 ## Verification
 
 ```powershell
-python -m unittest discover -s tests
+python scripts\run_isolated_tests.py
 python scripts\verify_memoryendpoints.py --wsgi
 python scripts\verify_static_site.py
 python scripts\secret_scan.py
