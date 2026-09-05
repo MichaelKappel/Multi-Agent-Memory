@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit
 
@@ -7,6 +8,123 @@ from urllib.parse import parse_qs, urlsplit
 _CREDENTIAL_PEPPER_ENV = "MEMORYENDPOINTS_CREDENTIAL_PEPPER"
 _MISSING = object()
 _TEST_CREDENTIAL_PEPPER = "test-only-governed-agent-provisioner-v1-" + ("p" * 64)
+_ISOLATED_RUNTIME_ENVIRONMENT = (
+    "DATABASE_URL",
+    "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
+    "MEMORYENDPOINTS_AGENT_TOKEN",
+    "MEMORYENDPOINTS_COMPANY_MASTER_TOKEN",
+    "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH",
+    "MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS",
+    "MEMORYENDPOINTS_DATA_DIR",
+    "MEMORYENDPOINTS_INVITE_SECRET",
+    "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH",
+    "MEMORYENDPOINTS_MCP_OAUTH_PATH",
+    "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
+    "MEMORYENDPOINTS_MYSQL_DATABASE",
+    "MEMORYENDPOINTS_MYSQL_HOST",
+    "MEMORYENDPOINTS_MYSQL_PASSWORD",
+    "MEMORYENDPOINTS_MYSQL_PORT",
+    "MEMORYENDPOINTS_MYSQL_URL",
+    "MEMORYENDPOINTS_MYSQL_USER",
+    "MEMORYENDPOINTS_SQLITE_PATH",
+    "MEMORYENDPOINTS_STORE_BACKEND",
+    "MEMORYENDPOINTS_STORE_PATH",
+    "MYSQL_DATABASE",
+    "MYSQL_HOST",
+    "MYSQL_PASSWORD",
+    "MYSQL_PORT",
+    "MYSQL_USER",
+)
+
+
+class IsolatedTestRuntimeEnvironment:
+    """Install OS-temporary runtime paths and restore every inherited value exactly."""
+
+    def __init__(self, prefix="memoryendpoints-test-"):
+        self._prefix = prefix
+        self._temporary = None
+        self._saved = None
+
+    @property
+    def root(self):
+        if self._temporary is None:
+            raise AssertionError("The isolated test runtime is not installed.")
+        return self._temporary.name
+
+    def install(self):
+        if self._temporary is not None:
+            return self
+        self._temporary = tempfile.TemporaryDirectory(prefix=self._prefix)
+        self._saved = {
+            name: os.environ.get(name, _MISSING)
+            for name in _ISOLATED_RUNTIME_ENVIRONMENT
+        }
+        for name in _ISOLATED_RUNTIME_ENVIRONMENT:
+            os.environ.pop(name, None)
+        data_dir = os.path.join(self.root, "data")
+        config_dir = os.path.join(self.root, "config")
+        os.environ.update(
+            {
+                "MEMORYENDPOINTS_STORE_BACKEND": "sqlite",
+                "MEMORYENDPOINTS_DATA_DIR": data_dir,
+                "MEMORYENDPOINTS_SQLITE_PATH": os.path.join(data_dir, "store.sqlite3"),
+                "MEMORYENDPOINTS_STORE_PATH": os.path.join(data_dir, "store.json"),
+                "MEMORYENDPOINTS_MCP_OAUTH_PATH": os.path.join(data_dir, "oauth.sqlite3"),
+                "MEMORYENDPOINTS_CREDENTIAL_CONFIG_PATH": os.path.join(
+                    config_dir, "missing-credential-config.json"
+                ),
+                "MEMORYENDPOINTS_MCP_HOST_CONFIG_PATH": os.path.join(
+                    config_dir, "missing-mcp-host-config.json"
+                ),
+                "MEMORYENDPOINTS_MYSQL_CONFIG_PATH": os.path.join(
+                    config_dir, "missing-mysql-config.json"
+                ),
+                "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH": os.path.join(
+                    config_dir, "missing-admin-diagnostics.json"
+                ),
+            }
+        )
+        return self
+
+    def restore(self):
+        if self._temporary is None:
+            return
+        try:
+            for name, value in self._saved.items():
+                if value is _MISSING:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        finally:
+            temporary = self._temporary
+            self._temporary = None
+            self._saved = None
+            temporary.cleanup()
+
+
+class IsolatedTestRuntimeMixin:
+    """Keep all default stores outside the repository for a complete test class."""
+
+    @classmethod
+    def setUpClass(cls):
+        fixture = IsolatedTestRuntimeEnvironment().install()
+        cls._isolated_test_runtime_fixture = fixture
+        try:
+            super().setUpClass()
+        except Exception:
+            fixture.restore()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        fixture = cls.__dict__.get("_isolated_test_runtime_fixture")
+        try:
+            super().tearDownClass()
+        finally:
+            if fixture is not None:
+                fixture.restore()
+
+
 
 
 class DeterministicCredentialPepperEnvironment:

@@ -4,7 +4,6 @@ import io
 import json
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 import threading
@@ -24,7 +23,10 @@ from memoryendpoints.app import (
     _store,
 )
 from memoryendpoints.storage import MySQLStore, _MYSQL_SCHEMA_READY
-from tests.governed_test_support import DeterministicCredentialPepperMixin
+from tests.governed_test_support import (
+    DeterministicCredentialPepperMixin,
+    IsolatedTestRuntimeEnvironment,
+)
 
 
 def call_app(path, method="GET", body=None, headers=None, query=""):
@@ -53,12 +55,10 @@ def call_app(path, method="GET", body=None, headers=None, query=""):
 
 class MemoryEndpointsAppTests(DeterministicCredentialPepperMixin, unittest.TestCase):
     def setUp(self):
-        temp_root = Path(__file__).resolve().parents[1] / "var" / "test-store"
-        temp_root.mkdir(parents=True, exist_ok=True)
-        safe_name = "".join(ch if ch.isalnum() else "-" for ch in self._testMethodName)
-        self.tempdir = str(temp_root / ("%s-%s" % (os.getpid(), safe_name)))
-        shutil.rmtree(self.tempdir, ignore_errors=True)
-        Path(self.tempdir).mkdir(parents=True, exist_ok=True)
+        self._isolated_runtime_environment = IsolatedTestRuntimeEnvironment(
+            prefix="memoryendpoints-app-test-"
+        ).install()
+        self.tempdir = self._isolated_runtime_environment.root
         os.environ["MEMORYENDPOINTS_STORE_PATH"] = os.path.join(self.tempdir, "store.json")
         os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
         os.environ["MEMORYENDPOINTS_SQLITE_PATH"] = os.path.join(self.tempdir, "store.sqlite3")
@@ -66,28 +66,7 @@ class MemoryEndpointsAppTests(DeterministicCredentialPepperMixin, unittest.TestC
         os.environ["MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH"] = os.path.join(self.tempdir, "missing-admin-diagnostics.json")
 
     def tearDown(self):
-        shutil.rmtree(self.tempdir, ignore_errors=True)
-        os.environ.pop("MEMORYENDPOINTS_STORE_PATH", None)
-        os.environ.pop("MEMORYENDPOINTS_STORE_BACKEND", None)
-        os.environ.pop("MEMORYENDPOINTS_SQLITE_PATH", None)
-        for key in (
-            "MEMORYENDPOINTS_MYSQL_URL",
-            "DATABASE_URL",
-            "MEMORYENDPOINTS_MYSQL_HOST",
-            "MYSQL_HOST",
-            "MEMORYENDPOINTS_MYSQL_PORT",
-            "MYSQL_PORT",
-            "MEMORYENDPOINTS_MYSQL_USER",
-            "MYSQL_USER",
-            "MEMORYENDPOINTS_MYSQL_PASSWORD",
-            "MYSQL_PASSWORD",
-            "MEMORYENDPOINTS_MYSQL_DATABASE",
-            "MYSQL_DATABASE",
-            "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
-            "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
-            "MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS",
-        ):
-            os.environ.pop(key, None)
+        self._isolated_runtime_environment.restore()
 
     def assert_safe_noop_response(self, text, code=None):
         payload = json.loads(text)
@@ -101,6 +80,19 @@ class MemoryEndpointsAppTests(DeterministicCredentialPepperMixin, unittest.TestC
         if code:
             self.assertEqual(code, payload["error"]["code"])
         return payload
+
+    def test_runtime_fixture_is_outside_repository(self):
+        runtime_root = Path(self.tempdir).resolve()
+        repository_root = Path(__file__).resolve().parents[1]
+        with self.assertRaises(ValueError):
+            runtime_root.relative_to(repository_root)
+        for name in (
+            "MEMORYENDPOINTS_STORE_PATH",
+            "MEMORYENDPOINTS_SQLITE_PATH",
+            "MEMORYENDPOINTS_MYSQL_CONFIG_PATH",
+            "MEMORYENDPOINTS_ADMIN_DIAGNOSTICS_PATH",
+        ):
+            Path(os.environ[name]).resolve().relative_to(runtime_root)
 
     def provision_agent_via_invite(
         self,

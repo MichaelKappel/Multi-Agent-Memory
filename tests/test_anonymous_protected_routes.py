@@ -1,11 +1,17 @@
 import io
 import json
+import os
 import re
 import unittest
+from pathlib import Path
 from urllib.parse import urlencode
 
 from app import application
 from memoryendpoints.site_data import PROTECTED_ROUTES, ROUTE_TABLE
+from tests.governed_test_support import (
+    IsolatedTestRuntimeEnvironment,
+    IsolatedTestRuntimeMixin,
+)
 
 
 CANARIES = {
@@ -93,7 +99,32 @@ def call_anonymously(route, method):
     return captured["status"], captured["headers"], response_body
 
 
-class AnonymousProtectedRouteTests(unittest.TestCase):
+class AnonymousProtectedRouteTests(IsolatedTestRuntimeMixin, unittest.TestCase):
+    def test_nested_runtime_fixture_restores_environment_exactly(self):
+        name = "MEMORYENDPOINTS_CORS_ALLOWED_ORIGINS"
+        inherited = os.environ.get(name)
+        fixture = None
+        try:
+            os.environ[name] = "https://restore.example"
+            fixture = IsolatedTestRuntimeEnvironment(
+                prefix="anonymous-route-isolation-test-"
+            ).install()
+            self.assertNotIn(name, os.environ)
+            isolated_root = Path(fixture.root).resolve()
+            repository_root = Path(__file__).resolve().parents[1]
+            with self.assertRaises(ValueError):
+                isolated_root.relative_to(repository_root)
+            fixture.restore()
+            fixture = None
+            self.assertEqual("https://restore.example", os.environ.get(name))
+        finally:
+            if fixture is not None:
+                fixture.restore()
+            if inherited is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = inherited
+
     def test_every_protected_method_fails_closed_without_leaking_tenant_canaries(self):
         protected_rows = [item for item in ROUTE_TABLE if item["access"] == "protected"]
         protected_routes = [item["route"] for item in protected_rows]
