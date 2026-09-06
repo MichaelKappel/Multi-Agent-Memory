@@ -5,8 +5,10 @@ import io
 import json
 import multiprocessing
 import os
+import queue
 import tempfile
 import threading
+import time
 import unicodedata
 import unittest
 from pathlib import Path
@@ -711,6 +713,57 @@ class BootstrapAccountContract(DeterministicCredentialPepperMixin):
 class BootstrapFileAccountTests(BootstrapAccountContract, unittest.TestCase):
     backend = "file"
 
+    def _run_spawned_workers(
+        self, processes, output, expected_count, timeout_seconds
+    ):
+        deadline = time.monotonic() + timeout_seconds
+        results = []
+        started = []
+        try:
+            for process in processes:
+                process.start()
+                started.append(process)
+            for _index in range(expected_count):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    results.append(output.get(timeout=remaining))
+                except queue.Empty:
+                    break
+            for process in processes:
+                process.join(max(0, deadline - time.monotonic()))
+            expected = {
+                "resultCount": expected_count,
+                "processes": [
+                    {"alive": False, "exitCode": 0} for _process in processes
+                ],
+            }
+            actual = {
+                "resultCount": len(results),
+                "processes": [
+                    {"alive": process.is_alive(), "exitCode": process.exitcode}
+                    for process in processes
+                ],
+            }
+            self.assertEqual(expected, actual)
+            return results
+        finally:
+            live = [process for process in started if process.is_alive()]
+            for process in live:
+                process.terminate()
+            cleanup_deadline = time.monotonic() + 5
+            for process in live:
+                process.join(max(0, cleanup_deadline - time.monotonic()))
+            live = [process for process in processes if process.is_alive()]
+            for process in live:
+                process.kill()
+            cleanup_deadline = time.monotonic() + 5
+            for process in live:
+                process.join(max(0, cleanup_deadline - time.monotonic()))
+            output.close()
+            output.join_thread()
+
     def _spawn_file_calls(self, calls):
         context = multiprocessing.get_context("spawn")
         gate = context.Barrier(len(calls))
@@ -734,19 +787,9 @@ class BootstrapFileAccountTests(BootstrapAccountContract, unittest.TestCase):
             )
             for body, idempotency in calls
         ]
-        for process in processes:
-            process.start()
-        for process in processes:
-            process.join(30)
-        try:
-            self.assertTrue(all(not process.is_alive() for process in processes))
-            self.assertEqual([0] * len(processes), [process.exitcode for process in processes])
-            return path, [output.get(timeout=5) for _index in processes]
-        finally:
-            for process in processes:
-                if process.is_alive():
-                    process.terminate()
-                    process.join(5)
+        return path, self._run_spawned_workers(
+            processes, output, len(processes), 30
+        )
 
     def test_spawned_exact_replay_is_one_persisted_graph(self):
         body = request_body("file-process-exact")
@@ -825,21 +868,9 @@ class BootstrapFileAccountTests(BootstrapAccountContract, unittest.TestCase):
             )
             for _index in range(call_count)
         ]
-        try:
-            for process in processes:
-                process.start()
-            for process in processes:
-                process.join(45)
-            self.assertTrue(all(not process.is_alive() for process in processes))
-            self.assertEqual(
-                [0] * call_count, [process.exitcode for process in processes]
-            )
-            results = [output.get(timeout=5) for _index in processes]
-        finally:
-            for process in processes:
-                if process.is_alive():
-                    process.terminate()
-                    process.join(5)
+        results = self._run_spawned_workers(
+            processes, output, call_count, 45
+        )
         self.assertTrue(all(item["kind"] == "ok" for item in results), results)
         statuses = [item["status"] for item in results]
         self.assertEqual(10, statuses.count("201 Created"), statuses)
@@ -889,21 +920,9 @@ class BootstrapFileAccountTests(BootstrapAccountContract, unittest.TestCase):
             )
             for index in range(call_count)
         ]
-        try:
-            for process in processes:
-                process.start()
-            for process in processes:
-                process.join(30)
-            self.assertTrue(all(not process.is_alive() for process in processes))
-            self.assertEqual(
-                [0] * call_count, [process.exitcode for process in processes]
-            )
-            results = [output.get(timeout=5) for _index in processes]
-        finally:
-            for process in processes:
-                if process.is_alive():
-                    process.terminate()
-                    process.join(5)
+        results = self._run_spawned_workers(
+            processes, output, call_count, 30
+        )
         self.assertTrue(all(item["kind"] == "ok" for item in results), results)
         admitted = [item for item in results if item["result"]["allowed"]]
         denied = [item for item in results if not item["result"]["allowed"]]
