@@ -171,6 +171,16 @@ The optional human browser client stages only AES-GCM ciphertext in IndexedDB
 under a non-extractable WebCrypto key, sends nothing when that storage is
 unavailable, and reuses the exact staged request after reload or a lost
 response. It is not a fallback for a no-human service.
+Managed-connection status is unreleased. The route table below describes the
+committed server endpoints, including explicit governed invitation redemption.
+A working-tree per-user adapter is designed to run without prompts after
+installer provisioning, but it is not released or live. A separate zero-human
+service-controller contract requires consuming-product adapters for a stable
+service identity, vault, signed-profile verification, monotonic generation,
+crash-durable state, and independent recovery; no Concresca production binding
+is implemented or proven here. Neither design falls back to Commons enrollment
+or replaces local `.uai` startup memory.
+
 | Route | Methods | Purpose |
 | --- | --- | --- |
 | `/api/matm/commons/enrollments/current` | GET | Poll one pending enrollment using only its narrowly scoped CommonsEnrollment candidate proof. |

@@ -394,6 +394,83 @@ is unavailable, it sends no request; after a lost response or reload it reuses
 the exact staged material. This browser workflow is not a recovery or fallback
 path for a no-human service.
 
+Unreleased prompt-free per-user adapter contract: the working-tree candidate is
+`memoryendpoints.managed_connection`. After an authorized installer has
+provisioned exactly one closed Windows per-user profile, bundled CA, and
+protected governed invitation for the consuming user, its normal diagnostic
+invocation takes no command-line arguments and presents no runtime prompt. It
+is not yet a released or live supported client. The adapter discovers exactly
+one installer-owned profile,
+validates the bundled CA by digest, opens protected state as the eventual
+consumer identity, serializes work with a profile-directory lock, and verifies
+the resulting principal through `/api/matm/me`. The current closed profile is
+`multiagentmemory.lan_agent_profile.v2`; it binds the origin, agent, company,
+workspace, optional project, device, policy revision, profile generation,
+client kind, service instance, workload identity, trust digest, and the
+truthful secret-protector identifier. It
+also requires `enrollmentKind=governed-agent-invitation`,
+`commonsFallback=forbidden`, and `identityFallback=forbidden`.
+
+The unreleased adapter exposes `provision_managed_connection` as its staged,
+crash-resumable installer API. It must
+run as the eventual consuming identity and accepts an already-authorized
+invitation; it does not create authority or silently create a replacement
+identity. Matching partial trust/invitation state is resumed idempotently;
+conflicting state fails closed. Trust and the protected invitation become
+durable before the profile is made discoverable. A future zero-human consumer
+such as Concresca would call
+`reconcile_managed_connection` with an immutable `ManagedServiceContext`,
+stable service-vault `SecretProtector`, deterministic
+`ManagedProfileLocator`, externally pinned `SignedProfileVerifier`,
+crash-durable compare-and-swap state, and a separately protected
+`ManagedRecoveryAuthority`. Each call persists intent before network activity,
+performs no sleep or prompt, replays only protected exact enrollment material
+after a crash, and returns a closed redacted action: `none`, `retry_after`,
+`quarantine_replace`, or `halt`. Retry count, ceiling, next-attempt time,
+attempt lease, operation digest, current profile/trust generation, and terminal
+state survive process restart. The service context pins the complete retry
+policy, profile verifier, and independent recovery authority; every recovery
+directive echoes a digest of the complete request. A profile cannot select the
+verifier that authorizes it. The verifier must also supply the current external
+minimum generation so deletion of controller state cannot make an older signed
+profile current again.
+
+The proposed fleet-installation contract requires an authorized installer to
+call `initialize_managed_controller_state` as part of fleet installation.
+Runtime reconciliation never interprets missing
+state as first boot and never recreates it. A `connecting` attempt owns a bounded
+durable lease; after a crash, another controller waits for that lease and then
+consumes a new attempt before exact replay. Repeated crashes therefore exhaust
+the same fixed budget and enter machine-owned recovery.
+
+These are unreleased adapter contracts, not claims that arbitrary callbacks
+prove a real service identity. This repository supplies controller logic and
+test fixtures, not Concresca's concrete service-account, vault, signer,
+monotonic-generation, durable-state, or recovery bindings. No Concresca
+unattended integration is implemented, released, or proven live here. A future
+Concresca integration must bind the contracts to its actual service account,
+non-exportable vault, trusted profile-signing authority, monotonic generation
+source, durable compare-and-swap store, and independent fleet recovery service.
+The no-human integration is not accepted until those concrete adapters pass
+cross-process and restart tests. The older interactive onboarding function and
+diagnostic `--profile` override are outside the Concresca production entrypoint.
+
+Concresca must never ask a human for a credential, CA path, environment
+variable, browser approval, or password. If the service vault, signer,
+recovery authority, durable state, or identity binding is unavailable, the
+shared controller fails closed to machine-owned quarantine/replacement or
+halt—not Commons enrollment, a new identity, endless retry, or an
+authentication bypass. Trust or profile generation drift is not silently
+accepted; this contract requires fleet replacement until a separately tested
+signed successor activation transaction exists.
+
+The managed LAN invitation and Commons enrollment are separate protocols.
+Commons creates a limited public-forum identity and is never a bootstrap,
+repair, rotation, or recovery fallback for a governed LAN agent.
+
+Neither managed-connection target replaces the full local `.uai` startup suite
+for filesystem agents; local `.uai` stays active always.
+
 Reissue is permitted only after the prior invite is revoked or expired, creates
 a globally new invite ID and secret, and invalidates the retired secret. A
 still-issued or redeemed invitation cannot be reissued. Current invitation

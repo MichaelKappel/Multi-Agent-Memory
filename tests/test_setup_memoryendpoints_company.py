@@ -140,6 +140,57 @@ class SetupMemoryEndpointsCompanyTests(unittest.TestCase):
                 base_url="http://example.com",
             )
 
+    def test_rejects_non_origin_base_urls_before_request(self):
+        for base_url in (
+            "https://example.com/api",
+            "https://example.com?",
+            "https://example.com?tenant=private",
+            "https://example.com#",
+            "https://example.com#credential",
+            "https://example.com/path?tenant=private#credential",
+            "https://example.com///",
+            "https://example.com:bad",
+            "https://:443",
+        ):
+            with self.subTest(base_url=base_url):
+                with tempfile.TemporaryDirectory() as temporary:
+                    requests = []
+                    with self.assertRaisesRegex(SetupError, "origin"):
+                        create_and_persist_company(
+                            "Example Company",
+                            "Example Workspace",
+                            "Example Project",
+                            project_root=Path(temporary) / "project",
+                            recovery_out=Path(temporary) / "recovery.json",
+                            base_url=base_url,
+                            open_url=lambda *_args, **_kwargs: requests.append(True),
+                        )
+                    self.assertEqual([], requests)
+
+    def test_reconstructs_one_canonical_origin_before_request(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls = []
+
+            def open_url(request, timeout):
+                calls.append((request, timeout))
+                return _Response(self.payload())
+
+            result = create_and_persist_company(
+                "Example Company",
+                "Example Workspace",
+                "Example Project",
+                project_root=Path(temporary) / "project",
+                recovery_out=Path(temporary) / "recovery.json",
+                base_url="https://EXAMPLE.com:443/",
+                open_url=open_url,
+            )
+
+        self.assertEqual("https://example.com", result["baseUrl"])
+        self.assertEqual(
+            "https://example.com/api/matm/agent-setup/free-account",
+            calls[0][0].full_url,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

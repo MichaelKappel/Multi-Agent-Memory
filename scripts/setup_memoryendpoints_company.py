@@ -8,6 +8,7 @@ written to its separate recovery file.
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -73,14 +74,50 @@ def default_recovery_path(company_label):
 
 
 def _validate_base_url(value):
-    base_url = str(value or "").strip().rstrip("/")
-    parsed = urlparse(base_url)
-    local_http = parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost")
-    if parsed.scheme != "https" and not local_http:
-        raise SetupError("Base URL must use HTTPS (local loopback HTTP is allowed for testing).")
-    if not parsed.netloc or parsed.username or parsed.password:
+    supplied = str(value or "").strip()
+    parsed = urlparse(supplied)
+    scheme = parsed.scheme.lower()
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise SetupError("Base URL must contain a valid origin authority.") from exc
+    if not parsed.netloc or not hostname or parsed.username or parsed.password:
         raise SetupError("Base URL must be an origin without embedded credentials.")
-    return base_url
+    if supplied.find("?") >= 0 or supplied.find("#") >= 0:
+        raise SetupError("Base URL must be an origin without a path, query, or fragment.")
+    if parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment:
+        raise SetupError("Base URL must be an origin without a path, query, or fragment.")
+    if parsed.netloc.endswith(":"):
+        raise SetupError("Base URL must contain a valid origin authority.")
+    if "%" in hostname:
+        raise SetupError("Base URL must contain a valid origin authority.")
+    try:
+        host = ipaddress.ip_address(hostname).compressed.lower()
+    except ValueError:
+        try:
+            host = hostname.encode("idna").decode("ascii").lower().rstrip(".")
+        except UnicodeError as exc:
+            raise SetupError("Base URL must contain a valid origin authority.") from exc
+        labels = host.split(".")
+        if (
+            not host
+            or len(host) > 253
+            or any(
+                not label
+                or len(label) > 63
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+                for label in labels
+            )
+        ):
+            raise SetupError("Base URL must contain a valid origin authority.")
+    local_http = scheme == "http" and host in ("127.0.0.1", "::1", "localhost")
+    if scheme != "https" and not local_http:
+        raise SetupError("Base URL must use HTTPS (local loopback HTTP is allowed for testing).")
+    default_port = 443 if scheme == "https" else 80
+    host_for_url = "[%s]" % host if ":" in host else host
+    authority = host_for_url if port in (None, default_port) else "%s:%s" % (host_for_url, port)
+    return "%s://%s" % (scheme, authority)
 
 
 def _prepare_target(path):
@@ -231,6 +268,7 @@ def create_and_persist_company(
 
     return {
         "ok": True,
+        "baseUrl": base_url,
         "companyId": payload["companyId"],
         "workspaceId": payload["workspaceId"],
         "projectId": payload.get("projectId"),

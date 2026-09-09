@@ -1,132 +1,84 @@
 Multi-Agent Memory platform workspace coordinator
 
 Purpose:
-- Give every cold-start agent one public-safe, evidence-bounded account of how RemoteEndpoints.com, LocalEndpoints.com, LocalEndpoint Connect, MemoryEndpoints.com, and MultiAgentMemory.com fit together.
-- Keep SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE evidence separate so a clean push or an old package is never mistaken for current production authority.
+- Give every cold-start agent one public-safe, evidence-bounded account of how the public LAN MATM, MultiAgentMemory.com, private MemoryEndpoints.com, LocalEndpoints, and no-human consumers such as Concresca fit together.
+- Keep SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE evidence separate so a clean push, package, or historical receipt is never mistaken for current authority.
 
-Verification status: active workspace memory, reconciled 2026-08-14 against exact repository bytes, local upstream refs, live remote refs, package reports, and safe no-op deployment admission results.
-Memory scope: cross-product intent, authoritative roots, synchronized revisions, independent gate verdicts, exact blockers, and ordered continuation.
-Public-safe status: safe for source control; contains public revisions and redacted gate results but no credential values, tenant identifiers, private payloads, or deployment secrets.
-Update route: replace stale facts after each multi-system audit; keep verbose command evidence in ignored report areas or independently sealed handoffs.
-Source of truth: direct human goal, current Git bytes and refs, product-owned package and deployment receipts, public live routes, governing `AGENTS.md` and `.uai` files, and independently sealed reviews.
-Next action for agents: load the complete governed startup order, recheck exact refs and later gates, then take the first unblocked action below without reviving a stale package.
-Must not expose: API keys, bearer tokens, pairing codes, FTP or signing credentials, private prompts, desktop pictures, tenant/device identifiers, private handoff payloads, or hidden deployment values.
+Verification status: active workspace memory. Source roots and the current public LAN checkpoint are reconciled below; every other product and every later release gate must be refreshed from its owning repository and exact receipt.
+Memory scope: cross-product boundaries, authoritative roots, current public LAN evidence, unresolved blockers, and ordered continuation.
+Public-safe status: safe for source control; contains no credential values, tenant identifiers, private payloads, secret-derived fingerprints, or deployment secrets.
+Update route: replace stale facts after each governed source or release transition; keep verbose evidence in ignored reports or immutable release receipts.
+Source of truth: direct human instructions, current Git bytes and refs, product-owned release receipts, governing `AGENTS.md` and `.uai` files, and protected public-safe coordination readback.
+Next action for agents: load the complete `.uai` startup order, verify the owning repository, and take the first unblocked action without asking a person for connection paths, trust files, environment variables, copied secrets, or recovery actions.
+Must not expose: API keys, bearer tokens, credential peppers, authorization codes, pairing or invitation secrets, database contents, private prompts, user or machine identifiers, private handoff payloads, or hidden deployment values.
 
-## Product model and authority
+## Authoritative roots and product boundaries
 
-- RemoteEndpoints.com provides unattended control of a computer running LocalEndpoint Connect. One explicit plugin enablement and authenticated pairing exchange grants standing paired-device authority until Pause, Disable, rotation, Revoke, uninstall, or another explicit authority transition. Normal paired work must not add target-side per-prompt approval.
-- LocalEndpoint Connect runs the local AI and performs Windows work with the authority of its signed-in Windows account. RemoteEndpoints transports authenticated prompts, pictures, progress, results, errors, receipts, and control messages; the website does not directly invoke Windows APIs.
-- MemoryEndpoints.com is the separately governed hosted commercial MATM service. MultiAgentMemory.com is the public GitHub companion site for the free single-organization private-intranet reference in this repository.
-- Active normalized agent names and immutable-memory writer leases are separate globally fenced authorities. True branches receive distinct immutable identities and retain complete lineage. Current live two-computer proof remains open.
-- Install, enable, pair, Stop, Pause, Disable, rotate, revoke, recover, and rollback are distinct operations. Never claim that one performs another or that completed external effects are automatically reversible.
+- `E:\Multi-Agent-Memory` is the sole editable checkout of `MichaelKappel/Multi-Agent-Memory` on this computer. It owns the free private-intranet MATM runtime and the source for MultiAgentMemory.com documentation.
+- `E:\MemoryEndpoints.com` is the sole editable checkout of the separate `MichaelKappel/MemoryEndpoints.com-Private` commercial project on this computer. Its source, `.uai`, credentials, packages, and deployment authority never come from the public checkout.
+- LocalEndpoints, LocalEndpoint Connect, RemoteEndpoints, Concresca, and other consumers are governed by their owning computers and repositories. This coordinator does not invent or preserve a filesystem path, revision, package, or release gate for them.
+- A content-addressed running release is immutable output, never source. It may exist only when a recognized service requires it and must never be edited, initialized as Git, copied back into source, or treated as an alternate checkout.
+- Packages, database backups, task-definition backups, receipts, and manifests are bounded operational evidence. They do not become editable source and do not justify an additional source-shaped tree.
+- Local `.uai` remains active always. Hosted MATM coordination augments it and never retires or replaces it.
 
-Authoritative roots:
+## Current public source and LAN checkpoint
 
-- `E:\Source\Python\RemoteEndpoints.com` — RemoteEndpoints.com source, private GitHub `main`.
-- `E:\Source\Python\LocalEndpoint.com` — LocalEndpoints.com public-site source, `master`.
-- `E:\Source\Python\LocalEndpointConnectScaffold-CSharp` — LocalEndpoint Connect source, `desktop-csharp`.
-- `E:\Source\Python\MemoryEndpoints.com-Private` — private commercial MemoryEndpoints.com source, private `main`.
-- `E:\Source\GH\Multi-Agent-Memory` — public MATM reference and MultiAgentMemory.com companion source, `main`.
-- Credentials, signing keys, protected tenant authority, one-time pairing material, packages, and deployment receipts are external to this coordinator and never embedded here.
+- Public HEAD and `origin/main` are exactly `7828a51d862a8200a2847a20009bd6a7bdf3ad2f`.
+- The exact clean candidate passed the isolated full suite, strict expected-HEAD WSGI verifier, package eligibility, secret scan, `.uai` audit, static companion-site verifier, repository-boundary audit, and diff check.
+- The combined enterprise readiness command ran and remained nonzero because the public commercial production domain reports a different private revision. That external deployment mismatch does not invalidate the public LAN candidate and must not be relabeled as a local pass.
+- The deterministic LAN package is SHA-256 `9163e9fa84281af54ebdf8a995ad24357d61b77aceec483fbd2a0d4fa2239264`, contains 224 closed-ledger members, and binds source content hash `42416d4a3447def778b4e8e4b74b3ea5f0f617d4e0841a15aeb6b1258f45d861`. It contains no runtime state, database, `.uai`, `.local-secrets`, Git metadata, logs, or unsafe paths.
+- The recognized LAN task runs immutable release `7828a51d862a` on ports 8088 and 8090. Trusted TLS chain and hostname verification pass. `/api/version` reports the exact source and content hashes, clean source, `ok=true`, SQLite connected and verified, and the documentation route responds successfully.
+- The schema-7 cutover was preflighted against a consistent shadow, backed up while quiesced, and verified after activation. Integrity and foreign-key checks pass, all pre-existing MATM and MCP data rows were preserved, the required invitation-receipt columns and unique index exist, and a controlled stop/start retained the same healthy revision.
+- Protected dogfooding automatically selected an existing governed credential from canonical protected storage, verified `/api/matm/me`, discovered the project room, persisted a public-safe coordination checkpoint, and read it back. No person supplied or received a path, token, certificate, identifier, or payload.
+- Public Git now lists only `E:\Multi-Agent-Memory` as its registered worktree. Three detached verification worktrees were removed and the empty gate root was removed.
+- Cleanup closure remains open: inactive extracted LAN releases and stale package artifacts remain because the host filesystem safety policy blocked direct removal. Never bypass that policy or follow a runtime junction during deletion. Reverify exact targets and remove them through an approved governed cleanup operation.
 
-Repository synchronization checkpoint:
+## Connection and no-human truth
 
-- LocalEndpoints `master`: clean, local/upstream/live-remote equal at `103c5cb335faf1f08aea6167fd8c3d04ba261af8`.
-- RemoteEndpoints `main`: clean, local/upstream/GitHub equal at `26e7fd66f856738b22642eb32c09c0d5732846b2`.
-- Connect `desktop-csharp`: clean, local/upstream/live-remote equal at `90b2f7c44529da30e97c92fa6d6735404e551a9d`.
-- MemoryEndpoints private `main`: clean, local/upstream equal at `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586`.
-- This public repository is clean/upstream-equal at pre-refresh parent `8d5574f7291963d0f46bc332567f821cfc8a1a03`, tree `9a6bc6dbde763b463088547483c2f9811ea1cb21`. The commit containing this file must be resolved from Git because a tracked file cannot embed its own commit hash.
+- The deployed public server provides secure, replay-safe explicit invitation redemption with client-generated credentials, exact idempotent replay, tenant and project isolation, and redacted receipts.
+- The currently committed end-to-end onboarding experience is still interactive. Host trust installation, invitation transfer, browser redemption, and credential disposition can require a person. Do not call this zero-touch.
+- The managed-connection controller and its conformance tests in the canonical working tree are unreleased drafts and are not part of the deployed revision. They define useful per-user and unattended runtime boundaries but do not constitute a shipped installer, signed profile authority, server recovery API, LocalEndpoints adapter, or Concresca integration.
+- A secure first connection may use network discovery only as an untrusted hint. Trust must arrive through an already trusted signed installer, enterprise policy, or pre-pinned fleet authority. Never download and trust a LAN CA from the discovered endpoint, use TOFU, or treat a Windows user name, machine name, IP address, reverse-DNS label, or current directory as authentication.
+- A prompt-free per-user LocalEndpoints client requires one product-owned signed profile and trust bundle, a deterministic OS-known profile location, DPAPI-protected per-user credential storage, durable reconciliation state, exact project binding, restart continuation, and a closed recovery path. No prompt, browser approval, copied secret, path, or environment variable is a supported production input.
+- A zero-human Concresca service requires a dedicated stable service or workload identity, boot-before-login operation, a non-user-bound protected vault, signed profile verification with a monotonic generation floor, crash-durable CAS state, an independent least-privilege recovery authority, bounded retry, quarantine on terminal drift, and fleet replacement. Current-user DPAPI and interactive logon tasks are forbidden for this class.
+- If every independent trust and recovery authority is lost, secure autonomous recovery is impossible. The system must fail closed and quarantine or replace the workload; it must not silently create another company, workspace, project, agent, credential, or trust root.
+
+## Credential-pepper incident boundary
+
+- An overbroad read-only release-tree search exposed the server-side credential pepper inside one agent tool context. The value must never be repeated, hashed into public evidence, transmitted, or included in a report.
+- No raw participant credential or customer payload exposure was established. The pepper alone does not reveal high-entropy bearer values, but it increases risk if verifier records are also obtained and can reconstruct some pending connector derivations.
+- The active service preserved the existing pepper during restoration because the current schema stores no pepper key ID, epoch, or previous-key fallback. Blind replacement would invalidate governed credentials and is forbidden.
+- Required remediation is a separately tested one-active/one-previous keyring with explicit non-secret key IDs, self-describing new verifiers, a hard legacy acceptance deadline, governed credential reissuance, pending-flow cancellation and reissue, sanitized migration counts, negative old-key tests, and bounded final retirement. Do not keep indefinite fallback support.
 
 ## Gate vocabulary
 
-- SOURCE GO binds only the named source bytes and source checks.
-- PACKAGE GO binds one immutable, allowlisted package to accepted source. A package does not authorize installation or deployment.
-- INSTALLED GO requires exact installed-byte identity and real target-runtime checks.
-- DEPLOYMENT GO requires a target-bound single-use activation, sanitized receipt, and appropriate rollback/containment proof.
-- LIVE GO requires exact deployed revision or byte proof plus the named behavioral checks.
-- COMMIT, PUSH, SIGNING, DESIGN acceptance, and RELEASE acceptance are separate gates. None silently upgrades another.
-- Never inherit a stronger gate from an older report, another commit, a synthetic fixture, a debug artifact, or another product.
-
-## Fast resume matrix
-
-| System | Highest exact gate | Current hard stop | Next safe action |
-| --- | --- | --- | --- |
-| LocalEndpoints.com | SOURCE/CHECKIN/PUSH and intrinsic PACKAGE GO at `103c5cb335faf1f08aea6167fd8c3d04ba261af8`; aligned immutable v1.5.262 archive independently verified | DEPLOYMENT/LIVE NO-GO: no current target-issued protected runtime, activation capability, retained readback, host-tool acceptance, short-lived authorization, matching credential, or protected-host preflight | Preserve the exact archive; obtain one complete independent target evidence set before its activation boundary or keep v1.5.258 live and cut a truthfully dated successor |
-| RemoteEndpoints.com | SOURCE/CHECKIN/PUSH GO at `26e7fd66f856738b22642eb32c09c0d5732846b2`; anonymous home and health routes respond | PACKAGE/INSTALLED/DEPLOYMENT/LIVE NO-GO: public live is an older versionless contract; cPanel offers Python 3.13.14 account-wide but no Setup Python App row binds RemoteEndpoints; the served `.htaccess`/`passenger_wsgi.py` directory is direct-root with no visible atomic layout; the eight-producer trust/runtime/wheelhouse/reload chain is unconfigured | Qualify the exact target runtime through governed discovery/verification A/B, then establish independent producer trust, a locked wheelhouse, protected controller/atomic root/baseline/bootstrap/privilege separation, zero-overlap reload/rollback, and signed single-use activation evidence before any package or target mutation |
-| LocalEndpoint Connect | Whole SOURCE GO and CHECKIN/PUSH current at `90b2f7c44529da30e97c92fa6d6735404e551a9d`; exact committed-byte ValidationOnly succeeds | PACKAGE/SIGNING/INSTALLED/DEPLOYMENT/LIVE NO-GO: ValidationOnly intentionally performed no build, signing, package, publish, or install action, and external production identities and authorities remain absent | Preserve the success receipt and satisfy shipped-binary identity, plugin closure, production signing, privacy-clean package, clean-install, and two-machine live gates independently |
-| MultiAgentMemory.com | SOURCE/CHECKIN/PUSH GO for pre-refresh parent `8d5574f7291963d0f46bc332567f821cfc8a1a03` | PACKAGE/DEPLOYMENT/LIVE NO-GO: no target-bound `MultiAgentMemory.com` FTPS profile or alternate mechanism exists, and the ignored historical package is stale | Obtain the exact target-bound mechanism, refresh activation truth, rebuild and qualify from the final coordinator commit, then perform the governed tag/package/rollback/activate/live sequence |
-| MemoryEndpoints.com | SOURCE/CHECKIN/PUSH and exact clean PACKAGE GO at `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586` | DEPLOYMENT/LIVE NO-GO: target-bound transport/release authority and required protected target, migration-preflight, and current-schema receipts are absent; production remains at older `81e2f2b3c6417cb05d9247414915843663a45300` | Bind valid Memory-specific transport and protected release authority, complete the required preflight and schema receipts, then deploy only the unchanged exact package if every later gate passes |
-
-Zero systems currently have DEPLOYMENT GO. No upload, activation, restart, rollback, tag, or production mutation was performed in this reconciliation.
-
-## Exact current evidence
-
-### LocalEndpoints.com
-
-- Commit `103c5cb335faf1f08aea6167fd8c3d04ba261af8`, tree `21625251b8789712aa006cc0f9638f3013edd064`, is clean and remote-equal.
-- Final source gates on exact bytes: 216 Python tests collected = 215 passed + one POSIX-only Windows skip; focused controller/verifier/release-history 132 collected = 131 passed + the same skip; Node 11/11; Ruff lint; 56/56 format-clean; 83/83 in-memory compile; UAI generator/manifest closure; diff and byte hygiene.
-- Exact aligned archive `localendpoints-site-v1.5.262.zip`: 813,576 bytes, 77 members, 1,876,869 uncompressed bytes, SHA-256 `88edd3548020421078889fbae55b4048b03e3a0f19890023f0f9323da5e978df`, member-closure SHA-256 `f8a29b5ba04b6a9268e380a44c82feabd359550c82d8ba8848cf54ba8efdfd86`.
-- Source, package, public website, and authorized forward release identities all bind v1.5.262. Exact local forward verification passes 103/103; independently frozen retained v1.5.258 verification passes 59/59 live, while the forward comparison against still-live v1.5.258 passes 48/103. Both live observations were read-only.
-- Intrinsic package eligibility is GO, but no current target-issued runtime, activation capability, retained readback, host-tool acceptance, short-lived authorization, matching credential, or protected-host preflight exists. The controller has no target transport. No upload, activation, pointer mutation, restart, or other production operation occurred.
-
-### RemoteEndpoints.com
-
-- Commit `26e7fd66f856738b22642eb32c09c0d5732846b2`, tree `debfa04f3ed69d4708b6b95a554655b758d28be0`, is clean and GitHub-equal.
-- Maintained source closure: 234 files, 4,978,821 bytes; 24,606-byte ordinal path/SHA ledger; SHA-256 `da0bd7fa3971fc5f4307fb0711c8a577f2df4853ea42bc443a88052f3116d542`.
-- Gates: 884 Python tests plus 45 subtests, Node 21, Ruff lint/format 136, external-cache compile, diff/fsck, and repository/UAI checks all pass.
-- Non-publishing package-input preflight is exact for 56 files / 2,029,324 bytes, allowlist SHA-256 `07ad99c6426a157a5665fff071557c4fa45bd1beb5f104079ae6de7658a88a8f`, closure SHA-256 `7fed1d52279ac73ec726df82f64c57f3040068e6107fea54e48556cf72543f87`, zero high-confidence secret findings. No package was built.
-- Fresh anonymous production checks return HTTP 200 for `/` and `/api/health`; `/releases`, `/api/releases.json`, and `/api/version` return 404. The live manifest and OpenAPI expose the older `2026-07-18` / `2.1.0` contract and omit the current source's `2.3.0` release routes, so live is healthy but old/versionless and not exact-source LIVE GO.
-- Authenticated cPanel exposes Terminal, SSH Access, File Manager, Setup Python App, and a complete selector list through Python 3.13.14, but none of the five existing Python app rows binds RemoteEndpoints. The exact `remoteendpoints.com` directory has a manual Passenger-style `.htaccess`, `passenger_wsgi.py`, `requirements.txt`, `app`, `scripts`, `tmp`, and `virtualenv` layout, with no visible `current`, `previous`, `releases`, `staging`, or `activation.lock`. Prior served-root and checked-in configuration selects Python 3.9; account-wide 3.13.14 availability does not qualify the exact Passenger interpreter or authorize an application change.
-- The fixed production trust policy remains `unconfigured`: zero producers, zero supported runtime branches, and zero machines. The required eight independent producer roles and 28 pairwise-independent trust relations, current runtime discovery/verification A/B, dependency lock and reviewed wheelhouse including the cryptography/cffi closure, signed receipts/admission bundle, protected controller/atomic root/baseline/bootstrap/privilege separation, and zero-overlap reload/rollback proof are absent. No package was built and no production mutation occurred.
-
-### LocalEndpoint Connect
-
-- Commit `90b2f7c44529da30e97c92fa6d6735404e551a9d`, tree `a3ecc3b9834fade5dbb009b24042239e78715e25`, is clean and upstream/live-remote equal.
-- Exact source gates pass: full repository 1,471/1,471, focused ValidationOnly 54/54, and freshness 124/124.
-- The exact committed-byte no-retry ValidationOnly controller exits zero after 9,772.2 seconds. Pytest records 1,471 total = 1,469 passed + two intentional skips, with zero failures or errors. .NET records 3,358 total = 3,357 executed and passed + one intentional not-executed test, with zero failures.
-- The complete prohibited-output scan reports zero findings. ValidationOnly package, publish, signing, and install flags are all false; no package, signing, installation, upload, or deployment action occurred.
-- The accepted success receipt is 3,417,561 bytes at SHA-256 `60a9bf560216547df193da1a7fd88eb42ff55b0a79eca39b85c1f2759de9eb02`; its sidecar is SHA-256 `bcd3ad380329f6465b7d2971b0f39a0f17ed174ac9682b9cc7df4ef73b89ec25`, and its staged manifest is SHA-256 `2001f371ca9f5d24aa01aaf61f88430545fea5163acfcca3b4125c95195e49dc`. All 260 privacy indicators are false and all 13 recorded commands pass.
-- Whole SOURCE is GO. PACKAGE, SIGNING, INSTALLED, DEPLOYMENT, Remote live compatibility, and Memory swarm live proof remain independently NO-GO pending exact production binaries and external authorities.
-
-### MultiAgentMemory.com and this public checkout
-
-- Pre-refresh parent `8d5574f7291963d0f46bc332567f821cfc8a1a03`, tree `9a6bc6dbde763b463088547483c2f9811ea1cb21`, is clean and upstream-equal.
-- Source includes target-bound prior-state capture, exact rollback pairing, retired-route deletion/404 verification, and truthful partial-mutation receipts. Those are source capabilities, not deployment authority.
-- The current FileZilla inventory has no profile whose exact name or host binds `MultiAgentMemory.com`, and no alternate target-bound mechanism is configured. The ignored historical package/manifest is stale and fails current release-identity closure.
-- Fresh live comparison differs on 15 of 16 canonical paths; `/releases/` and `/static/favicon.svg` are absent while the retired `/releases.html` surface remains. No package, upload, tag, activation, or production mutation occurred.
-
-### MemoryEndpoints.com
-
-- Private commit `97e0e5192e9f5ba9ae1c07ab209d39715b4e3586`, tree `de64c3932e14e9f93e7f086eba26aa9f607923f5`, is clean and upstream-equal.
-- Two independent builds produced the same clean package from the exact commit: 293 files, 10,506,324 bytes, SHA-256 `2ca7fe6c15f09f78554737c0d43505fc565ea4f0f2f5757f2c7baaea8f2214d3`; source revision and content hash match, secret scan reports zero hits, and the exact-SHA local WSGI verifier passes 44 routes.
-- The repo-owned no-upload deployment check remains a safe no-op because no Memory-specific target binding exists. Historical note credentials fail current Memory authentication; an unrelated authenticating profile exposes no Memory build marker and therefore grants no target identity.
-- Protected deployment also requires the target-binding receipt, current migration preflight, and current-schema release receipt before the bounded deployment window. None is present, so no upload, directory creation, restart, migration, or other target mutation occurred.
-- Public production still reports older revision `81e2f2b3c6417cb05d9247414915843663a45300`. This checkout cannot prove the private commercial implementation bytes by itself; the separate private source/package evidence above is the current authority, while public discovery remains observation rather than LIVE GO.
+- SOURCE binds only named committed source bytes and source checks.
+- PACKAGE binds one immutable allowlisted package to accepted source. It does not authorize installation or deployment.
+- INSTALLED binds target-installed bytes and configuration to the package.
+- DEPLOYMENT requires a target-bound activation, redacted receipt, backup, migration preflight, and rollback or containment proof.
+- LIVE requires exact deployed identity plus the named behavioral, security, persistence, and isolation checks.
+- COMMIT, PUSH, DESIGN, SIGNING, and acceptance-test results are separate gates. None silently upgrades another.
+- Never inherit a stronger gate from an older report, another commit, a fixture, a draft working tree, another product, or a successful test against different bytes.
 
 ## Ordered continuation
 
-1. Preserve all five clean pushed source revisions plus the exact LocalEndpoints and MemoryEndpoints packages; do not rebuild or reinterpret accepted immutable bytes.
-2. Bind valid Memory-specific transport and protected release authority, then complete the target, migration-preflight, and current-schema receipts. Deploy only if the unchanged exact package and every later gate remain valid; otherwise retain the safe no-op.
-3. Qualify RemoteEndpoints' exact target runtime through governed discovery/verification A/B, then establish the independent producer trust, reviewed wheelhouse, protected controller/atomic root/baseline/bootstrap/privilege boundary, zero-overlap reload/rollback, and signed single-use activation chain. Do not create or restart an application or mutate the direct root merely because cPanel offers Python 3.13.14.
-4. Preserve Connect's exact ValidationOnly success, then satisfy shipped-binary identity, plugin closure, production signing, privacy-clean package, clean-install, and two-machine live gates independently.
-5. Obtain MultiAgentMemory.com's exact target-bound transport, refresh activation truth, and rebuild/requalify only from the final coordinator commit before any tag, package, or deployment action.
-6. For LocalEndpoints, obtain one complete target-issued evidence set before the v1.5.262 activation boundary or keep v1.5.258 live and cut a new truthfully dated successor; never deploy stale activation metadata.
-7. Prove the unattended Remote lifecycle and Memory swarm on owned fixtures only after their independent installed/deployment authorities exist; keep Demo/authenticated UI parity and private-data containment exact.
+1. Preserve the healthy exact public LAN runtime and canonical dirty working-tree lanes. Do not edit the running release or rebuild from its files.
+2. Reconcile and checkpoint the existing public setup and managed-connection drafts as separate bounded commits. Repair the strict-origin validation defect and label all unreleased contracts truthfully.
+3. Implement the clean managed-service server enrollment, binding, recovery, revocation, atomic CAS, idempotency, rate-limit, audit, lifecycle, and tenant/project-isolation model as one current schema with no legacy connector or human fallback.
+4. Replace the interactive logon LAN task with a dedicated least-privilege boot service and signed machine-wide trust/profile distribution. Discovery remains a hint; verified signed profile, normal TLS validation, and CA/SPKI binding precede every protected request.
+5. Have the actual LocalEndpoints owner implement and prove its product-owned per-user adapters, automatic repository and service context, protected vault, restart continuation, project coordination, and recovery on its own computer. Issue the one-prompt cross-machine acceptance only when those installed capabilities exist.
+6. Have the Concresca owner implement and prove real service identity, non-user vault, signer and generation validation, durable CAS, independent recovery, reboot-before-login operation, and terminal quarantine or fleet replacement. Fixture callbacks do not count.
+7. Implement and test the versioned pepper keyring, reissue all governed authorities through existing or newly required safe rotation routes, terminalize pending derivations, retire the old key at a hard deadline, and prove old credentials reject while new credentials remain valid.
+8. Add one repo-owned content-addressed LAN package, activation, rollback, and cleanup state machine. Then remove inactive extracted releases and stale packages without following junctions, retain only explicitly bounded rollback evidence, and reprove repository singularity.
+9. Recompute SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE independently for each owning product. Publish documentation only after exact current source and live behavior agree.
 
-## Operating cadence
+## Cold-start continuation
 
-- Recheck every owning root at session start/end and before handoff. Commit and push exact accepted source promptly, but never let a source push imply a later gate.
-- After each accepted check-in, run clean-tree package and deployment admission for that exact revision. Deploy only a system whose immutable PACKAGE and target-bound DEPLOYMENT gates are both GO, then bind LIVE to the activated revision.
-- Keep an explicit per-product ledger here: root, branch/revision, dirty/ahead/behind state, independent gate verdicts, live observation, blocker, owning boundary, and next executable action.
-- When a target is blocked, preserve the package and public-safe evidence, record the named missing authority, continue other independent systems, and never force an upload.
+1. Read `AGENTS.md`, `.uai/startup-packet.uai`, and every file in the packet's complete declared order. Read this coordinator only after the governed repository startup manifest is loaded.
+2. Verify Git origin, canonical path, HEAD, worktree registry, recognized service action, live `/api/version`, and the newest exact product-owned receipts before relying on any checkpoint.
+3. Use protected hash-only edit claims and project-room coordination before changing shared `.uai` paths. If protected coordination is unavailable, continue from local `.uai` without asking a person for a credential or trust path.
+4. Stop at the first failed later gate, preserve the truthful safe state, and continue independent work. Never force an upload, trust decision, identity, recovery, or destructive cleanup.
 
-## Cold-start continuation sequence
+## Required next prompt
 
-1. Read `AGENTS.md`, then `.uai/startup-packet.uai`, then every file in the packet's complete declared order. After the governed repository startup manifest is loaded, read this cross-product `workspace.uai` coordinator checkpoint; it is intentionally outside that manifest.
-2. Recheck Git status, upstream and live remote refs, current public version/release/health routes, and the newest exact product-owned package/deployment receipts.
-3. Record SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE separately. Stop at the first failed later gate and retain its safe no-op evidence.
-4. When authenticated MemoryEndpoints coordination is available, use the current-message/project-room and bounded edit-claim workflows. If it is unavailable, continue from local `.uai` without requesting or exposing a credential.
-
-## Required Next Prompt
-
-Continue from the first unclosed gate above. Preserve one-time standing Remote authority, exact authenticated/Demo parity, full plugin power, globally unique active swarm names, exclusive immutable-memory writers, and true concurrent branches. Implement only the smallest complete slice in its owning repository, remove superseded behavior in the same change, run the exact focused and full gates, and promote SOURCE, PACKAGE, INSTALLED, DEPLOYMENT, and LIVE only from their own evidence.
+Continue from the first unclosed gate above in its owning repository. Implement the smallest complete first-class slice, remove superseded behavior in the same change, run focused and full gates on exact committed bytes, coordinate through the restored protected LAN service, and promote each release gate only from its own current evidence. Do not ask a human for connection, trust, credential, identity, or recovery input.
