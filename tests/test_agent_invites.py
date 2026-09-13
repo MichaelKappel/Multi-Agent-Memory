@@ -479,6 +479,60 @@ class AgentInviteContractMixin(object):
         self.assertIsNotNone(self.store.authenticate(successor_secret, self.workspace_id))
         self.assertIsNone(self.store.authenticate(cancelled_candidate["successorTokenSecret"], self.workspace_id))
 
+    def test_redemption_request_and_invite_terminal_states_fail_closed(self):
+        invalid_bodies = (
+            None,
+            {},
+            {
+                "schemaVersion": "other",
+                "inviteSecret": "x",
+                "candidateAgentTokenSecret": "y",
+            },
+            {
+                "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+                "inviteSecret": "me_invite_v1.bad.bad",
+                "candidateAgentTokenSecret": "me_agent_v1.bad.bad",
+            },
+        )
+        for index, body in enumerate(invalid_bodies):
+            with self.subTest(invalid_body=index):
+                rejected = self.store.redeem_agent_invite(
+                    body, "invalid-redemption-%d" % index
+                )
+                self.assertFalse(rejected["ok"], rejected)
+                self.assertEqual("invite_redemption_request_invalid", rejected["status"])
+
+        unknown = self.store.redeem_agent_invite(
+            {
+                "schemaVersion": "memoryendpoints.agent_invite_redemption.v1",
+                "inviteSecret": "me_invite_v1.invite-%s.%s" % ("a" * 20, "b" * 43),
+                "candidateAgentTokenSecret": "me_agent_v1.agenttoken-%s.%s" % ("c" * 20, "d" * 43),
+            },
+            "unknown-redemption",
+        )
+        self.assertFalse(unknown["ok"], unknown)
+        self.assertEqual("invite_unavailable", unknown["status"])
+
+        _requested, _approved, revoked_invite = self._issue("revoked-agent")
+        revoked = self.store.revoke_agent_invite(
+            self.master_token, revoked_invite["invite"]["inviteId"]
+        )
+        self.assertTrue(revoked["ok"], revoked)
+        revoked_result = self._redeem(revoked_invite["inviteSecret"])
+        self.assertFalse(revoked_result["ok"], revoked_result)
+        self.assertEqual("invite_revoked", revoked_result["status"])
+
+        _requested, _approved, expired_invite = self._issue("expired-agent")
+        data = self.store._load()
+        data["agentInvites"][expired_invite["invite"]["inviteId"]]["expiresAt"] = "2000-01-01T00:00:00Z"
+        self.store._save(data)
+        expired_result = self._redeem(expired_invite["inviteSecret"])
+        self.assertFalse(expired_result["ok"], expired_result)
+        self.assertEqual("invite_expired", expired_result["status"])
+        expired_replay = self._redeem(expired_invite["inviteSecret"])
+        self.assertFalse(expired_replay["ok"], expired_replay)
+        self.assertEqual("invite_expired", expired_replay["status"])
+
 
 class AgentInviteOpenAPIPatternTests(unittest.TestCase):
     @staticmethod

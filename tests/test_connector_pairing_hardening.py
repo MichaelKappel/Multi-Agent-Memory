@@ -370,6 +370,45 @@ class ConnectorHardeningContract:
         )
         self.assertFalse(activation["ok"], activation)
 
+    def test_old_canceled_pairings_are_purged_only_after_scope_chain_validation(self):
+        _request, _claim, exchange = self._pending("purge")
+        pairing_id = exchange["pairing"]["pairingId"]
+        token = exchange["connectorCredentialSecret"]
+        canceled = self.store.cancel_connector_pairing_request(
+            self.session_secret,
+            _request["publicRequestRef"],
+            "operator_cleanup",
+            "cancel-purge-request-idempotency",
+            _digest("cancel-purge-request"),
+        )
+        self.assertFalse(canceled["ok"], canceled)
+        canceled = self.store.cancel_connector_pairing(
+            pairing_id,
+            token,
+            "operator_cleanup",
+            "cancel-purge-idempotency",
+            _digest("cancel-purge"),
+        )
+        self.assertTrue(canceled["ok"], canceled)
+        if self.backend == "file":
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data["connectorPairings"][pairing_id]["endedAt"] = EXPIRED
+            self.path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        else:
+            with closing(sqlite3.connect(self.path)) as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE matm_connector_pairings SET ended_at = ? WHERE pairing_id = ?",
+                        (EXPIRED, pairing_id),
+                    )
+        purged = self.store.purge_abandoned_connector_pairings(3600)
+        self.assertEqual(1, purged["purgedCount"])
+        self.assertFalse(
+            self.store.get_connector_pairing_request(
+                pairing_request_proof=_request["pairingRequestProof"]
+            )["ok"]
+        )
+
     def test_rotation_preserves_scope_exact_retry_and_revokes_predecessor(self):
         pairing_id, predecessor = self._active("rotation")
         key = "prepare-rotation-idempotency"

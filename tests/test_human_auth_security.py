@@ -93,71 +93,22 @@ class HumanAuthSecurityTests(unittest.TestCase):
         self.assertNotIn(first.secret, first.verifier)
         self.assertNotIn(first.secret, repr(first))
         self.assertNotIn(first.verifier, repr(first))
-        self.assertTrue(
-            human_auth.verify_bound_secret(
-                first.secret,
-                first.verifier,
-                "human-session",
-                "session-1",
-                pepper=pepper,
-            )
-        )
-        self.assertFalse(
-            human_auth.verify_bound_secret(
-                first.secret,
-                first.verifier,
-                "csrf",
-                "session-1",
-                pepper=pepper,
-            )
-        )
-        self.assertFalse(
-            human_auth.verify_bound_secret(
-                first.secret,
-                "malformed",
-                "human-session",
-                "session-1",
-                pepper=pepper,
-            )
-        )
+        self.assertTrue(human_auth.verify_bound_secret(first.secret, first.verifier, "human-session", "session-1", pepper=pepper))
+        self.assertFalse(human_auth.verify_bound_secret(first.secret, first.verifier, "csrf", "session-1", pepper=pepper))
+        self.assertFalse(human_auth.verify_bound_secret(first.secret, "malformed", "human-session", "session-1", pepper=pepper))
 
     def test_recent_password_reauthentication_is_bounded_and_timezone_aware(self):
         now = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
-        self.assertTrue(
-            human_auth.reauthentication_is_recent(
-                "2026-01-01T11:56:00Z", now=now, max_age_seconds=300
-            )
-        )
-        self.assertFalse(
-            human_auth.reauthentication_is_recent(
-                "2026-01-01T11:54:00Z", now=now, max_age_seconds=300
-            )
-        )
+        self.assertTrue(human_auth.reauthentication_is_recent("2026-01-01T11:56:00Z", now=now, max_age_seconds=300))
+        self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T11:54:00Z", now=now, max_age_seconds=300))
         self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T11:59:00", now=now))
-        self.assertFalse(
-            human_auth.reauthentication_is_recent(
-                "2026-01-01T12:02:00Z", now=now, clock_skew_seconds=60
-            )
-        )
-        self.assertFalse(
-            human_auth.reauthentication_is_recent(
-                "2026-01-01T12:00:00Z", now=now, max_age_seconds=3600
-            )
-        )
+        self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T12:02:00Z", now=now, clock_skew_seconds=60))
+        self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T12:00:00Z", now=now, max_age_seconds=3600))
 
     def test_origin_and_fetch_metadata_policy_is_strict_for_human_routes(self):
         expected = "https://MemoryEndpoints.com:443/"
         self.assertEqual(human_auth.canonical_origin(expected), "https://memoryendpoints.com")
-        self.assertTrue(
-            human_auth.human_browser_request_allowed(
-                "POST",
-                "https://memoryendpoints.com",
-                expected,
-                "same-origin",
-                "cors",
-                "empty",
-            )
-        )
+        self.assertTrue(human_auth.human_browser_request_allowed("POST", "https://memoryendpoints.com", expected, "same-origin", "cors", "empty"))
         denied = (
             ("POST", "https://evil.example", "same-origin", "cors", "empty"),
             ("POST", "https://memoryendpoints.com", "cross-site", "cors", "empty"),
@@ -166,16 +117,95 @@ class HumanAuthSecurityTests(unittest.TestCase):
         )
         for method, origin, site, mode, destination in denied:
             with self.subTest(origin=origin, site=site, mode=mode):
-                self.assertFalse(
-                    human_auth.human_browser_request_allowed(
-                        method, origin, expected, site, mode, destination
-                    )
-                )
-        self.assertTrue(
-            human_auth.human_browser_request_allowed(
-                "GET", "", expected, "same-origin", "cors", "empty"
-            )
-        )
+                self.assertFalse(human_auth.human_browser_request_allowed(method, origin, expected, site, mode, destination))
+        self.assertTrue(human_auth.human_browser_request_allowed("GET", "", expected, "same-origin", "cors", "empty"))
+
+    def test_human_auth_rejects_type_encoding_and_secret_context_edges(self):
+        self.assertEqual(human_auth.PASSWORD_MIN_LENGTH, human_auth.password_policy()["minimumLength"])
+        self.assertEqual(("password_required",), human_auth.password_policy_errors(None))
+        self.assertEqual(("password_invalid_character",), human_auth.password_policy_errors("\ud800"))
+        self.assertIn("password_too_short", human_auth.password_policy_errors("short", "bad username!"))
+        with self.assertRaises(human_auth.HumanAuthPolicyError):
+            human_auth.validate_password("short")
+
+        for value in (None, "", "abc=", "abc+", "YWJj="):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    human_auth._b64url_decode(value)
+        with self.assertRaises(ValueError):
+            human_auth._b64url_decode("AB")
+        self.assertIsNone(human_auth.parse_password_verifier(1))
+        verifier = human_auth.encode_password_verifier("a valid and unique passphrase")
+        verifier_parts = verifier.split("$")
+        verifier_parts[5] = "AA"
+        self.assertIsNone(human_auth.parse_password_verifier("$".join(verifier_parts)))
+        with mock.patch.object(human_auth, "_derive_scrypt", side_effect=TypeError):
+            parsed = human_auth.parse_password_verifier(verifier)
+            self.assertFalse(human_auth._verify_with_parsed("a valid and unique passphrase", parsed))
+        self.assertEqual((b"", False), human_auth._password_bytes_for_verification(None))
+        self.assertEqual((b"", False), human_auth._password_bytes_for_verification("\ud800"))
+        oversized = "x" * (human_auth.PASSWORD_MAX_BYTES + 1)
+        self.assertEqual((human_auth.hashlib.sha256(oversized.encode("utf-8")).digest(), False), human_auth._password_bytes_for_verification(oversized))
+        self.assertEqual((b"short", False), human_auth._password_bytes_for_verification("short"))
+        self.assertFalse(human_auth._verify_with_parsed(None, parsed))
+
+        with tempfile.TemporaryDirectory() as directory:
+            invalid = Path(directory) / "invalid.json"
+            invalid.write_text("not-json", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"MEMORYENDPOINTS_CREDENTIAL_PEPPER": ""}, clear=False):
+                with self.assertRaises(human_auth.HumanAuthConfigurationError):
+                    human_auth.resolve_credential_pepper(config_path=invalid)
+            not_a_mapping = Path(directory) / "list.json"
+            not_a_mapping.write_text("[]", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"MEMORYENDPOINTS_CREDENTIAL_PEPPER": ""}, clear=False):
+                with self.assertRaises(human_auth.HumanAuthConfigurationError):
+                    human_auth.resolve_credential_pepper(config_path=not_a_mapping)
+            missing = Path(directory) / "missing.json"
+            with mock.patch.dict(os.environ, {"MEMORYENDPOINTS_CREDENTIAL_PEPPER": ""}, clear=False):
+                with self.assertRaises(human_auth.HumanAuthConfigurationError):
+                    human_auth.resolve_credential_pepper(config_path=missing)
+            with mock.patch.dict(os.environ, {"MEMORYENDPOINTS_CREDENTIAL_PEPPER": ""}, clear=False):
+                with self.assertRaises(human_auth.HumanAuthConfigurationError):
+                    human_auth.resolve_credential_pepper(pepper="\ud800")
+        for size in (0, 65, "32"):
+            with self.subTest(size=size):
+                with self.assertRaises(human_auth.HumanAuthPolicyError):
+                    human_auth.generate_opaque_secret(size)
+        for secret, purpose, subject in (
+            ("bad", "session", "subject"),
+            ("A" * 43, "bad purpose", "subject"),
+            ("A" * 43, "session", ""),
+            ("A" * 43, "session", "\ud800"),
+        ):
+            with self.subTest(secret=secret[:4], purpose=purpose, subject=subject[:4]):
+                with self.assertRaises(human_auth.HumanAuthPolicyError):
+                    human_auth._bound_secret_context(secret, purpose, subject)
+        self.assertFalse(human_auth.verify_bound_secret("bad", "bad", "session", "subject", pepper=b"p" * 32))
+
+    def test_human_auth_rejects_invalid_time_origins_and_fetch_metadata(self):
+        now = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        self.assertFalse(human_auth.reauthentication_is_recent("not-a-date", now=now))
+        self.assertFalse(human_auth.reauthentication_is_recent(1, now=now))
+        self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T12:00:00Z", now=now, max_age_seconds="bad"))
+        self.assertFalse(human_auth.reauthentication_is_recent("2026-01-01T12:00:00Z", now=now, clock_skew_seconds=-1))
+        for origin in (
+            None,
+            "null",
+            "ftp://memoryendpoints.com",
+            "https://user:pass@memoryendpoints.com",
+            "https://memoryendpoints.com/path",
+            "https://memoryendpoints.com?token=secret",
+            "https://[bad",
+            "https://memoryendpoints.com:not-a-port",
+            "https://\ud800.example",
+        ):
+            with self.subTest(origin=origin):
+                self.assertEqual("", human_auth.canonical_origin(origin))
+        self.assertEqual("http://[::1]", human_auth.canonical_origin("HTTP://[::1]:80/"))
+        expected = "https://memoryendpoints.com"
+        self.assertFalse(human_auth.human_browser_request_allowed("TRACE", expected, expected, "same-origin"))
+        self.assertFalse(human_auth.human_browser_request_allowed("GET", expected, expected, "same-origin", "cors", "iframe"))
+        self.assertFalse(human_auth.human_browser_request_allowed("GET", "https://evil.example", expected, "same-origin"))
 
 
 if __name__ == "__main__":

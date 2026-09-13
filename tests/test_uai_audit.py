@@ -146,12 +146,12 @@ class UaiAuditContractTests(unittest.TestCase):
             self.assertNotIn("Latest-code MemoryEndpoints.com", memory)
             self.assertIn("historical", memory.lower())
         self.assertIn(
-            "this checkout cannot prove the private commercial implementation bytes",
+            "The private commercial source exists only at `E:\\MemoryEndpoints.com`",
             progress,
         )
         self.assertIn(
-            "The current FileZilla inventory has no target-bound "
-            "`multiagentmemory` profile",
+            "The canonical public checkout still contains an intentional "
+            "uncommitted managed-connection and setup lane",
             progress,
         )
         self.assertIn(

@@ -449,6 +449,40 @@ class ConnectorPairingStorageContract:
         )
         self.assertEqual("connector_scopes_invalid", invalid["status"])
 
+    def test_approval_rejects_actor_selection_scope_mode_and_idempotency_edges(self):
+        request, _payload, _verifier, _state, _key, _digest_value = self._request(
+            "approval-edges"
+        )
+        cases = (
+            ("invalid actor", "invalid-session", request["publicRequestRef"], {"mode": "existing"}, list(V1_REQUESTED_SCOPES), "approval-edge-actor", _digest("approval-edge-actor"), "human_credential_authority_required"),
+            ("invalid ref", self.session_secret, "bad-ref", {"mode": "existing"}, list(V1_REQUESTED_SCOPES), "approval-edge-ref", _digest("approval-edge-ref"), "pairing_request_not_found"),
+            ("invalid scopes", self.session_secret, request["publicRequestRef"], {"mode": "existing"}, ["not-a-scope"], "approval-edge-scopes", _digest("approval-edge-scopes"), "connector_scopes_invalid"),
+            ("invalid mode", self.session_secret, request["publicRequestRef"], {"mode": "other"}, list(V1_REQUESTED_SCOPES), "approval-edge-mode", _digest("approval-edge-mode"), "workspace_selection_invalid"),
+            ("invalid idempotency", self.session_secret, request["publicRequestRef"], {"mode": "existing"}, list(V1_REQUESTED_SCOPES), "bad key\n", _digest("approval-edge-key"), "idempotency_key_invalid"),
+            ("invalid digest", self.session_secret, request["publicRequestRef"], {"mode": "existing"}, list(V1_REQUESTED_SCOPES), "approval-edge-digest", "bad-digest", "idempotency_key_invalid"),
+        )
+        for label, actor, public_ref, selection, scopes, key, digest, expected in cases:
+            with self.subTest(case=label):
+                rejected = self.store.approve_connector_pairing_request(
+                    actor, public_ref, selection, scopes, key, digest
+                )
+                self.assertFalse(rejected["ok"], rejected)
+                self.assertEqual(expected, rejected["status"])
+
+        missing_workspace = self.store.approve_connector_pairing_request(
+            self.session_secret,
+            request["publicRequestRef"],
+            {"mode": "existing"},
+            list(V1_REQUESTED_SCOPES),
+            "approval-edge-missing-workspace",
+            _digest("approval-edge-missing-workspace"),
+        )
+        self.assertFalse(missing_workspace["ok"], missing_workspace)
+        self.assertEqual("workspace_ref_invalid", missing_workspace["status"])
+
+        approved = self._approve(request, "approval-edges")
+        self.assertTrue(approved["ok"], approved)
+
 
 class FileConnectorPairingStorageTests(ConnectorPairingStorageContract, unittest.TestCase):
     backend = "file"

@@ -6,6 +6,7 @@ import unittest
 
 from memoryendpoints.storage import FileStore, SQLiteStore
 from tests.governed_test_support import governed_agent_redemption_material
+from tests.governed_test_support import governed_agent_redemption_material
 
 
 TEST_PEPPER = "human-lifecycle-test-pepper-0123456789-abcdefghijklmnopqrstuvwxyz"
@@ -55,6 +56,189 @@ class HumanLifecycleStorageMixin(object):
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["intentSecret"].startswith("me_closure_v1."))
         return result
+
+    def test_human_agent_token_replacement_is_atomic_replayable_and_fail_closed(self):
+        def issue_agent(agent_id):
+            request = self.store.request_agent_access(
+                self.company_id, agent_id, "workspace", self.workspace_id
+            )
+            self.assertTrue(request["ok"], request)
+            request_id = request["request"]["requestId"]
+            approved = self.store.decide_agent_access_request(
+                self.master_secret, request_id, "approved"
+            )
+            self.assertTrue(approved["ok"], approved)
+            invite = self.store.issue_agent_invite(self.master_secret, request_id)
+            self.assertTrue(invite["ok"], invite)
+            redemption, redemption_key, agent_secret = governed_agent_redemption_material(
+                invite["inviteSecret"]
+            )
+            redeemed = self.store.redeem_agent_invite(redemption, redemption_key)
+            self.assertTrue(redeemed["ok"], redeemed)
+            return redeemed, agent_secret, agent_secret.split(".")[1]
+
+        predecessor, predecessor_secret, predecessor_id = issue_agent("replacement-agent-a")
+        self.assertEqual(
+            "human_credential_authority_required",
+            self.store.prepare_human_agent_token_replacement(
+                "invalid-session", self.company_id, predecessor_id,
+                idempotency_key="prepare-a", request_digest="digest-a",
+            )["status"],
+        )
+        self.assertEqual(
+            "human_company_not_found",
+            self.store.prepare_human_agent_token_replacement(
+                self.session_secret, "wrong-company", predecessor_id,
+                idempotency_key="prepare-a", request_digest="digest-a",
+            )["status"],
+        )
+        self.assertEqual(
+            "idempotency_key_required",
+            self.store.prepare_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id
+            )["status"],
+        )
+        self.assertEqual(
+            "idempotency_key_invalid",
+            self.store.prepare_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id,
+                idempotency_key="x" * 201, request_digest="digest-a",
+            )["status"],
+        )
+        prepared = self.store.prepare_human_agent_token_replacement(
+            self.session_secret, self.company_id, predecessor_id,
+            reason=" rotate   the successor safely ",
+            idempotency_key="prepare-a", request_digest="digest-a",
+        )
+        self.assertTrue(prepared["ok"], prepared)
+        successor_secret = prepared["successorTokenSecret"]
+        replacement_id = prepared["replacement"]["replacementId"]
+        successor_id = prepared["replacement"]["successorCredentialId"]
+        self.assertEqual("prepared", prepared["replacement"]["status"])
+        self.assertNotIn(successor_secret, str(prepared["replacement"]))
+
+        replay = self.store.prepare_human_agent_token_replacement(
+            self.session_secret, self.company_id, predecessor_id,
+            idempotency_key="prepare-a", request_digest="digest-a",
+        )
+        self.assertTrue(replay["idempotentReplay"], replay)
+        self.assertEqual(
+            "idempotency_conflict",
+            self.store.prepare_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id,
+                idempotency_key="prepare-a", request_digest="different",
+            )["status"],
+        )
+        self.assertEqual(
+            "replacement_pending",
+            self.store.prepare_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id,
+                idempotency_key="prepare-a-second", request_digest="digest-a-second",
+            )["status"],
+        )
+        self.assertEqual(
+            "replacement_not_found",
+            self.store.human_agent_token_replacement_status(
+                self.session_secret, self.company_id, predecessor_id, "missing-replacement"
+            )["status"],
+        )
+        status = self.store.human_agent_token_replacement_status(
+            self.session_secret, self.company_id, predecessor_id, replacement_id
+        )
+        self.assertTrue(status["ok"], status)
+        self.assertEqual("prepared", status["replacement"]["status"])
+        self.assertEqual(
+            "successor_token_proof_required",
+            self.store.confirm_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id, replacement_id,
+                None, idempotency_key="confirm-a", request_digest="confirm-digest-a",
+            )["status"],
+        )
+        self.assertEqual(
+            "replacement_binding_invalid",
+            self.store.confirm_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id, replacement_id,
+                "me_agent_v1.invalid.invalid", idempotency_key="confirm-a-invalid",
+                request_digest="confirm-digest-invalid",
+            )["status"],
+        )
+        confirmed = self.store.confirm_human_agent_token_replacement(
+            self.session_secret, self.company_id, predecessor_id, replacement_id,
+            successor_secret, idempotency_key="confirm-a", request_digest="confirm-digest-a",
+        )
+        self.assertTrue(confirmed["ok"], confirmed)
+        self.assertEqual("confirmed", confirmed["replacement"]["status"])
+        self.assertIsNone(self.store.authenticate(predecessor_secret, self.workspace_id))
+        self.assertIsNotNone(self.store.authenticate(successor_secret, self.workspace_id))
+        confirmed_replay = self.store.confirm_human_agent_token_replacement(
+            self.session_secret, self.company_id, predecessor_id, replacement_id,
+            successor_secret, idempotency_key="confirm-a", request_digest="confirm-digest-a",
+        )
+        self.assertTrue(confirmed_replay["idempotentReplay"], confirmed_replay)
+        self.assertEqual(
+            "idempotency_conflict",
+            self.store.confirm_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id, replacement_id,
+                successor_secret, idempotency_key="confirm-a", request_digest="different",
+            )["status"],
+        )
+        self.assertEqual(
+            "replacement_unavailable",
+            self.store.cancel_human_agent_token_replacement(
+                self.session_secret, self.company_id, predecessor_id, replacement_id,
+                idempotency_key="cancel-confirmed", request_digest="cancel-confirmed-digest",
+            )["status"],
+        )
+
+        cancel_predecessor, cancel_secret, cancel_id = issue_agent("replacement-agent-b")
+        cancel_prepared = self.store.prepare_human_agent_token_replacement(
+            self.session_secret, self.company_id, cancel_id,
+            idempotency_key="prepare-b", request_digest="digest-b",
+        )
+        cancel_replacement_id = cancel_prepared["replacement"]["replacementId"]
+        canceled = self.store.cancel_human_agent_token_replacement(
+            self.session_secret, self.company_id, cancel_id, cancel_replacement_id,
+            idempotency_key="cancel-b", request_digest="cancel-digest-b",
+        )
+        self.assertTrue(canceled["ok"], canceled)
+        self.assertEqual("canceled", canceled["replacement"]["status"])
+        self.assertIsNotNone(self.store.authenticate(cancel_secret, self.workspace_id))
+        self.assertTrue(self.store.cancel_human_agent_token_replacement(
+            self.session_secret, self.company_id, cancel_id, cancel_replacement_id,
+            idempotency_key="cancel-b", request_digest="cancel-digest-b",
+        )["idempotentReplay"])
+        self.assertEqual(
+            "idempotency_conflict",
+            self.store.cancel_human_agent_token_replacement(
+                self.session_secret, self.company_id, cancel_id, cancel_replacement_id,
+                idempotency_key="cancel-b", request_digest="different",
+            )["status"],
+        )
+
+        _expired_predecessor, _expired_secret, expired_id = issue_agent("replacement-agent-c")
+        expired_prepared = self.store.prepare_human_agent_token_replacement(
+            self.session_secret, self.company_id, expired_id, expires_in_seconds=60,
+            idempotency_key="prepare-c", request_digest="digest-c",
+        )
+        expired_replacement_id = expired_prepared["replacement"]["replacementId"]
+        expired_successor = expired_prepared["successorTokenSecret"]
+        if isinstance(self.store, SQLiteStore):
+            with self.store._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE matm_agent_token_replacements SET expires_at = ? WHERE replacement_id = ?",
+                        ("2000-01-01T00:00:00.000000Z", expired_replacement_id),
+                    )
+        else:
+            data = self.store._load()
+            data["agentTokenReplacements"][expired_replacement_id]["expiresAt"] = "2000-01-01T00:00:00.000000Z"
+            self.store._save(data)
+        expired_status = self.store.human_agent_token_replacement_status(
+            self.session_secret, self.company_id, expired_id, expired_replacement_id
+        )
+        self.assertTrue(expired_status["ok"], expired_status)
+        self.assertEqual("expired", expired_status["replacement"]["status"])
+        self.assertIsNone(self.store.authenticate(expired_successor, self.workspace_id))
 
     def test_setup_returns_exceptional_recovery_and_account_session_requires_valid_csrf(self):
         self.assertTrue(self.recovery_secret.startswith("me_human_v1."))

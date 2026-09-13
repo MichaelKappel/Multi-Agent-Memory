@@ -1192,6 +1192,48 @@ class HumanAccountCompanyLifecycleContract:
         self.assertEqual(200, status)
         self.assertEqual("closed", closed["status"])
         self.assertEqual("recovery_closure", closed["auditActor"]["authMode"])
+
+    def test_closure_intent_rejection_matrix_preserves_company_state(self):
+        _account, session = self._account_session(self.primary)
+        session = self._reauth(session)
+        path = "/api/matm/human/companies/%s/closure-intents" % self.primary["companyId"]
+        status, _headers, invalid_purpose = self._human_call(
+            session, path, "POST", {"operation": "unknown", "acknowledgeExportOpportunity": True}
+        )
+        self._assert_error(status, invalid_purpose, 422, "closure_purpose_invalid")
+        status, _headers, missing_ack = self._human_call(
+            session, path, "POST", {"operation": "close", "acknowledgeExportOpportunity": False}
+        )
+        self._assert_error(status, missing_ack, 422, "export_opportunity_acknowledgement_required")
+
+        close_secret = self._create_intent(session, "close")
+        close_path = "/api/matm/human/companies/%s/close" % self.primary["companyId"]
+        status, _headers, wrong_phrase = self._human_call(
+            session, close_path, "POST",
+            {"closureIntentSecret": close_secret, "typedConfirmationPhrase": "wrong"},
+        )
+        self._assert_error(status, wrong_phrase, 422, "typed_confirmation_mismatch")
+        status, _headers, invalid_secret = self._human_call(
+            session, close_path, "POST",
+            {"closureIntentSecret": "not-a-closure", "typedConfirmationPhrase": self.primary["companyLabel"]},
+        )
+        self._assert_error(status, invalid_secret, 410, "closure_intent_invalid")
+        status, _headers, closed = self._human_call(
+            session, close_path, "POST",
+            {"closureIntentSecret": close_secret, "typedConfirmationPhrase": self.primary["companyLabel"]},
+        )
+        self.assertEqual(200, status)
+        self.assertEqual("closed", closed["status"])
+        status, _headers, reused = self._human_call(
+            session, close_path, "POST",
+            {"closureIntentSecret": close_secret, "typedConfirmationPhrase": self.primary["companyLabel"]},
+        )
+        self._assert_error(
+            status,
+            reused,
+            410,
+            "closure_intent_unavailable" if self.backend == "file" else "closure_intent_invalid",
+        )
         self._assert_not_persisted(self.primary["humanOwnerRecoverySecret"])
 
 

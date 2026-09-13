@@ -74,7 +74,7 @@ Must not expose: API keys, bearer tokens, credential peppers, authorization code
 
 ## Cold-start continuation
 
-1. Read `AGENTS.md`, `.uai/startup-packet.uai`, and every file in the packet's complete declared order. Read this coordinator only after the governed repository startup manifest is loaded.
+1. Read `AGENTS.md`, then `.uai/startup-packet.uai`, then every file in the packet's complete declared order. After the governed repository startup manifest is loaded, read this cross-product `workspace.uai` coordinator checkpoint.
 2. Verify Git origin, canonical path, HEAD, worktree registry, recognized service action, live `/api/version`, and the newest exact product-owned receipts before relying on any checkpoint.
 3. Use protected hash-only edit claims and project-room coordination before changing shared `.uai` paths. If protected coordination is unavailable, continue from local `.uai` without asking a person for a credential or trust path.
 4. Stop at the first failed later gate, preserve the truthful safe state, and continue independent work. Never force an upload, trust decision, identity, recovery, or destructive cleanup.

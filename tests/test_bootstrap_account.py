@@ -557,6 +557,98 @@ class BootstrapAccountContract(DeterministicCredentialPepperMixin):
             )
             self.assertEqual("400 Bad Request", status)
 
+    def test_direct_claim_validation_and_expiry_fail_closed_before_domain_writes(self):
+        body = request_body(self.backend)
+        capability_digest = bootstrap_capability_digest(self.capability)
+        idempotency_digest = bootstrap_idempotency_digest(self.idempotency_key)
+        request_digest = bootstrap_request_digest(body)
+        valid = (capability_digest, idempotency_digest, request_digest)
+        for index in range(3):
+            invalid = list(valid)
+            invalid[index] = "not-a-sha256-digest"
+            with self.subTest(digest=index), self.assertRaisesRegex(
+                BootstrapAccountError, "bootstrap_account_request_invalid"
+            ):
+                self.store().create_bootstrap_account(
+                    body, invalid[0], invalid[1], invalid[2],
+                    os.environ["MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT"],
+                )
+        expired = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=1)
+        ).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self.assertRaisesRegex(
+            BootstrapAccountError, "bootstrap_account_unavailable"
+        ):
+            self.store().create_bootstrap_account(
+                body, valid[0], valid[1], valid[2], expired
+            )
+        data = self.store()._load()
+        self.assertEqual({}, data["bootstrapAccountSetups"])
+        self.assertEqual({}, data["accounts"])
+
+    def test_graph_collision_is_rejected_without_claiming_the_capability(self):
+        existing = self.store().create_free_account(
+            "Existing Workspace", "Existing Company", "Existing Project"
+        )
+        existing_ids = {
+            "accountId": existing[3],
+            "companyId": existing[4],
+            "workspaceId": existing[0],
+            "projectId": existing[5],
+            "companyMasterCredentialId": existing[1],
+            "humanOwnerCredentialId": "humancred-" + ("e" * 20),
+        }
+        body = request_body("collision")
+        with patch(
+            "memoryendpoints.storage._bootstrap_account_ids",
+            return_value=existing_ids,
+        ), self.assertRaisesRegex(
+            BootstrapAccountError, "bootstrap_account_conflict"
+        ):
+            self.store().create_bootstrap_account(
+                body,
+                bootstrap_capability_digest(self.capability),
+                bootstrap_idempotency_digest(self.idempotency_key),
+                bootstrap_request_digest(body),
+                os.environ["MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT"],
+            )
+        self.assertEqual({}, self.store()._load()["bootstrapAccountSetups"])
+
+    def test_exact_replay_fails_closed_when_a_persisted_credential_is_tampered(self):
+        body = request_body("tampered-replay")
+        capability_digest = bootstrap_capability_digest(self.capability)
+        idempotency_digest = bootstrap_idempotency_digest(self.idempotency_key)
+        request_digest = bootstrap_request_digest(body)
+        first = self.store().create_bootstrap_account(
+            body,
+            capability_digest,
+            idempotency_digest,
+            request_digest,
+            os.environ["MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT"],
+        )
+        if self.backend == "file":
+            data = self.store()._load()
+            data["humanOwnerCredentials"][first["humanOwnerCredentialId"]]["tokenHash"] = "tampered"
+            self.store()._save(data)
+        else:
+            with self.store()._open_connection() as connection:
+                with connection:
+                    connection.execute(
+                        "UPDATE matm_human_owner_credentials SET token_hash = ? WHERE human_credential_id = ?",
+                        ("tampered", first["humanOwnerCredentialId"]),
+                    )
+        with self.assertRaisesRegex(
+            BootstrapAccountError, "bootstrap_account_unavailable"
+        ):
+            self.store().create_bootstrap_account(
+                body,
+                capability_digest,
+                idempotency_digest,
+                request_digest,
+                os.environ["MEMORYENDPOINTS_BOOTSTRAP_ACCOUNT_EXPIRES_AT"],
+            )
+
     def test_size_limit_does_not_read_or_touch_storage(self):
         class ExplodingStream:
             def read(self, _length):

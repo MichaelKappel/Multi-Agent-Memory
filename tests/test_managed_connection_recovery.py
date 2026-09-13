@@ -792,16 +792,19 @@ class ManagedConnectionRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "state" / "controller.json"
-            outside = root / "outside.json"
-            outside.write_text("{}", encoding="utf-8")
             cas = managed.FileDurableStateCAS(path)
             path.parent.mkdir(parents=True)
-            try:
-                path.symlink_to(outside)
-            except OSError as exc:
-                self.skipTest("file symlinks unavailable: %s" % type(exc).__name__)
-            with self.assertRaises(managed.OnboardingError) as raised:
-                cas.read("f" * 64)
+            path.write_text("{}", encoding="utf-8")
+            # The security decision is platform-independent; emulate the
+            # filesystem reporting a substituted link so Windows privilege
+            # policy cannot turn this critical check into a skip.
+            with patch.object(
+                managed,
+                "_path_is_link_or_junction",
+                side_effect=lambda candidate: Path(candidate) == path,
+            ):
+                with self.assertRaises(managed.OnboardingError) as raised:
+                    cas.read("f" * 64)
             self.assertEqual("managed_profile_invalid", raised.exception.code)
 
     def test_result_parser_rejects_extensions_and_incoherent_human_fallback(self):

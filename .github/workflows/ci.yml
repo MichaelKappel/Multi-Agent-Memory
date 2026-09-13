@@ -21,8 +21,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run unit tests
-        run: python scripts/run_isolated_tests.py
+      - name: Install declared test dependencies
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Run hermetic enterprise suite
+        # The enterprise runner is the maintained isolated replacement for run_isolated_tests.py.
+        run: python scripts/run_enterprise_tests.py --mode hermetic --artifacts "$RUNNER_TEMP/matm-enterprise-tests"
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matm-enterprise-tests
+          path: ${{ runner.temp }}/matm-enterprise-tests
 
       - name: Verify WSGI routes
         run: python scripts/verify_memoryendpoints.py --wsgi --expect-source-sha "$GITHUB_SHA"

@@ -25,7 +25,7 @@ from memoryendpoints.storage import FileStore, SQLiteStore
 GOVERNED_CREDENTIAL = re.compile(r"me_(?:master|agent|invite)_v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 
 
-def call_api(path, method="GET", body=None, token=None, query="", extra_headers=None):
+def call_api(path, method="GET", body=None, token=None, query="", extra_headers=None, content_type="application/json"):
     raw = json.dumps(body).encode("utf-8") if body is not None else b""
     captured = {}
 
@@ -40,6 +40,8 @@ def call_api(path, method="GET", body=None, token=None, query="", extra_headers=
         "wsgi.input": io.BytesIO(raw),
         "CONTENT_LENGTH": str(len(raw)),
     }
+    if body is not None and content_type:
+        environ["CONTENT_TYPE"] = content_type
     if token:
         environ["HTTP_AUTHORIZATION"] = "Bearer " + token
     for key, value in (extra_headers or {}).items():
@@ -1023,6 +1025,7 @@ class GovernedAgentAccessApiContract:
             "POST",
             body,
             extra_headers={"HTTP_IDEMPOTENCY_KEY": key},
+            content_type="text/plain",
         )
         self._assert_error(status, wrong_type, 415, "json_content_type_required")
 
